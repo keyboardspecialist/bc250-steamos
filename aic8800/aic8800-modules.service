@@ -1,0 +1,13 @@
+[Unit]
+Description=AIC8800 dongle: rebuild and load WiFi/BT modules if missing
+After=local-fs.target network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+TimeoutStartSec=15min
+ExecStart=/etc/aic8800-ensure-modules.sh
+
+[Install]
+WantedBy=multi-user.target
