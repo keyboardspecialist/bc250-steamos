@@ -1041,6 +1041,9 @@ struct aicwf_rx_priv *aicwf_rx_init(void *arg)
     }
     spin_lock_init(&rx_priv->stas_reord_lock);
     INIT_LIST_HEAD(&rx_priv->stas_reord_list);
+    rx_priv->reord_free_wq = alloc_workqueue("aicwf_reord_free", 0, 0);
+    if (!rx_priv->reord_free_wq)
+        txrx_err("no reord free workqueue, falling back to system wq\n");
 #endif
 
     return rx_priv;
@@ -1068,6 +1071,11 @@ void aicwf_rx_deinit(struct aicwf_rx_priv* rx_priv)
         reord_deinit_sta(rx_priv, reord_info);
     }
 
+    /* drain the deferred free_work items before the driver goes away */
+    if (rx_priv->reord_free_wq) {
+        destroy_workqueue(rx_priv->reord_free_wq);
+        rx_priv->reord_free_wq = NULL;
+    }
 #endif
 	AICWFDBG(LOGINFO, "stio rx thread\n");
 #ifdef AICWF_SDIO_SUPPORT

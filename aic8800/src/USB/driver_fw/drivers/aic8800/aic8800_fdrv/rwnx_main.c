@@ -3541,7 +3541,23 @@ static int rwnx_cfg80211_add_station(struct wiphy *wiphy,
                 AICWFDBG(LOGDEBUG, "sta idx %d fc error %d.\n", sta->sta_idx, atomic_read(&rwnx_hw->sta_flowctrl[sta->sta_idx].tx_pending_cnt));
 
             if (rwnx_vif->wdev.iftype == NL80211_IFTYPE_AP || rwnx_vif->wdev.iftype == NL80211_IFTYPE_P2P_GO) {
+                union rwnx_rate_ctrl_info rc;
                 struct station_info sinfo;
+                /* Pin fw rate control for AP/GO clients to 6 Mbps OFDM: the
+                 * fw otherwise starts new stations at 1 Mbps DSSS, which
+                 * WiFi-Direct clients (e.g. the SHIELD controller) cannot
+                 * decode, so the WPS/EAPOL exchange never completes. */
+                rc.value = 0;
+                rc.formatModTx = FORMATMOD_NON_HT;
+                rc.mcsIndexTx = 4; /* 6 Mbps OFDM */
+                rwnx_send_me_rc_set_rate(rwnx_hw, sta->sta_idx, (u16)rc.value);
+                /* Open the 802.1X port in fw right away: WPS runs before the
+                 * station is authorized, and the fw sends EAPOL to
+                 * port-closed stations at 1 Mbps DSSS regardless of host
+                 * rate control. Filtering stays with wpa_supplicant. */
+                rwnx_send_me_set_control_port_req(rwnx_hw, true, sta->sta_idx);
+                AICWFDBG(LOGINFO, "sta %d rate pinned to 6M OFDM + port open (GO client)\n",
+                         sta->sta_idx);
                 memset(&sinfo, 0, sizeof(struct station_info));
                 sinfo.assoc_req_ies = NULL;
                 sinfo.assoc_req_ies_len = 0;

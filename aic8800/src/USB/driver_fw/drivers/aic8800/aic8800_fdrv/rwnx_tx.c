@@ -671,9 +671,24 @@ void rwnx_tx_push(struct rwnx_hw *rwnx_hw, struct rwnx_txhdr *txhdr, int flags)
     aicwf_frame_tx((void *)(rwnx_hw->sdiodev), skb);
 #endif
 #ifdef AICWF_USB_SUPPORT
-    if( ((sw_txhdr->desc.host.flags & TXU_CNTRL_MGMT) && \
+    /* On AP/GO interfaces, cfm-class EAPOL is transmitted by the fw at
+     * 1 Mbps DSSS regardless of the BSS basic rates; P2P clients (e.g. the
+     * SHIELD controller) cannot decode 11b, so the WPS EAP exchange loops
+     * forever. Send GO-side EAPOL as normal data at a fixed 6 Mbps OFDM
+     * (the lowest basic rate) instead. STA EAPOL keeps vendor behavior. */
+    bool eapol_go_fix = (sw_txhdr->desc.host.ethertype == 0x8e88) &&
+        (RWNX_VIF_TYPE(sw_txhdr->rwnx_vif) == NL80211_IFTYPE_AP ||
+         RWNX_VIF_TYPE(sw_txhdr->rwnx_vif) == NL80211_IFTYPE_P2P_GO);
+    if (eapol_go_fix) {
+        sw_txhdr->fixed_rate = 1;
+        sw_txhdr->rate_config = (FORMATMOD_NON_HT << FORMAT_MOD_TX_RCX_OFT) |
+                                (4 << MCS_INDEX_TX_RCX_OFT); /* 6 Mbps OFDM */
+        AICWFDBG(LOGINFO, "eapol fixed-rate 6M (GO), sta_idx:%d\n",
+                 sw_txhdr->desc.host.staid);
+    }
+    if( !eapol_go_fix && (((sw_txhdr->desc.host.flags & TXU_CNTRL_MGMT) && \
 	((*(skb->data+sw_txhdr->headroom)==0xd0) || (*(skb->data+sw_txhdr->headroom)==0x10) || (*(skb->data+sw_txhdr->headroom)==0x30))) || \
-        (sw_txhdr->desc.host.ethertype == 0x8e88) || (sw_txhdr->desc.host.ethertype == 0xb488)) {
+        (sw_txhdr->desc.host.ethertype == 0x8e88) || (sw_txhdr->desc.host.ethertype == 0xb488))) {
 	// 0xd0:Action, 0x10:AssocRsp, 0x8e88:EAPOL, 0xb488: WAPI
         sw_txhdr->need_cfm = 1;
         sw_txhdr->desc.host.status_desc_addr = ((1<<31) | rwnx_hw->usb_env.txdesc_free_idx[0]);

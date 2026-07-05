@@ -1545,7 +1545,6 @@ int reord_flush_tid(struct aicwf_rx_priv *rx_priv, struct sk_buff *skb, u8 tid)
     u8 found = 0;
     struct list_head *phead, *plist;
     struct recv_msdu *prframe;
-    int ret;
 
     if((rwnx_vif->wdev.iftype == NL80211_IFTYPE_STATION) || (rwnx_vif->wdev.iftype == NL80211_IFTYPE_P2P_CLIENT))
         mac = eh->h_dest;
@@ -1588,16 +1587,40 @@ int reord_flush_tid(struct aicwf_rx_priv *rx_priv, struct sk_buff *skb, u8 tid)
 	AICWFDBG(LOGINFO, "flush:tid=%d", tid);
     preorder_ctrl->enable = false;
     spin_unlock_irqrestore(&preorder_ctrl->reord_list_lock, flags);
-    if (timer_pending(&preorder_ctrl->reord_timer)) {
+    /* async cancels only: this runs on the RX path, which may be atomic.
+     * A late-running worker sees enable=false and an empty list. */
 #if (LINUX_VERSION_CODE >= KERNEL_VERSION(6, 15, 0))
-	    ret = timer_delete_sync(&preorder_ctrl->reord_timer);
+    timer_delete(&preorder_ctrl->reord_timer);
 #else
-        ret = del_timer_sync(&preorder_ctrl->reord_timer);
+    del_timer(&preorder_ctrl->reord_timer);
 #endif
-    }
-    cancel_work_sync(&preorder_ctrl->reord_timer_work);
+    cancel_work(&preorder_ctrl->reord_timer_work);
 
     return 0;
+}
+
+static void reord_info_free_worker(struct work_struct *work)
+{
+    struct reord_ctrl_info *reord_info =
+        container_of(work, struct reord_ctrl_info, free_work);
+    struct reord_ctrl *preorder_ctrl;
+    u8 i;
+
+    /* process context: the sleeping cancels are legal here */
+    for (i = 0; i < 8; i++) {
+        preorder_ctrl = &reord_info->preorder_ctrl[i];
+#if (LINUX_VERSION_CODE >= KERNEL_VERSION(6, 15, 0))
+        timer_delete_sync(&preorder_ctrl->reord_timer);
+        cancel_work_sync(&preorder_ctrl->reord_timer_work);
+        /* a worker caught mid-run may have re-armed the timer */
+        timer_delete_sync(&preorder_ctrl->reord_timer);
+#else
+        del_timer_sync(&preorder_ctrl->reord_timer);
+        cancel_work_sync(&preorder_ctrl->reord_timer_work);
+        del_timer_sync(&preorder_ctrl->reord_timer);
+#endif
+    }
+    kfree(reord_info);
 }
 
 void reord_deinit_sta(struct aicwf_rx_priv* rx_priv, struct reord_ctrl_info *reord_info)
@@ -1605,7 +1628,6 @@ void reord_deinit_sta(struct aicwf_rx_priv* rx_priv, struct reord_ctrl_info *reo
     u8 i = 0;
     //unsigned long flags;
     struct reord_ctrl *preorder_ctrl = NULL;
-    int ret;
 
     if (rx_priv == NULL) {
         txrx_err("bad rx_priv!\n");
@@ -1614,19 +1636,20 @@ void reord_deinit_sta(struct aicwf_rx_priv* rx_priv, struct reord_ctrl_info *reo
 
 	AICWFDBG(LOGINFO, "%s\n", __func__);
 
+    /* Called in atomic context on the firmware disconnect-indication path
+     * (in_atomic, bh disabled), so nothing here may sleep: stop the timer
+     * asynchronously, flush the pending frames under the spinlock, and
+     * defer the sleeping *_sync() cancels plus the kfree to a worker. */
     for (i=0; i < 8; i++) {
         struct recv_msdu *req, *next;
         preorder_ctrl = &reord_info->preorder_ctrl[i];
 		if(preorder_ctrl->enable){
 			preorder_ctrl->enable = false;
-	        if (timer_pending(&preorder_ctrl->reord_timer)) {
 #if (LINUX_VERSION_CODE >= KERNEL_VERSION(6, 15, 0))
-	           ret = timer_delete_sync(&preorder_ctrl->reord_timer);
+	        timer_delete(&preorder_ctrl->reord_timer);
 #else
-	            ret = del_timer_sync(&preorder_ctrl->reord_timer);
+	        del_timer(&preorder_ctrl->reord_timer);
 #endif
-	        }
-	        cancel_work_sync(&preorder_ctrl->reord_timer_work);
 		}
 
         spin_lock_bh(&preorder_ctrl->reord_list_lock);
@@ -1637,16 +1660,18 @@ void reord_deinit_sta(struct aicwf_rx_priv* rx_priv, struct reord_ctrl_info *reo
             req->pkt = NULL;
             reord_rxframe_free(&rx_priv->freeq_lock, &rx_priv->rxframes_freequeue, &req->rxframe_list);
         }
-
-		AICWFDBG(LOGINFO, "reord dinit in_irq():%d in_atomic:%d in_softirq:%d\r\n", (int)in_irq()
-			,(int)in_atomic(), (int)in_softirq());
         spin_unlock_bh(&preorder_ctrl->reord_list_lock);
     }
 
     spin_lock_bh(&rx_priv->stas_reord_lock);
     list_del(&reord_info->list);
     spin_unlock_bh(&rx_priv->stas_reord_lock);
-    kfree(reord_info);
+
+    INIT_WORK(&reord_info->free_work, reord_info_free_worker);
+    if (rx_priv->reord_free_wq)
+        queue_work(rx_priv->reord_free_wq, &reord_info->free_work);
+    else
+        schedule_work(&reord_info->free_work);
 }
 
 int reord_single_frame_ind(struct aicwf_rx_priv *rx_priv, struct recv_msdu *prframe)

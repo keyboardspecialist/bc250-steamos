@@ -176,6 +176,9 @@ struct reord_ctrl_info {
     u8 mac_addr[6];
     struct reord_ctrl preorder_ctrl[8];
     struct list_head list;
+    /* deferred teardown: the sleeping timer/work cancels and the kfree run
+     * from here, because reord_deinit_sta can be called in atomic context */
+    struct work_struct free_work;
 };
 
 struct recv_msdu {
@@ -245,6 +248,8 @@ struct aicwf_rx_priv {
     struct list_head stas_reord_list;
     spinlock_t stas_reord_lock;
     struct recv_msdu *recv_frames;
+    /* drained in aicwf_rx_deinit so no free_work outlives the driver */
+    struct workqueue_struct *reord_free_wq;
 #endif
 
 #ifdef CONFIG_PREALLOC_RX_SKB
