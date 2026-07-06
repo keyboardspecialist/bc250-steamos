@@ -112,14 +112,16 @@ black screen, zero log output, nothing to debug from.
 
 Guards in this repo that close both holes:
 
-- Guard 1 in `install.sh` refuses to install a module whose vermagic doesn't
-  equal `uname -r`, so a version-mismatched build can never reach the
-  initramfs.
+- Guard 1 in `check-module.sh` (run by both `build.sh` and `install.sh`)
+  refuses a module whose vermagic doesn't equal `uname -r`, so a
+  version-mismatched build can never reach the initramfs.
 - `build-env.sh` puts the bundled `pahole`/`bc` on PATH and **fails loudly**
-  if they're missing. Source it before *any* `make` in the kernel tree.
+  if they're missing. Source it before *any* `make` in the kernel tree
+  (`build.sh` does).
 - After any config regen, verify `CONFIG_SCHED_CLASS_EXT=y` survived in both
-  `.config` and (after `modules_prepare`) `include/generated/autoconf.h`.
-- Guard 2 in `install.sh` does a real ABI check: it disassembles
+  `.config` and (after `modules_prepare`) `include/generated/autoconf.h`
+  (`build.sh` asserts both and aborts the build otherwise).
+- Guard 2 in `check-module.sh` does a real ABI check: it disassembles
   `amdgpu_vm_set_task_info` in the candidate and stock modules and diffs the
   `task_struct` field offsets — a mis-built module reads `current->pid` at
   0x9d0 where the stock module reads 0xad0, so config drift is caught before
@@ -138,6 +140,10 @@ built module carries DWARF; `strip --strip-debug` before packaging
 |---|---|
 | `bc250-dp-audio-clock.patch` | The two-hunk source patch |
 | `amdgpu.ko.zst` | Built, ABI-verified module for `6.16.12-valve24.2-1-neptune-616-g57ac0765fe0d` |
+| `update.sh` | Single entry point: fetch-sources.sh → build.sh → sudo install.sh |
+| `fetch-sources.sh` | Fetches kernel source (Evlav mirror), Module.symvers (headers package), and deps/ — runbook steps 1–2 as code |
+| `build.sh` | Builds the module against the running kernel — runbook steps 3–8 as code, every postcondition asserted |
+| `check-module.sh` | Both guards (vermagic + task_struct ABI offsets), shared by build.sh and install.sh |
 | `install.sh` | Installs to `/usr/lib/modules/$(uname -r)/updates/`, runs both guards, rebuilds initramfs |
 | `rollback.sh` | Removes the override and restores the stock module |
 | `build-env.sh` | Build-time PATH/env setup for the bundled deps (pahole, bc, libelf, openssl) |
@@ -162,6 +168,28 @@ it must be rebuilt (install.sh will refuse to install it against a different
 kernel).
 
 ## Rebuilding after a SteamOS update
+
+The whole flow is automated, run on the BC-250 itself:
+
+```
+./update.sh        # = ./fetch-sources.sh && ./build.sh && sudo ./install.sh
+```
+
+`fetch-sources.sh` covers steps 1–2: it derives everything from `uname -r`,
+clones Valve's kernel source at the exact `-g<sha>` commit from the Evlav
+mirror (github.com/Evlav/linux-integration — Valve's kernel GitLab is
+private; the old gitlab.com/evlaV mirror froze 2025-08), extracts
+`Module.symvers` from the matching `linux-neptune-*-headers` package on
+Valve's package mirror (old versions are retained there), and pulls the
+build deps from the mirror's Arch repos into `deps/`. Idempotent — re-run
+freely.
+
+`./build.sh [kernel-tree]` (default `./valve-kernel`) automates steps 3–8:
+it asserts each step's postcondition and refuses to continue on any
+mismatch — including that the tree's checked-out commit matches the
+`-g<sha>` in `uname -r` — then replaces `amdgpu.ko.zst` here only after the
+fresh module passes both guards in `check-module.sh`. The numbered steps
+remain as the reference for what the scripts do and why.
 
 1. Fetch Valve's source package for the *running* kernel
    (`linux-neptune-616`, version matching `uname -r`) and check out the
