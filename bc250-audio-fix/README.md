@@ -172,9 +172,21 @@ kernel).
 4. Configure from the running kernel (`zcat /proc/config.gz > .config`,
    `make olddefconfig`), then **verify**
    `grep '^CONFIG_SCHED_CLASS_EXT=y' .config`.
-5. Apply `bc250-dp-audio-clock.patch`, `make modules_prepare`, re-verify the
+5. Two version-string details, or the module is unusable: (a) recreate the
+   Arch localversion files (`echo -1 > localversion.10-pkgrel`,
+   `echo -neptune-616 > localversion.20-pkgname`) and check
+   `make -s kernelrelease` equals `uname -r`; (b) building from a *git*
+   checkout with the patch applied makes setlocalversion append `-dirty`
+   to vermagic — move the tree's `.git` aside (parked as
+   `valve-kernel-dot-git/`) and pin the hash suffix instead
+   (`echo -g<sha> > localversion.30-scm`), then re-run `modules_prepare`
+   so `utsrelease.h` regenerates.
+6. Copy `Module.symvers` from the headers package into the tree root —
+   `modules_prepare` does not generate it, and without it modpost fails
+   with a thousand "undefined!" symbol errors.
+7. Apply `bc250-dp-audio-clock.patch`, `make modules_prepare`, re-verify the
    option in `include/generated/autoconf.h`, then
    `make M=drivers/gpu/drm/amd/amdgpu modules`.
-6. `strip --strip-debug amdgpu.ko && zstd -19 amdgpu.ko`, replace
+8. `strip --strip-debug amdgpu.ko && zstd -19 amdgpu.ko`, replace
    `amdgpu.ko.zst` here, run `sudo ./install.sh` (the guards re-check
    everything).
