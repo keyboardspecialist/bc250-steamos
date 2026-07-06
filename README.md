@@ -26,10 +26,12 @@ Complete power-management setup:
   freq/voltage; without it the GPU is locked at 1500 MHz and idles hot.
 
 ### `bc250-audio-fix/`
-Patched `amdgpu.ko` fixing DisplayPort audio speed/pitch (and A/V sync drift).
+Patched `amdgpu.ko` fixing DisplayPort output running at ~82% speed — video
+and audio both, since every DP DTO (pixel and audio clock) was skewed.
 The BC-250's DCN 2.0.1 display block gets handed the dcn3 clock manager with a
-wrong hardcoded 730 MHz DP reference clock (real: 600 MHz), so audio ran at
-~82% speed. Two-hunk kernel patch, prebuilt module, and an installer with
+wrong hardcoded 730 MHz DP reference clock (real: 600 MHz), so the whole DP
+output ran at 600/730 of the requested rate.
+Two-hunk kernel patch, prebuilt module, and an installer with
 vermagic + real ABI guards. See `bc250-audio-fix/README.md` — including the
 build-environment trap (missing pahole silently breaking kernel ABI) that
 matters for anyone rebuilding kernel modules for SteamOS.

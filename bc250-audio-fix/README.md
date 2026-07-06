@@ -1,9 +1,9 @@
-# bc250-audio-fix — DP audio speed/pitch fix for the BC-250
+# bc250-audio-fix — DP output clock fix for the BC-250
 
-Patched `amdgpu.ko` for the ASRock BC-250 on SteamOS. Fixes DisplayPort audio
-playing at the wrong speed (slow, pitched down, drifting out of sync with
-video). **Confirmed working** on `6.16.12-valve24.2-1-neptune-616-g57ac0765fe0d`
-as of 2026-07-05.
+Patched `amdgpu.ko` for the ASRock BC-250 on SteamOS. Fixes DisplayPort output
+running slow: **both video and audio played at ~82% speed** — everything in
+slow motion, audio pitched down. **Confirmed working** on
+`6.16.12-valve24.2-1-neptune-616-g57ac0765fe0d` as of 2026-07-05.
 
 ## The bug
 
@@ -16,9 +16,10 @@ the register dump is unimplemented for this ASIC, so 730 MHz sticks. The real
 reference clock is **600 MHz**.
 
 Every DP DTO (the divider that generates the pixel and audio clocks) is
-programmed as `rate × dprefclk_actual / dprefclk_assumed`, so audio ran at
-600/730 ≈ **82% of the correct rate** — audibly slow and flat, and steadily
-falling behind the video.
+programmed as `rate × dprefclk_actual / dprefclk_assumed`, so the entire DP
+output — pixel clock and audio clock alike — ran at 600/730 ≈ **82% of the
+requested rate**. Video played in slow motion and audio with it, audibly slow
+and pitched flat.
 
 A second, smaller skew: the BC-250 VBIOS carries no DP spread-spectrum entry,
 and the driver's fallback SS data would also nudge the DP reference clock and
@@ -100,7 +101,7 @@ modules are gitignored — they're multi-gigabyte and fully reproducible.
 
 ```
 sudo ./install.sh     # prints "vermagic OK" and "ABI OK", then rebuilds initramfs
-# reboot, then play audio over DisplayPort
+# reboot, then confirm video and audio play at normal speed over DisplayPort
 ```
 
 If anything misbehaves: `sudo ./rollback.sh` restores the stock module. Worst
