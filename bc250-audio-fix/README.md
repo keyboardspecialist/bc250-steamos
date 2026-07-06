@@ -39,6 +39,35 @@ audio DTO.
 The patch itself was correct from the start. What went wrong — twice — was the
 build setup.
 
+## What was affected
+
+The bug lives in the DP stream clocking — on DisplayPort the pixel and audio
+clocks are synthesized by DTOs programmed as a ratio against dprefclk — so
+everything that leaves the GPU as native DP was affected, and the fix covers
+all of it:
+
+- **Straight DP to a DP monitor** — any resolution, refresh rate, or audio
+  format; the DTO formula scales everything from the same reference.
+- **Active DP→HDMI converters** — the GPU still outputs native DP and the
+  converter re-encodes downstream, so this path was broken before and is
+  fixed now.
+- **Any BC-250 board** — the 600 MHz reference is a property of the Cyan
+  Skillfish ASIC design, not one unit, and the patch only touches DCN 2.0.1
+  hardware.
+
+**Passive DP→HDMI adapters are a different electrical path.** They rely on
+dual-mode DP (DP++): the port itself switches to emitting TMDS — actual HDMI
+signaling — and the DP link layer isn't used. The pixel clock then comes
+straight from the PHY PLL rather than a dprefclk-referenced DTO, and audio
+timing rides on the TMDS clock via HDMI audio clock regeneration. dprefclk
+isn't in that chain, so the 82%-speed bug should never have manifested through
+a passive adapter, and the fix neither helps nor risks anything there.
+
+(Untested caveats: this follows from the DCN clocking architecture, not from
+testing a passive adapter on this board — and passive adapters only work at
+all if the port wires up DP++. Slow-motion playback through a passive adapter
+would be a separate bug, not a gap in this fix.)
+
 ## Why the build setup was the problem
 
 Two bad builds shipped before the working one, and both failures came from the
