@@ -25,6 +25,18 @@ Complete power-management setup:
 - **GPU governor** (cyan-skillfish-governor, SMU variant) — dynamic
   freq/voltage; without it the GPU is locked at 1500 MHz and idles hot.
 
+### `bc250-audio-fix/`
+Patched `amdgpu.ko` fixing DisplayPort audio speed/pitch (and A/V sync drift).
+The BC-250's DCN 2.0.1 display block gets handed the dcn3 clock manager with a
+wrong hardcoded 730 MHz DP reference clock (real: 600 MHz), so audio ran at
+~82% speed. Two-hunk kernel patch, prebuilt module, and an installer with
+vermagic + real ABI guards. See `bc250-audio-fix/README.md` — including the
+build-environment trap (missing pahole silently breaking kernel ABI) that
+matters for anyone rebuilding kernel modules for SteamOS.
+
+Kernel-release-specific: rebuild after each SteamOS update (instructions in
+the subdirectory README).
+
 ### `aic8800/`
 Working driver for AIC8800D80-based USB WiFi/BT dongles (the ones that boot
 as a fake `1111:1111` mass-storage device). Based on radxa-pkg/aic8800 with
