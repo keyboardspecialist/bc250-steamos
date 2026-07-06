@@ -15,20 +15,30 @@
  	init_data.clk_reg_offsets = adev->reg_offset[CLK_HWIP][0];
 --- a/drivers/gpu/drm/amd/display/dc/clk_mgr/clk_mgr.c
 +++ b/drivers/gpu/drm/amd/display/dc/clk_mgr/clk_mgr.c
-@@ -265,6 +265,16 @@
+@@ -253,6 +253,15 @@
+ 			BREAK_TO_DEBUGGER();
+ 			return NULL;
  		}
- 		if (ASICREV_IS_BEIGE_GOBY_P(asic_id.hw_internal_rev)) {
++		/* DCN 2.01 (Cyan Skillfish/BC-250) must be checked before the
++		 * Beige Goby rev range below, which is open-ended and matches
++		 * Cyan Skillfish's 0x82+ internal rev. Backport of upstream
++		 * commit 9c7be0efa6f0 ("drm/amd: fix dcn 2.01 check").
++		 */
++		if (ctx->dce_version == DCN_VERSION_2_01) {
++			dcn201_clk_mgr_construct(ctx, clk_mgr, pp_smu, dccg);
++			return &clk_mgr->base;
++		}
+ 		if (ASICREV_IS_SIENNA_CICHLID_P(asic_id.hw_internal_rev)) {
  			dcn3_clk_mgr_construct(ctx, clk_mgr, pp_smu, dccg);
-+			/* Cyan Skillfish (BC-250) falls into the Beige Goby rev
-+			 * range and gets the dcn3 clk_mgr, whose 730 MHz dprefclk
-+			 * default is never corrected on this ASIC (the register
-+			 * dump in dcn3_clk_mgr_construct is unimplemented). The
-+			 * real reference is 600 MHz, so every DP DTO — pixel and
-+			 * audio — runs at 600/730 of the requested rate. Keep the
-+			 * dcn3 clk_mgr and fix only the reference value.
-+			 */
-+			if (ctx->dce_version == DCN_VERSION_2_01)
-+				clk_mgr->base.dprefclk_khz = 600000;
+ 			return &clk_mgr->base;
+@@ -265,10 +273,6 @@
+ 			dcn3_clk_mgr_construct(ctx, clk_mgr, pp_smu, dccg);
  			return &clk_mgr->base;
  		}
- 		if (ctx->dce_version == DCN_VERSION_2_01) {
+-		if (ctx->dce_version == DCN_VERSION_2_01) {
+-			dcn201_clk_mgr_construct(ctx, clk_mgr, pp_smu, dccg);
+-			return &clk_mgr->base;
+-		}
+ 		dcn20_clk_mgr_construct(ctx, clk_mgr, pp_smu, dccg);
+ 		return &clk_mgr->base;
+ 	}

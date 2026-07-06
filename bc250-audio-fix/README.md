@@ -2,8 +2,15 @@
 
 Patched `amdgpu.ko` for the ASRock BC-250 on SteamOS. Fixes DisplayPort output
 running slow: **both video and audio played at ~82% speed** — everything in
-slow motion, audio pitched down. **Confirmed working** on
-`6.16.12-valve24.2-1-neptune-616-g57ac0765fe0d` as of 2026-07-05.
+slow motion, audio pitched down.
+
+**This branch (`dcn201`)**: hunk 2 is the upstream-faithful fix — the same
+reorder as mainline commit `9c7be0efa6f0` ("drm/amd: fix dcn 2.01 check",
+merged March 2026, first release after v6.19), which routes Cyan Skillfish to
+the dcn201 clock manager it was always meant to use. The module here is built
+and ABI-verified but **not yet boot-tested**; the conservative variant on
+`master` (keep dcn3 clk_mgr, pin dprefclk to 600 MHz) is the one **confirmed
+working** on `6.16.12-valve24.2-1-neptune-616-g57ac0765fe0d` as of 2026-07-05.
 
 ## The bug
 
@@ -30,9 +37,15 @@ audio DTO.
 `bc250-dp-audio-clock.patch` — two hunks against Valve's kernel tree
 (`linux-neptune-616`, commit `57ac0765fe0d`):
 
-1. **`dc/clk_mgr/clk_mgr.c`** — when the ASIC that matched the Beige Goby
-   range check is actually DCN 2.0.1 (Cyan Skillfish), keep the dcn3 clock
-   manager but set `dprefclk_khz = 600000`.
+1. **`dc/clk_mgr/clk_mgr.c`** — check `dce_version == DCN_VERSION_2_01`
+   *before* the Beige Goby rev-range check, so Cyan Skillfish gets
+   `dcn201_clk_mgr_construct` (backport of upstream `9c7be0efa6f0`). The
+   dcn201 clock manager reads the real dprefclk from the chip's own CLK
+   registers (`CLK4_CLK2_CURRENT_CNT`, falling back to 600 MHz — the same
+   value the master-branch variant pins) and actively manages
+   dispclk/dppclk via DENTIST, which the mis-selected dcn3 clock manager
+   never did on this ASIC (its SMU handshake fails, so its update path is
+   inert).
 2. **`amdgpu_dm/amdgpu_dm.c`** — set `ignore_dpref_ss` for DCE IP 2.0.3 so the
    bogus fallback spread-spectrum data is not applied.
 
