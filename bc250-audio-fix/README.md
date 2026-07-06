@@ -36,8 +36,8 @@ audio DTO.
 2. **`amdgpu_dm/amdgpu_dm.c`** — set `ignore_dpref_ss` for DCE IP 2.0.3 so the
    bogus fallback spread-spectrum data is not applied.
 
-The patch itself was correct from the start. What went wrong — twice — was the
-build setup.
+The patch is small; getting a module that's safe to boot is the harder part.
+See "Why the build setup matters" below.
 
 ## What was affected
 
@@ -68,20 +68,23 @@ testing a passive adapter on this board — and passive adapters only work at
 all if the port wires up DP++. Slow-motion playback through a passive adapter
 would be a separate bug, not a gap in this fix.)
 
-## Why the build setup was the problem
+## Why the build setup matters
 
-Two bad builds shipped before the working one, and both failures came from the
-environment, not the code:
+A kernel module built out-of-tree must match the running kernel in *two*
+independent ways, and on SteamOS both are easy to get silently wrong. Since
+this module replaces the GPU driver via an `updates/` override baked into the
+initramfs, a bad build doesn't just fail — it can leave the machine with no
+display at boot.
 
-**Attempt 1 (recovered 2026-07-02): wrong source version.** The module was
-built from `valve24.1` sources while the running kernel was `valve24.2-1`.
-modprobe rejected it at boot on the vermagic string, and because the
-`updates/` override was baked into the initramfs, the machine came up with no
-GPU driver at all. Guard 1 in `install.sh` (vermagic must equal `uname -r`)
-now makes this impossible to install.
+**1. Exact source version.** The module must be built from the source of the
+kernel that's actually running (Valve ships point releases like `valve24.1`
+vs `valve24.2-1` that are not interchangeable). A version mismatch is the
+benign failure: modprobe rejects the module on its vermagic string — but with
+the override in the initramfs, "rejected" still means booting without a GPU
+driver.
 
-**Attempt 2 (the 2026-07-05 black screen): silent config drift.** The running
-SteamOS kernel has `CONFIG_SCHED_CLASS_EXT=y`, which depends on
+**2. Exact kernel config.** This is the dangerous one, because nothing checks
+it. The SteamOS kernel has `CONFIG_SCHED_CLASS_EXT=y`, which depends on
 `CONFIG_DEBUG_INFO_BTF` — and Kconfig **silently disables BTF whenever
 `pahole` is not on PATH**. Any `olddefconfig`/`syncconfig` run does this
 without a word (syncconfig even rewrites `.config` behind your back
@@ -89,23 +92,27 @@ mid-build). sched_ext adds a 256-byte member in the middle of `task_struct`,
 so a module built without it has every `task_struct` field offset 0x100 short
 of the running kernel's.
 
-The nasty part: nothing catches this at load time. vermagic is only a
-release-string compare, and `CONFIG_MODVERSIONS` is off in this kernel, so
-there is **no ABI check at all**. The module loads cleanly and then hangs
-before amdgpu's first printk — black screen, zero log output.
+Nothing catches that at load time: vermagic is only a release-string compare,
+and `CONFIG_MODVERSIONS` is off in this kernel, so there is **no ABI check at
+all**. The module loads cleanly and then hangs before amdgpu's first printk —
+black screen, zero log output, nothing to debug from.
 
-Guards added so neither failure can recur:
+Guards in this repo that close both holes:
 
+- Guard 1 in `install.sh` refuses to install a module whose vermagic doesn't
+  equal `uname -r`, so a version-mismatched build can never reach the
+  initramfs.
 - `build-env.sh` puts the bundled `pahole`/`bc` on PATH and **fails loudly**
   if they're missing. Source it before *any* `make` in the kernel tree.
 - After any config regen, verify `CONFIG_SCHED_CLASS_EXT=y` survived in both
   `.config` and (after `modules_prepare`) `include/generated/autoconf.h`.
 - Guard 2 in `install.sh` does a real ABI check: it disassembles
   `amdgpu_vm_set_task_info` in the candidate and stock modules and diffs the
-  `task_struct` field offsets. The bad module read `current->pid` at 0x9d0
-  where the stock module reads 0xad0.
+  `task_struct` field offsets — a mis-built module reads `current->pid` at
+  0x9d0 where the stock module reads 0xad0, so config drift is caught before
+  it can touch the boot path.
 
-Related Kbuild footguns hit along the way: after fixing a config, syncconfig
+Related Kbuild footguns to keep in mind: after fixing a config, syncconfig
 may regenerate `auto.conf` without touching the per-option
 `include/config/` stamp files, so stale objects **don't rebuild** — run
 `make M=... clean` after any config change. And BTF implies DEBUG_INFO, so the
