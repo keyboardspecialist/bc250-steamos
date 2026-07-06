@@ -5,6 +5,7 @@ linux-neptune-616/
 linux-neptune-616-*.src.tar.gz
 valve-kernel/
 valve-kernel-git/
+valve-kernel-dot-git/
 headers/
 
 # Build deps: extracted packages and their pacman archives
