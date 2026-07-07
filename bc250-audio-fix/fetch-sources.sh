@@ -82,8 +82,9 @@ else
     # `git fetch` needs the full 40-char sha; uname -r only carries 12.
     # Resolve via the GitHub API (or pass FULLSHA=<40-hex> to skip).
     FULLSHA=${FULLSHA:-$(curl -fsSL "$KERNEL_API/commits/$SHA" \
-        | grep -m1 -oE '"sha": *"[0-9a-f]{40}"' | grep -oE '[0-9a-f]{40}')} \
+        | grep -oE '"sha": *"[0-9a-f]{40}"' | grep -oE '[0-9a-f]{40}')} \
         || die "could not resolve $SHA via $KERNEL_API — offline or rate-limited? Retry, or pass FULLSHA=<40-hex-sha>"
+    FULLSHA=${FULLSHA%%$'\n'*}   # commit's own sha is the first match (no -m1: early grep exit SIGPIPEs curl under pipefail)
     [[ "$FULLSHA" == "$SHA"* ]] || die "API returned $FULLSHA which does not start with $SHA"
     echo "resolved: $FULLSHA"
 
@@ -105,8 +106,11 @@ if [ ! -f "$HERE/$HDRPKG" ]; then
 else
     echo "already downloaded: $HDRPKG"
 fi
-MEMBER=$(tar --zstd -tf "$HERE/$HDRPKG" | grep -m1 '/Module.symvers$') \
+# no -m1: grep quitting at the first match SIGPIPEs tar mid-listing, and
+# pipefail turns that into a bogus "no Module.symvers" failure
+MEMBER=$(tar --zstd -tf "$HERE/$HDRPKG" | grep '/Module.symvers$') \
     || die "no Module.symvers inside $HDRPKG"
+MEMBER=${MEMBER%%$'\n'*}
 tar --zstd -xOf "$HERE/$HDRPKG" "$MEMBER" > "$TREE/Module.symvers"
 [ -s "$TREE/Module.symvers" ] || die "extracted Module.symvers is empty"
 echo "Module.symvers -> $TREE/Module.symvers ($(wc -l < "$TREE/Module.symvers" | tr -d ' ') symbols)"
