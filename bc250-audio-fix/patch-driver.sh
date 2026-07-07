@@ -2,7 +2,7 @@
 # Single entry point: fetch sources, build, install — the full cycle after a
 # SteamOS update. Run as the normal user; sudo is invoked for install only.
 #
-#   ./update.sh [kernel-tree]      (default: ./valve-kernel)
+#   ./patch-driver.sh [kernel-tree]      (default: ./valve-kernel)
 set -euo pipefail
 
 HERE=$(cd "$(dirname "$0")" && pwd)

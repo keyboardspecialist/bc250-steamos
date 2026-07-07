@@ -140,7 +140,7 @@ built module carries DWARF; `strip --strip-debug` before packaging
 |---|---|
 | `bc250-dp-audio-clock.patch` | The two-hunk source patch |
 | `amdgpu.ko.zst` | Built, ABI-verified module for `6.16.12-valve24.2-1-neptune-616-g57ac0765fe0d` |
-| `update.sh` | Single entry point: fetch-sources.sh → build.sh → sudo install.sh |
+| `patch-driver.sh` | Single entry point: fetch-sources.sh → build.sh → sudo install.sh |
 | `fetch-sources.sh` | Fetches kernel source (Evlav mirror), Module.symvers (headers package), and deps/ — runbook steps 1–2 as code |
 | `build.sh` | Builds the module against the running kernel — runbook steps 3–8 as code, every postcondition asserted |
 | `check-module.sh` | Both guards (vermagic + task_struct ABI offsets), shared by build.sh and install.sh |
@@ -148,9 +148,11 @@ built module carries DWARF; `strip --strip-debug` before packaging
 | `rollback.sh` | Removes the override and restores the stock module |
 | `build-env.sh` | Build-time PATH/env setup for the bundled deps (pahole, bc, libelf, openssl) |
 | `cleanup-other-slot.sh` | Cleans a stale override out of the other SteamOS A/B slot |
+| `clean.sh` | Removes generated state: default resets the kernel tree to pristine source and drops logs; `--all` also deletes the tree, deps/, and downloads; `-n` dry-runs |
 
 The kernel trees, source tarballs, dep packages, build logs, and intermediate
-modules are gitignored — they're multi-gigabyte and fully reproducible.
+modules are gitignored — they're multi-gigabyte and fully reproducible
+(`clean.sh` removes exactly these categories).
 
 ## Install
 
@@ -172,7 +174,7 @@ kernel).
 The whole flow is automated, run on the BC-250 itself:
 
 ```
-./update.sh        # = ./fetch-sources.sh && ./build.sh && sudo ./install.sh
+./patch-driver.sh        # = ./fetch-sources.sh && ./build.sh && sudo ./install.sh
 ```
 
 `fetch-sources.sh` covers steps 1–2: it derives everything from `uname -r`,
