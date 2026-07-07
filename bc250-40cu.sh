@@ -176,6 +176,22 @@ badge_persist() {
     elif [[ -f "$ROOTFS_MANAGER_BIN" ]]; then b_mid "on wipeable rootfs"
     else b_off "nothing to persist yet"; fi
 }
+CU_STATUS_SH="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/bc250-cu-status.sh"
+cu_count() {   # "38/40" on stdout; fails without root / umr / sibling script
+    [[ $EUID -eq 0 && -f "$CU_STATUS_SH" && -x "$UMR_BIN" ]] || return 1
+    bash "$CU_STATUS_SH" -q 2>/dev/null
+}
+badge_cu() {   # live routed-CU count read from the SPI dispatch registers
+    local st
+    if st=$(cu_count) && [[ -n "$st" ]]; then
+        case "$st" in
+            24/40) b_mid "stock $st" ;;
+            *)     b_ok "$st routed" ;;
+        esac
+    else
+        b_off "CU count: root only"
+    fi
+}
 
 # Prefer bare .so symlink; fall back to highest versioned .so.N present.
 resolve_lib() {
@@ -538,7 +554,7 @@ cmd_menu() {
             "Step 1 - Build umr|$(badge_umr)|Deps + build into /var/lib. Unlocks rootfs; takes a few minutes."
             "Step 2 - Live CU manager|$(badge_service)|Dashboard TUI. READ the harvest map first: contiguous -> [f], scattered -> [e]."
             "Step 3 - Persist across updates|$(badge_persist)|Relocate the service off the wipeable rootfs. Run after 'i' in the manager."
-            "Verify|$(badge_service)|Registers + service + guidance."
+            "Verify|$(badge_cu)|Read the live dispatch registers: routed CU count + guidance."
             "Revert to stock 24 CU||Disable the boot service; stock dispatch after reboot."
             "Full help||Complete walkthrough, including the harvest-map guide."
         )
