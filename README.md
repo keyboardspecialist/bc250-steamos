@@ -6,9 +6,14 @@ Everything installs to update-proof locations (`/etc`, `/var`, `/home`) where
 possible — SteamOS updates wipe `/usr` (including `/usr/local` and pacman
 packages) but leave those alone.
 
+Both setup scripts open a **guided interactive menu** when run with no
+arguments in a terminal (pure bash — arrow keys, live per-step state badges,
+color output; `q` backs out). Every menu action maps to a plain CLI command,
+so scripting/SSH use is unchanged.
+
 ## Contents
 
-### `bc250-40cu-steamos-v2.sh`
+### `bc250-40cu.sh`
 All-in-one 40 CU unlock via the runtime UMR route. Installs the umr binary,
 ASIC database, and a manager script to `/var/lib/bc250-40cu`, plus a systemd
 unit and boot table config in `/etc`.
@@ -17,13 +22,27 @@ unit and boot table config in `/etc`.
 Read-only CU dispatch report (e.g. `38/40`). No writes, safe to run any time.
 `-q` prints just the total.
 
-### `bc250-power-steamos-v3.sh`
+### `bc250-power.sh`
 Complete power-management setup:
 - **ACPI fix** (SSDT-CST/SSDT-PST early-initrd override) — the BC-250 BIOS
   ships no CPU power tables, so without this the cores never idle and cpufreq
   scaling (800–3200 MHz) doesn't exist.
 - **GPU governor** (cyan-skillfish-governor, SMU variant) — dynamic
   freq/voltage; without it the GPU is locked at 1500 MHz and idles hot.
+- **GPU freq persistence** — `freq` settings (pin/range/max) are saved and
+  replayed at boot by a `bc250-gpu-freq-restore` service; `freq auto` clears.
+- **CPU overclock/undervolt** (`cpu-oc`, wraps
+  [bc250_smu_oc](https://github.com/bc250-collective/bc250_smu_oc)) — max
+  boost clock + vid-curve scaling via SMU. Sources are fetched at a pinned
+  upstream commit with local patches overlaid from `smu-oc-patches/` (no
+  clone, pip, or git needed); the boot unit is ordered before the GPU
+  governor because both share the SMU indirect window.
+
+### `smu-oc-patches/`
+Overlay files + diffs applied on top of the pinned `bc250_smu_oc` fetch:
+transaction-level flock (SMU window race vs the running GPU governor) and a
+Python-native stress fallback (stock SteamOS ships no `stress`). See its
+README for the pin-bump procedure.
 
 ### `bc250-audio-fix/`
 Patched `amdgpu.ko` fixing DisplayPort output running at ~82% speed — video

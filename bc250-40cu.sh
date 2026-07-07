@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# bc250-40cu-steamos.sh  (v2 -- battle-tested edition)
+# bc250-40cu.sh  (40 CU unlock, v2 battle-tested)
 #
 # All-in-one BC-250 40 CU unlock for SteamOS 3.8.x via the runtime UMR route.
 #
@@ -34,13 +34,13 @@
 #     silicon -- enable selectively with [e] instead of [f].
 #
 # Usage (run as root):
-#   ./bc250-40cu-steamos.sh check      board / debugfs / install state
-#   ./bc250-40cu-steamos.sh prep       deps + build umr into /var/lib
-#   ./bc250-40cu-steamos.sh manager    launch the live-manager TUI correctly
-#   ./bc250-40cu-steamos.sh persist    relocate service off the wipeable rootfs
-#   ./bc250-40cu-steamos.sh verify     registers + service + guidance
-#   ./bc250-40cu-steamos.sh revert     disable service (reboot -> stock 24 CU)
-#   ./bc250-40cu-steamos.sh all        check + prep + manager
+#   ./bc250-40cu.sh check      board / debugfs / install state
+#   ./bc250-40cu.sh prep       deps + build umr into /var/lib
+#   ./bc250-40cu.sh manager    launch the live-manager TUI correctly
+#   ./bc250-40cu.sh persist    relocate service off the wipeable rootfs
+#   ./bc250-40cu.sh verify     registers + service + guidance
+#   ./bc250-40cu.sh revert     disable service (reboot -> stock 24 CU)
+#   ./bc250-40cu.sh all        check + prep + manager
 #
 set -euo pipefail
 
@@ -76,7 +76,106 @@ relock_rootfs() {
         RO_WAS_DISABLED=0
     fi
 }
-trap relock_rootfs EXIT
+cleanup() { tui_show_cursor; relock_rootfs; }
+trap cleanup EXIT
+
+# ========================= pure-bash TUI menu =============================
+# Zero dependencies: ANSI colors + read -rsn1 keyboard handling. The guided
+# menu (run with no arguments) is a thin skin -- every action calls the same
+# cmd_* function as the CLI, so nothing is menu-only.
+C0=$'\033[0m'; CB=$'\033[1m'; CD=$'\033[2m'; CI=$'\033[7m'
+CG=$'\033[32m'; CY=$'\033[33m'; CR=$'\033[31m'; CC=$'\033[36m'
+
+TUI_CURSOR_HIDDEN=0
+tui_show_cursor() {
+    if [[ $TUI_CURSOR_HIDDEN -eq 1 ]]; then printf '\033[?25h'; TUI_CURSOR_HIDDEN=0; fi
+}
+
+# menu_select "Title" "label|badge|hint" ...
+# up/down or j/k to move, Enter selects (MENU_CHOICE=index), q/Esc backs out
+# (returns 1). Redraws in place; hint line describes the highlighted item.
+menu_select() {
+    local title="$1"; shift
+    local items=("$@") n=$# cur=0 drawn=0 key rest i label badge hint
+    local lines=$((n + 4))
+    printf '\033[?25l'; TUI_CURSOR_HIDDEN=1
+    while true; do
+        if [[ $drawn -eq 1 ]]; then printf '\033[%dA' "$lines"; fi
+        printf '\r\033[K%s\n' "${CB}${CC}${title}${C0}"
+        printf '\033[K%s\n' "${CD}  up/down move - Enter select - q back${C0}"
+        for i in "${!items[@]}"; do
+            IFS='|' read -r label badge hint <<< "${items[$i]}"
+            if [[ $i -eq $cur ]]; then
+                printf '\033[K%s\n' "  ${CI}${CB} > ${label} ${C0} ${badge}"
+            else
+                printf '\033[K%s\n' "     ${label}  ${badge}"
+            fi
+        done
+        IFS='|' read -r label badge hint <<< "${items[$cur]}"
+        printf '\033[K\n\033[K%s\n' "  ${CD}${hint}${C0}"
+        drawn=1
+        IFS= read -rsn1 key || { tui_show_cursor; return 1; }
+        if [[ $key == $'\033' ]]; then
+            rest=""
+            IFS= read -rsn2 -t 0.05 rest || true
+            key+="$rest"
+        fi
+        case "$key" in
+            $'\033[A'|k) if (( cur > 0 ));   then cur=$((cur-1)); else cur=$((n-1)); fi ;;
+            $'\033[B'|j) if (( cur < n-1 )); then cur=$((cur+1)); else cur=0; fi ;;
+            "")          MENU_CHOICE=$cur; tui_show_cursor; return 0 ;;
+            q|Q|$'\033') tui_show_cursor; return 1 ;;
+        esac
+    done
+}
+
+pause_key() {
+    echo
+    printf '%s' "${CD}-- press any key to return to the menu --${C0}"
+    IFS= read -rsn1 || true
+    printf '\r\033[K'
+}
+
+ask() {   # ask "Prompt" [default] -> REPLY
+    local prompt="$1" def="${2:-}"
+    REPLY=""
+    if [[ -n "$def" ]]; then
+        read -rp "  $prompt [$def]: " REPLY || true
+        [[ -n "$REPLY" ]] || REPLY="$def"
+    else
+        read -rp "  $prompt: " REPLY || true
+    fi
+}
+
+# run a cmd_* in a subshell with its own cleanup trap: a die() inside an
+# action drops back to the menu instead of killing it, and the subshell
+# still relocks the rootfs on the way out
+run_action() {
+    local rc=0
+    ( trap cleanup EXIT; "$@" ) || rc=$?
+    if [[ $rc -ne 0 ]]; then
+        echo -e "${CR}${CB}[bc250]${C0} action failed (exit $rc) -- see message above."
+    fi
+    pause_key
+}
+
+b_ok()   { printf '%s' "${CG}[$1]${C0}"; }
+b_mid()  { printf '%s' "${CY}[$1]${C0}"; }
+b_off()  { printf '%s' "${CD}[$1]${C0}"; }
+
+badge_umr() {
+    if [[ -x "$UMR_BIN" ]]; then b_ok "installed"; else b_off "not installed"; fi
+}
+badge_service() {
+    if [[ "$(systemctl is-active bc250-cu-live-manager.service 2>/dev/null)" == active ]]; then b_ok "service active"
+    elif [[ -f "$SERVICE" ]]; then b_mid "service installed - inactive"
+    else b_off "no service yet"; fi
+}
+badge_persist() {
+    if [[ -f "$PERSIST_MANAGER_BIN" ]]; then b_ok "update-proof"
+    elif [[ -f "$ROOTFS_MANAGER_BIN" ]]; then b_mid "on wipeable rootfs"
+    else b_off "nothing to persist yet"; fi
+}
 
 # Prefer bare .so symlink; fall back to highest versioned .so.N present.
 resolve_lib() {
@@ -345,12 +444,17 @@ cmd_revert() {
 # ================================ help ====================================
 cmd_help() {
     cat << 'EOF'
-bc250-40cu-steamos-v2.sh -- BC-250 40 CU unlock for SteamOS
+bc250-40cu.sh -- BC-250 40 CU unlock for SteamOS
 ============================================================
 Re-enables the factory-harvested compute units at RUNTIME (no kernel
 rebuild) by writing the CC/SPI/RLC dispatch registers via umr, using
 WinnieLV's bc250-cu-live-manager. A boot service replays the saved WGP
 table every boot. Everything lives update-proof in /etc + /var/lib.
+
+GUIDED MENU
+  Run with no arguments (or 'menu') in a terminal for an interactive,
+  color-coded menu: arrow keys / j k to move, Enter to run, q to back
+  out. Shows live install state per step and walks the setup order.
 
 Background: the BC-250 ships 24 of 40 RDNA2 CUs active. Two registers
 gate them (CC = enumeration, SPI = wave dispatch); the runtime route
@@ -415,8 +519,40 @@ FILE MAP
 
 RELATED
   bc250-cu-status.sh          read-only CU dispatch report (-q for N/40)
-  bc250-power-steamos.sh      ACPI C/P-states + GPU governor + freq ctl
+  bc250-power.sh      ACPI C/P-states + GPU governor + freq ctl
 EOF
+}
+
+# ============================ guided menu =================================
+cmd_menu() {
+    [[ -t 0 && -t 1 ]] || die "The menu needs an interactive terminal. See '$0 help' for CLI commands."
+    if [[ $EUID -ne 0 ]]; then
+        warn "Not running as root -- setup actions will fail."
+        ask "Restart with sudo? [Y/n]" "Y"
+        if [[ "$REPLY" =~ ^[Yy] ]]; then exec sudo "$0" menu; fi
+        echo
+    fi
+    while true; do
+        local items=(
+            "Board / install check||Read-only report: board, debugfs, umr, service. Start here."
+            "Step 1 - Build umr|$(badge_umr)|Deps + build into /var/lib. Unlocks rootfs; takes a few minutes."
+            "Step 2 - Live CU manager|$(badge_service)|Dashboard TUI. READ the harvest map first: contiguous -> [f], scattered -> [e]."
+            "Step 3 - Persist across updates|$(badge_persist)|Relocate the service off the wipeable rootfs. Run after 'i' in the manager."
+            "Verify|$(badge_service)|Registers + service + guidance."
+            "Revert to stock 24 CU||Disable the boot service; stock dispatch after reboot."
+            "Full help||Complete walkthrough, including the harvest-map guide."
+        )
+        menu_select "BC-250 40 CU unlock  ${CD}(SteamOS)${C0}" "${items[@]}" || { echo; break; }
+        case $MENU_CHOICE in
+            0) run_action cmd_check ;;
+            1) run_action cmd_prep ;;
+            2) run_action cmd_manager ;;
+            3) run_action cmd_persist ;;
+            4) run_action cmd_verify ;;
+            5) run_action cmd_revert ;;
+            6) cmd_help; pause_key ;;
+        esac
+    done
 }
 
 # ================================ main ====================================
@@ -428,8 +564,11 @@ case "${1:-}" in
     verify)  cmd_verify ;;
     revert)  cmd_revert ;;
     all)     cmd_check; cmd_prep; cmd_manager ;;
+    menu)    cmd_menu ;;
     help|-h|--help) cmd_help ;;
-    *) echo "Usage: $0 {check|prep|manager|persist|verify|revert|all|help}"
+    "") if [[ -t 0 && -t 1 ]]; then cmd_menu; exit 0; fi ;&
+    *) echo "Usage: $0 {check|prep|manager|persist|verify|revert|all|menu|help}"
+       echo "  (no arguments on a terminal opens the guided menu)"
        echo "Run '$0 help' for the full walkthrough of every command."
        exit 1 ;;
 esac
