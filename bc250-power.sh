@@ -216,11 +216,37 @@ badge_freq() {
     else b_off "config defaults"; fi
 }
 badge_oc() {
-    local f=""
-    [[ -f "$OC_CONF" ]] && f=", $(sed -n 's/^frequency = //p' "$OC_CONF" | head -1) MHz"
-    if [[ "$(systemctl is-enabled "$OC_SVC" 2>/dev/null)" == enabled ]]; then b_ok "enabled$f"
+    local d=""
+    d=$(oc_detected_result "$OC_CONF")
+    if [[ -z "$d" && -f "$OC_CONF" ]]; then
+        d="$(sed -n 's/^frequency = //p' "$OC_CONF" | head -1) MHz"
+    fi
+    if [[ "$(systemctl is-enabled "$OC_SVC" 2>/dev/null)" == enabled ]]; then b_ok "enabled${d:+ - $d}"
     elif [[ -f "$OC_CONF" || -f "$OC_STAGE_CONF" ]]; then b_mid "detected - not enabled"
     else b_off "stock"; fi
+}
+badge_oc_saved() {   # persistence verdict, for the enable row
+    case "$(oc_persist_state)" in
+        none)  b_off "nothing detected yet" ;;
+        saved) b_ok "saved - applies at boot" ;;
+        stale) b_mid "NOT saved - boot config older" ;;
+        live)  b_mid "NOT saved - live only" ;;
+    esac
+    return 0
+}
+badge_oc_last() {   # last measured detect result, for the detect row
+    local f res
+    for f in "$OC_STAGE_CONF" "$OC_CONF"; do
+        res=$(oc_detected_result "$f")
+        if [[ -n "$res" ]]; then b_mid "last: $res"; break; fi
+    done
+    return 0
+}
+badge_oc_live() {   # live CPU voltage, for the status row
+    local mv_=""
+    mv_=$(oc_live_mv) || mv_=""
+    if [[ -n "$mv_" ]]; then b_ok "CPU now: ${mv_} mV"; else b_off "live mV: root only"; fi
+    return 0
 }
 
 # ============================== ACPI fix ==================================
@@ -961,23 +987,34 @@ oc_confs_match() {
     cmp -s <(grep -E '^[a-z]' "$OC_STAGE_CONF") <(grep -E '^[a-z]' "$OC_CONF")
 }
 
-# one-line verdict on whether the current OC settings survive a reboot
-oc_persist_report() {
+# persistence state token: none | saved | stale | live
+oc_persist_state() {
     local enabled=0
     [[ "$(systemctl is-enabled "$OC_SVC" 2>/dev/null)" == enabled ]] && enabled=1
-    if [[ ! -f "$OC_STAGE_CONF" && ! -f "$OC_CONF" ]]; then
-        return 0
-    elif [[ $enabled -eq 1 ]] && oc_confs_match; then
-        log "Saved: this config is enabled and reapplies at every boot."
-    elif [[ $enabled -eq 1 && -f "$OC_STAGE_CONF" ]]; then
-        warn "NOT saved: the boot config is OLDER than this detect result."
-        warn "Run '$0 cpu-oc enable' to save the new settings."
-    elif [[ $enabled -eq 1 ]]; then
-        log "Saved: boot config enabled ($OC_CONF)."
-    else
-        warn "NOT saved: applied live only -- a reboot reverts to stock."
-        warn "Run '$0 cpu-oc enable' to keep it."
+    if [[ ! -f "$OC_STAGE_CONF" && ! -f "$OC_CONF" ]]; then echo none
+    elif [[ $enabled -eq 0 ]]; then echo live
+    elif [[ ! -f "$OC_STAGE_CONF" ]] || oc_confs_match; then echo saved
+    else echo stale
     fi
+}
+
+# one-line verdict on whether the current OC settings survive a reboot
+oc_persist_report() {
+    case "$(oc_persist_state)" in
+        none)  ;;
+        saved) log "Saved: this config is enabled and reapplies at every boot." ;;
+        stale) warn "NOT saved: the boot config is OLDER than this detect result."
+               warn "Run '$0 cpu-oc enable' to save the new settings." ;;
+        live)  warn "NOT saved: applied live only -- a reboot reverts to stock."
+               warn "Run '$0 cpu-oc enable' to keep it." ;;
+    esac
+}
+
+oc_detected_result() {   # "3800 MHz @ 1176 mV" from a conf's detect stamp
+    if [[ -f "${1:-}" ]]; then
+        grep -oP '^# detected: \K[0-9]+ MHz @ [0-9]+ mV' "$1" | tail -1 || true
+    fi
+    return 0
 }
 
 oc_live_mv() {   # current CPU voltage over SMU; needs root + staged tool
@@ -1099,9 +1136,9 @@ menu_freq() {
 menu_cpu_oc() {
     while true; do
         local items=(
-            "Show OC status|$(badge_oc)|Service state + active overclock config."
-            "Detect stable overclock||Guided stress-stepped search. Start here. CAN hard-crash if pushed."
-            "Enable at boot||Persist the detected config; applies before the GPU governor."
+            "Show OC status|$(badge_oc_live)|Full report: configs, measured + live mV, saved verdict."
+            "Detect stable overclock|$(badge_oc_last)|Guided stress-stepped search. Start here. CAN hard-crash if pushed."
+            "Enable at boot|$(badge_oc_saved)|Persist the detected config; applies before the GPU governor."
             "Apply now||Re-apply the saved config immediately."
             "Revert to stock||Disable at boot + back to 3500 MHz / factory curve now."
             "Update tool sources||Re-fetch bc250_smu_oc (pinned commit + our patches)."
