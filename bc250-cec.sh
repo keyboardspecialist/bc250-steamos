@@ -703,8 +703,16 @@ cmd_test() {
                 standby|"on->standby"|no-reply) t_pass "TV standing by ('$st')" ;;
                 *)                              t_fail "TV still reports '$st'" ;;
             esac
-            ask "Wake it back up? [Y/n]" "Y"
-            [[ "$REPLY" =~ ^[Yy] ]] && dev_call Wake >/dev/null 2>&1 && log "Wake sent."
+            # auto-wake: the terminal is usually ON the TV we just put to
+            # sleep, so a prompt here would never be seen
+            log "Waking the TV back up..."
+            dev_call Wake >/dev/null 2>&1 || true
+            sleep 3
+            st=$(tv_power_status)
+            case "$st" in
+                on|"standby->on") t_pass "TV back on ('$st')" ;;
+                *)                t_fail "TV reports '$st' after wake-back -- manual recovery: $0 tv-on" ;;
+            esac
         fi
     fi
 }
