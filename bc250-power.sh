@@ -872,14 +872,22 @@ NEVER above 1325 mV -- exceeding it has bricked boards."
     warn "The result stays applied afterwards: 'cpu-oc enable' to persist,"
     warn "'cpu-oc off' to revert to stock."
     pause_governor
-    local rc=0
+    local rc=0 dlog=/tmp/bc250-oc-detect.log
     python3 "$OC_DIR/bc250_detect.py" -f "$freq" -v "$vid" -t "$temp" \
-            --keep -c "$OC_STAGE_CONF" || rc=$?
+            --keep -c "$OC_STAGE_CONF" 2>&1 | tee "$dlog" || rc=$?
     resume_governor
     [[ $rc -eq 0 ]] || die "Detection failed (rc=$rc)."
+    # stamp the measured result into the config (the file only stores the
+    # abstract vid-curve scale; the mV number is what humans care about)
+    local res
+    res=$(grep -oP 'Final Result: \K.*' "$dlog" | tail -1 || true)
+    if [[ -n "$res" && -f "$OC_STAGE_CONF" ]]; then
+        sed -i '/^# detected/d' "$OC_STAGE_CONF"
+        echo "# detected: $res ($(date +%Y-%m-%d))" >> "$OC_STAGE_CONF"
+    fi
     log "Detected config -> $OC_STAGE_CONF"
+    oc_persist_report
     log "Stability-test now (games / OCCT), watch: grep MHz /proc/cpuinfo"
-    log "Happy with it?  sudo $0 cpu-oc enable"
 }
 
 oc_apply() {
@@ -944,20 +952,63 @@ EOF
     log "re-activate any time with '$0 cpu-oc enable'."
 }
 
+# staged (fresh detect) vs installed boot config, comments ignored
+oc_confs_match() {
+    [[ -f "$OC_STAGE_CONF" && -f "$OC_CONF" ]] || return 1
+    cmp -s <(grep -E '^[a-z]' "$OC_STAGE_CONF") <(grep -E '^[a-z]' "$OC_CONF")
+}
+
+# one-line verdict on whether the current OC settings survive a reboot
+oc_persist_report() {
+    local enabled=0
+    [[ "$(systemctl is-enabled "$OC_SVC" 2>/dev/null)" == enabled ]] && enabled=1
+    if [[ ! -f "$OC_STAGE_CONF" && ! -f "$OC_CONF" ]]; then
+        return 0
+    elif [[ $enabled -eq 1 ]] && oc_confs_match; then
+        log "Saved: this config is enabled and reapplies at every boot."
+    elif [[ $enabled -eq 1 && -f "$OC_STAGE_CONF" ]]; then
+        warn "NOT saved: the boot config is OLDER than this detect result."
+        warn "Run '$0 cpu-oc enable' to save the new settings."
+    elif [[ $enabled -eq 1 ]]; then
+        log "Saved: boot config enabled ($OC_CONF)."
+    else
+        warn "NOT saved: applied live only -- a reboot reverts to stock."
+        warn "Run '$0 cpu-oc enable' to keep it."
+    fi
+}
+
+oc_live_mv() {   # current CPU voltage over SMU; needs root + staged tool
+    [[ $EUID -eq 0 && -f "$OC_DIR/bc250_smu/api.py" ]] || return 1
+    PYTHONPATH="$OC_DIR" python3 - << 'EOF' 2>/dev/null
+from bc250_smu import Bc250Smu
+print(Bc250Smu(use_flock=True).q3_0x36_get_current_cpu_voltage())
+EOF
+}
+
 oc_status() {
-    echo "=== CPU OC (bc250_smu_oc) ==="
-    printf '  %-38s %s / %s\n' "$OC_SVC" \
-        "$(systemctl is-enabled "$OC_SVC" 2>/dev/null || echo -)" \
-        "$(systemctl is-active "$OC_SVC" 2>/dev/null || echo -)"
+    echo -e "${CB}=== CPU OC (bc250_smu_oc) ===${C0}"
+    local en ac
+    en=$(systemctl is-enabled "$OC_SVC" 2>/dev/null) || en=-
+    ac=$(systemctl is-active "$OC_SVC" 2>/dev/null) || ac=-
+    printf '  %-38s %s / %s\n' "$OC_SVC" "$(c_state "$en")" "$(c_state "$ac")"
     if [[ -f "$OC_CONF" ]]; then
-        echo "  installed config ($OC_CONF):"
+        echo "  boot config ($OC_CONF):"
         sed 's/^/    /' "$OC_CONF"
+        if [[ -f "$OC_STAGE_CONF" ]] && ! oc_confs_match; then
+            echo "  newer detect result, not yet enabled ($OC_STAGE_CONF):"
+            sed 's/^/    /' "$OC_STAGE_CONF"
+        fi
     elif [[ -f "$OC_STAGE_CONF" ]]; then
-        echo "  detected but NOT enabled ($OC_STAGE_CONF):"
+        echo "  detected config, not yet enabled ($OC_STAGE_CONF):"
         sed 's/^/    /' "$OC_STAGE_CONF"
     else
         echo "  no config -- start with: sudo $0 cpu-oc detect 4000 1275"
     fi
+    local live
+    if live=$(oc_live_mv) && [[ -n "$live" ]]; then
+        echo "  live CPU voltage: ${live} mV (idle unless loaded)"
+    fi
+    oc_persist_report
     echo "  effective clocks: watch -n1 'grep MHz /proc/cpuinfo'"
 }
 
@@ -1162,7 +1213,9 @@ CPU OVERCLOCK / UNDERVOLT (bc250-collective/bc250_smu_oc, CPU only)
   cpu-oc apply      Re-apply the saved config right now.
   cpu-oc off        Disable at boot + revert to stock live (3500 MHz,
                     factory curve, 100 C). Config is kept for re-enable.
-  cpu-oc status     Service state + active config.
+  cpu-oc status     Service state, configs (incl. the measured mV noted
+                    by the last detect), live CPU voltage via SMU, and a
+                    clear saved / NOT-saved-at-boot verdict.
   cpu-oc update     Re-fetch the tool sources. They come from upstream
                     (bc250-collective/bc250_smu_oc) at a pinned commit
                     with our patches overlaid from smu-oc-patches/ --
