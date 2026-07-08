@@ -872,7 +872,10 @@ NEVER above 1325 mV -- exceeding it has bricked boards."
     warn "The result stays applied afterwards: 'cpu-oc enable' to persist,"
     warn "'cpu-oc off' to revert to stock."
     pause_governor
-    local rc=0 dlog=/tmp/bc250-oc-detect.log
+    # log lives in the tool's own root-owned dir: a fixed /tmp path breaks
+    # under fs.protected_regular once any other user has created it, and
+    # this way the last detect transcript sticks around for reference
+    local rc=0 dlog="$OC_DIR/last-detect.log"
     python3 "$OC_DIR/bc250_detect.py" -f "$freq" -v "$vid" -t "$temp" \
             --keep -c "$OC_STAGE_CONF" 2>&1 | tee "$dlog" || rc=$?
     resume_governor
