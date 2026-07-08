@@ -61,13 +61,33 @@ matters for anyone rebuilding kernel modules for SteamOS.
 Kernel-release-specific: rebuild after each SteamOS update (instructions in
 the subdirectory README).
 
-### `cec/`
-HDMI-CEC / TV control (`bc250-cec.sh`) through a CEC-tunneling DP→HDMI
-adapter. The kernel and Valve's `cecd` daemon already do the heavy lifting;
-the script configures cecd (OSD name, behavior toggles that outrank the
-Steam UI) and fills its gaps: TV standby on poweroff, TV wake at cold boot,
-plus status/test/monitor tooling and one-shot verbs (`tv-on`, `tv-off`,
-`switch`, volume). Runs as deck, not root. See `cec/README.md`.
+### `bc250-cec.sh`
+HDMI-CEC / TV control through a CEC-tunneling DP→HDMI adapter. Far less
+greenfield than expected: the kernel already ships `DRM_DISPLAY_DP_AUX_CEC`
+(so amdgpu exposes `/dev/cec0` on the DP AUX channel) and Valve's `cecd`
+daemon (D-Bus `com.steampowered.CecDaemon1`, CLI `cectool`) already wakes
+the TV on resume, suspends the console when the TV turns off, and relays
+the TV remote as an input device. The script configures cecd and fills its
+gaps:
+- **OSD name** — "BC-250" instead of "steamdeck" in the TV's device list.
+- **Behavior toggles** (TV standby on suspend, etc.) written to
+  `~/.config/cecd/config.d/99-zz-bc250.toml`, which sorts after — and
+  therefore outranks — Steam UI's `99-steamos-manager.toml` (verified;
+  `clear-overrides` hands control back).
+- **TV standby on poweroff** — system unit, ExecStop gated on the
+  poweroff/halt goal target so reboot and suspend are excluded; uses
+  root `cec-ctl`, no user-session coupling.
+- **TV wake + input grab at cold boot** — user unit calling cecd's D-Bus
+  `Wake` with retries.
+- `status`/`test`/`monitor`/`remote` tooling and one-shot verbs
+  (`tv-on`, `tv-off`, `switch`, `vol-up`/`vol-down`/`mute`).
+
+Runs as **deck, not root** (cecd lives on the user D-Bus session); only the
+poweroff unit install sudos, by itself. Adapter caveat: CEC over DP only
+works if the adapter implements CEC-Tunneling-over-AUX — most don't (known
+good: Club3D CAC-1080/1085 and other Parade PS176/PS186 designs). Debug
+notes (power-status reply parsing, `busctl -- -1`, monitor needs sudo) are
+in the script header and `help`.
 
 ### `aic8800/`
 Working driver for AIC8800D80-based USB WiFi/BT dongles (the ones that boot
