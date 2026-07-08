@@ -335,6 +335,30 @@ EOF
 }
 
 # ============================ GPU governor ================================
+# Single source for the tuned voltage curve: written on governor install and
+# restored by 'gpu-volt reset'.
+default_safe_points() {
+    cat << 'EOF'
+# Voltage curve: flat 1000 mV ceiling (2026 community finding: most boards
+# hold it; bump the TOP point +15-25 mV only if yours proves unstable there)
+[[safe-points]]
+frequency = 1000
+voltage = 800
+
+[[safe-points]]
+frequency = 1500
+voltage = 900
+
+[[safe-points]]
+frequency = 2000
+voltage = 1000
+
+[[safe-points]]
+frequency = 2150
+voltage = 1000
+EOF
+}
+
 check_conflicts() {
     local s
     for s in cyan-skillfish-governor.service cyan-skillfish-governor-tt.service \
@@ -473,24 +497,8 @@ max = 1500                  # sustained-safe with 38 CUs routed
 throttling = 85
 throttling_recovery = 75
 
-# Voltage curve: flat 1000 mV ceiling (2026 community finding: most boards
-# hold it; bump the TOP point +15-25 mV only if yours proves unstable there)
-[[safe-points]]
-frequency = 1000
-voltage = 800
-
-[[safe-points]]
-frequency = 1500
-voltage = 900
-
-[[safe-points]]
-frequency = 2000
-voltage = 1000
-
-[[safe-points]]
-frequency = 2150
-voltage = 1000
 EOF
+        default_safe_points >> "$GOV_CONF"
     fi
 
     log "Writing systemd unit (persistent paths) -> $GOV_UNIT"
@@ -653,6 +661,98 @@ cmd_freq() {
                     && save_freq_state pin "$a"
             fi ;;
         *) die "Usage: $0 freq [status|auto|max|<MHz>|<min> <max>]" ;;
+    esac
+}
+
+# ========================= GPU voltage control ============================
+# GPU voltage belongs to the governor's safe-points curve (it applies mV per
+# frequency continuously); forcing vid directly over SMU would fight it.
+# These commands edit the curve in config.toml, restart the governor, and
+# reapply the saved freq setting (a restart otherwise drops runtime state).
+VOLT_MIN=700    # below: artifact/crash territory even at low clocks
+VOLT_MAX=1050   # above the community flat-1000 ceiling + small margin
+
+restart_governor_reapply() {
+    systemctl restart "$GOV_SVC"
+    log "Governor restarted with the new curve."
+    if [[ -f "$FREQ_STATE" && -x "$RESTORE_BIN" ]]; then
+        "$RESTORE_BIN" && log "Saved freq setting reapplied." \
+            || warn "Could not reapply saved freq setting -- check 'freq status'."
+    fi
+}
+
+volt_show() {
+    [[ -f "$GOV_CONF" ]] || die "No governor config at $GOV_CONF -- run '$0 governor' first."
+    echo -e "${CB}=== GPU voltage curve ($GOV_CONF) ===${C0}"
+    awk '/^frequency = /{f=$3} /^voltage = /{printf "  %4d MHz -> %4d mV\n", f, $3}' "$GOV_CONF"
+    local live
+    live=$(sensors 2>/dev/null | grep -im1 vddgfx || true)
+    [[ -n "$live" ]] && echo "  live: $live"
+    echo "  (any frequency you run needs a point at or above it)"
+}
+
+volt_check_bounds() {   # validate every voltage in a candidate config
+    local bad
+    bad=$(awk -v lo="$VOLT_MIN" -v hi="$VOLT_MAX" \
+        '/^voltage = /{ if ($3 < lo || $3 > hi) printf "%s ", $3 }' "$1")
+    [[ -z "$bad" ]] || { rm -f "$1"; die "Voltage(s) outside safe ${VOLT_MIN}-${VOLT_MAX} mV range: $bad"; }
+}
+
+volt_offset() {
+    require_root
+    local delta="${1:-}"
+    [[ "$delta" =~ ^[+-]?[0-9]+$ ]] || die "Usage: $0 gpu-volt offset <±mV>   (e.g. offset -25)"
+    [[ -f "$GOV_CONF" ]] || die "No governor config -- run '$0 governor' first."
+    awk -v d="$delta" '/^voltage = /{ print "voltage = " $3+d; next } { print }' \
+        "$GOV_CONF" > "$GOV_CONF.tmp"
+    volt_check_bounds "$GOV_CONF.tmp"
+    mv "$GOV_CONF.tmp" "$GOV_CONF"
+    log "Whole curve shifted ${delta} mV:"
+    volt_show
+    restart_governor_reapply
+    warn "Stress test now -- undervolts that boot fine can still crash under load."
+}
+
+volt_set() {
+    require_root
+    local freq="${1:-}" mv_="${2:-}"
+    [[ "$freq" =~ ^[0-9]+$ && "$mv_" =~ ^[0-9]+$ ]] || die "Usage: $0 gpu-volt set <freqMHz> <mV>"
+    [[ -f "$GOV_CONF" ]] || die "No governor config -- run '$0 governor' first."
+    grep -q "^frequency = ${freq}\$" "$GOV_CONF" \
+        || die "No curve point at $freq MHz. Existing points: $(awk '/^frequency = /{printf "%s ", $3}' "$GOV_CONF")"
+    awk -v f="$freq" -v m="$mv_" '
+        /^frequency = /{cur=$3}
+        /^voltage = / && cur==f { print "voltage = " m; next }
+        { print }' "$GOV_CONF" > "$GOV_CONF.tmp"
+    volt_check_bounds "$GOV_CONF.tmp"
+    mv "$GOV_CONF.tmp" "$GOV_CONF"
+    log "Point $freq MHz -> $mv_ mV."
+    restart_governor_reapply
+    warn "Stress test now -- undervolts that boot fine can still crash under load."
+}
+
+volt_reset() {
+    require_root
+    [[ -f "$GOV_CONF" ]] || die "No governor config -- run '$0 governor' first."
+    # our generated config keeps the curve last; cut it off and re-append
+    awk '/^# Voltage curve/ || /^\[\[safe-points\]\]/{ exit } { print }' \
+        "$GOV_CONF" > "$GOV_CONF.tmp"
+    default_safe_points >> "$GOV_CONF.tmp"
+    mv "$GOV_CONF.tmp" "$GOV_CONF"
+    log "Curve reset to tuned defaults."
+    volt_show
+    restart_governor_reapply
+}
+
+cmd_gpu_volt() {
+    local sub="${1:-show}"
+    shift || true
+    case "$sub" in
+        ""|show)  volt_show ;;
+        offset)   volt_offset "$@" ;;
+        set)      volt_set "$@" ;;
+        reset)    volt_reset ;;
+        *) die "Usage: $0 gpu-volt {show | offset <±mV> | set <freqMHz> <mV> | reset}" ;;
     esac
 }
 
@@ -914,8 +1014,12 @@ menu_freq() {
             "Set min + max range||Floor AND ceiling, adaptive in between."
             "Pin a frequency||Fixed clock, perf mode ON -- no idle downscale. For testing."
             "Max performance||Top of the voltage curve until you switch back to auto."
+            "Show voltage curve||Current freq -> mV safe-points + live vddgfx reading."
+            "Offset voltage curve||Undervolt/overvolt every point by +-mV. Small steps, stress test."
+            "Set one voltage point||Change the mV at a single frequency point."
+            "Reset voltage curve||Restore the tuned 800/900/1000/1000 mV defaults."
         )
-        menu_select "GPU frequency control  ${CD}(persists across reboots)${C0}" "${items[@]}" || return 0
+        menu_select "GPU frequency & voltage  ${CD}(persists across reboots)${C0}" "${items[@]}" || return 0
         case $MENU_CHOICE in
             0) run_action cmd_freq status ;;
             1) run_action cmd_freq auto ;;
@@ -927,6 +1031,13 @@ menu_freq() {
             4) ask "Pin at MHz" "1800"
                run_action cmd_freq "$REPLY" ;;
             5) run_action cmd_freq max ;;
+            6) run_action volt_show ;;
+            7) ask "Offset mV (negative = undervolt)" "-15"
+               run_action volt_offset "$REPLY" ;;
+            8) ask "Frequency point MHz" "2000"; local vf="$REPLY"
+               ask "Voltage mV ($VOLT_MIN-$VOLT_MAX)" "1000"
+               run_action volt_set "$vf" "$REPLY" ;;
+            9) run_action volt_reset ;;
         esac
     done
 }
@@ -975,7 +1086,7 @@ cmd_menu() {
             "Step 1 - ACPI fix: CPU idle + scaling|$(badge_acpi)|SSDT override via GRUB + self-heal. Reboot needed after install."
             "Step 2 - GPU governor|$(badge_governor)|Adaptive GPU freq/voltage via SMU. Test under load before step 3."
             "Step 3 - Enable governor at boot|$(badge_gov_boot)|Lock it in once step 2 proves stable."
-            "GPU frequency control|$(badge_freq)|Pin / cap / range via the governor. Settings survive reboots."
+            "GPU frequency & voltage|$(badge_freq)|Pin / cap / range + voltage curve. Settings survive reboots."
             "CPU overclock / undervolt|$(badge_oc)|bc250_smu_oc: ~200 mV undervolt even at stock clocks."
             "Reinstall D-Bus helpers||Fixes 'name is not activatable' errors from freq control."
             "Full help||The complete manual for every CLI command."
@@ -1078,6 +1189,17 @@ EVERYDAY COMMANDS
               governor is up. 'freq auto' clears the saved state.
               Thermal throttling (85C) applies no matter what you set.
 
+  gpu-volt    GPU voltage curve control. Edits the governor's safe-points
+              (the layer that owns GPU voltage), restarts it, reapplies
+              your saved freq setting:
+    gpu-volt              show curve + live vddgfx
+    gpu-volt offset -25   undervolt the whole curve 25 mV
+    gpu-volt set 2000 985 change one point
+    gpu-volt reset        restore the tuned default curve
+              Bounds 700-1050 mV enforced. Small steps (10-25 mV) and
+              stress test after -- undervolts that boot fine can still
+              crash under load. Changes are permanent (config.toml).
+
 PERMANENT TUNING (config file, not this script)
   /etc/cyan-skillfish-governor-smu/config.toml
     [frequency-range] max = 1500     <- permanent ceiling
@@ -1114,6 +1236,7 @@ case "${1:-}" in
     governor)     cmd_governor ;;
     helpers)      cmd_helpers ;;
     freq)         shift; cmd_freq "$@" ;;
+    gpu-volt)     shift; cmd_gpu_volt "$@" ;;
     cpu-oc)       shift; cmd_cpu_oc "$@" ;;
     enable)       cmd_enable ;;
     status)       cmd_status ;;
@@ -1121,7 +1244,7 @@ case "${1:-}" in
     menu)         cmd_menu ;;
     help|-h|--help) cmd_help ;;
     "") if [[ -t 0 && -t 1 ]]; then cmd_menu; exit 0; fi ;&
-    *) echo "Usage: $0 {acpi|governor|helpers|freq|cpu-oc|enable|status|all|menu|help}"
+    *) echo "Usage: $0 {acpi|governor|helpers|freq|gpu-volt|cpu-oc|enable|status|all|menu|help}"
        echo "  (no arguments on a terminal opens the guided menu)"
        echo "  freq                 show performance-mode state"
        echo "  freq 1800            pin GPU at 1800 MHz (perf mode)"

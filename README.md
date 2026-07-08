@@ -31,6 +31,9 @@ Complete power-management setup:
   freq/voltage; without it the GPU is locked at 1500 MHz and idles hot.
 - **GPU freq persistence** — `freq` settings (pin/range/max) are saved and
   replayed at boot by a `bc250-gpu-freq-restore` service; `freq auto` clears.
+- **GPU voltage control** (`gpu-volt`) — show/offset/set/reset the governor's
+  safe-points voltage curve with enforced 700–1050 mV bounds; restarts the
+  governor and reapplies the saved freq setting.
 - **CPU overclock/undervolt** (`cpu-oc`, wraps
   [bc250_smu_oc](https://github.com/bc250-collective/bc250_smu_oc)) — max
   boost clock + vid-curve scaling via SMU. Sources are fetched at a pinned
