@@ -61,6 +61,14 @@ matters for anyone rebuilding kernel modules for SteamOS.
 Kernel-release-specific: rebuild after each SteamOS update (instructions in
 the subdirectory README).
 
+### `cec/`
+HDMI-CEC / TV control (`bc250-cec.sh`) through a CEC-tunneling DP→HDMI
+adapter. The kernel and Valve's `cecd` daemon already do the heavy lifting;
+the script configures cecd (OSD name, behavior toggles that outrank the
+Steam UI) and fills its gaps: TV standby on poweroff, TV wake at cold boot,
+plus status/test/monitor tooling and one-shot verbs (`tv-on`, `tv-off`,
+`switch`, volume). Runs as deck, not root. See `cec/README.md`.
+
 ### `aic8800/`
 Working driver for AIC8800D80-based USB WiFi/BT dongles (the ones that boot
 as a fake `1111:1111` mass-storage device). Based on radxa-pkg/aic8800 with
