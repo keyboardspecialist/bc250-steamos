@@ -4530,6 +4530,9 @@ static int rwnx_cfg80211_get_tx_power(struct wiphy *wiphy,
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(3, 8, 0)
  struct wireless_dev *wdev,
 #endif
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 17, 0)
+ int radio_idx,
+#endif
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 13, 0)
  unsigned int link_id,
 #endif
