@@ -74,13 +74,37 @@ gaps:
   `~/.config/cecd/config.d/99-zz-bc250.toml`, which sorts after — and
   therefore outranks — Steam UI's `99-steamos-manager.toml` (verified;
   `clear-overrides` hands control back).
-- **TV standby on poweroff** — system unit, ExecStop gated on the
-  poweroff/halt goal target so reboot and suspend are excluded; uses
+- **TV + receiver standby on poweroff** — system unit, ExecStop gated on
+  the poweroff/halt goal target so reboot and suspend are excluded; uses
   root `cec-ctl`, no user-session coupling.
-- **TV wake + input grab at cold boot** — user unit calling cecd's D-Bus
-  `Wake` with retries.
-- `status`/`test`/`monitor`/`remote` tooling and one-shot verbs
-  (`tv-on`, `tv-off`, `switch`, `vol-up`/`vol-down`/`mute`).
+- **TV wake at cold boot** — user unit calling cecd's D-Bus `Wake` with
+  retries, then claiming active source.
+- **Receiver power** — `amp-on` sends `<System Audio Mode Request>`, the
+  CEC-standard "amplifier, wake up and take the audio" command (verified
+  against a Yamaha RX-V381); `amp-off` sends it standby.
+- **Receiver follows the console** — `amp-follow {boot|poweroff|suspend|
+  resume}` toggles make the receiver's power track the console (poweroff
+  is on by default, the rest opt-in). Flags live in
+  `~/.config/bc250-cec.conf` and are read by the generated helpers at
+  runtime, so flipping never needs a unit reinstall; suspend/resume need
+  the one-time `amp-sleep install` hook (`/etc/systemd/system-sleep/`,
+  resume side retries in the background while the DP link renegotiates).
+- **Multi-device etiquette** — for setups where several sources share one
+  receiver and fight over the input (all verified live against an Apple TV
+  behind the same RX-V381):
+  - `active` — ask the bus who holds the input before touching anything;
+  - `handoff <dev>` — route the TV/receiver to another device (wakes it
+    first: devices ignore `<Set Stream Path>` while in standby);
+  - `release` — `<Inactive Source>`, give up the input and let the TV pick;
+  - both installed units are **polite by default**: boot-wake won't steal
+    the input if another device is actively showing (`install grab`
+    restores the old behavior), and poweroff-standby leaves the TV +
+    receiver on when someone else holds the input.
+- `status`/`test`/`scan`/`monitor`/`remote` tooling and one-shot verbs
+  (`tv-on`, `tv-off`, `amp-on`, `amp-off`, `switch`,
+  `vol-up`/`vol-down`/`mute`). `scan` renders the HDMI tree from physical
+  addresses — who's plugged into which receiver input — with vendor, power
+  state, and the active source marked.
 
 Runs as **deck, not root** (cecd lives on the user D-Bus session); only the
 poweroff unit install sudos, by itself. Adapter caveat: CEC over DP only

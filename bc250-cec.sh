@@ -18,11 +18,29 @@
 #     99-zz-bc250.toml, which sorts after it and therefore wins.
 #
 # What this script adds on top of cecd:
-#   - status/test/monitor tooling for the whole CEC stack
+#   - status/test/scan/monitor tooling for the whole CEC stack
 #   - OSD name ("BC-250" instead of "steamdeck" in the TV's device list)
 #   - behavior toggles that outrank the Steam UI fragment
-#   - TV standby on POWEROFF (cecd only covers suspend)
+#   - TV + receiver standby on POWEROFF (cecd only covers suspend)
 #   - wake TV + grab input at cold boot (cecd only covers resume)
+#   - receiver power (amp-on/amp-off) via <System Audio Mode Request>
+#   - receiver follows the console: amp-follow toggles for boot / poweroff
+#     / suspend / resume, stored in ~/.config/bc250-cec.conf and read by
+#     the generated helpers at runtime (flip = instant, no reinstall)
+#   - multi-device etiquette: 'active' (who holds the input), 'handoff'
+#     (route the TV/receiver to another device), 'release' (<Inactive
+#     Source>), and both installed units are POLITE -- they never steal
+#     the input or power off the TV while another device is the active
+#     source. Sharing a receiver with an Apple TV etc. stops being a
+#     tug-of-war.
+#
+# cecd raw-message discovery (verified live): SendReceiveRawMessage
+# matches the reply by OPCODE even when the reply is a broadcast --
+# <Report Physical Address>, <Device Vendor ID> and <Active Source> all
+# come back fine. A broadcast *request* (dest 15) also works; it times
+# out iff nobody answers. cecd does NOT loop back its own replies, so
+# <Request Active Source> timing out while our Active property is true
+# just means "we hold it ourselves".
 #
 # Root handling deviates from bc250-power.sh on purpose: everything here
 # talks to cecd on the *user* D-Bus session, so the script must run as
@@ -51,8 +69,16 @@ OVR_CONF="$CONF_DIR/99-zz-bc250.toml"        # toggle overrides (sorts last)
 USER_UNIT_DIR="$HOME/.config/systemd/user"
 WAKE_UNIT="$USER_UNIT_DIR/bc250-cec-boot-wake.service"
 WAKE_SVC="bc250-cec-boot-wake.service"
+WAKE_HELPER="$HOME/.local/bin/bc250-cec-boot-wake"
 STANDBY_UNIT="/etc/systemd/system/bc250-cec-poweroff-standby.service"
 STANDBY_SVC="bc250-cec-poweroff-standby.service"
+STANDBY_HELPER="/etc/bc250-cec-poweroff-standby.sh"   # /etc = writable overlay
+
+# Receiver-follow toggles live in our own flat key=value file, read by the
+# generated helpers AT RUNTIME -- flipping a toggle never needs a unit
+# reinstall. Root helpers get the absolute path baked in at install.
+AMP_CONF="$HOME/.config/bc250-cec.conf"
+SLEEP_HOOK="/etc/systemd/system-sleep/bc250-cec-amp.sh"
 
 OSD_DEFAULT="BC-250"                         # CEC OSD name limit: 14 bytes
 
@@ -219,18 +245,25 @@ la_name() {
     esac
 }
 
+ala_valid() { [[ "$1" =~ ^[0-9]+$ && "$1" -ge 1 && "$1" -le 14 ]]; }
+
 audio_la() {
+    # cecd reports 255 for "no audio system announced" -- and 0 (the TV's
+    # address, impossible for an amp) as its unset default, seen live when
+    # system audio mode is off. Either way fall back to 5: the CEC spec
+    # fixes the audio system there, and a receiver in standby often isn't
+    # announced even though it still listens.
     local v; v=$(dev_prop AudioLogicalAddress)
-    if [[ "$v" =~ ^[0-9]+$ ]]; then echo "$v"; else echo 5; fi
+    if ala_valid "$v"; then echo "$v"; else echo 5; fi
 }
 
-# Ask the TV for its power state: <Give Device Power Status> (0x8f = 143),
+# Ask a device for its power state: <Give Device Power Status> (0x8f = 143),
 # expect <Report Power Status> (0x90 = 144). Reply includes the opcode, so
 # the status byte is the LAST field (verified live: "ay 2 144 0").
-tv_power_status() {
+power_status() {   # power_status LA
     local out
     out=$(busctl --user --timeout=3 call "$DBUS_NAME" "$DEV_PATH" "$IF_DEV" \
-          SendReceiveRawMessage ayyyq 1 143 "$TV_LA" 144 1500 2>/dev/null) || { echo "no-reply"; return 0; }
+          SendReceiveRawMessage ayyyq 1 143 "$1" 144 1500 2>/dev/null) || { echo "no-reply"; return 0; }
     case "${out##* }" in
         0) echo "on" ;;
         1) echo "standby" ;;
@@ -238,6 +271,79 @@ tv_power_status() {
         3) echo "on->standby" ;;
         *) echo "unknown" ;;
     esac
+}
+tv_power_status() { power_status "$TV_LA"; }
+
+# raw_req LA REQ_OPCODE REPLY_OPCODE [TIMEOUT_MS]
+# -> reply payload bytes AFTER the opcode ("hi lo ..."), fails on timeout.
+# LA 15 broadcasts the request; broadcast replies still match (see header).
+raw_req() {
+    local out
+    out=$(busctl --user --timeout=5 call "$DBUS_NAME" "$DEV_PATH" "$IF_DEV" \
+          SendReceiveRawMessage ayyyq 1 "$2" "$1" "$3" "${4:-1500}" 2>/dev/null) || return 1
+    echo "$out" | cut -d' ' -f4-
+}
+
+raw_send() {   # raw_send LA BYTE... -- fire-and-forget (LA 15 = broadcast)
+    local la="$1"; shift
+    busctl --user --timeout=5 call "$DBUS_NAME" "$DEV_PATH" "$IF_DEV" \
+        SendRawMessage ayy $# "$@" "$la" >/dev/null
+}
+
+dev_pa() {   # LA -> decimal physical address, via <Give Physical Address>
+    local r; r=$(raw_req "$1" 131 132) || return 1
+    set -- $r
+    echo $(( ${1:-0} * 256 + ${2:-0} ))
+}
+
+pa_depth() {   # decimal PA -> nesting depth in the HDMI tree (TV = 0)
+    local d="$1" n=0
+    if (( d & 15 ));         then n=4
+    elif (( (d>>4) & 15 ));  then n=3
+    elif (( (d>>8) & 15 ));  then n=2
+    elif (( (d>>12) & 15 )); then n=1
+    fi
+    echo "$n"
+}
+
+osd_of() {   # LA -> OSD name via <Give OSD Name>, "?" if no reply
+    local r b name=""
+    r=$(raw_req "$1" 70 71) || { echo "?"; return 0; }
+    for b in $r; do name+=$(printf "\\x$(printf '%02x' "$b")"); done
+    echo "${name:-?}"
+}
+
+vendor_of() {   # LA -> brand via <Give Device Vendor ID>, IEEE OUI mapped
+    local r; r=$(raw_req "$1" 140 135) || { echo "-"; return 0; }
+    set -- $r
+    local id; id=$(printf '%02X%02X%02X' "${1:-0}" "${2:-0}" "${3:-0}")
+    case "$id" in
+        0010FA) echo "Apple" ;;      00A0DE) echo "Yamaha" ;;
+        0000F0) echo "Samsung" ;;    00E091) echo "LG" ;;
+        080046) echo "Sony" ;;       008045) echo "Panasonic" ;;
+        00903E) echo "Philips" ;;    000039) echo "Toshiba" ;;
+        08001F) echo "Sharp" ;;      0009B0) echo "Onkyo" ;;
+        0005CD) echo "Denon" ;;      000678) echo "Marantz" ;;
+        00E036) echo "Pioneer" ;;    001A11) echo "Google" ;;
+        6B746D) echo "Vizio" ;;      000CE7) echo "Amazon" ;;
+        *)      echo "$id" ;;
+    esac
+}
+
+# Decimal PA of the bus's current active source, or fail if nobody claims.
+# Instant when it's us (Active property); otherwise <Request Active Source>
+# (0x85=133) broadcast, reply <Active Source> (0x82=130) carries the PA.
+# Caveat (verified live): "no reply" is NOT proof the input isn't ours.
+# cecd flips Active=true only when the TV confirms routing on the bus, and
+# TVs stay silent when a claim doesn't change the current path -- so after
+# a release + re-claim the property can read false while the TV still
+# shows us. The polite gates are unaffected: they only back off when a
+# DIFFERENT device answers, and that reply path is verified.
+active_source_pa() {
+    if [[ "$(dev_prop Active)" == true ]]; then dev_prop PhysicalAddress; return 0; fi
+    local r; r=$(raw_req 15 133 130 2000) || return 1
+    set -- $r
+    echo $(( ${1:-0} * 256 + ${2:-0} ))
 }
 
 # toml_set KEY VALUE FILE -- flat-key TOML edit, no /tmp round-trips
@@ -252,6 +358,30 @@ toml_set() {
     printf '%s = %s\n' "$key" "$val" >> "$tmp"
     mv "$tmp" "$file"
 }
+
+# amp_conf_get KEY DEFAULT / amp_conf_set KEY 0|1 -- receiver-follow flags.
+# Same no-/tmp temp-file pattern as toml_set (fs.protected_regular).
+amp_conf_get() {
+    local v
+    v=$(sed -n "s/^${1}=//p" "$AMP_CONF" 2>/dev/null | head -1)
+    echo "${v:-$2}"
+}
+
+amp_conf_set() {
+    local tmp
+    mkdir -p "$(dirname "$AMP_CONF")"
+    tmp=$(mktemp "$(dirname "$AMP_CONF")/.bc250-cec.XXXXXX")
+    if [[ -f "$AMP_CONF" ]]; then
+        grep -v "^${1}=" "$AMP_CONF" > "$tmp" || true
+    else
+        printf '# Written by bc250-cec.sh -- receiver (amp) follow toggles.\n# Read at runtime by the boot-wake/poweroff/sleep helpers.\n' > "$tmp"
+    fi
+    echo "${1}=${2}" >> "$tmp"
+    mv "$tmp" "$AMP_CONF"
+}
+
+# key -> default: poweroff standby was always on before it became a toggle
+amp_follow_def() { if [[ "$1" == poweroff ]]; then echo 1; else echo 0; fi }
 
 ovr_has() { grep -q "^${1}[[:space:]]*=" "$OVR_CONF" 2>/dev/null; }
 
@@ -318,6 +448,42 @@ badge_wake() {
     return 0
 }
 
+badge_amp_follow() {   # badge_amp_follow KEY -- one receiver-follow flag
+    if [[ "$(amp_conf_get "amp_$1" "$(amp_follow_def "$1")")" == 1 ]]; then b_ok "on"
+    else b_off "off"; fi
+    return 0
+}
+
+badge_amp_power() {   # colorize a power_status word passed in
+    case "$1" in
+        on|"standby->on") b_ok "$1" ;;
+        standby|"on->standby") b_mid "$1" ;;
+        *) b_off "$1" ;;
+    esac
+    return 0
+}
+
+badge_amp_summary() {
+    local n=0 k
+    for k in boot poweroff suspend resume; do
+        [[ "$(amp_conf_get "amp_$k" "$(amp_follow_def "$k")")" == 1 ]] && n=$((n+1))
+    done
+    if (( n > 0 )); then b_ok "$n follow(s) on"; else b_off "no follows"; fi
+    return 0
+}
+
+badge_sleep_hook() {
+    if [[ -f "$SLEEP_HOOK" ]]; then b_ok "installed"; else b_off "not installed"; fi
+    return 0
+}
+
+badge_active() {   # cheap: Active property only, no bus traffic
+    cecd_up || { b_off "cecd not running"; return 0; }
+    if [[ "$(dev_prop Active)" == true ]]; then b_ok "input is ours"
+    else b_mid "not ours"; fi
+    return 0
+}
+
 badge_remote() {
     cecd_up || { b_off "cecd not running"; return 0; }
     local val; val=$(cfg_prop Uinput)
@@ -359,11 +525,15 @@ cmd_status() {
     echo "  OSD name:         $osd"
     echo "  logical address:  $la_disp"
     echo "  physical address: $(pa_pretty "$pa")"
-    echo "  active source:    $active"
-    if [[ "$ala" =~ ^[0-9]+$ && "$ala" -ne 255 ]]; then
+    if [[ "$active" == true ]]; then
+        echo "  active source:    yes -- the TV/receiver input is ours"
+    else
+        echo "  active source:    no -- another device (or nobody) holds it; see '$0 active'"
+    fi
+    if ala_valid "$ala"; then
         echo "  audio system:     LA $ala ($(la_name "$ala")) -- vol-up/vol-down/mute target"
     else
-        echo "  audio system:     none on the bus (volume verbs will no-op)"
+        echo "  audio system:     none announced (amp + volume verbs assume LA 5)"
     fi
 
     echo -e "${CB}== behavior (effective cecd config) ==${C0}"
@@ -379,6 +549,12 @@ cmd_status() {
     echo -e "${CB}== installed extras ==${C0}"
     echo "  poweroff standby unit: $(c_state "$(unit_state is-enabled "$STANDBY_SVC")")"
     echo "  boot wake unit (user): $(c_state "$(unit_state --user is-enabled "$WAKE_SVC")")"
+    echo "  amp suspend/resume hook: $([[ -f "$SLEEP_HOOK" ]] && echo present || echo absent)"
+    local k follows=""
+    for k in boot poweroff suspend resume; do
+        follows+="${follows:+ }$k=$(amp_conf_get "amp_$k" "$(amp_follow_def "$k")")"
+    done
+    echo "  receiver follows: $follows"
     [[ -f "$NAME_CONF" ]] && echo "  $NAME_CONF: present" || echo "  $NAME_CONF: not written"
     [[ -f "$OVR_CONF"  ]] && echo "  $OVR_CONF: present ($(ovr_count) key(s))" || echo "  $OVR_CONF: not written"
 
@@ -490,7 +666,7 @@ cmd_clear_overrides() {
     done
 }
 
-# ===================== TV standby on poweroff =============================
+# ================= TV + receiver standby on poweroff ======================
 # cecd's suspend_tv covers suspend only. This system unit covers poweroff:
 # it is inert at boot (ExecStart=true, RemainAfterExit) and does its work in
 # ExecStop, which systemd runs early in shutdown while /dev/cec0, journald
@@ -499,25 +675,56 @@ cmd_clear_overrides() {
 # is used instead of cecd/D-Bus because the user session may already be
 # tearing down -- and a second fd transmitting alongside cecd is verified
 # to work.
+#
+# Also POLITE: before sending standby it asks the bus who the active source
+# is (cec-ctl --request-active-source). If another device answers -- someone
+# is watching the Apple TV through the same receiver -- the TV and receiver
+# stay on. When WE hold the input there is no reply (cecd never answers a
+# request sent from its own logical address, and it's dead by now anyway),
+# so the standby proceeds. Verified live: an active Apple TV replies with
+# "phys-addr: 3.2.0.0"-style output; the sed below extracts exactly that.
 
 cmd_shutdown_standby() {
     local action="${1:-status}"
     case "$action" in
         install)
             require_user
-            log "Installing $STANDBY_SVC (sudo)..."
-            sudo tee "$STANDBY_UNIT" >/dev/null << 'EOF'
+            log "Installing $STANDBY_SVC + helper (sudo)..."
+            { printf '#!/bin/bash\nconf=%s\n' "$AMP_CONF"; cat << 'EOF'
+# Written by bc250-cec.sh -- CEC standby to TV + receiver on poweroff.
+# Runs from the unit's ExecStop; regenerate via "bc250-cec.sh
+# shutdown-standby install"; do not edit.
+# Gate 1: real poweroff/halt only -- reboot and suspend leave the TV alone.
+systemctl list-jobs | grep -qE '(poweroff|halt)\.target.*start' || exit 0
+dev=/dev/cec0
+[ -e "$dev" ] || exit 0
+# Gate 2 (polite): if another device is the active source, someone is
+# still watching -- leave the TV and receiver on.
+own=$(cec-ctl -d "$dev" 2>/dev/null | sed -n 's/.*Physical Address *: *//p' | head -1)
+act=$(cec-ctl -s -d "$dev" --request-active-source 2>/dev/null \
+      | sed -n 's/.*phys-addr: *\([0-9a-f.]*\).*/\1/p' | head -1)
+if [ -n "$act" ] && [ "$act" != "$own" ]; then
+    exit 0
+fi
+# LA 0 = TV, LA 5 = audio system; a missing receiver just never ACKs.
+cec-ctl -s -d "$dev" --to 0 --standby || true
+# receiver standby is a toggle (default on): bc250-cec.sh amp-follow poweroff
+grep -qx 'amp_poweroff=0' "$conf" 2>/dev/null \
+    || cec-ctl -s -d "$dev" --to 5 --standby || true
+EOF
+            } | sudo tee "$STANDBY_HELPER" >/dev/null
+            sudo chmod +x "$STANDBY_HELPER"
+            sudo tee "$STANDBY_UNIT" >/dev/null << EOF
 [Unit]
-Description=BC-250: send CEC standby to the TV on poweroff
-# Inert at boot; the work happens in ExecStop during shutdown. Reboot is
-# excluded by the goal-target gate, suspend never stops the unit.
+Description=BC-250: CEC standby to TV + receiver on poweroff (polite)
+# Inert at boot; the work happens in ExecStop during shutdown.
 After=multi-user.target
 
 [Service]
 Type=oneshot
 RemainAfterExit=yes
 ExecStart=/usr/bin/true
-ExecStop=/bin/bash -c 'if systemctl list-jobs | grep -qE "(poweroff|halt)\.target.*start"; then /usr/bin/cec-ctl -s -d /dev/cec0 --to 0 --standby || true; fi'
+ExecStop=$STANDBY_HELPER
 TimeoutStopSec=10
 
 [Install]
@@ -526,18 +733,20 @@ EOF
             sudo systemctl daemon-reload
             sudo systemctl enable "$STANDBY_SVC" >/dev/null 2>&1
             sudo systemctl start "$STANDBY_SVC"
-            log "Installed. TV goes to standby on poweroff (not reboot, not suspend)."
+            log "Installed. TV + receiver stand by on poweroff (not reboot/suspend) --"
+            log "unless another device holds the input; then they stay on for it."
             ;;
         remove)
             require_user
             log "Removing $STANDBY_SVC (sudo)..."
             sudo systemctl disable --now "$STANDBY_SVC" >/dev/null 2>&1 || true
-            sudo rm -f "$STANDBY_UNIT"
+            sudo rm -f "$STANDBY_UNIT" "$STANDBY_HELPER"
             sudo systemctl daemon-reload
             log "Removed."
             ;;
         status)
             echo "  unit file: $STANDBY_UNIT $([[ -f "$STANDBY_UNIT" ]] && echo present || echo absent)"
+            echo "  helper:    $STANDBY_HELPER $([[ -f "$STANDBY_HELPER" ]] && echo present || echo absent)"
             echo "  enabled:   $(systemctl is-enabled "$STANDBY_SVC" 2>/dev/null || echo -)"
             echo "  active:    $(systemctl is-active "$STANDBY_SVC" 2>/dev/null || echo -)"
             ;;
@@ -555,46 +764,109 @@ shutdown_standby_toggle() {   # menu helper: flip install state
 
 # ========================= wake TV at boot ================================
 # cecd wakes the TV on resume-from-suspend (wake_tv) but does nothing at
-# cold boot. This user unit fires once per session start; Wake() powers the
-# TV on AND switches its input to us. cecd is D-Bus activatable, so the
-# call also covers "cecd not started yet"; the retry loop covers the
-# adapter still negotiating HPD / a logical address right after boot.
+# cold boot. This user unit runs a generated helper once per session start;
+# Wake() powers the TV on AND switches its input to us. cecd is D-Bus
+# activatable, so the calls also cover "cecd not started yet"; the retry
+# loop covers the adapter still negotiating HPD right after boot.
+#
+# Default mode is POLITE: if the TV is already on and another device is the
+# active source (someone's watching the Apple TV), the helper backs off
+# instead of yanking the input. 'install grab' restores the old behavior.
+# The active-source probe can't misfire on ourselves: cecd never answers
+# <Request Active Source> sent from its own logical address, and at session
+# start we haven't claimed anything yet anyway.
+
+write_wake_helper() {   # write_wake_helper polite|grab
+    mkdir -p "$(dirname "$WAKE_HELPER")"
+    {
+        printf '#!/bin/bash\n'
+        printf '# Written by bc250-cec.sh -- TV wake at session start. Regenerate with\n'
+        printf '# "bc250-cec.sh boot-wake install [polite|grab]"; do not edit.\n'
+        printf 'MODE=%s\n' "$1"
+        printf 'CONF=%s\n' "$AMP_CONF"
+        cat << 'EOF'
+D=(busctl --user --timeout=5 call com.steampowered.CecDaemon1
+   /com/steampowered/CecDaemon1/Devices/Cec0
+   com.steampowered.CecDaemon1.CecDevice1)
+# TV power status (0x8f -> 0x90), retried while the adapter settles
+st=""
+for i in 1 2 3 4 5; do
+    out=$("${D[@]}" SendReceiveRawMessage ayyyq 1 143 0 144 1500 2>/dev/null) \
+        && { st=${out##* }; break; }
+    sleep 2
+done
+if [[ "$MODE" == polite && ( "$st" == 0 || "$st" == 2 ) ]]; then
+    # TV is on (or waking): if any device answers <Request Active Source>,
+    # someone else is watching -- leave the input alone.
+    if "${D[@]}" SendReceiveRawMessage ayyyq 1 133 15 130 2000 >/dev/null 2>&1; then
+        exit 0
+    fi
+fi
+# Wake = power on + input to us; the explicit claim after it is needed
+# because Wake alone doesn't broadcast <Active Source> (verified live)
+"${D[@]}" Wake || true
+"${D[@]}" SetActiveSource i -- -1 || true
+# Receiver wake (toggle: bc250-cec.sh amp-follow boot): <System Audio Mode
+# Request> with our PA = "amp on + take the audio". LA 5 is fixed by spec.
+if grep -qx 'amp_boot=1' "$CONF" 2>/dev/null; then
+    pa=$(busctl --user --timeout=5 get-property com.steampowered.CecDaemon1 \
+         /com/steampowered/CecDaemon1/Devices/Cec0 \
+         com.steampowered.CecDaemon1.CecDevice1 PhysicalAddress 2>/dev/null \
+         | awk '{print $2}')
+    if [[ "$pa" =~ ^[0-9]+$ ]]; then
+        "${D[@]}" SendRawMessage ayy 3 112 $(( (pa>>8)&255 )) $(( pa&255 )) 5 >/dev/null || true
+    fi
+fi
+exit 0
+EOF
+    } > "$WAKE_HELPER"
+    chmod +x "$WAKE_HELPER"
+}
 
 cmd_boot_wake() {
-    local action="${1:-status}"
+    local action="${1:-status}" mode="${2:-polite}"
     case "$action" in
         install)
             require_user
+            [[ "$mode" == polite || "$mode" == grab ]] \
+                || die "usage: $0 boot-wake install [polite|grab]"
+            write_wake_helper "$mode"
             mkdir -p "$USER_UNIT_DIR"
-            cat > "$WAKE_UNIT" << 'EOF'
+            cat > "$WAKE_UNIT" << EOF
 [Unit]
-Description=BC-250: wake the TV and take input at session start
+Description=BC-250: wake the TV at session start (mode: $mode)
 After=cecd.service
 Wants=cecd.service
 
 [Service]
 Type=oneshot
-ExecStart=/bin/bash -c 'for i in 1 2 3 4 5; do busctl --user call com.steampowered.CecDaemon1 /com/steampowered/CecDaemon1/Devices/Cec0 com.steampowered.CecDaemon1.CecDevice1 Wake && exit 0; sleep 2; done; exit 1'
+ExecStart=$WAKE_HELPER
 
 [Install]
 WantedBy=graphical-session.target
 EOF
             systemctl --user daemon-reload
             systemctl --user enable "$WAKE_SVC" >/dev/null 2>&1
-            log "Installed. TV wakes + switches to the BC-250 at every session start."
+            if [[ "$mode" == polite ]]; then
+                log "Installed (polite). TV wakes at session start -- but if another device"
+                log "is already the active source on a TV that's on, we don't steal the input."
+            else
+                log "Installed (grab). TV wakes + switches to the BC-250 at every session start."
+            fi
             ;;
         remove)
             require_user
             systemctl --user disable "$WAKE_SVC" >/dev/null 2>&1 || true
-            rm -f "$WAKE_UNIT"
+            rm -f "$WAKE_UNIT" "$WAKE_HELPER"
             systemctl --user daemon-reload
             log "Removed."
             ;;
         status)
             echo "  unit file: $WAKE_UNIT $([[ -f "$WAKE_UNIT" ]] && echo present || echo absent)"
+            echo "  helper:    $WAKE_HELPER $([[ -x "$WAKE_HELPER" ]] && echo "present (mode: $(sed -n 's/^MODE=//p' "$WAKE_HELPER"))" || echo absent)"
             echo "  enabled:   $(systemctl --user is-enabled "$WAKE_SVC" 2>/dev/null || echo -)"
             ;;
-        *) die "usage: $0 boot-wake {install|remove|status}" ;;
+        *) die "usage: $0 boot-wake {install [polite|grab]|remove|status}" ;;
     esac
 }
 
@@ -604,6 +876,120 @@ boot_wake_toggle() {
     else
         cmd_boot_wake install
     fi
+}
+
+# ==================== receiver follows the console ========================
+# Four toggles that make the receiver's power track the console: boot,
+# poweroff, suspend, resume. Flags live in $AMP_CONF and are read by the
+# helpers at runtime, so flipping one is instant -- but each needs its
+# carrier installed: boot -> boot-wake unit, poweroff -> shutdown-standby
+# unit, suspend/resume -> the amp-sleep hook below. Standby paths keep the
+# polite gate: a receiver someone else is playing through stays on.
+
+cmd_amp_follow() {
+    local key="${1:-}" want="${2:-}"
+    case "$key" in
+        boot|poweroff|suspend|resume) ;;
+        *) die "usage: $0 amp-follow {boot|poweroff|suspend|resume} [on|off]" ;;
+    esac
+    require_user
+    local ck="amp_$key" cur new
+    cur=$(amp_conf_get "$ck" "$(amp_follow_def "$key")")
+    [[ "$cur" == 1 ]] || cur=0   # tolerate a hand-edited conf
+    case "$want" in
+        on)  new=1 ;;
+        off) new=0 ;;
+        "")  if [[ "$cur" == 1 ]]; then new=0; else new=1; fi ;;
+        *)   die "usage: $0 amp-follow $key [on|off]" ;;
+    esac
+    amp_conf_set "$ck" "$new"
+    local words=(off on)
+    log "receiver follow '$key': ${words[$cur]} -> ${words[$new]}"
+    case "$key" in
+        boot)
+            # regenerate the helper in case it predates amp support
+            [[ -x "$WAKE_HELPER" ]] && write_wake_helper "$(sed -n 's/^MODE=//p' "$WAKE_HELPER")"
+            [[ "$(systemctl --user is-enabled "$WAKE_SVC" 2>/dev/null)" == enabled ]] \
+                || warn "Needs the boot-wake unit to act: $0 boot-wake install"
+            ;;
+        poweroff)
+            # helper must exist AND know about the toggle (older installs don't)
+            grep -q amp_poweroff "$STANDBY_HELPER" 2>/dev/null \
+                || warn "Poweroff unit missing or predates this toggle -- refresh: $0 shutdown-standby install"
+            ;;
+        suspend|resume)
+            [[ -f "$SLEEP_HOOK" ]] \
+                || warn "Needs the sleep hook to act: $0 amp-sleep install"
+            ;;
+    esac
+    return 0
+}
+
+cmd_amp_sleep() {
+    local action="${1:-status}"
+    case "$action" in
+        install)
+            require_user
+            log "Installing $SLEEP_HOOK (sudo)..."
+            sudo mkdir -p "$(dirname "$SLEEP_HOOK")"
+            { printf '#!/bin/bash\nconf=%s\n' "$AMP_CONF"; cat << 'EOF'
+# Written by bc250-cec.sh -- receiver (CEC audio system, LA 5) follows
+# console suspend/resume. Runs as root from systemd-sleep; the TV side is
+# cecd's job (wake_tv/suspend_tv). Toggles: bc250-cec.sh amp-follow
+# suspend|resume -- this hook is inert while both are off.
+dev=/dev/cec0
+flag() { grep -qx "$1=1" "$conf" 2>/dev/null; }
+case "$1" in
+pre)
+    flag amp_suspend || exit 0
+    [ -e "$dev" ] || exit 0
+    # polite: if another device is playing through the receiver, leave it on
+    own=$(cec-ctl -d "$dev" 2>/dev/null | sed -n 's/.*Physical Address *: *//p' | head -1)
+    act=$(cec-ctl -s -d "$dev" --request-active-source 2>/dev/null \
+          | sed -n 's/.*phys-addr: *\([0-9a-f.]*\).*/\1/p' | head -1)
+    if [ -n "$act" ] && [ "$act" != "$own" ]; then exit 0; fi
+    cec-ctl -s -d "$dev" --to 5 --standby || true
+    ;;
+post)
+    flag amp_resume || exit 0
+    # Backgrounded: the DP link (and /dev/cec0 behind a receiver's standby
+    # passthrough) can take seconds to renegotiate after resume, and a
+    # sleep hook must not block resume while we retry.
+    (
+        for i in 1 2 3 4 5; do
+            if [ -e "$dev" ]; then
+                pa=$(cec-ctl -d "$dev" 2>/dev/null | sed -n 's/.*Physical Address *: *//p' | head -1)
+                [ -n "$pa" ] \
+                    && cec-ctl -s -d "$dev" --to 5 --system-audio-mode-request phys-addr="$pa" \
+                    && exit 0
+            fi
+            sleep 2
+        done
+    ) >/dev/null 2>&1 &
+    ;;
+esac
+exit 0
+EOF
+            } | sudo tee "$SLEEP_HOOK" >/dev/null
+            sudo chmod +x "$SLEEP_HOOK"
+            log "Installed. Acts on the 'suspend' / 'resume' follows (both currently:"
+            log "suspend=$(amp_conf_get amp_suspend 0) resume=$(amp_conf_get amp_resume 0) -- flip with: $0 amp-follow suspend|resume)"
+            ;;
+        remove)
+            require_user
+            log "Removing $SLEEP_HOOK (sudo)..."
+            sudo rm -f "$SLEEP_HOOK"
+            log "Removed."
+            ;;
+        status)
+            echo "  hook file: $SLEEP_HOOK $([[ -f "$SLEEP_HOOK" ]] && echo present || echo absent)"
+            ;;
+        *) die "usage: $0 amp-sleep {install|remove|status}" ;;
+    esac
+}
+
+amp_sleep_toggle() {   # menu helper
+    if [[ -f "$SLEEP_HOOK" ]]; then cmd_amp_sleep remove; else cmd_amp_sleep install; fi
 }
 
 # ======================== recommended setup ===============================
@@ -677,7 +1063,7 @@ cmd_test() {
     fi
 
     local ala; ala=$(dev_prop AudioLogicalAddress)
-    if [[ "$ala" =~ ^[0-9]+$ && "$ala" -ne 255 ]]; then
+    if ala_valid "$ala"; then
         local astat
         if astat=$(dev_call GetAudioStatus y "$ala" 2>/dev/null); then
             t_pass "audio system LA $ala: volume $(echo "$astat" | awk '{print $2}')%, mute $(echo "$astat" | awk '{print $3}')"
@@ -717,6 +1103,145 @@ cmd_test() {
     fi
 }
 
+# =============================== scan =====================================
+
+cmd_scan() {
+    require_user; require_daemon
+    # Poll is a bus-level ACK probe (fast NACK for empty addresses), so
+    # sweeping all 15 addresses is cheap; details are only fetched from
+    # devices that ACK. Rows sort by physical address, which nests the
+    # HDMI tree naturally (3.0.0.0 receiver, 3.4.0.0 = its input 4).
+    local ours=" $(dev_prop LogicalAddresses | cut -d' ' -f2- ) "
+    log "Scanning the CEC bus (logical addresses 0-14)..."
+    local act; act=$(active_source_pa) || act=""
+    local rows=() la pa
+    for la in {0..14}; do
+        if [[ "$ours" == *" $la "* ]]; then
+            pa=$(dev_prop PhysicalAddress)
+            rows+=("$pa|$la|$(cfg_prop OsdName)|-|(this device)")
+            continue
+        fi
+        dev_call Poll y "$la" >/dev/null 2>&1 || continue
+        pa=$(dev_pa "$la") || pa=65535
+        rows+=("$pa|$la|$(osd_of "$la")|$(vendor_of "$la")|$(power_status "$la")")
+    done
+    printf '  %-13s %-3s %-20s %-16s %-10s %s\n' "physical" "LA" "role" "OSD name" "vendor" "power"
+    local name vend st indent mark padisp
+    while IFS='|' read -r pa la name vend st; do
+        indent=$(printf '%*s' $(( $(pa_depth "$pa") * 2 )) "")
+        padisp=$(pa_pretty "$pa"); [[ "$pa" == 65535 ]] && padisp="?"
+        mark=""
+        [[ -n "$act" && "$pa" == "$act" ]] && mark=" ${CG}<- active source${C0}"
+        printf '  %-13s %-3s %-20s %-16s %-10s %s%s\n' \
+            "${indent}${padisp}" "$la" "$(la_name "$la")" "$name" "$vend" "$st" "$mark"
+    done < <(printf '%s\n' "${rows[@]}" | sort -t'|' -k1,1n)
+    [[ -n "$act" ]] || echo "  ${CD}(no active source -- nobody currently claims the input)${C0}"
+}
+
+# ===================== playing nice with other devices ====================
+# The classic multi-CEC-device fight: two sources behind one receiver both
+# fire <Active Source> / One Touch Play and yank the input around. These
+# verbs (plus the polite install units) are the ceasefire: look first, ask
+# for the input politely, give it back when done.
+
+cmd_active() {
+    require_user; require_daemon
+    if [[ "$(dev_prop Active)" == true ]]; then
+        log "We are the active source ($(pa_pretty "$(dev_prop PhysicalAddress)")) -- the TV/receiver input is ours."
+        return 0
+    fi
+    local pa
+    if ! pa=$(active_source_pa); then
+        log "No active source claimed on the bus."
+        echo "  TV off / on a non-CEC input -- or it's silently showing us: TVs don't"
+        echo "  re-announce routing that didn't change. 'switch' claims it cleanly."
+        return 0
+    fi
+    # Name the holder: find the logical address reporting that physical
+    # address (the <Active Source> broadcast doesn't carry identity).
+    local ours=" $(dev_prop LogicalAddresses | cut -d' ' -f2- ) " la hold=""
+    for la in {0..14}; do
+        [[ "$ours" == *" $la "* ]] && continue
+        dev_call Poll y "$la" >/dev/null 2>&1 || continue
+        [[ "$(dev_pa "$la" || echo -1)" == "$pa" ]] || continue
+        hold="LA $la, $(la_name "$la"), \"$(osd_of "$la")\""
+        break
+    done
+    log "Active source: $(pa_pretty "$pa")${hold:+ ($hold)} -- another device holds the input."
+    echo "  Take it over: '$0 switch' -- or leave them alone; that's the point."
+}
+
+cmd_handoff() {
+    require_user; require_daemon
+    local target="${1:-}"
+    if [[ -z "$target" && -t 0 ]]; then
+        cmd_scan
+        echo
+        ask "Hand the input to (LA number or physical address a.b.c.d)"
+        target="$REPLY"
+    fi
+    [[ -n "$target" ]] || die "usage: $0 handoff <LA | a.b.c.d>   ('scan' lists both)"
+    local pa la="" a b c d
+    if [[ "$target" =~ ^[0-9a-fA-F]\.[0-9a-fA-F]\.[0-9a-fA-F]\.[0-9a-fA-F]$ ]]; then
+        IFS=. read -r a b c d <<< "$target"
+        pa=$(( 16#$a<<12 | 16#$b<<8 | 16#$c<<4 | 16#$d ))
+        # find the LA behind that PA -- needed for the wake step below
+        local ours=" $(dev_prop LogicalAddresses | cut -d' ' -f2- ) " cand
+        for cand in {0..14}; do
+            [[ "$ours" == *" $cand "* ]] && continue
+            dev_call Poll y "$cand" >/dev/null 2>&1 || continue
+            [[ "$(dev_pa "$cand" || echo -1)" == "$pa" ]] && { la=$cand; break; }
+        done
+    elif [[ "$target" =~ ^[0-9]+$ ]] && (( target <= 14 )); then
+        la=$target
+        dev_call Poll y "$la" >/dev/null 2>&1 || die "Nothing answers at LA $la -- try 'scan'."
+        pa=$(dev_pa "$la") || die "Device at LA $la did not report a physical address."
+    else
+        die "usage: $0 handoff <LA | a.b.c.d>   ('scan' lists both)"
+    fi
+    (( pa != 0 )) || die "0.0.0.0 is the TV itself -- handoff routes TO a source device."
+    # Verified live (Apple TV): a device in standby IGNORES <Set Stream
+    # Path> -- wake-on-routing is optional in the spec -- but honors it
+    # once awake. So wake it first and wait until it reports on.
+    if [[ -n "$la" && "$(power_status "$la")" != on ]]; then
+        log "Target is asleep -- waking it (<User Control Pressed>[Power On])..."
+        dev_call PressOnceUserControl ayy 1 109 "$la" >/dev/null 2>&1 || true
+        local i
+        for i in {1..6}; do
+            sleep 2
+            [[ "$(power_status "$la")" == on ]] && break
+        done
+    fi
+    # <Set Stream Path> (0x86): TV + receiver route to that path, and the
+    # device there answers with an <Active Source> claim.
+    log "Routing the input to $(pa_pretty "$pa") via <Set Stream Path>..."
+    raw_send 15 134 $(( (pa>>8)&255 )) $(( pa&255 ))
+    # the claim can trail the routing by a few seconds (verified live)
+    local act="" i
+    for i in {1..4}; do
+        sleep 2
+        act=$(active_source_pa) || act=""
+        [[ "$act" == "$pa" ]] && break
+    done
+    if [[ "$act" == "$pa" ]]; then
+        log "Done -- $(pa_pretty "$pa") claimed the input."
+    else
+        warn "No <Active Source> claim from $(pa_pretty "$pa") yet -- some devices"
+        warn "take a while after waking. Check with 'active'."
+    fi
+}
+
+cmd_release() {
+    require_user; require_daemon
+    local pa; pa=$(dev_prop PhysicalAddress)
+    [[ "$pa" =~ ^[0-9]+$ ]] || die "Own physical address unknown -- adapter detached?"
+    # <Inactive Source> (0x9d), directed to the TV with our PA: "we're done,
+    # you pick". The TV falls back to its previous input / home screen
+    # instead of us force-routing anywhere. The politest exit there is.
+    raw_send "$TV_LA" 157 $(( (pa>>8)&255 )) $(( pa&255 ))
+    log "<Inactive Source> sent -- we gave up the input; the TV decides what's next."
+}
+
 # ======================== monitor / remote ================================
 
 cmd_monitor() {
@@ -749,6 +1274,42 @@ cmd_remote() {
 
 cmd_tv_on()    { require_user; require_daemon; dev_call Wake >/dev/null; log "Wake sent (power on + switch input)."; }
 cmd_tv_off()   { require_user; require_daemon; dev_call Standby y "$TV_LA" >/dev/null; log "Standby sent to the TV."; }
+
+# <System Audio Mode Request> (0x70) with our physical address as operand:
+# the spec requires an amp in standby to power on, take over audio, and
+# reply <Set System Audio Mode> (0x72). Verified live against a Yamaha
+# RX-V381. Fallback for amps that skip the reply: <User Control Pressed>
+# [Power On Function] (0x6d).
+cmd_amp_on() {
+    require_user; require_daemon
+    local la pa out
+    la=$(audio_la)
+    pa=$(dev_prop PhysicalAddress)
+    [[ "$pa" =~ ^[0-9]+$ ]] || die "Own physical address unknown -- adapter detached, or the receiver's
+      standby-passthrough is still renegotiating the link (takes ~20 s; retry)."
+    if out=$(dev_call SendReceiveRawMessage ayyyq 3 112 $(( (pa>>8)&255 )) $(( pa&255 )) "$la" 114 2000 2>/dev/null); then
+        local sam=off; [[ "${out##* }" == 1 ]] && sam=on
+        log "Receiver (LA $la) awake -- system audio mode: $sam."
+    else
+        warn "No <Set System Audio Mode> reply -- trying <User Control Pressed>[Power On]..."
+        dev_call PressOnceUserControl ayy 1 109 "$la" >/dev/null 2>&1 || true
+        sleep 2
+        log "Receiver power status: $(power_status "$la")"
+    fi
+}
+
+cmd_amp_off() {
+    require_user; require_daemon
+    local la; la=$(audio_la)
+    dev_call Standby y "$la" >/dev/null
+    log "Standby sent to the receiver (LA $la)."
+    # Verified live (RX-V381): with the console plugged THROUGH the
+    # receiver, its HDMI passthrough drops on standby, taking /dev/cec0
+    # and cecd's device object with it until Standby Through renegotiates
+    # the link (~20 s). CEC verbs just fail during that window.
+    warn "If the console is routed through the receiver, CEC drops for ~20 s"
+    warn "while its standby-passthrough takes over -- verbs fail until then."
+}
 cmd_switch()   { require_user; require_daemon; dev_call SetActiveSource i -- -1 >/dev/null; log "Active-source claim sent."; }
 cmd_vol_up()   { require_user; require_daemon; dev_call VolumeUp   y "$(audio_la)" >/dev/null; }
 cmd_vol_down() { require_user; require_daemon; dev_call VolumeDown y "$(audio_la)" >/dev/null; }
@@ -776,6 +1337,30 @@ menu_toggles() {
     done
 }
 
+menu_amp() {
+    while true; do
+        local la ast
+        la=$(audio_la); ast=$(power_status "$la")
+        local items=(
+            "Receiver power|$(badge_amp_power "$ast")|amp-on / amp-off via <System Audio Mode Request> -- flips based on the state shown."
+            "Wake receiver at boot|$(badge_amp_follow boot)|Boot-wake also powers the receiver + hands it the audio. Needs boot-wake installed."
+            "Standby receiver at poweroff|$(badge_amp_follow poweroff)|Poweroff unit sends the receiver to standby too. On by default; needs the unit."
+            "Standby receiver on suspend|$(badge_amp_follow suspend)|Receiver off when the console sleeps -- unless another device plays through it. Needs the hook."
+            "Wake receiver on resume|$(badge_amp_follow resume)|Receiver on + takes the audio when the console wakes. Needs the hook."
+            "Suspend/resume hook|$(badge_sleep_hook)|Root helper in /etc/systemd/system-sleep driving the two follows above. Uses sudo."
+        )
+        menu_select "Receiver / amp  ${CD}(CEC audio system, LA $la)${C0}" "${items[@]}" || { echo; break; }
+        case $MENU_CHOICE in
+            0) if [[ "$ast" == on ]]; then run_action cmd_amp_off; else run_action cmd_amp_on; fi ;;
+            1) run_action cmd_amp_follow boot ;;
+            2) run_action cmd_amp_follow poweroff ;;
+            3) run_action cmd_amp_follow suspend ;;
+            4) run_action cmd_amp_follow resume ;;
+            5) run_action amp_sleep_toggle ;;
+        esac
+    done
+}
+
 cmd_menu() {
     [[ -t 0 && -t 1 ]] || die "The menu needs an interactive terminal. See '$0 help' for CLI commands."
     # Opposite of bc250-power.sh: this script must NOT run as root, because
@@ -787,9 +1372,14 @@ cmd_menu() {
             "Recommended setup||One shot: OSD name + TV off on suspend/poweroff + wake at boot."
             "Set TV name (OSD)|$(badge_osd)|Name in the TV's device list. Default: $OSD_DEFAULT."
             "Behavior toggles|$(badge_overrides)|Wake/standby/remote toggles -- overrides Steam UI settings."
-            "TV standby on power-off|$(badge_standby)|Sends CEC standby on poweroff only (not reboot/suspend). Uses sudo."
-            "Wake TV at boot|$(badge_wake)|Wake the TV + grab its input when the session starts."
+            "TV standby on power-off|$(badge_standby)|CEC standby on poweroff only -- skipped if another device holds the input. Uses sudo."
+            "Wake TV at boot|$(badge_wake)|Wake the TV at session start; polite -- won't steal the input from an active device."
+            "Receiver / amp|$(badge_amp_summary)|Receiver power now, plus follow-the-console toggles: boot, poweroff, suspend, resume."
+            "Who has the input|$(badge_active)|Ask the bus for the active source -- the device the TV/receiver is showing."
+            "Hand off the input|$(badge_active)|Route the TV/receiver to another device (it wakes + claims the input)."
+            "Release the input||We give up the input, the TV picks what's next. The polite exit."
             "Test TV control|$(tv_badge_menu)|Guided sequence: poll, wake, switch input, audio, standby."
+            "Scan CEC bus|$(tv_badge_menu)|HDMI tree of every device: address, name, vendor, power, active source."
             "TV-remote input|$(badge_remote)|uinput relay state and the input devices cecd created."
             "Live CEC monitor||Raw bus traffic via cectool (needs sudo; Ctrl-C exits)."
             "Full help||The complete manual for every CLI command."
@@ -802,10 +1392,15 @@ cmd_menu() {
             3) menu_toggles ;;
             4) run_action shutdown_standby_toggle ;;
             5) run_action boot_wake_toggle ;;
-            6) run_action cmd_test ;;
-            7) run_action cmd_remote ;;
-            8) cmd_monitor ;;
-            9) cmd_help; pause_key ;;
+            6) menu_amp ;;
+            7) run_action cmd_active ;;
+            8) run_action cmd_handoff ;;
+            9) run_action cmd_release ;;
+            10) run_action cmd_test ;;
+            11) run_action cmd_scan ;;
+            12) run_action cmd_remote ;;
+            13) cmd_monitor ;;
+            14) cmd_help; pause_key ;;
         esac
     done
 }
@@ -849,24 +1444,60 @@ SETUP
                    which outranks Steam UI's fragment. No arg = flip.
   clear-overrides  Delete the override file; Steam UI back in control.
   shutdown-standby install|remove|status
-                   System unit: CEC standby to the TV on POWEROFF only
-                   (reboot and suspend excluded). The one sudo action.
-  boot-wake install|remove|status
-                   User unit: wake TV + switch its input to the BC-250
-                   at every session start.
+                   System unit: CEC standby to the TV + receiver on
+                   POWEROFF only (reboot and suspend excluded) -- and only
+                   if no OTHER device holds the input. The one sudo action.
+  boot-wake install [polite|grab] | remove | status
+                   User unit: wake the TV at every session start.
+                   polite (default): if the TV is on and another device is
+                   the active source, don't touch the input. grab: old
+                   behavior, always switch input to the BC-250.
 
 EVERYDAY VERBS
   tv-on            Wake the TV and switch input to the BC-250.
   tv-off           Put the TV into standby.
+  amp-on           Power on the receiver/soundbar via <System Audio Mode
+                   Request> -- it also takes over volume handling.
+  amp-off          Put the receiver/soundbar into standby.
   switch           Claim active source (switch TV input to us).
   vol-up|vol-down|mute
                    Volume on the CEC audio system (soundbar/AVR).
+
+RECEIVER FOLLOWS THE CONSOLE
+  amp-follow {boot|poweroff|suspend|resume} [on|off]
+                   Make the receiver's power track the console. No arg =
+                   flip. Stored in ~/.config/bc250-cec.conf, read by the
+                   helpers at runtime -- flipping is instant. Each needs
+                   its carrier: boot -> 'boot-wake install', poweroff ->
+                   'shutdown-standby install' (poweroff is ON by default),
+                   suspend/resume -> 'amp-sleep install'.
+  amp-sleep install|remove|status
+                   Root hook in /etc/systemd/system-sleep driving the
+                   suspend/resume follows (sudo). Standby paths stay
+                   polite: a receiver another device is playing through
+                   is left on.
+
+PLAYING NICE (shared receiver / multiple CEC sources)
+  active           Who holds the input right now: us, another device (says
+                   which), or nobody. Look before you switch.
+  handoff [LA|a.b.c.d]
+                   Route the TV/receiver to another device via <Set Stream
+                   Path>; it wakes and claims the input. No arg: pick from
+                   a scan. The counterpart of 'switch'.
+  release          <Inactive Source>: we give up the input and the TV
+                   picks what's next. Politer than tv-off when others
+                   share the screen.
+  Both installed units are polite by default -- boot-wake won't steal the
+  input from an active device, shutdown-standby won't power off a TV that
+  another device is using.
 
 DIAGNOSTICS
   status           Full health dump -- device, daemon, bus identity,
                    effective config + source, TV power, installed units.
   test             Guided pass/fail sequence: poll TV, power status,
                    wake, input switch, audio, optional standby.
+  scan             HDMI tree of all devices: physical address, role, OSD
+                   name, vendor, power, and who is the active source.
   monitor          Raw CEC traffic (sudo cectool monitor; Ctrl-C exits).
                    Rootless: busctl --user monitor com.steampowered.CecDaemon1
   remote           TV-remote relay state + the input devices cecd made.
@@ -875,8 +1506,12 @@ FILE MAP (everything survives SteamOS updates)
   ~/.config/cecd/config.d/50-bc250.toml       osd_name
   ~/.config/cecd/config.d/99-zz-bc250.toml    toggle overrides (outranks
                                               Steam UI's 99-steamos-manager.toml)
+  ~/.config/bc250-cec.conf                    receiver-follow toggles
   ~/.config/systemd/user/bc250-cec-boot-wake.service
+  ~/.local/bin/bc250-cec-boot-wake            its helper (polite/grab + amp)
   /etc/systemd/system/bc250-cec-poweroff-standby.service
+  /etc/bc250-cec-poweroff-standby.sh          its helper (polite gate)
+  /etc/systemd/system-sleep/bc250-cec-amp.sh  amp suspend/resume hook
   (nothing in /usr or /boot; cecd itself is part of the OS image)
 EOF
 }
@@ -890,12 +1525,20 @@ case "${1:-}" in
     toggle)            shift; cmd_toggle "$@" ;;
     clear-overrides)   cmd_clear_overrides ;;
     shutdown-standby)  shift; cmd_shutdown_standby "${1:-status}" ;;
-    boot-wake)         shift; cmd_boot_wake "${1:-status}" ;;
+    boot-wake)         shift; cmd_boot_wake "${1:-status}" "${2:-polite}" ;;
+    active)            cmd_active ;;
+    handoff)           shift; cmd_handoff "${1:-}" ;;
+    release)           cmd_release ;;
+    amp-follow)        shift; cmd_amp_follow "$@" ;;
+    amp-sleep)         shift; cmd_amp_sleep "${1:-status}" ;;
     test)              cmd_test ;;
+    scan)              cmd_scan ;;
     monitor)           cmd_monitor ;;
     remote)            cmd_remote ;;
     tv-on)             cmd_tv_on ;;
     tv-off)            cmd_tv_off ;;
+    amp-on)            cmd_amp_on ;;
+    amp-off)           cmd_amp_off ;;
     switch)            cmd_switch ;;
     vol-up)            cmd_vol_up ;;
     vol-down)          cmd_vol_down ;;
@@ -904,7 +1547,8 @@ case "${1:-}" in
     help|-h|--help)    cmd_help ;;
     "") if [[ -t 0 && -t 1 ]]; then cmd_menu; exit 0; fi ;&
     *) echo "Usage: $0 {status|setup|osd-name|toggle|clear-overrides|shutdown-standby|boot-wake|"
-       echo "           test|monitor|remote|tv-on|tv-off|switch|vol-up|vol-down|mute|menu|help}"
+       echo "           active|handoff|release|amp-follow|amp-sleep|test|scan|monitor|remote|"
+       echo "           tv-on|tv-off|amp-on|amp-off|switch|vol-up|vol-down|mute|menu|help}"
        echo "  (no arguments on a terminal opens the guided menu)"
        echo
        echo "Run '$0 help' for the full explanation of every command."
