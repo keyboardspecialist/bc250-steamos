@@ -101,10 +101,19 @@ gaps:
     restores the old behavior), and poweroff-standby leaves the TV +
     receiver on when someone else holds the input.
 - `status`/`test`/`scan`/`monitor`/`remote` tooling and one-shot verbs
-  (`tv-on`, `tv-off`, `amp-on`, `amp-off`, `switch`,
+  (`tv-on`, `tv-off [hard]`, `amp-on`, `amp-off`, `switch`,
   `vol-up`/`vol-down`/`mute`). `scan` renders the HDMI tree from physical
   addresses — who's plugged into which receiver input — with vendor, power
   state, and the active source marked.
+- **`repair`** — for "CEC stopped responding", typically after suspend:
+  some DP→HDMI adapters silently lose their CEC registration across sleep
+  (a failure mode reported in the field on TCL Roku + DP-adapter setups),
+  and a receiver's standby-passthrough drops `/dev/cec0` for ~20 s. Health
+  check, then a cecd restart to re-claim the logical address — the
+  cecd-safe equivalent of `cec-ctl --clear` + `--playback`, which repair
+  only uses raw when cecd is off (clearing a live cecd's address would
+  break it). `tv-off hard` sends the remote's discrete power-off key for
+  TVs that bounce back out of `<Standby>` (TCL Roku class).
 
 Runs as **deck, not root** (cecd lives on the user D-Bus session); only the
 poweroff unit install sudos, by itself. Adapter caveat: CEC over DP only

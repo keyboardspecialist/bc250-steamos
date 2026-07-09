@@ -813,7 +813,8 @@ if grep -qx 'amp_boot=1' "$CONF" 2>/dev/null; then
          /com/steampowered/CecDaemon1/Devices/Cec0 \
          com.steampowered.CecDaemon1.CecDevice1 PhysicalAddress 2>/dev/null \
          | awk '{print $2}')
-    if [[ "$pa" =~ ^[0-9]+$ ]]; then
+    # 65535 = f.f.f.f = adapter not registered (can happen right after boot)
+    if [[ "$pa" =~ ^[0-9]+$ ]] && (( pa != 65535 )); then
         "${D[@]}" SendRawMessage ayy 3 112 $(( (pa>>8)&255 )) $(( pa&255 )) 5 >/dev/null || true
     fi
 fi
@@ -959,7 +960,8 @@ post)
         for i in 1 2 3 4 5; do
             if [ -e "$dev" ]; then
                 pa=$(cec-ctl -d "$dev" 2>/dev/null | sed -n 's/.*Physical Address *: *//p' | head -1)
-                [ -n "$pa" ] \
+                # f.f.f.f = registration not back yet -- keep retrying
+                [ -n "$pa" ] && [ "$pa" != "f.f.f.f" ] \
                     && cec-ctl -s -d "$dev" --to 5 --system-audio-mode-request phys-addr="$pa" \
                     && exit 0
             fi
@@ -1234,12 +1236,108 @@ cmd_handoff() {
 cmd_release() {
     require_user; require_daemon
     local pa; pa=$(dev_prop PhysicalAddress)
-    [[ "$pa" =~ ^[0-9]+$ ]] || die "Own physical address unknown -- adapter detached?"
+    [[ "$pa" =~ ^[0-9]+$ ]] && (( pa != 65535 )) \
+        || die "Own physical address unknown -- adapter detached? If it stays broken: $0 repair"
     # <Inactive Source> (0x9d), directed to the TV with our PA: "we're done,
     # you pick". The TV falls back to its previous input / home screen
     # instead of us force-routing anywhere. The politest exit there is.
     raw_send "$TV_LA" 157 $(( (pa>>8)&255 )) $(( pa&255 ))
     log "<Inactive Source> sent -- we gave up the input; the TV decides what's next."
+}
+
+# =============================== repair ===================================
+# "CEC stopped responding" -- usually after suspend. Two known causes:
+# some adapters silently lose their CEC registration across sleep (symptom:
+# works once, then every command times out -- reported in the field on a
+# TCL Roku + DP adapter setup), and behind a receiver the standby-
+# passthrough drops /dev/cec0 for ~20 s while the link renegotiates.
+# Restarting cecd makes it re-claim its logical address -- the rootless
+# equivalent of the cec-ctl --clear + --playback dance. Raw re-registration
+# is only safe when cecd is NOT running: --clear on a live cecd would yank
+# its claimed address out from under it.
+
+reg_info() {   # adapter registration as cec-ctl sees it -> "PA MASK"
+    local out pa mask
+    out=$(cec-ctl -d "$CEC_DEV" 2>/dev/null) || true
+    pa=$(sed -n 's/.*Physical Address *: *//p' <<< "$out" | head -1)
+    mask=$(sed -n 's/.*Logical Address Mask *: *//p' <<< "$out" | head -1)
+    echo "${pa:-?} ${mask:-?}"
+}
+
+reg_ok() {   # reg_ok PA MASK -- registered = valid PA and a nonzero LA mask
+    [[ "$1" != "?" && "$1" != "f.f.f.f" && "$2" =~ ^0x0*[1-9a-fA-F] ]]
+}
+
+tv_acks() {   # can we reach the TV -- via cecd if up, else raw cec-ctl
+    if cecd_up; then
+        dev_call Poll y "$TV_LA" >/dev/null 2>&1
+    else
+        cec-ctl -s -d "$CEC_DEV" --to "$TV_LA" --give-device-power-status 2>/dev/null \
+            | grep -q 'pwr-state'
+    fi
+}
+
+repair_checks() {   # print the three health lines; sets OK_REG OK_BUS OK_TV
+    local pa mask dpa
+    read -r pa mask <<< "$(reg_info)"
+    OK_REG=0; OK_BUS=0; OK_TV=0
+    reg_ok "$pa" "$mask" && OK_REG=1
+    if cecd_up; then
+        dpa=$(dev_prop PhysicalAddress)
+        [[ "$dpa" =~ ^[0-9]+$ ]] && (( dpa != 65535 )) && OK_BUS=1
+    fi
+    tv_acks && OK_TV=1
+    echo "  adapter registration: $( ((OK_REG)) && echo ok || echo BAD ) (PA $pa, LA mask $mask)"
+    echo "  cecd on the bus:      $( ((OK_BUS)) && echo ok || echo "not answering / no address" )"
+    echo "  TV ACKs us:           $( ((OK_TV)) && echo ok || echo NO )"
+    return 0
+}
+
+cmd_repair() {
+    require_user
+    [[ -e "$CEC_DEV" ]] || die "$CEC_DEV is missing -- software can't repair that.
+      Behind a receiver it vanishes for ~20 s after amp standby while the
+      passthrough renegotiates (wait, then retry); otherwise re-seat the
+      adapter (it must tunnel CEC over the DP AUX channel)."
+    log "CEC health check..."
+    repair_checks
+    if (( OK_REG && OK_BUS && OK_TV )); then
+        log "Healthy -- nothing to repair."
+        return 0
+    fi
+    echo
+    # cecd ships with the OS and is pulled in by dependency, so is-enabled
+    # says "disabled" even on a stock install -- presence of the unit file
+    # is the real signal. Only a MASKED unit means "user turned it off on
+    # purpose"; then (or with no cecd at all) we re-register raw instead.
+    local pa mask i want_cecd=0
+    if [[ "$(systemctl --user is-enabled "$CECD_SVC" 2>/dev/null)" != masked ]] \
+       && systemctl --user cat "$CECD_SVC" >/dev/null 2>&1; then
+        want_cecd=1
+        log "Restarting cecd -- it re-claims its logical address on startup..."
+        systemctl --user restart "$CECD_SVC"
+        for i in {1..8}; do
+            sleep 2
+            read -r pa mask <<< "$(reg_info)"
+            reg_ok "$pa" "$mask" && cecd_up && break
+        done
+    else
+        log "cecd is masked or absent -- raw re-registration (--clear + --playback)..."
+        cec-ctl -d "$CEC_DEV" --clear >/dev/null 2>&1 || true
+        cec-ctl -d "$CEC_DEV" --playback >/dev/null 2>&1 || true
+        sleep 2
+    fi
+    log "After repair:"
+    repair_checks
+    if (( OK_REG && OK_TV )) && { (( ! want_cecd )) || (( OK_BUS )); }; then
+        log "Repaired."
+        return 0
+    fi
+    warn "Still unhealthy. Next: replug the adapter / power-cycle the receiver."
+    warn "If only the TV poll fails, check the TV's CEC setting (brand names:"
+    warn "SimpLink, Anynet+, Bravia Sync, 1-Touch Play, HDMI Control) -- TV"
+    warn "firmware updates are known to flip it off."
+    return 1
 }
 
 # ======================== monitor / remote ================================
@@ -1273,7 +1371,23 @@ cmd_remote() {
 # ========================= one-shot CLI verbs =============================
 
 cmd_tv_on()    { require_user; require_daemon; dev_call Wake >/dev/null; log "Wake sent (power on + switch input)."; }
-cmd_tv_off()   { require_user; require_daemon; dev_call Standby y "$TV_LA" >/dev/null; log "Standby sent to the TV."; }
+
+cmd_tv_off() {
+    require_user; require_daemon
+    if [[ "${1:-}" == hard ]]; then
+        # <User Control Pressed>[Power Off Function] (0x6c): the remote's
+        # DISCRETE off key. For TVs that bounce back out of <Standby> when
+        # more CEC traffic arrives during suspend (TCL Roku class). Unlike
+        # ui-cmd=power (0x40) it is not a toggle, so no state-gating needed.
+        dev_call PressOnceUserControl ayy 1 108 "$TV_LA" >/dev/null
+        log "Discrete power-off keypress sent to the TV."
+    elif [[ -n "${1:-}" ]]; then
+        die "usage: $0 tv-off [hard]"
+    else
+        dev_call Standby y "$TV_LA" >/dev/null
+        log "Standby sent to the TV."
+    fi
+}
 
 # <System Audio Mode Request> (0x70) with our physical address as operand:
 # the spec requires an amp in standby to power on, take over audio, and
@@ -1285,8 +1399,10 @@ cmd_amp_on() {
     local la pa out
     la=$(audio_la)
     pa=$(dev_prop PhysicalAddress)
-    [[ "$pa" =~ ^[0-9]+$ ]] || die "Own physical address unknown -- adapter detached, or the receiver's
-      standby-passthrough is still renegotiating the link (takes ~20 s; retry)."
+    [[ "$pa" =~ ^[0-9]+$ ]] && (( pa != 65535 )) \
+        || die "Own physical address unknown -- adapter detached, or the receiver's
+      standby-passthrough is still renegotiating the link (takes ~20 s; retry).
+      If it stays broken: $0 repair"
     if out=$(dev_call SendReceiveRawMessage ayyyq 3 112 $(( (pa>>8)&255 )) $(( pa&255 )) "$la" 114 2000 2>/dev/null); then
         local sam=off; [[ "${out##* }" == 1 ]] && sam=on
         log "Receiver (LA $la) awake -- system audio mode: $sam."
@@ -1380,6 +1496,7 @@ cmd_menu() {
             "Release the input||We give up the input, the TV picks what's next. The polite exit."
             "Test TV control|$(tv_badge_menu)|Guided sequence: poll, wake, switch input, audio, standby."
             "Scan CEC bus|$(tv_badge_menu)|HDMI tree of every device: address, name, vendor, power, active source."
+            "Repair CEC|$(tv_badge_menu)|Dead after suspend? Health check + re-register the adapter on the bus."
             "TV-remote input|$(badge_remote)|uinput relay state and the input devices cecd created."
             "Live CEC monitor||Raw bus traffic via cectool (needs sudo; Ctrl-C exits)."
             "Full help||The complete manual for every CLI command."
@@ -1398,9 +1515,10 @@ cmd_menu() {
             9) run_action cmd_release ;;
             10) run_action cmd_test ;;
             11) run_action cmd_scan ;;
-            12) run_action cmd_remote ;;
-            13) cmd_monitor ;;
-            14) cmd_help; pause_key ;;
+            12) run_action cmd_repair ;;
+            13) run_action cmd_remote ;;
+            14) cmd_monitor ;;
+            15) cmd_help; pause_key ;;
         esac
     done
 }
@@ -1455,7 +1573,10 @@ SETUP
 
 EVERYDAY VERBS
   tv-on            Wake the TV and switch input to the BC-250.
-  tv-off           Put the TV into standby.
+  tv-off [hard]    Put the TV into standby. 'hard' sends the remote's
+                   discrete power-off key instead (<User Control Pressed>
+                   [Power Off Function]) -- for TVs that bounce back out
+                   of <Standby> when other CEC traffic follows it.
   amp-on           Power on the receiver/soundbar via <System Audio Mode
                    Request> -- it also takes over volume handling.
   amp-off          Put the receiver/soundbar into standby.
@@ -1498,9 +1619,24 @@ DIAGNOSTICS
                    wake, input switch, audio, optional standby.
   scan             HDMI tree of all devices: physical address, role, OSD
                    name, vendor, power, and who is the active source.
+  repair           Health check + fix for "CEC stopped responding":
+                   restarts cecd so it re-claims its logical address (raw
+                   cec-ctl --clear/--playback only if cecd is off).
   monitor          Raw CEC traffic (sudo cectool monitor; Ctrl-C exits).
                    Rootless: busctl --user monitor com.steampowered.CecDaemon1
   remote           TV-remote relay state + the input devices cecd made.
+
+TROUBLESHOOTING
+  CEC dead after suspend/resume:  run 'repair'. Some DP->HDMI adapters
+    silently lose their CEC registration across sleep (works once, then
+    every command times out); behind a receiver, its standby-passthrough
+    also drops /dev/cec0 for ~20 s while the link renegotiates.
+  TV turns back on (or lands on its home screen) instead of staying off
+    when the console suspends:  some TVs (TCL Roku notably) abort
+    <Standby> when more CEC traffic arrives -- use 'tv-off hard'.
+  Why build on cecd instead of raw cec-ctl units: keeping cecd gives us
+    the TV remote as input, Steam UI integration and resume handling for
+    free; raw cec-ctl scripts are the fallback when cecd itself is off.
 
 FILE MAP (everything survives SteamOS updates)
   ~/.config/cecd/config.d/50-bc250.toml       osd_name
@@ -1536,7 +1672,8 @@ case "${1:-}" in
     monitor)           cmd_monitor ;;
     remote)            cmd_remote ;;
     tv-on)             cmd_tv_on ;;
-    tv-off)            cmd_tv_off ;;
+    tv-off)            shift; cmd_tv_off "${1:-}" ;;
+    repair)            cmd_repair ;;
     amp-on)            cmd_amp_on ;;
     amp-off)           cmd_amp_off ;;
     switch)            cmd_switch ;;
@@ -1547,8 +1684,8 @@ case "${1:-}" in
     help|-h|--help)    cmd_help ;;
     "") if [[ -t 0 && -t 1 ]]; then cmd_menu; exit 0; fi ;&
     *) echo "Usage: $0 {status|setup|osd-name|toggle|clear-overrides|shutdown-standby|boot-wake|"
-       echo "           active|handoff|release|amp-follow|amp-sleep|test|scan|monitor|remote|"
-       echo "           tv-on|tv-off|amp-on|amp-off|switch|vol-up|vol-down|mute|menu|help}"
+       echo "           active|handoff|release|amp-follow|amp-sleep|test|scan|repair|monitor|"
+       echo "           remote|tv-on|tv-off|amp-on|amp-off|switch|vol-up|vol-down|mute|menu|help}"
        echo "  (no arguments on a terminal opens the guided menu)"
        echo
        echo "Run '$0 help' for the full explanation of every command."
