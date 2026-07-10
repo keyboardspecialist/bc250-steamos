@@ -783,9 +783,17 @@ shutdown_standby_toggle() {   # menu helper: flip install state
 # activatable, so the calls also cover "cecd not started yet"; the retry
 # loop covers the adapter still negotiating HPD right after boot.
 #
+# Order matters when the console is plugged THROUGH the receiver: the amp
+# wake (amp-follow boot) runs first, and TV wake + <Active Source> wait for
+# the amp to report on -- a receiver in standby misses broadcasts, and a TV
+# woken early just shows a dead input.
+#
 # Default mode is POLITE: if the TV is already on and another device is the
 # active source (someone's watching the Apple TV), the helper backs off
 # instead of yanking the input. 'install grab' restores the old behavior.
+# The polite probe stays FIRST (before the amp wake): it's read-only, and
+# <System Audio Mode Request> would steal the audio path from an active
+# device if we sent it before looking.
 # The active-source probe can't misfire on ourselves: cecd never answers
 # <Request Active Source> sent from its own logical address, and at session
 # start we haven't claimed anything yet anyway.
@@ -816,22 +824,44 @@ if [[ "$MODE" == polite && ( "$st" == 0 || "$st" == 2 ) ]]; then
         exit 0
     fi
 fi
-# Wake = power on + input to us; the explicit claim after it is needed
-# because Wake alone doesn't broadcast <Active Source> (verified live)
-"${D[@]}" Wake || true
-"${D[@]}" SetActiveSource i -- -1 || true
-# Receiver wake (toggle: bc250-cec.sh amp-follow boot): <System Audio Mode
-# Request> with our PA = "amp on + take the audio". LA 5 is fixed by spec.
+# Receiver wake FIRST (toggle: bc250-cec.sh amp-follow boot): with the
+# console plugged THROUGH the receiver, the amp must be up for the TV to
+# have a picture to route to -- and a receiver in standby misses routing
+# broadcasts (same behavior 'handoff' works around), so the <Active
+# Source> claim below has to wait for it. <System Audio Mode Request>
+# with our PA = "amp on + take the audio"; LA 5 is fixed by spec. The PA
+# read retries: the adapter can register late at boot (65535 = f.f.f.f).
+amp_sent=0
 if grep -qx 'amp_boot=1' "$CONF" 2>/dev/null; then
-    pa=$(busctl --user --timeout=5 get-property com.steampowered.CecDaemon1 \
-         /com/steampowered/CecDaemon1/Devices/Cec0 \
-         com.steampowered.CecDaemon1.CecDevice1 PhysicalAddress 2>/dev/null \
-         | awk '{print $2}')
-    # 65535 = f.f.f.f = adapter not registered (can happen right after boot)
+    pa=""
+    for i in 1 2 3 4; do
+        pa=$(busctl --user --timeout=5 get-property com.steampowered.CecDaemon1 \
+             /com/steampowered/CecDaemon1/Devices/Cec0 \
+             com.steampowered.CecDaemon1.CecDevice1 PhysicalAddress 2>/dev/null \
+             | awk '{print $2}')
+        [[ "$pa" =~ ^[0-9]+$ ]] && (( pa != 65535 )) && break
+        sleep 2
+    done
     if [[ "$pa" =~ ^[0-9]+$ ]] && (( pa != 65535 )); then
         "${D[@]}" SendRawMessage ayy 3 112 $(( (pa>>8)&255 )) $(( pa&255 )) 5 >/dev/null || true
+        amp_sent=1
     fi
 fi
+# Hold ALL TV commands until the amp reports on (0x8f -> 0x90, status 0):
+# a receiver mid-wake misses broadcasts, and waking the TV first just
+# routes it to a dead input. Give up after ~20 s and proceed anyway --
+# better a late picture than none.
+if [[ $amp_sent == 1 ]]; then
+    for i in 1 2 3 4 5 6; do
+        out=$("${D[@]}" SendReceiveRawMessage ayyyq 1 143 5 144 1500 2>/dev/null) \
+            && [[ "${out##* }" == 0 ]] && break
+        sleep 2
+    done
+fi
+# Wake = TV power on + input to us; the explicit claim after it is needed
+# because Wake alone doesn't broadcast <Active Source> (verified live).
+"${D[@]}" Wake || true
+"${D[@]}" SetActiveSource i -- -1 || true
 exit 0
 EOF
     } > "$WAKE_HELPER"
