@@ -34,8 +34,15 @@ audio DTO.
 
 ## The fix
 
-`bc250-dp-audio-clock.patch` — two hunks against Valve's kernel tree
-(`linux-neptune-616`, commit `57ac0765fe0d`):
+Two patch variants; `build.sh` picks by the running kernel's version:
+
+- `bc250-dp-audio-clock-6.16.patch` — both hunks, for SteamOS 3.8.x
+  (`linux-neptune-616`).
+- `bc250-dp-audio-clock-6.18.patch` — hunk 2 only, for SteamOS 3.9.x
+  (`linux-neptune-618`): Valve's 6.18 tree already carries the clk_mgr
+  reorder (hunk 1) upstream, so only the spread-spectrum hunk remains.
+
+The full fix, as written against `linux-neptune-616` commit `57ac0765fe0d`:
 
 1. **`dc/clk_mgr/clk_mgr.c`** — check `dce_version == DCN_VERSION_2_01`
    *before* the Beige Goby rev-range check, so Cyan Skillfish gets
@@ -138,7 +145,8 @@ built module carries DWARF; `strip --strip-debug` before packaging
 
 | File | Purpose |
 |---|---|
-| `bc250-dp-audio-clock.patch` | The two-hunk source patch |
+| `bc250-dp-audio-clock-6.16.patch` | Full two-hunk source patch (SteamOS 3.8.x) |
+| `bc250-dp-audio-clock-6.18.patch` | ignore_dpref_ss hunk only (SteamOS 3.9.x — clk_mgr hunk is upstream there) |
 | `amdgpu.ko.zst` | Built, ABI-verified module for `6.16.12-valve24.2-1-neptune-616-g57ac0765fe0d` |
 | `patch-driver.sh` | Single entry point: fetch-sources.sh → build.sh → sudo install.sh |
 | `fetch-sources.sh` | Fetches kernel source (Evlav mirror), Module.symvers (headers package), and deps/ — runbook steps 1–2 as code |
@@ -198,6 +206,10 @@ remain as the reference for what the scripts do and why.
    commit hash embedded in `uname -r`.
 2. Extract the Arch packages for `pahole`, `bc`, `libelf`, `openssl`, `zlib`
    into `deps/` (pacman `.pkg.tar.zst` files extracted with `tar -x`).
+   SteamOS 3.9 also strips `/usr/include` from the image (gcc can't even
+   find `sys/types.h`), so `glibc` and `linux-api-headers` join the list —
+   headers only: their libraries are still installed, and extracting
+   glibc's `usr/lib` would shadow the system libc via `LD_LIBRARY_PATH`.
 3. `source build-env.sh` — must print nothing; a FATAL means fix deps first.
 4. Configure from the running kernel (`zcat /proc/config.gz > .config`,
    `make olddefconfig`), then **verify**
@@ -214,7 +226,8 @@ remain as the reference for what the scripts do and why.
 6. Copy `Module.symvers` from the headers package into the tree root —
    `modules_prepare` does not generate it, and without it modpost fails
    with a thousand "undefined!" symbol errors.
-7. Apply `bc250-dp-audio-clock.patch`, `make modules_prepare`, re-verify the
+7. Apply the DP-audio patch for this kernel (`-6.16.patch` on SteamOS 3.8.x,
+   `-6.18.patch` on 3.9.x), `make modules_prepare`, re-verify the
    option in `include/generated/autoconf.h`, then
    `make M=drivers/gpu/drm/amd/amdgpu modules`.
 8. `strip --strip-debug amdgpu.ko && zstd -19 amdgpu.ko`, replace

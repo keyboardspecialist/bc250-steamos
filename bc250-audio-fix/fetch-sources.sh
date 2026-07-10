@@ -24,7 +24,12 @@ REL=${KERNEL_RELEASE:-$(uname -r)}
 MIRROR=${MIRROR:-https://steamdeck-packages.steamos.cloud/archlinux-mirror}
 KERNEL_REMOTE=${KERNEL_REMOTE:-https://github.com/Evlav/linux-integration.git}
 KERNEL_API=${KERNEL_API:-https://api.github.com/repos/Evlav/linux-integration}
-DEP_PKGS=(pahole bc libelf openssl zlib)
+DEP_PKGS=(pahole bc libelf openssl zlib glibc linux-api-headers)
+# SteamOS 3.9 strips /usr/include from the image, so HOSTCC can't find even
+# sys/types.h. The libraries themselves (libc.so, crt*.o) are still installed,
+# so for these two packages only usr/include is extracted — pulling glibc's
+# usr/lib into deps/ would shadow the system libc via LD_LIBRARY_PATH.
+HEADERS_ONLY_PKGS=(glibc linux-api-headers)
 DEP_REPOS=(extra-main core-main)
 
 die()  { echo "FATAL: $*" >&2; exit 1; }
@@ -147,7 +152,11 @@ for pkg in "${DEP_PKGS[@]}"; do
         mv "$TMPD/$FILE" "$HERE/$FILE"
     fi
     # extract only usr/ — skips .PKGINFO/.MTREE clutter
-    tar --zstd -xf "$HERE/$FILE" -C "$DEPS" usr
+    SUBTREE=usr
+    for h in "${HEADERS_ONLY_PKGS[@]}"; do
+        [ "$pkg" = "$h" ] && SUBTREE=usr/include
+    done
+    tar --zstd -xf "$HERE/$FILE" -C "$DEPS" "$SUBTREE"
     touch "$DEPS/.$ENTRY.done"
     echo "$pkg: $ENTRY extracted from $REPO"
 done

@@ -91,8 +91,17 @@ step "Module.symvers (runbook step 6)"
 [ -s Module.symvers ] || die "Module.symvers missing from tree root — copy it from Valve's headers package (modules_prepare cannot generate it; without it modpost drowns in 'undefined!' errors)"
 echo "Module.symvers present ($(wc -l < Module.symvers | tr -d ' ') symbols)"
 
-step "apply bc250-dp-audio-clock.patch (runbook step 7)"
-PATCH=$HERE/bc250-dp-audio-clock.patch
+step "apply DP-audio patch (runbook step 7)"
+# SteamOS 3.8.x (6.16) needs both hunks; 3.9.x (6.18) already carries the
+# clk_mgr DCN 2.01 reorder upstream (was hunk 2), leaving only the
+# ignore_dpref_ss hunk. New kernel major: check which hunks are upstream
+# before adding a variant here.
+case "$BASE" in
+    6.16.*) PATCH=$HERE/bc250-dp-audio-clock-6.16.patch ;;
+    6.18.*) PATCH=$HERE/bc250-dp-audio-clock-6.18.patch ;;
+    *)      die "no DP-audio patch variant for kernel $BASE — check which hunks are already upstream, then add a case above" ;;
+esac
+echo "kernel $BASE -> $(basename "$PATCH")"
 if patch -p1 -R --dry-run -s -f < "$PATCH" >/dev/null 2>&1; then
     echo "patch already applied"
 elif patch -p1 --dry-run -s -f < "$PATCH" >/dev/null 2>&1; then
