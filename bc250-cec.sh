@@ -441,10 +441,24 @@ badge_standby() {
     return 0
 }
 
+wake_mode() {   # installed boot-wake helper's mode (polite|grab), or ""
+    sed -n 's/^MODE=//p' "$WAKE_HELPER" 2>/dev/null
+}
+
 badge_wake() {
-    if [[ "$(systemctl --user is-enabled "$WAKE_SVC" 2>/dev/null)" == enabled ]]; then b_ok "installed"
+    local m; m=$(wake_mode)
+    if [[ "$(systemctl --user is-enabled "$WAKE_SVC" 2>/dev/null)" == enabled ]]; then b_ok "installed${m:+ - $m}"
     elif [[ -f "$WAKE_UNIT" ]]; then b_mid "present - not enabled"
     else b_off "not installed"; fi
+    return 0
+}
+
+badge_wake_mode() {
+    case "$(wake_mode)" in
+        polite) b_ok "polite - won't steal the input" ;;
+        grab)   b_mid "grab - always takes the input" ;;
+        *)      b_off "not installed" ;;
+    esac
     return 0
 }
 
@@ -864,7 +878,7 @@ EOF
             ;;
         status)
             echo "  unit file: $WAKE_UNIT $([[ -f "$WAKE_UNIT" ]] && echo present || echo absent)"
-            echo "  helper:    $WAKE_HELPER $([[ -x "$WAKE_HELPER" ]] && echo "present (mode: $(sed -n 's/^MODE=//p' "$WAKE_HELPER"))" || echo absent)"
+            echo "  helper:    $WAKE_HELPER $([[ -x "$WAKE_HELPER" ]] && echo "present (mode: $(wake_mode))" || echo absent)"
             echo "  enabled:   $(systemctl --user is-enabled "$WAKE_SVC" 2>/dev/null || echo -)"
             ;;
         *) die "usage: $0 boot-wake {install [polite|grab]|remove|status}" ;;
@@ -877,6 +891,12 @@ boot_wake_toggle() {
     else
         cmd_boot_wake install
     fi
+}
+
+boot_wake_mode_toggle() {   # menu helper: polite <-> grab (reinstall keeps the unit)
+    local m; m=$(wake_mode)
+    [[ -n "$m" ]] || die "Boot-wake is not installed -- install it first; the mode is part of the install."
+    if [[ "$m" == polite ]]; then cmd_boot_wake install grab; else cmd_boot_wake install polite; fi
 }
 
 # ==================== receiver follows the console ========================
@@ -1477,6 +1497,20 @@ menu_amp() {
     done
 }
 
+menu_boot_wake() {
+    while true; do
+        local items=(
+            "Boot wake unit|$(badge_wake)|Wake the TV at every session start. Toggles install/remove (installs polite)."
+            "Mode: polite / grab|$(badge_wake_mode)|polite: back off if another device holds the input. grab: always switch the TV to us."
+        )
+        menu_select "Wake TV at boot  ${CD}(session-start unit)${C0}" "${items[@]}" || { echo; break; }
+        case $MENU_CHOICE in
+            0) run_action boot_wake_toggle ;;
+            1) run_action boot_wake_mode_toggle ;;
+        esac
+    done
+}
+
 cmd_menu() {
     [[ -t 0 && -t 1 ]] || die "The menu needs an interactive terminal. See '$0 help' for CLI commands."
     # Opposite of bc250-power.sh: this script must NOT run as root, because
@@ -1489,9 +1523,10 @@ cmd_menu() {
             "Set TV name (OSD)|$(badge_osd)|Name in the TV's device list. Default: $OSD_DEFAULT."
             "Behavior toggles|$(badge_overrides)|Wake/standby/remote toggles -- overrides Steam UI settings."
             "TV standby on power-off|$(badge_standby)|CEC standby on poweroff only -- skipped if another device holds the input. Uses sudo."
-            "Wake TV at boot|$(badge_wake)|Wake the TV at session start; polite -- won't steal the input from an active device."
+            "Wake TV at boot|$(badge_wake)|Wake the TV at session start -- install/remove, and polite vs grab mode."
             "Receiver / amp|$(badge_amp_summary)|Receiver power now, plus follow-the-console toggles: boot, poweroff, suspend, resume."
             "Who has the input|$(badge_active)|Ask the bus for the active source -- the device the TV/receiver is showing."
+            "Take the input|$(badge_active)|Claim active source now -- switch the TV/receiver to the BC-250 ('switch')."
             "Hand off the input|$(badge_active)|Route the TV/receiver to another device (it wakes + claims the input)."
             "Release the input||We give up the input, the TV picks what's next. The polite exit."
             "Test TV control|$(tv_badge_menu)|Guided sequence: poll, wake, switch input, audio, standby."
@@ -1508,17 +1543,18 @@ cmd_menu() {
             2) run_action cmd_osd_name ;;
             3) menu_toggles ;;
             4) run_action shutdown_standby_toggle ;;
-            5) run_action boot_wake_toggle ;;
+            5) menu_boot_wake ;;
             6) menu_amp ;;
             7) run_action cmd_active ;;
-            8) run_action cmd_handoff ;;
-            9) run_action cmd_release ;;
-            10) run_action cmd_test ;;
-            11) run_action cmd_scan ;;
-            12) run_action cmd_repair ;;
-            13) run_action cmd_remote ;;
-            14) cmd_monitor ;;
-            15) cmd_help; pause_key ;;
+            8) run_action cmd_switch ;;
+            9) run_action cmd_handoff ;;
+            10) run_action cmd_release ;;
+            11) run_action cmd_test ;;
+            12) run_action cmd_scan ;;
+            13) run_action cmd_repair ;;
+            14) run_action cmd_remote ;;
+            15) cmd_monitor ;;
+            16) cmd_help; pause_key ;;
         esac
     done
 }
