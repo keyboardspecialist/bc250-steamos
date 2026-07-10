@@ -34,6 +34,15 @@ Complete power-management setup:
 - **GPU voltage control** (`gpu-volt`) — show/offset/set/reset the governor's
   safe-points voltage curve with enforced 700–1050 mV bounds; restarts the
   governor and reapplies the saved freq setting.
+- **GPU load targets** (`load-target`) — the busy% band that decides when the
+  governor clocks up/down. `eager` preset (0.60/0.45) for light or frame-capped
+  games that never generate enough load to leave idle clocks; saved to
+  config.toml and applied live over D-Bus without a restart.
+- **GPU ramp tuning** (`ramp`) — takes one number (idle-to-max climb time in
+  ms) and derives step size, control interval, and down-events from the
+  no-hunting formula (a step above `f_min × (upper−lower)/upper` can oscillate
+  at steady load); requested climb time is auto-extended if it can't be met
+  smoothly at the current load-target band.
 - **CPU overclock/undervolt** (`cpu-oc`, wraps
   [bc250_smu_oc](https://github.com/bc250-collective/bc250_smu_oc)) — max
   boost clock + vid-curve scaling via SMU. Sources are fetched at a pinned
