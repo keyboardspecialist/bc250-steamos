@@ -6,7 +6,9 @@
 #      the Evlav mirror (github.com/Evlav/linux-integration — the community
 #      mirror of Valve's private kernel GitLab; the old gitlab.com/evlaV
 #      mirror shuttered 2025-08 and is frozen), plus Module.symvers from the
-#      matching linux-neptune-*-headers package on Valve's package mirror.
+#      matching linux-neptune-*-headers package on Valve's package mirror
+#      (all jupiter-* channels are probed — point releases can ship from a
+#      version branch like jupiter-3.8.1x instead of jupiter-main).
 #   2. The build deps (pahole, bc, libelf, openssl, zlib) from the SteamOS
 #      Arch mirror, extracted into deps/ where build-env.sh expects them.
 #
@@ -88,7 +90,7 @@ else
     # Resolve via the GitHub API (or pass FULLSHA=<40-hex> to skip).
     FULLSHA=${FULLSHA:-$(curl -fsSL "$KERNEL_API/commits/$SHA" \
         | grep -oE '"sha": *"[0-9a-f]{40}"' | grep -oE '[0-9a-f]{40}')} \
-        || die "could not resolve $SHA via $KERNEL_API — offline or rate-limited? Retry, or pass FULLSHA=<40-hex-sha>"
+        || die "could not resolve $SHA via $KERNEL_API — offline, rate-limited, or the mirror has not synced this release yet (it lags Valve by up to ~a week after a SteamOS update; 6.16.12-valve24.4 took 6 days). Retry later, or pass FULLSHA=<40-hex-sha>. Valve's own signed full source is always up at $MIRROR/sources/<channel>/linux-neptune-$FLAVOR-$PKGVER-$PKGREL.src.tar.gz if you cannot wait (manual: build.sh expects a git tree)"
     FULLSHA=${FULLSHA%%$'\n'*}   # commit's own sha is the first match (no -m1: early grep exit SIGPIPEs curl under pipefail)
     [[ "$FULLSHA" == "$SHA"* ]] || die "API returned $FULLSHA which does not start with $SHA"
     echo "resolved: $FULLSHA"
@@ -105,8 +107,28 @@ fi
 
 step "Module.symvers from the headers package (runbook step 1)"
 if [ ! -f "$HERE/$HDRPKG" ]; then
-    curl -fL -o "$TMPD/$HDRPKG" "$MIRROR/jupiter-main/os/x86_64/$HDRPKG" \
-        || die "download failed: $MIRROR/jupiter-main/os/x86_64/$HDRPKG — mirror may have pruned this version; check the index by hand"
+    # Not every kernel ships from jupiter-main: point releases can exist only
+    # in a version-branch channel (6.16.12-valve24.4 is only in
+    # jupiter-3.8.1x). Probe jupiter-main first, then every other jupiter-*
+    # repo the mirror lists. Pin with HDR_REPOS="repo ..." to skip discovery.
+    if [ -z "${HDR_REPOS:-}" ]; then
+        DISCOVERED=$(curl -fsSL "$MIRROR/" \
+            | grep -oE 'href="jupiter-[^"/]*/"' | sed 's|^href="||; s|/"$||' \
+            | grep -vxE 'jupiter-(main|ci-test)' | sort -rV | tr '\n' ' ') \
+            || DISCOVERED=
+        HDR_REPOS="jupiter-main $DISCOVERED"
+    fi
+    HDR_REPO=
+    for repo in $HDR_REPOS; do
+        if curl -fsIL -o /dev/null "$MIRROR/$repo/os/x86_64/$HDRPKG"; then
+            HDR_REPO=$repo
+            break
+        fi
+    done
+    [ -n "$HDR_REPO" ] || die "no jupiter channel on $MIRROR carries $HDRPKG (probed: $HDR_REPOS) — check the mirror indexes by hand"
+    echo "found in channel: $HDR_REPO"
+    curl -fL -o "$TMPD/$HDRPKG" "$MIRROR/$HDR_REPO/os/x86_64/$HDRPKG" \
+        || die "download failed: $MIRROR/$HDR_REPO/os/x86_64/$HDRPKG"
     mv "$TMPD/$HDRPKG" "$HERE/$HDRPKG"
 else
     echo "already downloaded: $HDRPKG"

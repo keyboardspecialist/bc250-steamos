@@ -188,11 +188,14 @@ The whole flow is automated, run on the BC-250 itself:
 `fetch-sources.sh` covers steps 1–2: it derives everything from `uname -r`,
 clones Valve's kernel source at the exact `-g<sha>` commit from the Evlav
 mirror (github.com/Evlav/linux-integration — Valve's kernel GitLab is
-private; the old gitlab.com/evlaV mirror froze 2025-08), extracts
-`Module.symvers` from the matching `linux-neptune-*-headers` package on
-Valve's package mirror (old versions are retained there), and pulls the
-build deps from the mirror's Arch repos into `deps/`. Idempotent — re-run
-freely.
+private; the old gitlab.com/evlaV mirror froze 2025-08, and the GitHub
+mirror can lag a new SteamOS release by several days — if the `-g<sha>`
+commit isn't there yet, retry later), extracts `Module.symvers` from the
+matching `linux-neptune-*-headers` package on Valve's package mirror (old
+versions are retained there; every `jupiter-*` channel is probed, since
+point releases like `6.16.12-valve24.4` ship only from a version branch
+such as `jupiter-3.8.1x`, not `jupiter-main`), and pulls the build deps
+from the mirror's Arch repos into `deps/`. Idempotent — re-run freely.
 
 `./build.sh [kernel-tree]` (default `./valve-kernel`) automates steps 3–8:
 it asserts each step's postcondition and refuses to continue on any
