@@ -215,6 +215,30 @@ badge_freq() {
         b_mid "saved: $( (. "$FREQ_STATE" && echo "$MODE ${A:-} ${B:-}") 2>/dev/null | xargs || true)"
     else b_off "config defaults"; fi
 }
+badge_load_target() {
+    local cfg=""
+    cfg=$(lt_config_get)
+    if [[ -z "$cfg" ]]; then b_off "governor built-ins"
+    elif [[ "$cfg" == "$LT_DEF_UPPER $LT_DEF_LOWER" ]]; then b_ok "tuned default ${cfg/ /\/}"
+    else b_mid "custom: ${cfg/ /\/}"; fi
+    return 0
+}
+badge_ramp() {
+    local adj n ms step
+    adj=$(toml_get timing.intervals adjust)
+    n=$(toml_get timing.ramp-rates normal)
+    if [[ -z "$adj" || -z "$n" ]]; then b_off "governor built-ins"
+    else
+        ms=$(( adj / 1000 ))
+        step=$(awk -v n="$n" -v m="$ms" 'BEGIN{ printf "%d", n * m }')
+        if [[ "$ms" == "$RAMP_DEF_ADJ_MS" && "$n" == "$RAMP_DEF_NORMAL" ]]; then
+            b_ok "default: ${step} MHz/${ms} ms"
+        else
+            b_mid "custom: ${step} MHz/${ms} ms"
+        fi
+    fi
+    return 0
+}
 badge_oc() {
     local d=""
     d=$(oc_detected_result "$OC_CONF")
@@ -782,6 +806,306 @@ cmd_gpu_volt() {
     esac
 }
 
+# ========================= GPU load-target control ========================
+# The governor only clocks UP when sampled GPU busy% exceeds load-target
+# upper -- a frame-capped light game can sit at 60-75% busy at idle clocks
+# forever and never trigger a ramp. These commands edit [load-target] in
+# config.toml (persists) and push the same values live over D-Bus
+# (SetLoadTarget -- no restart, saved freq state untouched).
+LT_DEF_UPPER=0.80    # tuned defaults written by 'governor'
+LT_DEF_LOWER=0.65
+LT_EAGER_UPPER=0.60  # light-load preset: ramps on loads the default ignores
+LT_EAGER_LOWER=0.45
+
+lt_norm() {   # "60" or "0.60" -> "0.60"; rejects junk and out-of-range
+    awk -v v="${1:-}" 'BEGIN{
+        if (v !~ /^[0-9]+(\.[0-9]+)?$/) exit 1
+        v += 0; if (v > 1) v /= 100
+        if (v < 0.05 || v > 0.99) exit 1
+        printf "%.2f", v }'
+}
+
+lt_config_get() {   # config values as "upper lower", normalized; empty if absent
+    [[ -f "$GOV_CONF" ]] || return 0
+    awk '/^\[/{ lt = ($0=="[load-target]") }
+         lt && /^upper = /{u=$3} lt && /^lower = /{l=$3}
+         END{ if (u!="" && l!="") printf "%.2f %.2f", u, l }' "$GOV_CONF"
+}
+
+lt_live_get() {   # live values from the governor as "upper lower"; empty if down
+    local u l
+    u=$(busctl --system get-property "$BUS_NAME" "$BUS_PATH" "$BUS_IFACE" \
+            LoadTargetMax 2>/dev/null | awk '{printf "%.2f", $2}') || true
+    l=$(busctl --system get-property "$BUS_NAME" "$BUS_PATH" "$BUS_IFACE" \
+            LoadTargetMin 2>/dev/null | awk '{printf "%.2f", $2}') || true
+    [[ -n "$u" && -n "$l" ]] && echo "$u $l"
+    return 0
+}
+
+lt_show() {
+    [[ -f "$GOV_CONF" ]] || die "No governor config at $GOV_CONF -- run '$0 governor' first."
+    echo -e "${CB}=== GPU load targets ===${C0}"
+    local cfg live
+    cfg=$(lt_config_get)
+    if [[ -n "$cfg" ]]; then
+        echo "  config (applies at boot):  upper ${cfg% *}  lower ${cfg#* }"
+    else
+        echo "  config: no [load-target] section -- governor built-ins apply (0.95/0.80)"
+    fi
+    live=$(lt_live_get)
+    if [[ -n "$live" ]]; then
+        echo "  live (governor, running):  upper ${live% *}  lower ${live#* }"
+    else
+        echo "  live: governor not running (or D-Bus down)"
+    fi
+    echo "  clocks UP when GPU busy% stays above upper; steps DOWN below lower."
+    echo "  Lower upper = lighter loads trigger a ramp off idle clocks."
+}
+
+lt_apply_live() {   # push to the running governor; restart only as fallback
+    local upper="$1" lower="$2"
+    if ! systemctl is-active "$GOV_SVC" >/dev/null 2>&1; then
+        warn "Governor not running -- values take effect when it starts."
+        return 0
+    fi
+    # D-Bus signature is SetLoadTarget(min, max) = (lower, upper)
+    if gov_dbus SetLoadTarget dd "$lower" "$upper" >/dev/null 2>&1; then
+        log "Applied live -- no restart needed."
+    else
+        warn "D-Bus call failed -- restarting the governor to load the new config."
+        restart_governor_reapply
+    fi
+}
+
+lt_set() {
+    require_root
+    local usage="Usage: $0 load-target set <upper> <lower>   (percent 60 45, or fractions 0.60 0.45)"
+    local upper lower
+    upper=$(lt_norm "${1:-}") || die "$usage"
+    lower=$(lt_norm "${2:-}") || die "$usage"
+    awk -v u="$upper" -v l="$lower" 'BEGIN{ exit !(l+0 < u+0) }' \
+        || die "lower ($lower) must be below upper ($upper)."
+    [[ -f "$GOV_CONF" ]] || die "No governor config -- run '$0 governor' first."
+    if grep -q '^\[load-target\]' "$GOV_CONF"; then
+        awk -v u="$upper" -v l="$lower" '
+            /^\[/{ lt = ($0=="[load-target]") }
+            lt && /^upper = /{ print "upper = " u; next }
+            lt && /^lower = /{ print "lower = " l; next }
+            { print }' "$GOV_CONF" > "$GOV_CONF.tmp"
+    else
+        # section missing (hand-edited config): insert ahead of the voltage
+        # curve, or append -- both are valid TOML table placements
+        awk -v u="$upper" -v l="$lower" '
+            !done && (/^# Voltage curve/ || /^\[\[safe-points\]\]/) {
+                print "[load-target]"; print "upper = " u
+                print "lower = " l; print ""; done=1 }
+            { print }
+            END{ if (!done) { print "[load-target]"; print "upper = " u; print "lower = " l } }' \
+            "$GOV_CONF" > "$GOV_CONF.tmp"
+    fi
+    mv "$GOV_CONF.tmp" "$GOV_CONF"
+    log "Load targets saved: upper = $upper, lower = $lower (persists across reboots)."
+    awk -v u="$upper" 'BEGIN{ exit !(u+0 < 0.40) }' \
+        && warn "Upper below 0.40: very eager -- expect higher idle clocks/power."
+    lt_apply_live "$upper" "$lower"
+}
+
+cmd_load_target() {
+    local sub="${1:-show}"
+    shift || true
+    case "$sub" in
+        ""|show)  lt_show ;;
+        set)      lt_set "$@" ;;
+        eager)    lt_set "$LT_EAGER_UPPER" "$LT_EAGER_LOWER" ;;
+        reset)    lt_set "$LT_DEF_UPPER" "$LT_DEF_LOWER" ;;
+        *) die "Usage: $0 load-target {show | set <upper> <lower> | eager | reset}" ;;
+    esac
+}
+
+# =========================== GPU ramp behavior ============================
+# Every [timing.intervals] adjust cycle the governor moves its target by
+# ramp-rates.normal x adjust_ms MHz. So climb SPEED is 'normal' alone
+# (MHz/ms, interval-independent) and 'adjust' only sets step GRANULARITY.
+# 'ramp set T' takes one number -- the idle-to-max climb time in ms -- and
+# derives the smoothest step that cannot hunt: GPU busy% ~ 1/freq, so a
+# step of S MHz at frequency f moves load by ~S/f; keeping
+#   S <= f_min x (upper - lower) / upper
+# means no single step can jump across the whole load-target band and
+# oscillate. These are startup-only params (no D-Bus): governor restarts.
+RAMP_DEF_ADJ_MS=200; RAMP_DEF_NORMAL=1; RAMP_DEF_BURST=50; RAMP_DEF_DE=5
+RAMP_FALLBACK_MIN=500; RAMP_FALLBACK_MAX=2200
+
+toml_get() {   # toml_get <section> <key> [file] -- value, underscores stripped
+    local f="${3:-$GOV_CONF}"
+    [[ -f "$f" ]] || return 0
+    awk -v sec="[$1]" -v key="$2" '
+        /^\[/{ insec = ($0 == sec) }
+        insec && $1 == key && $2 == "=" { gsub("_", "", $3); print $3; exit }
+    ' "$f"
+}
+
+toml_set() {   # toml_set <section> <key> <value> <file> -- edits file in place
+    local f="$4"
+    awk -v sec="[$1]" -v key="$2" -v val="$3" '
+        function emit() { print key " = " val; done = 1 }
+        /^\[/{ if (insec && !done) emit()             # leaving section, key absent
+               insec = ($0 == sec); if (insec) found = 1 }
+        insec && !done && $1 == key && $2 == "=" { emit(); next }
+        { print }
+        END{ if (!done) { if (!found) { print ""; print sec }; emit() } }
+    ' "$f" > "$f.n" && mv "$f.n" "$f"
+}
+
+ramp_allowed_range() {   # hardware range from the running governor; empty if down
+    local mn mx
+    mn=$(busctl --system get-property "$BUS_NAME" "$BUS_PATH/Range/Allowed" \
+             "$BUS_NAME.Range" min 2>/dev/null | awk '{print $2}') || true
+    mx=$(busctl --system get-property "$BUS_NAME" "$BUS_PATH/Range/Allowed" \
+             "$BUS_NAME.Range" max 2>/dev/null | awk '{print $2}') || true
+    [[ -n "$mn" && -n "$mx" ]] && echo "$mn $mx"
+    return 0
+}
+
+ramp_range() {   # "fmin fmax [assumed]" -- config range clamped by hw allowed
+    local cmin cmax amin amax fmin fmax note=""
+    cmin=$(toml_get frequency-range min)
+    cmax=$(toml_get frequency-range max)
+    read -r amin amax <<< "$(ramp_allowed_range)"
+    if   [[ -n "$cmin" && -n "$amin" ]]; then fmin=$(( cmin > amin ? cmin : amin ))
+    elif [[ -n "$cmin$amin" ]];          then fmin="${cmin:-$amin}"
+    else fmin=$RAMP_FALLBACK_MIN; note=assumed; fi
+    if   [[ -n "$cmax" && -n "$amax" ]]; then fmax=$(( cmax < amax ? cmax : amax ))
+    elif [[ -n "$cmax$amax" ]];          then fmax="${cmax:-$amax}"
+    else fmax=$RAMP_FALLBACK_MAX; note=assumed; fi
+    echo "$fmin $fmax $note"
+}
+
+ramp_lt() {   # load targets from config as "upper lower", defaults if absent
+    local lt
+    lt=$(lt_config_get)
+    echo "${lt:-$LT_DEF_UPPER $LT_DEF_LOWER}"
+}
+
+ramp_restart_if_active() {   # ramp params are read at startup only
+    if systemctl is-active "$GOV_SVC" >/dev/null 2>&1; then
+        restart_governor_reapply
+    else
+        warn "Governor not running -- new ramp params load when it starts."
+    fi
+}
+
+ramp_show() {
+    [[ -f "$GOV_CONF" ]] || die "No governor config at $GOV_CONF -- run '$0 governor' first."
+    local adj_us sample normal de bs fmin fmax note upper lower
+    adj_us=$(toml_get timing.intervals adjust);  adj_us=${adj_us:-20000}
+    sample=$(toml_get timing.intervals sample);  sample=${sample:-2000}
+    normal=$(toml_get timing.ramp-rates normal); normal=${normal:-1}
+    de=$(toml_get timing down-events);           de=${de:-10}
+    bs=$(toml_get timing burst-samples)
+    read -r fmin fmax note <<< "$(ramp_range)"
+    read -r upper lower   <<< "$(ramp_lt)"
+    echo -e "${CB}=== GPU ramp behavior ===${C0}"
+    awk -v aus="$adj_us" -v n="$normal" -v de="$de" -v fmin="$fmin" -v fmax="$fmax" \
+        -v up="$upper" -v lo="$lower" -v bs="${bs:-0}" -v sus="$sample" 'BEGIN{
+        ms = aus / 1000.0
+        S = n * ms
+        ceil = fmin * (up - lo) / up
+        printf "  step:      %.0f MHz every %.0f ms  (rate %g MHz/ms)\n", S, ms, n
+        printf "  climb:     idle->max ~%.0f ms across %d-%d MHz\n", (fmax - fmin) / n, fmin, fmax
+        printf "  downhold:  %.0f ms of low load before stepping down (down-events %d)\n", de * ms, de
+        if (bs > 0) printf "  burst:     jump to max after %.0f ms of saturated load\n", bs * sus / 1000.0
+        else        printf "  burst:     disabled\n"
+        printf "  hunting:   step ceiling %.0f MHz at load targets %.2f/%.2f -> %s\n", ceil, up, lo,
+            (S <= ceil + 0.5) ? "OK, cannot oscillate" \
+                              : "AT RISK -- may bounce at steady load (run: ramp set)"
+    }'
+    [[ -n "$note" ]] && echo "  (hardware floor assumed ${fmin} MHz -- start the governor for the real one)"
+    return 0
+}
+
+ramp_set() {
+    require_root
+    local T="${1:-}"
+    [[ "$T" =~ ^[0-9]+$ ]] || die "Usage: $0 ramp set <climb-ms>   (idle-to-max climb time, e.g. 500)"
+    (( T >= 200 && T <= 5000 )) || die "Climb time $T ms outside the sane 200-5000 ms window."
+    [[ -f "$GOV_CONF" ]] || die "No governor config -- run '$0 governor' first."
+
+    local fmin fmax note upper lower
+    read -r fmin fmax note <<< "$(ramp_range)"
+    [[ -n "$note" ]] && warn "Governor not running -- assuming a ${fmin} MHz hardware floor."
+    (( fmax > fmin )) || die "Bad operating range ${fmin}-${fmax} MHz."
+    local R=$(( fmax - fmin ))
+    read -r upper lower <<< "$(ramp_lt)"
+
+    # speed normal = R/T; hunting-safe step S <= fmin*(upper-lower)/upper;
+    # interval = S/normal clamped to 50-200 ms (>= ~3 frames per load
+    # average, still responsive). If the clamp pushes S past the ceiling,
+    # slow the climb to the smallest hunting-free time instead of hunting.
+    local calc normal adjust_ms step de teff capped
+    calc=$(awk -v R="$R" -v T="$T" -v fmin="$fmin" -v up="$upper" -v lo="$lower" 'BEGIN{
+        normal = R / T
+        ceil = fmin * (up - lo) / up
+        S = 0.7 * ceil
+        if (S < 30) S = 30                       # dither floor: 3x apply threshold
+        adj = S / normal
+        if (adj < 50) adj = 50; if (adj > 200) adj = 200
+        adj = int(adj + 0.5)
+        S = normal * adj
+        capped = 0
+        if (S > ceil && ceil >= 30) { S = ceil; normal = S / adj; capped = 1 }
+        de = int(1000.0 / adj + 0.5); if (de < 2) de = 2
+        printf "%.3g %d %d %d %d %d", normal, adj, int(S + 0.5), de, int(R / normal + 0.5), capped
+    }')
+    read -r normal adjust_ms step de teff capped <<< "$calc"
+    if [[ "$capped" == 1 ]]; then
+        warn "At load targets $upper/$lower a hunting-free step maxes out at $step MHz:"
+        warn "climb time extended $T -> ~$teff ms. (Wider load-target band or a"
+        warn "higher freq floor would allow faster smooth climbs.)"
+    fi
+
+    # upstream rejects burst <= normal; keep the config's burst rate otherwise
+    local burst
+    burst=$(toml_get timing.ramp-rates burst); burst=${burst:-$RAMP_DEF_BURST}
+    if awk -v b="$burst" -v n="$normal" 'BEGIN{ exit !(b + 0 <= n + 0) }'; then
+        burst=$(awk -v n="$normal" 'BEGIN{ printf "%g", 200 * n }')
+        warn "Burst rate raised to $burst (must stay above the normal rate)."
+    fi
+
+    cp "$GOV_CONF" "$GOV_CONF.tmp"
+    toml_set timing.intervals adjust "${adjust_ms}_000" "$GOV_CONF.tmp"
+    toml_set timing.ramp-rates normal "$normal"         "$GOV_CONF.tmp"
+    toml_set timing.ramp-rates burst  "$burst"          "$GOV_CONF.tmp"
+    toml_set timing down-events "$de"                   "$GOV_CONF.tmp"
+    mv "$GOV_CONF.tmp" "$GOV_CONF"
+    log "Ramp saved: $step MHz steps every $adjust_ms ms -> idle-to-max in ~$teff ms,"
+    log "downscale after $(( de * adjust_ms )) ms of low load (down-events $de)."
+    ramp_restart_if_active
+}
+
+ramp_reset() {
+    require_root
+    [[ -f "$GOV_CONF" ]] || die "No governor config -- run '$0 governor' first."
+    cp "$GOV_CONF" "$GOV_CONF.tmp"
+    toml_set timing.intervals adjust "${RAMP_DEF_ADJ_MS}_000" "$GOV_CONF.tmp"
+    toml_set timing.ramp-rates normal "$RAMP_DEF_NORMAL"      "$GOV_CONF.tmp"
+    toml_set timing.ramp-rates burst  "$RAMP_DEF_BURST"       "$GOV_CONF.tmp"
+    toml_set timing down-events "$RAMP_DEF_DE"                "$GOV_CONF.tmp"
+    mv "$GOV_CONF.tmp" "$GOV_CONF"
+    log "Ramp params reset to install defaults (200 MHz steps / 200 ms, 1 s hold)."
+    ramp_restart_if_active
+}
+
+cmd_ramp() {
+    local sub="${1:-show}"
+    shift || true
+    case "$sub" in
+        ""|show)  ramp_show ;;
+        set)      ramp_set "$@" ;;
+        reset)    ramp_reset ;;
+        *) die "Usage: $0 ramp {show | set <climb-ms> | reset}" ;;
+    esac
+}
+
 cmd_helpers() {
     require_root
     mkdir -p "$BIN_DIR" /etc/dbus-1/system.d
@@ -1133,6 +1457,47 @@ menu_freq() {
     done
 }
 
+menu_load_target() {
+    while true; do
+        local items=(
+            "Show load targets|$(badge_load_target)|Config + live values, and what upper/lower mean."
+            "Eager preset (0.60 / 0.45)||Light-load games clock up off idle. Fixes 'stuck at low clocks'."
+            "Tuned default (0.80 / 0.65)||Install default: full ramps under real load, best idle savings."
+            "Custom values||Set your own thresholds (percent or fraction)."
+        )
+        menu_select "GPU load targets  ${CD}(when the governor clocks up/down)${C0}" "${items[@]}" || return 0
+        case $MENU_CHOICE in
+            0) run_action lt_show ;;
+            1) run_action lt_set "$LT_EAGER_UPPER" "$LT_EAGER_LOWER" ;;
+            2) run_action lt_set "$LT_DEF_UPPER" "$LT_DEF_LOWER" ;;
+            3) ask "Upper -- clock UP above this GPU busy% (10-99)" "60"; local u="$REPLY"
+               ask "Lower -- step DOWN below this GPU busy%" "45"
+               run_action lt_set "$u" "$REPLY" ;;
+        esac
+    done
+}
+
+menu_ramp() {
+    while true; do
+        local items=(
+            "Show ramp behavior|$(badge_ramp)|Step size, climb time, downhold + hunting verdict from the config."
+            "Responsive (climb in 500 ms)||Smoothest hunting-free step for a half-second idle-to-max climb."
+            "Relaxed (climb in 1000 ms)||Install-default speed, but finer steps derived for smoothness."
+            "Custom climb time||You pick idle-to-max ms; step, interval, down-events are derived."
+            "Reset install defaults||200 MHz steps every 200 ms, 1 s hold before downscaling."
+        )
+        menu_select "GPU ramp behavior  ${CD}(how fast + how granular clocks move)${C0}" "${items[@]}" || return 0
+        case $MENU_CHOICE in
+            0) run_action ramp_show ;;
+            1) run_action ramp_set 500 ;;
+            2) run_action ramp_set 1000 ;;
+            3) ask "Idle-to-max climb time ms (200-5000)" "500"
+               run_action ramp_set "$REPLY" ;;
+            4) run_action ramp_reset ;;
+        esac
+    done
+}
+
 menu_cpu_oc() {
     while true; do
         local items=(
@@ -1178,6 +1543,8 @@ cmd_menu() {
             "Step 2 - GPU governor|$(badge_governor)|Adaptive GPU freq/voltage via SMU. Test under load before step 3."
             "Step 3 - Enable governor at boot|$(badge_gov_boot)|Lock it in once step 2 proves stable."
             "GPU frequency & voltage|$(badge_freq)|Pin / cap / range + voltage curve. Settings survive reboots."
+            "GPU load targets|$(badge_load_target)|When to clock up/down. Fixes light games stuck at idle clocks."
+            "GPU ramp behavior|$(badge_ramp)|How fast + how granular clocks move. One number, rest derived."
             "CPU overclock / undervolt|$(badge_oc)|bc250_smu_oc: ~200 mV undervolt even at stock clocks."
             "Reinstall D-Bus helpers||Fixes 'name is not activatable' errors from freq control."
             "Full help||The complete manual for every CLI command."
@@ -1189,9 +1556,11 @@ cmd_menu() {
             2) run_action cmd_governor ;;
             3) run_action cmd_enable ;;
             4) menu_freq ;;
-            5) menu_cpu_oc ;;
-            6) run_action cmd_helpers ;;
-            7) cmd_help; pause_key ;;
+            5) menu_load_target ;;
+            6) menu_ramp ;;
+            7) menu_cpu_oc ;;
+            8) run_action cmd_helpers ;;
+            9) cmd_help; pause_key ;;
         esac
     done
 }
@@ -1293,6 +1662,34 @@ EVERYDAY COMMANDS
               stress test after -- undervolts that boot fine can still
               crash under load. Changes are permanent (config.toml).
 
+  load-target GPU load targets: the busy% band the governor keeps the GPU
+              in. It only clocks UP above 'upper' -- frame-capped light
+              games can sit below it at idle clocks forever. Values go to
+              config.toml (persist) AND apply live via D-Bus (no restart):
+    load-target             show config + live values
+    load-target eager       0.60/0.45 -- light loads ramp off idle clocks
+    load-target reset       0.80/0.65 tuned defaults (best idle savings)
+    load-target set 70 55   custom upper/lower (percent or fraction)
+              Alternative for single problem games -- per-game floor via
+              Steam launch options (see STEAM LAUNCH OPTION below), which
+              leaves global idle behavior untouched.
+
+  ramp        GPU ramp behavior: how fast AND how granular clocks move.
+              'set' takes ONE number -- idle-to-max climb time in ms --
+              and derives the rest for smoothness: climb speed = range/T;
+              step capped by the no-hunting bound (busy% ~ 1/freq, so a
+              step above f_min x (upper-lower)/upper can oscillate at
+              steady load = the notchy feel); interval clamped 50-200 ms;
+              down-events scaled to keep a 1 s hold before downscaling.
+              Startup-only params -> the governor restarts (saved freq
+              setting reapplied automatically):
+    ramp                    show step, climb time, hunting verdict
+    ramp set 500            idle-to-max in 500 ms, smoothest safe steps
+    ramp reset              install defaults (200 MHz / 200 ms, 1 s hold)
+              Re-run after changing load-target or the freq range -- the
+              derived step depends on both. Burst mode is left alone: 30 ms
+              of saturated load still jumps straight to max.
+
 PERMANENT TUNING (config file, not this script)
   /etc/cyan-skillfish-governor-smu/config.toml
     [frequency-range] max = 1500     <- permanent ceiling
@@ -1330,6 +1727,8 @@ case "${1:-}" in
     helpers)      cmd_helpers ;;
     freq)         shift; cmd_freq "$@" ;;
     gpu-volt)     shift; cmd_gpu_volt "$@" ;;
+    load-target)  shift; cmd_load_target "$@" ;;
+    ramp)         shift; cmd_ramp "$@" ;;
     cpu-oc)       shift; cmd_cpu_oc "$@" ;;
     enable)       cmd_enable ;;
     status)       cmd_status ;;
@@ -1337,7 +1736,7 @@ case "${1:-}" in
     menu)         cmd_menu ;;
     help|-h|--help) cmd_help ;;
     "") if [[ -t 0 && -t 1 ]]; then cmd_menu; exit 0; fi ;&
-    *) echo "Usage: $0 {acpi|governor|helpers|freq|gpu-volt|cpu-oc|enable|status|all|menu|help}"
+    *) echo "Usage: $0 {acpi|governor|helpers|freq|gpu-volt|load-target|ramp|cpu-oc|enable|status|all|menu|help}"
        echo "  (no arguments on a terminal opens the guided menu)"
        echo "  freq                 show performance-mode state"
        echo "  freq 1800            pin GPU at 1800 MHz (perf mode)"
