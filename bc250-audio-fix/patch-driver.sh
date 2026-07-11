@@ -2,10 +2,11 @@
 # Single entry point: fetch sources, build, install — the full cycle after a
 # SteamOS update. Run as the normal user; sudo is invoked for install only.
 #
-#   ./patch-driver.sh [--cg] [kernel-tree]      (default: ./valve-kernel)
+#   ./patch-driver.sh [--cg|--cg-unvalidated] [kernel-tree]  (default: ./valve-kernel)
 #
-# --cg is forwarded to build.sh (EXPERIMENTAL clock-gating patch, see
-# build.sh); fetch-sources.sh doesn't know it, so it's filtered out there.
+# --cg / --cg-unvalidated are forwarded to build.sh (EXPERIMENTAL clock-gating
+# patches, see build.sh); fetch-sources.sh doesn't know them, so they're
+# filtered out there.
 set -euo pipefail
 
 HERE=$(cd "$(dirname "$0")" && pwd)
@@ -15,8 +16,9 @@ WITH_CG=()
 ARGS=()
 for a in "$@"; do
     case "$a" in
-        --cg) WITH_CG=(--cg) ;;
-        *)    ARGS+=("$a") ;;
+        --cg)             WITH_CG=(--cg) ;;
+        --cg-unvalidated) WITH_CG=(--cg-unvalidated) ;;
+        *)                ARGS+=("$a") ;;
     esac
 done
 

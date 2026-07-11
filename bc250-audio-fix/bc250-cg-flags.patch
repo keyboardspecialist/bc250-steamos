@@ -1,13 +1,22 @@
-BC-250 / Cyan Skillfish: enable clock gating (idle power)
+BC-250 / Cyan Skillfish: enable GFX clock gating (idle power)
 
-AMD ships cyan skillfish with cg_flags=0/pg_flags=0 and leaves its IP
-revisions (GC 10.1.3/4, SDMA 5.0.1, NBIF 2.1.1, MMHUB/ATHUB 2.0.3) out
-of every set_clockgating_state switch, so no clock in the chip ever
-gates at idle (~20 W on VDDCR_GFX at 0% activity). The silicon is
-navi1x-generation; this mirrors Navi10's CG set minus VCN/JPEG (not
-present) and BIF (NBIF 2.1.1 register map unvalidated), and adds the
-missing switch cases. Each update func is flag-gated, so features can
-be bisected at boot with amdgpu.cg_mask (GFX-only: 0x5).
+AMD ships cyan skillfish (GC 10.1.3/4) with cg_flags=0 and leaves its IP
+revisions out of every set_clockgating_state switch, so no clock ever
+gates at idle (~20 W on VDDCR_GFX at 0% activity). This layer enables ONLY
+the GFX MGCG/CGCG path: the silicon is navi1x-generation GC 10.1, so this
+reuses the register programming AMD already validated on Navi10 (10.1.10)
+and its siblings (10.1.1/10.1.2) — nothing here touches an unvalidated
+register map. It sets the two GFX flags and adds 10.1.3/4 to the gfx_v10
+set_clockgating_state switch so the flags actually program.
+
+The memory/SDMA/NBIO paths (MC, ATHUB, SDMA, HDP, NBIF) are split out into
+bc250-cg-flags-unvalidated.patch: those fold cyan skillfish's IP revisions
+into a *different* revision's register programming and are NOT known-safe
+(AMD ships cyan skillfish its own SDMA golden-settings table, so its
+register map is demonstrably distinct). Keep them opt-in.
+
+Each update func is flag-gated, so features can be bisected at boot with
+amdgpu.cg_mask (GFX-only: 0x5).
 
 The navi1x MGCG TCP_CTRL workaround is deliberately NOT applied: its
 register lists encode Navi10/12 WGP topology. If GFX misbehaves under
@@ -15,42 +24,19 @@ load with MGCG, drop bit 0 via cg_mask before suspecting anything else.
 
 --- a/drivers/gpu/drm/amd/amdgpu/nv.c
 +++ b/drivers/gpu/drm/amd/amdgpu/nv.c
-@@ -870,7 +870,23 @@
+@@ -870,7 +870,8 @@
  		break;
  	case IP_VERSION(10, 1, 3):
  	case IP_VERSION(10, 1, 4):
 -		adev->cg_flags = 0;
-+		/* BC-250 (cyan skillfish): never validated by AMD, but the
-+		 * silicon is navi1x-generation GC 10.1; mirror Navi10's CG
-+		 * set minus the IPs this part lacks (VCN/JPEG) and BIF
-+		 * (NBIF 2.1.1 unvalidated). Bisect at boot via
-+		 * amdgpu.cg_mask if instability appears.
-+		 */
 +		adev->cg_flags = AMD_CG_SUPPORT_GFX_MGCG |
-+			AMD_CG_SUPPORT_GFX_CGCG |
-+			AMD_CG_SUPPORT_IH_CG |
-+			AMD_CG_SUPPORT_HDP_MGCG |
-+			AMD_CG_SUPPORT_HDP_LS |
-+			AMD_CG_SUPPORT_SDMA_MGCG |
-+			AMD_CG_SUPPORT_SDMA_LS |
-+			AMD_CG_SUPPORT_MC_MGCG |
-+			AMD_CG_SUPPORT_MC_LS |
-+			AMD_CG_SUPPORT_ATHUB_MGCG |
-+			AMD_CG_SUPPORT_ATHUB_LS;
++			AMD_CG_SUPPORT_GFX_CGCG;
  		adev->pg_flags = 0;
  		adev->external_rev_id = adev->rev_id + 0x82;
  		break;
-@@ -1049,6 +1065,7 @@
- 		return 0;
- 
- 	switch (amdgpu_ip_version(adev, NBIO_HWIP, 0)) {
-+	case IP_VERSION(2, 1, 1):
- 	case IP_VERSION(2, 3, 0):
- 	case IP_VERSION(2, 3, 1):
- 	case IP_VERSION(2, 3, 2):
 --- a/drivers/gpu/drm/amd/amdgpu/gfx_v10_0.c
 +++ b/drivers/gpu/drm/amd/amdgpu/gfx_v10_0.c
-@@ -8497,6 +8497,8 @@
+@@ -8495,6 +8495,8 @@
  	case IP_VERSION(10, 1, 10):
  	case IP_VERSION(10, 1, 1):
  	case IP_VERSION(10, 1, 2):
@@ -59,33 +45,3 @@ load with MGCG, drop bit 0 via cg_mask before suspecting anything else.
  	case IP_VERSION(10, 3, 0):
  	case IP_VERSION(10, 3, 2):
  	case IP_VERSION(10, 3, 1):
---- a/drivers/gpu/drm/amd/amdgpu/sdma_v5_0.c
-+++ b/drivers/gpu/drm/amd/amdgpu/sdma_v5_0.c
-@@ -1830,6 +1830,7 @@
- 
- 	switch (amdgpu_ip_version(adev, SDMA0_HWIP, 0)) {
- 	case IP_VERSION(5, 0, 0):
-+	case IP_VERSION(5, 0, 1):
- 	case IP_VERSION(5, 0, 2):
- 	case IP_VERSION(5, 0, 5):
- 		sdma_v5_0_update_medium_grain_clock_gating(adev,
---- a/drivers/gpu/drm/amd/amdgpu/mmhub_v2_0.c
-+++ b/drivers/gpu/drm/amd/amdgpu/mmhub_v2_0.c
-@@ -657,6 +657,7 @@
- 	switch (amdgpu_ip_version(adev, MMHUB_HWIP, 0)) {
- 	case IP_VERSION(2, 0, 0):
- 	case IP_VERSION(2, 0, 2):
-+	case IP_VERSION(2, 0, 3):
- 	case IP_VERSION(2, 1, 0):
- 	case IP_VERSION(2, 1, 1):
- 	case IP_VERSION(2, 1, 2):
---- a/drivers/gpu/drm/amd/amdgpu/athub_v2_0.c
-+++ b/drivers/gpu/drm/amd/amdgpu/athub_v2_0.c
-@@ -81,6 +81,7 @@
- 	case IP_VERSION(1, 3, 1):
- 	case IP_VERSION(2, 0, 0):
- 	case IP_VERSION(2, 0, 2):
-+	case IP_VERSION(2, 0, 3):
- 		athub_v2_0_update_medium_grain_clock_gating(adev,
- 				state == AMD_CG_STATE_GATE);
- 		athub_v2_0_update_medium_grain_light_sleep(adev,

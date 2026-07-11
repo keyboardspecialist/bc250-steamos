@@ -5,10 +5,12 @@
 # running kernel, extract the dep packages into deps/); this script verifies
 # their results and refuses to continue on any mismatch.
 #
-#   ./build.sh [--cg] [kernel-tree]      (default: ./valve-kernel)
+#   ./build.sh [--cg|--cg-unvalidated] [kernel-tree]   (default: ./valve-kernel)
 #
-# --cg additionally applies the EXPERIMENTAL clock-gating patch
-# (bc250-cg-flags.patch, idle power) — off by default until validated.
+# --cg applies the GFX-only clock-gating patch (bc250-cg-flags.patch, idle
+# power) — navi1x-validated, EXPERIMENTAL, off by default. --cg-unvalidated
+# adds bc250-cg-flags-unvalidated.patch on top (MC/SDMA/ATHUB/HDP/NBIO on
+# unvalidated register maps — can black-screen; bisect with amdgpu.cg_mask).
 #
 # Run on the BC-250 itself, as the normal user: the running kernel's
 # /proc/config.gz and `uname -r` are the ground truth everything is checked
@@ -23,11 +25,13 @@ die()  { echo "FATAL: $*" >&2; exit 1; }
 step() { echo; echo "==> $*"; }
 
 WITH_CG=0
+WITH_CG_UNVAL=0
 ARGS=()
 for a in "$@"; do
     case "$a" in
-        --cg) WITH_CG=1 ;;
-        *)    ARGS+=("$a") ;;
+        --cg)             WITH_CG=1 ;;
+        --cg-unvalidated) WITH_CG=1; WITH_CG_UNVAL=1 ;;  # implies --cg
+        *)                ARGS+=("$a") ;;
     esac
 done
 TREE_ARG=${ARGS[0]:-$HERE/valve-kernel}
@@ -122,32 +126,54 @@ else
     die "patch neither applies nor reverses cleanly — tree has drifted; inspect by hand"
 fi
 
-step "clock-gating patch (BC-250 idle power) — EXPERIMENTAL, opt-in via --cg"
-# Enables the CG features AMD never wired up for cyan skillfish (cg_flags=0
-# upstream). Unvalidated on this silicon, so default builds must NOT carry
-# it: without --cg an applied copy left over from a previous --cg build is
-# actively reversed, not tolerated. Version-independent code (nv.c switch
-# cases); if a kernel bump makes it fail, the hunks are small — refresh
-# against the new tree.
+step "clock-gating patches (BC-250 idle power) — EXPERIMENTAL, opt-in"
+# Two layers, both off by default (a leftover copy from a previous build is
+# actively reversed, not tolerated):
+#   bc250-cg-flags.patch              --cg              GFX MGCG/CGCG only.
+#                                                       navi1x-validated path.
+#   bc250-cg-flags-unvalidated.patch  --cg-unvalidated  MC/SDMA/ATHUB/HDP/NBIO
+#                                                       on unvalidated register
+#                                                       maps — can black-screen
+#                                                       the box; bisect at boot
+#                                                       with amdgpu.cg_mask.
+# Layer 2's cg_flags hunk sits after external_rev_id (disjoint from layer 1),
+# but to keep the tree self-consistent the order is fixed: apply 1 then 2,
+# reverse 2 then 1. Version-independent code; if a kernel bump makes a hunk
+# fail, they are small — refresh against the new tree.
 CGPATCH=$HERE/bc250-cg-flags.patch
-if [ "$WITH_CG" = 1 ]; then
-    if patch -p1 -R --dry-run -s -f < "$CGPATCH" >/dev/null 2>&1; then
-        echo "cg-flags patch already applied"
-    elif patch -p1 --dry-run -s -f < "$CGPATCH" >/dev/null 2>&1; then
-        patch -p1 -s < "$CGPATCH"
-        echo "cg-flags patch applied"
+CGPATCH_UNVAL=$HERE/bc250-cg-flags-unvalidated.patch
+
+apply_patch() {  # $1=patch file  $2=label
+    if patch -p1 -R --dry-run -s -f < "$1" >/dev/null 2>&1; then
+        echo "$2 already applied"
+    elif patch -p1 --dry-run -s -f < "$1" >/dev/null 2>&1; then
+        patch -p1 -s < "$1"; echo "$2 applied"
     else
-        die "cg-flags patch neither applies nor reverses cleanly — tree has drifted; inspect by hand"
+        die "$2 neither applies nor reverses cleanly — tree has drifted; inspect by hand"
     fi
+}
+reverse_if_present() {  # $1=patch file  $2=label
+    if patch -p1 -R --dry-run -s -f < "$1" >/dev/null 2>&1; then
+        patch -p1 -R -s < "$1"; echo "$2 REVERSED (leftover from a previous build)"
+    elif patch -p1 --dry-run -s -f < "$1" >/dev/null 2>&1; then
+        : # pristine w.r.t. this layer — nothing to do
+    else
+        die "tree in unknown state w.r.t. $2 (neither applied nor pristine) — inspect by hand"
+    fi
+}
+
+if [ "$WITH_CG_UNVAL" = 1 ]; then
+    apply_patch "$CGPATCH"       "cg-flags (GFX)"
+    apply_patch "$CGPATCH_UNVAL" "cg-flags-unvalidated (MC/SDMA/ATHUB/NBIO)"
+    echo "WARNING: unvalidated CG layer applied — if the display goes dark, boot with"
+    echo "         amdgpu.cg_mask=0x5 (GFX-only) and bisect from there; cg_mask=0 = stock."
+elif [ "$WITH_CG" = 1 ]; then
+    reverse_if_present "$CGPATCH_UNVAL" "cg-flags-unvalidated"   # drop layer 2 before touching layer 1
+    apply_patch        "$CGPATCH"       "cg-flags (GFX)"
 else
-    if patch -p1 -R --dry-run -s -f < "$CGPATCH" >/dev/null 2>&1; then
-        patch -p1 -R -s < "$CGPATCH"
-        echo "cg-flags patch REVERSED (leftover from a previous --cg build)"
-    elif patch -p1 --dry-run -s -f < "$CGPATCH" >/dev/null 2>&1; then
-        echo "skipped (opt in with: ./build.sh --cg)"
-    else
-        die "tree in unknown state w.r.t. cg-flags patch (neither applied nor pristine) — inspect by hand"
-    fi
+    reverse_if_present "$CGPATCH_UNVAL" "cg-flags-unvalidated"   # layer 2 first (it stacks on layer 1)
+    reverse_if_present "$CGPATCH"       "cg-flags (GFX)"
+    echo "clock-gating: not applied (opt in with --cg, or --cg-unvalidated for the experimental MC/SDMA layer)"
 fi
 
 step "modules_prepare + config re-verify (runbook step 7)"

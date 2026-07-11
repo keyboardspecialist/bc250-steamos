@@ -5,3 +5,11 @@ bc250-audio-fix/valve-kernel-dot-git/
 bc250-audio-fix/deps/
 
 __pycache__/
+
+# macOS cruft
+.DS_Store
+
+# Full BIOS image — 16 MiB signed blob; SHA-256 recorded in
+# bc250-power/SMU-FINDINGS.md instead of committing it
+BC250_3.00_CHIPSETMENU.ROM
+*.ROM

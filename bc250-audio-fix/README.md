@@ -182,8 +182,9 @@ kernel).
 The whole flow is automated, run on the BC-250 itself:
 
 ```
-./patch-driver.sh        # = ./fetch-sources.sh && ./build.sh && sudo ./install.sh
-./patch-driver.sh --cg   # same, with the experimental clock-gating patch (see build.sh)
+./patch-driver.sh                  # = ./fetch-sources.sh && ./build.sh && sudo ./install.sh
+./patch-driver.sh --cg             # + GFX-only clock gating (experimental, see build.sh)
+./patch-driver.sh --cg-unvalidated # + the risky MC/SDMA/NBIO layer (can black-screen)
 ```
 
 `fetch-sources.sh` covers steps 1–2: it derives everything from `uname -r`,
@@ -198,19 +199,30 @@ point releases like `6.16.12-valve24.4` ship only from a version branch
 such as `jupiter-3.8.1x`, not `jupiter-main`), and pulls the build deps
 from the mirror's Arch repos into `deps/`. Idempotent — re-run freely.
 
-`./build.sh [--cg] [kernel-tree]` (default `./valve-kernel`) automates steps
-3–8: it asserts each step's postcondition and refuses to continue on any
+`./build.sh [--cg|--cg-unvalidated] [kernel-tree]` (default `./valve-kernel`)
+automates steps 3–8: it asserts each step's postcondition and refuses to continue on any
 mismatch — including that the tree's checked-out commit matches the
 `-g<sha>` in `uname -r` — then replaces `amdgpu.ko.zst` here only after the
 fresh module passes both guards in `check-module.sh`. The numbered steps
 remain as the reference for what the scripts do and why.
 
-`--cg` additionally applies `bc250-cg-flags.patch`: clock gating for the
-GPU at idle (AMD ships cyan skillfish with `cg_flags=0`, ~20 W on the GFX
-rail at 0% activity). **Experimental / unvalidated** — off by default, and
-a default build actively reverses it if a previous `--cg` build left it in
-the tree. Bisect features at boot with `amdgpu.cg_mask` (GFX-only: `0x5`)
-if instability appears.
+`--cg` applies `bc250-cg-flags.patch`: idle clock gating for the GPU (AMD
+ships cyan skillfish with `cg_flags=0`, ~20 W on the GFX rail at 0%
+activity). This layer enables **GFX MGCG/CGCG only** — the navi1x-validated
+path, so it reuses register programming AMD already ships for Navi10.
+
+`--cg-unvalidated` adds `bc250-cg-flags-unvalidated.patch` on top: the
+MC/SDMA/ATHUB/HDP/NBIO paths. These fold cyan skillfish's IP revisions
+(MMHUB/ATHUB `2.0.3`, SDMA `5.0.1`, NBIF `2.1.1`) into a *different*
+revision's clock-gating register programming, which is **not known-safe on
+this silicon and can black-screen the box** — AMD ships cyan skillfish its
+own SDMA golden-settings table, so its register map is demonstrably
+distinct. Opt in only to bisect idle-power gains.
+
+Both are **experimental** and off by default; a build without the flag
+actively reverses either layer if a previous build left it in the tree.
+Bisect at boot with `amdgpu.cg_mask` (GFX-only: `0x5`; `0` = stock) if the
+display goes dark or instability appears.
 
 1. Fetch Valve's source package for the *running* kernel
    (`linux-neptune-616`, version matching `uname -r`) and check out the
