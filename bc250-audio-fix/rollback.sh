@@ -31,5 +31,15 @@ trap 'steamos-readonly enable || true' EXIT
 rm -f /usr/lib/modules/$REL/updates/amdgpu.ko.zst
 depmod "$REL"
 echo "amdgpu now resolves to: $(modinfo -F filename amdgpu)"
-mkinitcpio -p linux-neptune-616
+
+# Preset name follows the kernel package (linux-neptune-616 -> -618 across
+# SteamOS 3.8 -> 3.9), so derive it from the kernel release being rolled back.
+[[ "$REL" =~ neptune-[0-9]+ ]] && PRESET=linux-${BASH_REMATCH[0]} || PRESET=
+[ -n "$PRESET" ] && [ -f "/etc/mkinitcpio.d/$PRESET.preset" ] || {
+    echo "cannot find an mkinitcpio preset for '$REL' — available:"
+    ls /etc/mkinitcpio.d/
+    echo "stock module restored and depmod done; rerun after fixing: mkinitcpio -p <preset>"
+    exit 1
+}
+mkinitcpio -p "$PRESET"
 echo "OK — stock amdgpu restored. Reboot to apply."
