@@ -40,5 +40,14 @@ if [[ "$RESOLVED" != *"/updates/"* ]]; then
     [[ "$RESOLVED" == *"/updates/"* ]] || { echo "still losing — aborting before initramfs"; rm -f "$DST"; depmod "$REL"; exit 1; }
 fi
 
-mkinitcpio -p linux-neptune-616
+# Preset name follows the kernel package (linux-neptune-616 -> -618 across
+# SteamOS 3.8 -> 3.9), so derive it from the running kernel release.
+[[ "$REL" =~ neptune-[0-9]+ ]] && PRESET=linux-${BASH_REMATCH[0]} || PRESET=
+[ -n "$PRESET" ] && [ -f "/etc/mkinitcpio.d/$PRESET.preset" ] || {
+    echo "cannot find an mkinitcpio preset for '$REL' — available:"
+    ls /etc/mkinitcpio.d/
+    echo "module is installed and depmod done; rerun after fixing: mkinitcpio -p <preset>"
+    exit 1
+}
+mkinitcpio -p "$PRESET"
 echo "OK — patched amdgpu installed. Reboot to activate."
