@@ -183,6 +183,7 @@ The whole flow is automated, run on the BC-250 itself:
 
 ```
 ./patch-driver.sh        # = ./fetch-sources.sh && ./build.sh && sudo ./install.sh
+./patch-driver.sh --cg   # same, with the experimental clock-gating patch (see build.sh)
 ```
 
 `fetch-sources.sh` covers steps 1–2: it derives everything from `uname -r`,
