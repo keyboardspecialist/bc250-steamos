@@ -13,3 +13,6 @@ __pycache__/
 # bc250-power/SMU-FINDINGS.md instead of committing it
 BC250_3.00_CHIPSETMENU.ROM
 *.ROM
+# Full BIOS images at repo root (e.g. BC250_5.00_clv.bin) — anchored so it
+# does not catch extracted artifacts like bc250-power/cyan-skillfish-smu-fw.bin
+/BC250_*.bin

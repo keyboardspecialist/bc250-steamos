@@ -25,50 +25,50 @@ board reach a real low-power sleep state, and what power levers actually exist?*
 - `bc250-smu-deepsleep.patch` here is a first driver patch that maps and uses
   `SetMinDeepSleepGfxclkFreq` (idle power, no perf cost under load).
 
+**Target BIOS: Robin 3.00** ("Robin X.00" is ASRock's naming for the stock
+BC-250 releases). All addresses, offsets, and the driver patch here are for
+3.00. 5.00 was examined only for cross-version findings — see the note at the
+end; it is not a target.
+
 ## Provenance
 | Artifact | SHA-256 |
 |---|---|
 | `BC250_3.00_CHIPSETMENU.ROM` | `48fbe5d366e6a56e2fdffdca848426216ba1f083610dab63db89d2f4e6c940b5` |
-| `BC250_5.00_clv.bin` | `ea5781049160ab3343fd8839bf0b745e9948e80dff9db96dca5438c268ca4cb8` |
 | `cyan-skillfish-smu-fw.bin` (SMU from 3.00) | `6a3da1ef6024c3143283fb92468fd71d628e9402a751c4a9799a20f473549ad9` |
-| SMU from 5.00 | `13c93c081333110e725661d8046e67175ee3490ed05e68647b501e71c0fc3a25` |
 
-"Robin X.00" is ASRock's naming for the stock BC-250 BIOS releases; 3.00 and
-5.00 here are Robin 3.00 / Robin 5.00.
-
-## Locating the SMU firmware
+## Locating the SMU firmware (3.00)
 AMI Aptio BIOS with an AMD PSP directory (`$PSP` @ flash `0x8e0000`). SMU is
 PSP entry type `0x08` (the `0x12` B-slot is blank):
 
 ```
-3.00: type=0x08 SMU_FW size=262656 -> flash 0x8ff000
-5.00: type=0x08 SMU_FW size=262656 -> flash 0x8fee00
+type=0x08 SMU_FW size=262656 -> flash 0x8ff000
 ```
 
 Layout: 0x100-byte PSP entry header, then 256 KiB payload. Runtime→file map:
 `file_offset = runtime_addr + 0x104` (validated: the Queue 0 handler table at
-runtime `0x7070` lands at file `0x7174` with the exact pointers the RE repo
-lists).
+runtime `0x7070` lands at file `0x7174` with the expected `TestMessage` /
+`GetSmuVersion` pointers).
 
-## The message queue table (the real one)
+## The message queue table (3.00)
 At runtime `0x7070` (file `0x7174`): **4 queues, 8-byte entries**
 `{func_ptr, config}`. Queue 0 is the host/driver PPSMC interface, ~35 real
-handlers. Power/sleep-relevant handlers **present** (confirmed non-null in both
-3.00 and 5.00 binaries):
+handlers. Power/sleep-relevant handlers **present** (func addresses read from
+the 3.00 binary; all non-null):
 
-| msg id | handler (5.00) | name | note |
+| msg id | handler (3.00) | name | note |
 |---|---|---|---|
-| `0x16/0x17` | `0x25188/0x251b8` | ConfigureS3PwrOffRegisterAddress Hi/Lo | S3 suspend power-off |
-| `0x18` | `0x2b510` | RequestActiveWgp | GPU compute-unit power gate |
-| `0x19` | `0x2b5f4` | SetMinDeepSleepGfxclkFreq | idle gfxclk floor |
-| `0x1A` | `0x2b634` | SetMaxDeepSleepDfllGfxDiv | deep-sleep DFLL divider |
-| `0x1E` | `0x2b690` | QueryActiveWgp | read active WGP count |
-| `0x0B/0x0C` | `0x22bbc/0x22c94` | Request/QueryCorePstate | CPU DPM |
-| `0x35/0x36` | `0x234cc/0x23548` | SetSoftMin/MaxCclk | CPU clock floor/ceiling |
-| `0x3B/0x3C` | `0x2c358/0x2c388` | Force/UnforceGfxVid | GFX voltage (driver uses these) |
+| `0x16/0x17` | `0x24f28/0x24f58` | ConfigureS3PwrOffRegisterAddress Hi/Lo | S3 suspend power-off |
+| `0x18` | `0x2b1d0` | RequestActiveWgp | GPU compute-unit power gate |
+| `0x19` | `0x2b2b4` | SetMinDeepSleepGfxclkFreq | idle gfxclk floor |
+| `0x1A` | `0x2b2f4` | SetMaxDeepSleepDfllGfxDiv | deep-sleep DFLL divider |
+| `0x1E` | `0x2b350` | QueryActiveWgp | read active WGP count |
+| `0x0E` | `0x2b0c0` | RequestGfxclk | GFX clock (driver uses) |
+| `0x3B/0x3C` | `0x2c048/0x1db14` | Force/UnforceGfxVid | GFX voltage (driver uses) |
 
 The stock `cyan_skillfish_ppt.c` `cyan_skillfish_message_map` maps only 11 of
-these. The rest are implemented in firmware but never called by Linux.
+these. The rest are implemented in firmware but never called by Linux. Message
+IDs (`0x16`, `0x19`, …) are the fixed PPSMC protocol from `smu_v11_8_ppsmc.h`,
+so the driver patch is keyed to IDs, not these build-specific addresses.
 
 Not present anywhere in the table: `AllowGfxOff`, `EnterBaco`, `ArmD3` — so
 full GFXOFF / BACO chip-off is genuinely unavailable, and (firmware being
@@ -82,20 +82,6 @@ PSP-signed) cannot be added.
   reachable by patching amdgpu. This is the practical path to lower idle/GPU
   power, well past clock-gating alone.
 
-## 3.00 vs 5.00 — same interface, different firmware
-- **Version constant** (payload `0x100`): `0x00580600` (3.00) → `0x00580701`
-  (5.00) — genuinely different firmware (~88.6.0 → 88.7.1).
-- **Message set:** ~120 handlers across 4 queues in both; all handler addresses
-  moved (recompile/relayout, ~98% byte-diff in the code half, entropy ~7.3).
-  Minor slot differences at queue boundaries.
-- **Why a BIOS swap causes issues (as reported):** not the message list — the
-  **metrics table** (`SmuMetrics_t`) layout and **DriverIfVersion**. The driver
-  reads metrics via `TransferTableSmu2Dram` into a struct keyed to the fw
-  interface version; a mismatch yields garbage sensor/power/clock reads. The RE
-  repo's `amdgpu_full_metrics_table.patch` addresses exactly this. That patch
-  also shows the true SCLK range is **500–2230 MHz**, not the driver's clamped
-  1000–2000.
-
 ## Reachable levers, in order
 1. AMD CBS knobs (BIOS) — `AMDSETUP-power-knobs.txt` (PPT cap, C-states, DF
    C-states, deep-sleep clocks).
@@ -105,14 +91,24 @@ PSP-signed) cannot be added.
 
 ## Caveats
 - Handler *identification* comes from the RE repo's Xtensa disassembly; this
-  file validates the table against the two live binaries but does not
-  re-disassemble.
-- Offsets are per BIOS build (Robin 3.00 / 5.00). Re-extract for others.
+  file validates the table against the 3.00 binary but does not re-disassemble.
+- Offsets are for Robin 3.00. Re-extract for other builds.
 - Live corroboration on the board: `GetEnabledSmuFeatures` returns a bitmask of
   which power features the PMFW currently has enabled.
 
 ## Method / tooling
 - BIOS FV/PSP extraction: `uefi-firmware-parser`.
-- PSP-dir + SMU-header parse, entropy, table validation, version diff: ad-hoc
-  Python (no external binaries executed).
+- PSP-dir + SMU-header parse, entropy, table validation: ad-hoc Python (no
+  external binaries executed).
 - Message-name decode + Xtensa disassembly: the RE repo linked above.
+
+## Cross-version note (5.00 — reference only, not a target)
+5.00 (`BC250_5.00_clv.bin`, SMU sha `13c93c08…`) was examined only to check
+whether a newer BIOS adds power capability. It does not:
+- Version constant `0x00580600` (3.00) → `0x00580701` (5.00); the code half is a
+  full recompile (~98% byte-diff, entropy ~7.3), but the **message set is the
+  same** — same deep-sleep/WGP/S3 handlers, no GFXOFF/BACO added.
+- Its handler addresses differ (build-specific), which is why the driver patch
+  keys to PPSMC message IDs, not addresses — so it is unaffected either way.
+- Reports of 5.00 causing issues trace to the **metrics table** (`SmuMetrics_t`)
+  layout / **DriverIfVersion**, not the message interface — out of scope here.

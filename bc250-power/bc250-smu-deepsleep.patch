@@ -4,7 +4,10 @@ The cyan skillfish PMFW implements deep-sleep and WGP power-gating messages
 (SetMinDeepSleepGfxclkFreq 0x19, SetMaxDeepSleepDfllGfxDiv 0x1A,
 Request/QueryActiveWgp 0x18/0x1E — see bc250-power/SMU-FINDINGS.md and the
 bc250-collective/amd_smu_reverse_engineering message map), but the stock
-cyan_skillfish_ppt.c maps only 11 messages and never sends them.
+cyan_skillfish_ppt.c maps only 11 messages and never sends them. All four
+handlers are confirmed present (non-null) in the target Robin 3.00 PMFW; the
+message IDs come from smu_v11_8_ppsmc.h, so this is keyed to protocol IDs, not
+build-specific firmware addresses.
 
 This maps the four messages and, on a pp_od_clk_voltage COMMIT, lowers the
 deep-sleep gfxclk floor so the GPU idles further down. It touches the idle
