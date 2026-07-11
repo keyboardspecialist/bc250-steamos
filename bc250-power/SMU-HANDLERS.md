@@ -62,8 +62,40 @@ is off. So WGP gating is only usable once feature 6 is enabled.
 4. `power_limit_set` (Q2 0x2c) — runtime PPT cap without a BIOS flash.
 5. `set_cpu_gpu_vid` (Q3 0x0f) — CPU + GPU voltage (driver only forces GPU).
 
-All Q2/Q3 messages use separate mailbox register sets and may have per-queue
-guards; the Linux driver drives only Q0.
+All Q2/Q3 messages use separate mailbox register sets; the Linux driver drives
+only Q0. Reachability is settled below.
+
+## Communication / reachability
+Confirmed by [bc250-collective/bc250_smu_oc](https://github.com/bc250-collective/bc250_smu_oc)
+(a userspace CPU-OC tool) and reproduced in `bc250-smu-poke.py`:
+
+- **Transport is PCI config space, no kernel module, no MMIO.** Open
+  `/sys/bus/pci/devices/<bdf>/config`; the SMN index/data window is at config
+  offsets **`0xB8` (index) / `0xBC` (data)**. `write32(0xB8,reg);
+  read32(0xBC)` reads any SMN register (incl. the SMU mailboxes). Root only.
+- **Each queue is an SMN `(cmd, rsp, arg)` register triple** — these are the
+  `queue_descriptor_table` pointers, with concrete addresses:
+
+  | queue | cmd | rsp | arg | notes |
+  |---|---|---|---|---|
+  | 0 | `0x03B10A08` | `0x03B10A68` | `0x03B10A48` | **amdgpu-owned — racy** |
+  | 1 | `0x03B10A00` | `0x03B10A60` | `0x03B10A40` | |
+  | 2 | `0x03B10528` | `0x03B10564` | `0x03B10998` | safe |
+  | 3 | `0x03B10A20` | `0x03B10A80` | `0x03B10A88` | safe (OC tool uses this) |
+  | 4 | `0x03B10A24` | `0x03B10A84` | `0x03B10A8C` | |
+
+- **`send`:** `rsp=0`; `arg`=arg, `arg+4`=arg_high; `cmd`=msg_id; poll `rsp`
+  for `0x01`(OK)/`0xFF`/`0xFE`/`0xFD`/`0xFC` — the same status codes the
+  handlers write via `FUN_00000fa8`.
+- **Q1–Q4 are freely host-reachable** alongside amdgpu. Only **Q0 races the
+  driver** (it owns Q0), so Q0 handlers — `SetMinDeepSleepGfxclkFreq` (0x19),
+  `RequestActiveWgp` (0x18), `GetEnabledSmuFeatures` (0x3D) — are better driven
+  in-kernel (`bc250-smu-deepsleep.patch`) than from userspace.
+
+So the two clean paths to the power levers:
+- **Userspace (Q2/Q3):** `enable_smu_features` (Q2 0x05), `power_limit_set`
+  (Q2 0x2c), `set_cpu_gpu_vid` (Q3 0x0f) — see `bc250-smu-poke.py`.
+- **In-kernel (Q0):** deep-sleep floor + WGP gating — the driver patch.
 
 ## Reproducing the decode
 Ghidra 12 ships a built-in Xtensa processor, but it misses a few AMD-SMU
