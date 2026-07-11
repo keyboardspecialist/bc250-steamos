@@ -1,90 +1,118 @@
 # BC-250 (Cyan Skillfish) SMU / power-management analysis
 
-Static teardown of the BC-250's platform BIOS to answer one question: **can the
-board do a real low-power sleep state (GFXOFF / BACO / suspend), or only idle?**
+Static teardown of the BC-250's platform BIOS SMU firmware, to answer: **can the
+board reach a real low-power sleep state, and what power levers actually exist?**
 
-Short answer: **no true sleep.** The GPU's power-management firmware (PMFW,
-a.k.a. SMU) that would implement GFXOFF/BACO is *not present in the binary* —
-its message-dispatch table has 64 slots but only 13 real handlers; the rest
-route to an "unsupported" stub. And the firmware is PSP-signed, so the missing
-handlers can't be added. The reachable ceiling is deep idle (PPT cap, C-states,
-undervolt), documented in `AMDSETUP-power-knobs.txt`.
+> **Correction (this revision).** An earlier version of this file claimed the
+> SMU exposed only "13 handlers / 64 slots, no deep-sleep, sleep impossible."
+> That was wrong — it read a *tick/feature slot table*, not the message queue.
+> The real message table has ~120 handlers across 4 queues (~35 in the
+> host/driver queue), **including deep-sleep, WGP power-gating, and S3
+> power-off messages**. Corrected below. Credit to
+> [bc250-collective/amd_smu_reverse_engineering](https://github.com/bc250-collective/amd_smu_reverse_engineering)
+> — Xtensa Ghidra specs + decoded message tables — which enabled the fix.
+
+## TL;DR
+- The SMU core is **Xtensa**. Firmware is plaintext (signed, not encrypted).
+- The PMFW **implements** deep-sleep gfxclk, WGP (compute-unit) power-gating,
+  and S3 suspend power-off messages. The stock amdgpu driver maps only 11
+  messages and **never sends them** — so these are reachable by *driver*
+  patching, no firmware mod, no PSP-signing wall.
+- What is genuinely **absent** (no handler in firmware): `AllowGfxOff` /
+  `EnterBaco` by name — i.e. full GFXOFF / BACO chip-off. `RequestActiveWgp`
+  is a partial GPU power-gate; `ConfigureS3PwrOff*` means S3 suspend is
+  firmware-supported.
+- `bc250-smu-deepsleep.patch` here is a first driver patch that maps and uses
+  `SetMinDeepSleepGfxclkFreq` (idle power, no perf cost under load).
 
 ## Provenance
 | Artifact | SHA-256 |
 |---|---|
-| `BC250_3.00_CHIPSETMENU.ROM` (16 MiB SPI BIOS) | `48fbe5d366e6a56e2fdffdca848426216ba1f083610dab63db89d2f4e6c940b5` |
-| `cyan-skillfish-smu-fw.bin` (extracted SMU PMFW) | `6a3da1ef6024c3143283fb92468fd71d628e9402a751c4a9799a20f473549ad9` |
+| `BC250_3.00_CHIPSETMENU.ROM` | `48fbe5d366e6a56e2fdffdca848426216ba1f083610dab63db89d2f4e6c940b5` |
+| `BC250_5.00_clv.bin` | `ea5781049160ab3343fd8839bf0b745e9948e80dff9db96dca5438c268ca4cb8` |
+| `cyan-skillfish-smu-fw.bin` (SMU from 3.00) | `6a3da1ef6024c3143283fb92468fd71d628e9402a751c4a9799a20f473549ad9` |
+| SMU from 5.00 | `13c93c081333110e725661d8046e67175ee3490ed05e68647b501e71c0fc3a25` |
 
-## How the SMU firmware was located
-The BIOS is an AMI Aptio image with an AMD PSP directory (`$PSP` @ flash
-`0x8e0000`). Parsing its entries:
+"Robin X.00" is ASRock's naming for the stock BC-250 BIOS releases; 3.00 and
+5.00 here are Robin 3.00 / Robin 5.00.
 
-```
-type=0x08 SMU_FW   size=262656  -> flash 0x8ff000   (the live copy)
-type=0x12 SMU_FW2  size=262656  -> flash 0x93f700   (B-slot, blank: all 0x00)
-```
-
-`cyan-skillfish-smu-fw.bin` is the `0x08` blob (flash `0x8ff000`, 262656 bytes).
-Layout: 0x100-byte PSP firmware-entry header (`$PS1` magic at +0x10, payload
-size `0x40000` at +0x14) followed by a 256 KiB payload.
-
-- Payload entropy ≈ **5.09 bits/byte** → plaintext code, **not encrypted**
-  (encrypted would be ≈ 8.0). Signed, but readable.
-- Payload strings are stripped (release build). Only marker found: `AMD BC-250`.
-- ISA is AMD's proprietary MP1 core — not ARM-Thumb/Xtensa by opcode-signature
-  density — so there is no off-the-shelf disassembler. Analysis below is
-  structural, not a full disassembly.
-
-## The message-dispatch table (the key evidence)
-An ISA-agnostic scan for runs of code-range pointers found the PPSMC message
-dispatch table at **payload offset `0x15200`** (i.e. file `0x15300`):
-
-- **64 entries** (message IDs 0..63).
-- Entry `0x1f4d0` appears **51 times** — the shared "unsupported message" stub.
-- **13 real handlers**, at message indices:
+## Locating the SMU firmware
+AMI Aptio BIOS with an AMD PSP directory (`$PSP` @ flash `0x8e0000`). SMU is
+PSP entry type `0x08` (the `0x12` B-slot is blank):
 
 ```
- idx  handler        idx  handler        idx  handler
-   0  0x1f520         14  0x1fa60         22  0x1fa68
-   8  0x1fa70         16  0x1fa9c         28  0x1f634
-   9  0x1faac         17  0x1fabc         29  0x1f910
-  12  0x1f59c         20  0x1f5d8
-  13  0x1f5e8         21  0x1f624
+3.00: type=0x08 SMU_FW size=262656 -> flash 0x8ff000
+5.00: type=0x08 SMU_FW size=262656 -> flash 0x8fee00
 ```
 
-13 implemented handlers ≈ the 11 messages the amdgpu driver maps for cyan
-skillfish (`cyan_skillfish_message_map` in `cyan_skillfish_ppt.c`:
-TestMessage, GetSmuVersion, GetDriverIfVersion, Set/TransferTable pair,
-GetEnabledSmuFeatures, RequestGfxclk, Force/UnforceGfxVid) plus a couple
-internal. Everything else — `AllowGfxOff`, `EnterBaco`/`ArmD3`,
-`SetSoftMin/MaxGfxclk`, `SetPptLimit` — indexes into the 51 stub slots.
+Layout: 0x100-byte PSP entry header, then 256 KiB payload. Runtime→file map:
+`file_offset = runtime_addr + 0x104` (validated: the Queue 0 handler table at
+runtime `0x7070` lands at file `0x7174` with the exact pointers the RE repo
+lists).
 
-## Conclusion
-| Layer | Finding |
-|---|---|
-| amdgpu driver message map | 11 messages; no GFXOFF/BACO/DPM-min-max |
-| **SMU PMFW binary (this file)** | **64 slots, 13 real handlers, GFXOFF/BACO IDs → stub** |
-| PSP signing | missing handlers cannot be added (signature enforced) |
+## The message queue table (the real one)
+At runtime `0x7070` (file `0x7174`): **4 queues, 8-byte entries**
+`{func_ptr, config}`. Queue 0 is the host/driver PPSMC interface, ~35 real
+handlers. Power/sleep-relevant handlers **present** (confirmed non-null in both
+3.00 and 5.00 binaries):
 
-Sleep is not firmware-toggleable, not a hidden register, and not a hidden
-message. The GPU can gate clocks (see the `bc250-audio-fix/bc250-cg-flags*`
-patches) and can be parked at a low fixed voltage via `RequestGfxclk` +
-`ForceGfxVid` (the `pp_od_clk_voltage` VDDC-curve path), and the platform can be
-throttled via the AMD CBS knobs in `AMDSETUP-power-knobs.txt`. That is the
-floor.
+| msg id | handler (5.00) | name | note |
+|---|---|---|---|
+| `0x16/0x17` | `0x25188/0x251b8` | ConfigureS3PwrOffRegisterAddress Hi/Lo | S3 suspend power-off |
+| `0x18` | `0x2b510` | RequestActiveWgp | GPU compute-unit power gate |
+| `0x19` | `0x2b5f4` | SetMinDeepSleepGfxclkFreq | idle gfxclk floor |
+| `0x1A` | `0x2b634` | SetMaxDeepSleepDfllGfxDiv | deep-sleep DFLL divider |
+| `0x1E` | `0x2b690` | QueryActiveWgp | read active WGP count |
+| `0x0B/0x0C` | `0x22bbc/0x22c94` | Request/QueryCorePstate | CPU DPM |
+| `0x35/0x36` | `0x234cc/0x23548` | SetSoftMin/MaxCclk | CPU clock floor/ceiling |
+| `0x3B/0x3C` | `0x2c358/0x2c388` | Force/UnforceGfxVid | GFX voltage (driver uses these) |
+
+The stock `cyan_skillfish_ppt.c` `cyan_skillfish_message_map` maps only 11 of
+these. The rest are implemented in firmware but never called by Linux.
+
+Not present anywhere in the table: `AllowGfxOff`, `EnterBaco`, `ArmD3` — so
+full GFXOFF / BACO chip-off is genuinely unavailable, and (firmware being
+PSP-signed) cannot be added.
+
+## Sleep verdict
+- **Full GPU chip-off (GFXOFF/BACO):** no — handler absent, can't be signed in.
+- **S3 suspend-to-RAM:** firmware-supported (`ConfigureS3PwrOff*`); needs
+  driver/ACPI wiring to exercise.
+- **Deep-sleep gfxclk + WGP power-gating:** firmware-supported, driver-unused →
+  reachable by patching amdgpu. This is the practical path to lower idle/GPU
+  power, well past clock-gating alone.
+
+## 3.00 vs 5.00 — same interface, different firmware
+- **Version constant** (payload `0x100`): `0x00580600` (3.00) → `0x00580701`
+  (5.00) — genuinely different firmware (~88.6.0 → 88.7.1).
+- **Message set:** ~120 handlers across 4 queues in both; all handler addresses
+  moved (recompile/relayout, ~98% byte-diff in the code half, entropy ~7.3).
+  Minor slot differences at queue boundaries.
+- **Why a BIOS swap causes issues (as reported):** not the message list — the
+  **metrics table** (`SmuMetrics_t`) layout and **DriverIfVersion**. The driver
+  reads metrics via `TransferTableSmu2Dram` into a struct keyed to the fw
+  interface version; a mismatch yields garbage sensor/power/clock reads. The RE
+  repo's `amdgpu_full_metrics_table.patch` addresses exactly this. That patch
+  also shows the true SCLK range is **500–2230 MHz**, not the driver's clamped
+  1000–2000.
+
+## Reachable levers, in order
+1. AMD CBS knobs (BIOS) — `AMDSETUP-power-knobs.txt` (PPT cap, C-states, DF
+   C-states, deep-sleep clocks).
+2. GFX undervolt/downclock — `pp_od_clk_voltage` VDDC curve.
+3. **Driver-side, using existing PMFW messages** — `bc250-smu-deepsleep.patch`
+   (deep-sleep gfxclk floor; WGP gating mapped for follow-up).
 
 ## Caveats
-- Handler identification is structural (64-slot, stub-dominated table with a
-  13≈11 match to the known driver messages). The MP1 mailbox ISR was not
-  disassembled to trace the index register into this table.
-- Offsets are specific to this BIOS build (`BC250 3.00 CHIPSETMENU`). Re-extract
-  for other builds.
-- Live corroboration (no reflash, on the board): read `GetEnabledSmuFeatures`
-  via the SMU mailbox — the returned feature bitmask shows which power features
-  the PMFW actually has compiled/enabled.
+- Handler *identification* comes from the RE repo's Xtensa disassembly; this
+  file validates the table against the two live binaries but does not
+  re-disassemble.
+- Offsets are per BIOS build (Robin 3.00 / 5.00). Re-extract for others.
+- Live corroboration on the board: `GetEnabledSmuFeatures` returns a bitmask of
+  which power features the PMFW currently has enabled.
 
 ## Method / tooling
-- BIOS FV/PSP extraction: `uefi-firmware-parser` (Tiano/LZMA decompressor).
-- PSP directory + SMU header parse, entropy, dispatch-table scan: ad-hoc Python
-  (no external binaries executed).
+- BIOS FV/PSP extraction: `uefi-firmware-parser`.
+- PSP-dir + SMU-header parse, entropy, table validation, version diff: ad-hoc
+  Python (no external binaries executed).
+- Message-name decode + Xtensa disassembly: the RE repo linked above.
