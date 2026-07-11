@@ -7,8 +7,8 @@ Short answer: **no true sleep.** The GPU's power-management firmware (PMFW,
 a.k.a. SMU) that would implement GFXOFF/BACO is *not present in the binary* —
 its message-dispatch table has 64 slots but only 13 real handlers; the rest
 route to an "unsupported" stub. And the firmware is PSP-signed, so the missing
-handlers can't be added. The reachable ceiling is deep idle (PPT cap + C-states
-+ undervolt), documented in `AMDSETUP-power-knobs.txt`.
+handlers can't be added. The reachable ceiling is deep idle (PPT cap, C-states,
+undervolt), documented in `AMDSETUP-power-knobs.txt`.
 
 ## Provenance
 | Artifact | SHA-256 |
