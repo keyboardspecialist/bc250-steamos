@@ -1,0 +1,7 @@
+# Build products — users build the module fresh against their running kernel
+bc250-audio-fix/amdgpu.ko.zst
+bc250-audio-fix/valve-kernel/
+bc250-audio-fix/valve-kernel-dot-git/
+bc250-audio-fix/deps/
+
+__pycache__/

@@ -5,7 +5,10 @@
 # running kernel, extract the dep packages into deps/); this script verifies
 # their results and refuses to continue on any mismatch.
 #
-#   ./build.sh [kernel-tree]      (default: ./valve-kernel)
+#   ./build.sh [--cg] [kernel-tree]      (default: ./valve-kernel)
+#
+# --cg additionally applies the EXPERIMENTAL clock-gating patch
+# (bc250-cg-flags.patch, idle power) — off by default until validated.
 #
 # Run on the BC-250 itself, as the normal user: the running kernel's
 # /proc/config.gz and `uname -r` are the ground truth everything is checked
@@ -19,7 +22,15 @@ REL=$(uname -r)
 die()  { echo "FATAL: $*" >&2; exit 1; }
 step() { echo; echo "==> $*"; }
 
-TREE_ARG=${1:-$HERE/valve-kernel}
+WITH_CG=0
+ARGS=()
+for a in "$@"; do
+    case "$a" in
+        --cg) WITH_CG=1 ;;
+        *)    ARGS+=("$a") ;;
+    esac
+done
+TREE_ARG=${ARGS[0]:-$HERE/valve-kernel}
 TREE=$(cd "$TREE_ARG" 2>/dev/null && pwd) || die "kernel tree not found: $TREE_ARG"
 
 step "preflight"
@@ -109,6 +120,34 @@ elif patch -p1 --dry-run -s -f < "$PATCH" >/dev/null 2>&1; then
     echo "patch applied"
 else
     die "patch neither applies nor reverses cleanly — tree has drifted; inspect by hand"
+fi
+
+step "clock-gating patch (BC-250 idle power) — EXPERIMENTAL, opt-in via --cg"
+# Enables the CG features AMD never wired up for cyan skillfish (cg_flags=0
+# upstream). Unvalidated on this silicon, so default builds must NOT carry
+# it: without --cg an applied copy left over from a previous --cg build is
+# actively reversed, not tolerated. Version-independent code (nv.c switch
+# cases); if a kernel bump makes it fail, the hunks are small — refresh
+# against the new tree.
+CGPATCH=$HERE/bc250-cg-flags.patch
+if [ "$WITH_CG" = 1 ]; then
+    if patch -p1 -R --dry-run -s -f < "$CGPATCH" >/dev/null 2>&1; then
+        echo "cg-flags patch already applied"
+    elif patch -p1 --dry-run -s -f < "$CGPATCH" >/dev/null 2>&1; then
+        patch -p1 -s < "$CGPATCH"
+        echo "cg-flags patch applied"
+    else
+        die "cg-flags patch neither applies nor reverses cleanly — tree has drifted; inspect by hand"
+    fi
+else
+    if patch -p1 -R --dry-run -s -f < "$CGPATCH" >/dev/null 2>&1; then
+        patch -p1 -R -s < "$CGPATCH"
+        echo "cg-flags patch REVERSED (leftover from a previous --cg build)"
+    elif patch -p1 --dry-run -s -f < "$CGPATCH" >/dev/null 2>&1; then
+        echo "skipped (opt in with: ./build.sh --cg)"
+    else
+        die "tree in unknown state w.r.t. cg-flags patch (neither applied nor pristine) — inspect by hand"
+    fi
 fi
 
 step "modules_prepare + config re-verify (runbook step 7)"

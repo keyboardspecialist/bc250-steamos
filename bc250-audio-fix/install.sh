@@ -8,7 +8,7 @@ HERE=$(cd "$(dirname "$0")" && pwd)
 SRC=$HERE/amdgpu.ko.zst
 DST=/usr/lib/modules/$REL/updates/amdgpu.ko.zst
 
-[ -f "$SRC" ] || { echo "missing $SRC"; exit 1; }
+[ -f "$SRC" ] || { echo "missing $SRC — the module is not shipped in the repo; build it against your running kernel first: ./fetch-sources.sh && ./build.sh"; exit 1; }
 [ "$(id -u)" = 0 ] || { echo "run with sudo"; exit 1; }
 
 # Both guards (vermagic + task_struct ABI offsets) live in check-module.sh,

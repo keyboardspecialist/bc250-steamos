@@ -147,7 +147,7 @@ built module carries DWARF; `strip --strip-debug` before packaging
 |---|---|
 | `bc250-dp-audio-clock-6.16.patch` | Full two-hunk source patch (SteamOS 3.8.x) |
 | `bc250-dp-audio-clock-6.18.patch` | ignore_dpref_ss hunk only (SteamOS 3.9.x — clk_mgr hunk is upstream there) |
-| `amdgpu.ko.zst` | Built, ABI-verified module for `6.16.12-valve24.2-1-neptune-616-g57ac0765fe0d` |
+| `amdgpu.ko.zst` | Local build product (untracked): `build.sh` writes it, `install.sh` installs it — always built fresh against *your* running kernel |
 | `patch-driver.sh` | Single entry point: fetch-sources.sh → build.sh → sudo install.sh |
 | `fetch-sources.sh` | Fetches kernel source (Evlav mirror), Module.symvers (headers package), and deps/ — runbook steps 1–2 as code |
 | `build.sh` | Builds the module against the running kernel — runbook steps 3–8 as code, every postcondition asserted |
@@ -197,12 +197,19 @@ point releases like `6.16.12-valve24.4` ship only from a version branch
 such as `jupiter-3.8.1x`, not `jupiter-main`), and pulls the build deps
 from the mirror's Arch repos into `deps/`. Idempotent — re-run freely.
 
-`./build.sh [kernel-tree]` (default `./valve-kernel`) automates steps 3–8:
-it asserts each step's postcondition and refuses to continue on any
+`./build.sh [--cg] [kernel-tree]` (default `./valve-kernel`) automates steps
+3–8: it asserts each step's postcondition and refuses to continue on any
 mismatch — including that the tree's checked-out commit matches the
 `-g<sha>` in `uname -r` — then replaces `amdgpu.ko.zst` here only after the
 fresh module passes both guards in `check-module.sh`. The numbered steps
 remain as the reference for what the scripts do and why.
+
+`--cg` additionally applies `bc250-cg-flags.patch`: clock gating for the
+GPU at idle (AMD ships cyan skillfish with `cg_flags=0`, ~20 W on the GFX
+rail at 0% activity). **Experimental / unvalidated** — off by default, and
+a default build actively reverses it if a previous `--cg` build left it in
+the tree. Bisect features at boot with `amdgpu.cg_mask` (GFX-only: `0x5`)
+if instability appears.
 
 1. Fetch Valve's source package for the *running* kernel
    (`linux-neptune-616`, version matching `uname -r`) and check out the
