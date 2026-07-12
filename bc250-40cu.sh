@@ -533,6 +533,10 @@ FILE MAP
   /usr/*, /tmp/umr-build                 disposable -- wiped by updates
                                          and that's fine
 
+  NB: umr links base-image libs (libdrm.so.2, libncursesw.so.6). Point
+  releases keep sonames stable; after a MAJOR SteamOS version jump run
+  'verify' -- if register reads fail, re-run 'prep' to rebuild umr.
+
 RELATED
   bc250-cu-status.sh          read-only CU dispatch report (-q for N/40)
   bc250-power.sh      ACPI C/P-states + GPU governor + freq ctl

@@ -341,12 +341,17 @@ After=local-fs.target
 [Service]
 Type=oneshot
 ExecStart=/bin/bash -c '\
-  if [[ ! -f $CPIO_BOOT ]] || ! cmp -s "$CPIO_MASTER" "$CPIO_BOOT"; then \
+  if [[ ! -f $CPIO_BOOT ]] || ! cmp -s "$CPIO_MASTER" "$CPIO_BOOT" \
+     || ! grep -q acpi_override.cpio /boot/grub/grub.cfg 2>/dev/null; then \
     steamos-readonly disable; \
     cp -f "$CPIO_MASTER" "$CPIO_BOOT"; \
     command -v update-grub >/dev/null && update-grub || grub-mkconfig -o /boot/grub/grub.cfg; \
     steamos-readonly enable; \
-    echo "bc250: ACPI override restored after OS update; REBOOT to re-activate C/P-states" | systemd-cat -p warning; \
+    if grep -q acpi_override.cpio /boot/grub/grub.cfg 2>/dev/null; then \
+      echo "bc250: ACPI override restored after OS update; REBOOT to re-activate C/P-states" | systemd-cat -p warning; \
+    else \
+      echo "bc250: grub.cfg still lacks acpi_override.cpio after regen -- this grub ignores GRUB_EARLY_INITRD_LINUX_CUSTOM; add the initrd line manually (see bc250-power.sh acpi output)" | systemd-cat -p err; \
+    fi; \
   fi'
 RemainAfterExit=yes
 
