@@ -24,6 +24,44 @@ KREL=$(uname -r)
 [ "$(id -u)" = 0 ] || { echo "Please run with sudo."; exit 1; }
 [ -d "$DRV" ] || { echo "Driver source not found at $DRV"; exit 1; }
 
+find_storage_device() {
+    local device vendor product
+
+    for device in /sys/bus/usb/devices/*; do
+        [ -r "$device/idVendor" ] && [ -r "$device/idProduct" ] || continue
+        vendor=$(<"$device/idVendor")
+        product=$(<"$device/idProduct")
+        if [ "$vendor:$product" = 1111:1111 ]; then
+            printf '%s\n' "${device##*/}"
+            return 0
+        fi
+    done
+    return 1
+}
+
+find_wifi_device_id() {
+    local expected_device="${1:-}" device vendor product alias
+
+    for device in /sys/bus/usb/devices/*; do
+        [ -r "$device/idVendor" ] && [ -r "$device/idProduct" ] || continue
+        if [ -n "$expected_device" ] && [ "${device##*/}" != "$expected_device" ]; then
+            continue
+        fi
+
+        vendor=$(<"$device/idVendor")
+        product=$(<"$device/idProduct")
+        while IFS= read -r alias; do
+            case "$alias" in
+                "usb:v${vendor^^}p${product^^}"*)
+                    printf '%s:%s\n' "$vendor" "$product"
+                    return 0
+                    ;;
+            esac
+        done < <(modinfo -F alias aic8800_fdrv 2>/dev/null)
+    done
+    return 1
+}
+
 echo "== [1/7] Unlocking rootfs =="
 steamos-readonly disable
 
@@ -50,12 +88,10 @@ echo "== [6/7] Writing /etc configuration =="
 mkdir -p /etc/usb_modeswitch.d /etc/udev/rules.d /etc/modprobe.d
 
 # Dongle enumerates as fake USB mass-storage 1111:1111 (removable disk, so
-# the standard CD-ROM eject doesn't work). This vendor SCSI message makes it
-# re-enumerate as a69c:8d80 (firmware loader mode).
+# the standard CD-ROM eject doesn't work). This vendor SCSI message switches
+# it to its actual firmware-loader and WiFi device IDs.
 cat > '/etc/usb_modeswitch.d/1111:1111' <<'EOF'
 # AIC8800D80 WiFi dongle: fake mass-storage -> WiFi mode
-TargetVendor=0xa69c
-TargetProduct=0x8d80
 MessageContent="555342431234567800000000000010fd0000000000000000000000000000f2"
 ResetUSB=1
 EOF
@@ -74,13 +110,25 @@ udevadm control --reload
 echo "== [7/7] Relocking rootfs =="
 steamos-readonly enable
 
-if lsusb -d 1111:1111 >/dev/null 2>&1; then
+if storage_device=$(find_storage_device); then
     echo "Switching dongle to WiFi mode..."
     usb_modeswitch -v 1111 -p 1111 \
         -M "555342431234567800000000000010fd0000000000000000000000000000f2" -R || true
-    echo "Firmware upload + driver bind takes ~10s; watch: ip link"
-elif lsusb -d a69c:8d81 >/dev/null 2>&1; then
-    echo "Dongle already in WiFi mode; reloading driver..."
+
+    wifi_id=
+    for _ in {1..15}; do
+        if wifi_id=$(find_wifi_device_id "$storage_device"); then
+            break
+        fi
+        sleep 1
+    done
+    if [ -n "$wifi_id" ]; then
+        echo "Dongle switched to WiFi mode as $wifi_id."
+    else
+        echo "WiFi device did not appear; check: journalctl -k -u systemd-udevd"
+    fi
+elif wifi_id=$(find_wifi_device_id); then
+    echo "Dongle already in WiFi mode as $wifi_id; reloading driver..."
     modprobe -r aic8800_fdrv aic_load_fw 2>/dev/null || true
     modprobe aic8800_fdrv
 else
