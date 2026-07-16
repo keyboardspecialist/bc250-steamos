@@ -1,259 +1,125 @@
-# bc250-audio-fix — DP output clock fix for the BC-250
+# DisplayPort clock correction
 
-Patched `amdgpu.ko` for the ASRock BC-250 on SteamOS. Fixes DisplayPort output
-running slow: **both video and audio played at ~82% speed** — everything in
-slow motion, audio pitched down.
+Corrects DisplayPort video and audio playback timing through a patched `amdgpu` module.
 
-The clock-manager hunk is the upstream-faithful fix — the same
-reorder as mainline commit `9c7be0efa6f0` ("drm/amd: fix dcn 2.01 check",
-merged March 2026, first release after v6.19), which routes Cyan Skillfish to
-the dcn201 clock manager it was always meant to use. This dcn201 variant is
-built and ABI-verified but **not yet boot-tested**; an earlier conservative
-variant (keep dcn3 clk_mgr, pin dprefclk to 600 MHz) was **confirmed working**
-on `6.16.12-valve24.2-1-neptune-616-g57ac0765fe0d` as of 2026-07-05.
+## Install
 
-## The bug
+Run from the logged-in user session:
 
-The BC-250's GPU (Cyan Skillfish, DCN 2.0.1) reports a hardware revision that
-falls into the *Beige Goby* range check in
-`drivers/gpu/drm/amd/display/dc/clk_mgr/clk_mgr.c`, so it is handed the dcn3
-clock manager. That clock manager starts from a hardcoded DP reference clock
-(dprefclk) of **730 MHz** and normally corrects it from a register dump — but
-the register dump is unimplemented for this ASIC, so 730 MHz sticks. The real
-reference clock is **600 MHz**.
+```bash
+cd ~/.local/share/bc250-fixes/bc250-steamos/bc250-audio-fix
+./patch-driver.sh
+sudo reboot
+```
 
-Every DP DTO (the divider that generates the pixel and audio clocks) is
-programmed as `rate × dprefclk_actual / dprefclk_assumed`, so the entire DP
-output — pixel clock and audio clock alike — ran at 600/730 ≈ **82% of the
-requested rate**. Video played in slow motion and audio with it, audibly slow
-and pitched flat.
+`patch-driver.sh` fetches matching sources and build dependencies, builds the module, validates it, and invokes `sudo` for installation.
 
-A second, smaller skew: the BC-250 integrated VBIOS info reports DP spread
-spectrum disabled, but the generic SS reader can still leave DPREFCLK spread
-spectrum state enabled and nudge the DP reference clock and audio DTO.
+## Kernel Support
 
-## The fix
+| SteamOS | Kernel | Patch |
+|---|---|---|
+| 3.8.x | `linux-neptune-616` | [`bc250-dp-audio-clock-6.16.patch`](bc250-dp-audio-clock-6.16.patch) |
+| 3.9.x | `linux-neptune-618` | [`bc250-dp-audio-clock-6.18.patch`](bc250-dp-audio-clock-6.18.patch) |
 
-Two patch variants; `build.sh` picks by the running kernel's version:
+The build selects the patch from the running kernel and produces `amdgpu.ko.zst` for that exact release.
 
-- `bc250-dp-audio-clock-6.16.patch` — both hunks, for SteamOS 3.8.x
-  (`linux-neptune-616`).
-- `bc250-dp-audio-clock-6.18.patch` — hunk 2 only, for SteamOS 3.9.x
-  (`linux-neptune-618`): Valve's 6.18 tree already carries the clk_mgr
-  reorder (hunk 1) upstream, so only the spread-spectrum hunk remains.
+## Commands
 
-The full fix, as written against `linux-neptune-616` commit `57ac0765fe0d`:
+| Command | Action |
+|---|---|
+| `./patch-driver.sh` | Fetch, build, validate, and install |
+| `./fetch-sources.sh` | Fetch the matching kernel source, symbols, and dependencies |
+| `./build.sh` | Build and validate `amdgpu.ko.zst` |
+| `./check-module.sh amdgpu.ko.zst` | Validate vermagic and ABI compatibility |
+| `sudo ./install.sh` | Install the module and rebuild the initramfs |
+| `sudo ./rollback.sh` | Restore the stock module for the running kernel |
+| `sudo ./rollback.sh <kernel-release>` | Restore the stock module for a selected kernel |
+| `sudo ./cleanup-other-slot.sh` | Restore the stock module in the alternate SteamOS slot |
+| `./clean.sh` | Reset build state and retain downloaded packages |
+| `./clean.sh --all` | Remove the kernel tree, dependencies, downloads, and generated builds |
+| `./clean.sh --dry-run` | Preview cleanup |
 
-1. **`dc/clk_mgr/clk_mgr.c`** — check `dce_version == DCN_VERSION_2_01`
-   *before* the Beige Goby rev-range check, so Cyan Skillfish gets
-   `dcn201_clk_mgr_construct` (backport of upstream `9c7be0efa6f0`). The
-   dcn201 clock manager reads the real dprefclk from the chip's own CLK
-   registers (`CLK4_CLK2_CURRENT_CNT`, falling back to 600 MHz — the same
-   value the earlier conservative variant pinned) and actively manages
-   dispclk/dppclk via DENTIST, which the mis-selected dcn3 clock manager
-   never did on this ASIC (its SMU handshake fails, so its update path is
-   inert).
-2. **`dc/clk_mgr/dcn201/dcn201_clk_mgr.c`** — after reading generic SS data,
-   clear both the DPREFCLK SS percentage and enabled state when the integrated
-   VBIOS info reports `dp_ss_control == 0`.
+Use a custom kernel-tree path as the final argument:
 
-The patch is small; getting a module that's safe to boot is the harder part.
-See "Why the build setup matters" below.
+```bash
+./patch-driver.sh /path/to/kernel-tree
+./fetch-sources.sh /path/to/kernel-tree
+./build.sh /path/to/kernel-tree
+```
 
-## What was affected
+## Validation
 
-The bug lives in the DP stream clocking — on DisplayPort the pixel and audio
-clocks are synthesized by DTOs programmed as a ratio against dprefclk — so
-everything that leaves the GPU as native DP was affected, and the fix covers
-all of it:
+The build and installer verify the source revision, kernel release, kernel configuration, and stock-module ABI before installation.
 
-- **Straight DP to a DP monitor** — any resolution, refresh rate, or audio
-  format; the DTO formula scales everything from the same reference.
-- **Active DP→HDMI converters** — the GPU still outputs native DP and the
-  converter re-encodes downstream, so this path was broken before and is
-  fixed now.
-- **Any BC-250 board** — the 600 MHz reference is a property of the Cyan
-  Skillfish ASIC design, not one unit, and the patch only touches DCN 2.0.1
-  hardware.
+## Clock Gating
 
-**Passive DP→HDMI adapters are a different electrical path.** They rely on
-dual-mode DP (DP++): the port itself switches to emitting TMDS — actual HDMI
-signaling — and the DP link layer isn't used. The pixel clock then comes
-straight from the PHY PLL rather than a dprefclk-referenced DTO, and audio
-timing rides on the TMDS clock via HDMI audio clock regeneration. dprefclk
-isn't in that chain, so the 82%-speed bug should never have manifested through
-a passive adapter, and the fix neither helps nor risks anything there.
+Clock-gating patches are experimental and opt-in.
 
-(Untested caveats: this follows from the DCN clocking architecture, not from
-testing a passive adapter on this board — and passive adapters only work at
-all if the port wires up DP++. Slow-motion playback through a passive adapter
-would be a separate bug, not a gap in this fix.)
+| Command | Configuration |
+|---|---|
+| `./patch-driver.sh` | Display clock correction |
+| `./patch-driver.sh --cg` | Display clock correction plus GFX MGCG/CGCG |
+| `./patch-driver.sh --cg-unvalidated` | Display clock correction plus GFX, MC, SDMA, ATHUB, HDP, and NBIO clock gating |
 
-## Why the build setup matters
+`--cg-unvalidated` applies register programming across additional GPU blocks and carries black-screen risk. Use `amdgpu.cg_mask=0x5` for GFX-only recovery or `amdgpu.cg_mask=0` for the stock clock-gating mask.
 
-A kernel module built out-of-tree must match the running kernel in *two*
-independent ways, and on SteamOS both are easy to get silently wrong. Since
-this module replaces the GPU driver via an `updates/` override baked into the
-initramfs, a bad build doesn't just fail — it can leave the machine with no
-display at boot.
+The flags also work with `build.sh`:
 
-**1. Exact source version.** The module must be built from the source of the
-kernel that's actually running (Valve ships point releases like `valve24.1`
-vs `valve24.2-1` that are not interchangeable). A version mismatch is the
-benign failure: modprobe rejects the module on its vermagic string — but with
-the override in the initramfs, "rejected" still means booting without a GPU
-driver.
+```bash
+./build.sh --cg
+./build.sh --cg-unvalidated
+```
 
-**2. Exact kernel config.** This is the dangerous one, because nothing checks
-it. The SteamOS kernel has `CONFIG_SCHED_CLASS_EXT=y`, which depends on
-`CONFIG_DEBUG_INFO_BTF` — and Kconfig **silently disables BTF whenever
-`pahole` is not on PATH**. Any `olddefconfig`/`syncconfig` run does this
-without a word (syncconfig even rewrites `.config` behind your back
-mid-build). sched_ext adds a 256-byte member in the middle of `task_struct`,
-so a module built without it has every `task_struct` field offset 0x100 short
-of the running kernel's.
+## Rollback
 
-Nothing catches that at load time: vermagic is only a release-string compare,
-and `CONFIG_MODVERSIONS` is off in this kernel, so there is **no ABI check at
-all**. The module loads cleanly and then hangs before amdgpu's first printk —
-black screen, zero log output, nothing to debug from.
+Restore the stock module and reboot:
 
-Guards in this repo that close both holes:
+```bash
+cd ~/.local/share/bc250-fixes/bc250-steamos/bc250-audio-fix
+sudo ./rollback.sh
+sudo reboot
+```
 
-- Guard 1 in `check-module.sh` (run by both `build.sh` and `install.sh`)
-  refuses a module whose vermagic doesn't equal `uname -r`, so a
-  version-mismatched build can never reach the initramfs.
-- `build-env.sh` puts the bundled `pahole`/`bc` on PATH and **fails loudly**
-  if they're missing. Source it before *any* `make` in the kernel tree
-  (`build.sh` does).
-- After any config regen, verify `CONFIG_SCHED_CLASS_EXT=y` survived in both
-  `.config` and (after `modules_prepare`) `include/generated/autoconf.h`
-  (`build.sh` asserts both and aborts the build otherwise).
-- Guard 2 in `check-module.sh` does a real ABI check: it disassembles
-  `amdgpu_vm_set_task_info` in the candidate and stock modules and diffs the
-  `task_struct` field offsets — a mis-built module reads `current->pid` at
-  0x9d0 where the stock module reads 0xad0, so config drift is caught before
-  it can touch the boot path.
+Recovery environments can target the installed kernel directly:
 
-Related Kbuild footguns to keep in mind: after fixing a config, syncconfig
-may regenerate `auto.conf` without touching the per-option
-`include/config/` stamp files, so stale objects **don't rebuild** — run
-`make M=... clean` after any config change. And BTF implies DEBUG_INFO, so the
-built module carries DWARF; `strip --strip-debug` before packaging
-(591 MB → 27.5 MB, matching stock minus the `.BTF` section).
+```bash
+sudo ./rollback.sh 6.16.12-valve24.2-1-neptune-616-g57ac0765fe0d
+```
+
+For an override installed in the alternate A/B slot:
+
+```bash
+sudo ./cleanup-other-slot.sh
+```
+
+## SteamOS Updates
+
+Rebuild after each kernel update:
+
+```bash
+cd ~/.local/share/bc250-fixes/bc250-steamos
+git pull
+cd bc250-audio-fix
+./patch-driver.sh
+sudo reboot
+```
+
+Source availability follows the Evlav kernel mirror. Run the command again after the target kernel commit appears in the mirror.
 
 ## Files
 
 | File | Purpose |
 |---|---|
-| `bc250-dp-audio-clock-6.16.patch` | Full two-hunk source patch (SteamOS 3.8.x) |
-| `bc250-dp-audio-clock-6.18.patch` | dcn201 spread-spectrum hunk only (SteamOS 3.9.x — clk_mgr selection hunk is upstream there) |
-| `amdgpu.ko.zst` | Local build product (untracked): `build.sh` writes it, `install.sh` installs it — always built fresh against *your* running kernel |
-| `patch-driver.sh` | Single entry point: fetch-sources.sh → build.sh → sudo install.sh |
-| `fetch-sources.sh` | Fetches kernel source (Evlav mirror), Module.symvers (headers package), and deps/ — runbook steps 1–2 as code |
-| `build.sh` | Builds the module against the running kernel — runbook steps 3–8 as code, every postcondition asserted |
-| `check-module.sh` | Both guards (vermagic + task_struct ABI offsets), shared by build.sh and install.sh |
-| `install.sh` | Installs to `/usr/lib/modules/$(uname -r)/updates/`, runs both guards, rebuilds initramfs |
-| `rollback.sh` | Removes the override and restores the stock module |
-| `build-env.sh` | Build-time PATH/env setup for the bundled deps (pahole, bc, libelf, openssl) |
-| `cleanup-other-slot.sh` | Cleans a stale override out of the other SteamOS A/B slot |
-| `clean.sh` | Removes generated state: default resets the kernel tree to pristine source and drops logs; `--all` also deletes the tree, deps/, and downloads; `-n` dry-runs |
-
-The kernel trees, source tarballs, dep packages, build logs, and intermediate
-modules are gitignored — they're multi-gigabyte and fully reproducible
-(`clean.sh` removes exactly these categories).
-
-## Install
-
-```
-sudo ./install.sh     # prints "vermagic OK" and "ABI OK", then rebuilds initramfs
-# reboot, then confirm video and audio play at normal speed over DisplayPort
-```
-
-If anything misbehaves: `sudo ./rollback.sh` restores the stock module. Worst
-case is soft now — a behaviorally-buggy module that passes both guards is
-still ABI-consistent, so it will load and you keep a working GPU at boot.
-
-The module is tied to the exact kernel release above; after a SteamOS update
-it must be rebuilt (install.sh will refuse to install it against a different
-kernel).
-
-## Rebuilding after a SteamOS update
-
-The whole flow is automated, run on the BC-250 itself:
-
-```
-./patch-driver.sh                  # = ./fetch-sources.sh && ./build.sh && sudo ./install.sh
-./patch-driver.sh --cg             # + GFX-only clock gating (experimental, see build.sh)
-./patch-driver.sh --cg-unvalidated # + the risky MC/SDMA/NBIO layer (can black-screen)
-```
-
-`fetch-sources.sh` covers steps 1–2: it derives everything from `uname -r`,
-clones Valve's kernel source at the exact `-g<sha>` commit from the Evlav
-mirror (github.com/Evlav/linux-integration — Valve's kernel GitLab is
-private; the old gitlab.com/evlaV mirror froze 2025-08, and the GitHub
-mirror can lag a new SteamOS release by several days — if the `-g<sha>`
-commit isn't there yet, retry later), extracts `Module.symvers` from the
-matching `linux-neptune-*-headers` package on Valve's package mirror (old
-versions are retained there; every `jupiter-*` channel is probed, since
-point releases like `6.16.12-valve24.4` ship only from a version branch
-such as `jupiter-3.8.1x`, not `jupiter-main`), and pulls the build deps
-from the mirror's Arch repos into `deps/`. Idempotent — re-run freely.
-
-`./build.sh [--cg|--cg-unvalidated] [kernel-tree]` (default `./valve-kernel`)
-automates steps 3–8: it asserts each step's postcondition and refuses to continue on any
-mismatch — including that the tree's checked-out commit matches the
-`-g<sha>` in `uname -r` — then replaces `amdgpu.ko.zst` here only after the
-fresh module passes both guards in `check-module.sh`. The numbered steps
-remain as the reference for what the scripts do and why.
-
-`--cg` applies `bc250-cg-flags.patch`: idle clock gating for the GPU (AMD
-ships cyan skillfish with `cg_flags=0`, ~20 W on the GFX rail at 0%
-activity). This layer enables **GFX MGCG/CGCG only** — the navi1x-validated
-path, so it reuses register programming AMD already ships for Navi10.
-
-`--cg-unvalidated` adds `bc250-cg-flags-unvalidated.patch` on top: the
-MC/SDMA/ATHUB/HDP/NBIO paths. These fold cyan skillfish's IP revisions
-(MMHUB/ATHUB `2.0.3`, SDMA `5.0.1`, NBIF `2.1.1`) into a *different*
-revision's clock-gating register programming, which is **not known-safe on
-this silicon and can black-screen the box** — AMD ships cyan skillfish its
-own SDMA golden-settings table, so its register map is demonstrably
-distinct. Opt in only to bisect idle-power gains.
-
-Both are **experimental** and off by default; a build without the flag
-actively reverses either layer if a previous build left it in the tree.
-Bisect at boot with `amdgpu.cg_mask` (GFX-only: `0x5`; `0` = stock) if the
-display goes dark or instability appears.
-
-1. Fetch Valve's source package for the *running* kernel
-   (`linux-neptune-616`, version matching `uname -r`) and check out the
-   commit hash embedded in `uname -r`.
-2. Extract the Arch packages for `pahole`, `bc`, `libelf`, `openssl`, `zlib`
-   into `deps/` (pacman `.pkg.tar.zst` files extracted with `tar -x`).
-   SteamOS 3.9 also strips `/usr/include` from the image (gcc can't even
-   find `sys/types.h`), so `glibc` and `linux-api-headers` join the list —
-   headers only: their libraries are still installed, and extracting
-   glibc's `usr/lib` would shadow the system libc via `LD_LIBRARY_PATH`.
-3. `source build-env.sh` — must print nothing; a FATAL means fix deps first.
-4. Configure from the running kernel (`zcat /proc/config.gz > .config`,
-   `make olddefconfig`), then **verify**
-   `grep '^CONFIG_SCHED_CLASS_EXT=y' .config`.
-5. Two version-string details, or the module is unusable: (a) recreate the
-   Arch localversion files (`echo -1 > localversion.10-pkgrel`,
-   `echo -neptune-616 > localversion.20-pkgname`) and check
-   `make -s kernelrelease` equals `uname -r`; (b) building from a *git*
-   checkout with the patch applied makes setlocalversion append `-dirty`
-   to vermagic — move the tree's `.git` aside (parked as
-   `valve-kernel-dot-git/`) and pin the hash suffix instead
-   (`echo -g<sha> > localversion.30-scm`), then re-run `modules_prepare`
-   so `utsrelease.h` regenerates.
-6. Copy `Module.symvers` from the headers package into the tree root —
-   `modules_prepare` does not generate it, and without it modpost fails
-   with a thousand "undefined!" symbol errors.
-7. Apply the DP-audio patch for this kernel (`-6.16.patch` on SteamOS 3.8.x,
-   `-6.18.patch` on 3.9.x), `make modules_prepare`, re-verify the
-   option in `include/generated/autoconf.h`, then
-   `make M=drivers/gpu/drm/amd/amdgpu modules`.
-8. `strip --strip-debug amdgpu.ko && zstd -19 amdgpu.ko`, replace
-   `amdgpu.ko.zst` here, run `sudo ./install.sh` (the guards re-check
-   everything).
+| `patch-driver.sh` | Complete build and installation workflow |
+| `fetch-sources.sh` | Source, symbol, and dependency acquisition |
+| `build.sh` | Patch application, module build, packaging, and validation |
+| `check-module.sh` | Vermagic and ABI validation |
+| `install.sh` | Module override installation and initramfs generation |
+| `rollback.sh` | Stock-module restoration |
+| `cleanup-other-slot.sh` | Alternate-slot restoration |
+| `clean.sh` | Generated-state cleanup |
+| `build-env.sh` | Local build environment |
+| `bc250-dp-audio-clock-6.16.patch` | SteamOS 3.8.x display clock patch |
+| `bc250-dp-audio-clock-6.18.patch` | SteamOS 3.9.x display clock patch |
+| `bc250-cg-flags.patch` | Experimental GFX clock gating |
+| `bc250-cg-flags-unvalidated.patch` | Experimental expanded clock gating |
