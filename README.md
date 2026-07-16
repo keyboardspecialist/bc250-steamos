@@ -1,157 +1,175 @@
 # bc250-steamos
 
-Scripts and drivers for running SteamOS 3.8.x on the ASRock BC-250 board.
+Management tools for SteamOS 3.8.x.
 
-Everything installs to update-proof locations (`/etc` and the real user's
-`~/.local/share/bc250-fixes/bc250-steamos` toolkit directory) where
-possible — SteamOS updates wipe `/usr` (including `/usr/local` and pacman
-packages) but leave those alone.
+## Install
 
-Both setup scripts open a **guided interactive menu** when run with no
-arguments in a terminal (pure bash — arrow keys, live per-step state badges,
-color output; `q` backs out). Every menu action maps to a plain CLI command,
-so scripting/SSH use is unchanged.
-
-## Contents
-
-### `bc250-40cu.sh`
-All-in-one 40 CU unlock via the runtime UMR route. Installs the umr binary,
-ASIC database, and a manager script under the hidden toolkit directory, plus
-a systemd unit and boot table config in `/etc`.
-Existing `/var/lib/bc250-40cu` data is migrated automatically; a tiny
-compatibility symlink preserves old Steam launch options without retaining
-artifacts on the `/var` partition.
-
-### `bc250-cu-status.sh`
-Read-only CU dispatch report (e.g. `38/40`). No writes, safe to run any time.
-`-q` prints just the total.
-
-### `bc250-power.sh`
-Complete power-management setup:
-- **ACPI fix** (SSDT-CST/SSDT-PST early-initrd override) — the BC-250 BIOS
-  ships no CPU power tables, so without this the cores never idle and cpufreq
-  scaling (800–3200 MHz) doesn't exist.
-- **GPU governor** (cyan-skillfish-governor, SMU variant) — dynamic
-  freq/voltage; without it the GPU is locked at 1500 MHz and idles hot.
-- **GPU freq persistence** — `freq` settings (pin/range/max) are saved and
-  replayed at boot by a `bc250-gpu-freq-restore` service; `freq auto` clears.
-- **GPU voltage control** (`gpu-volt`) — show/offset/set/reset the governor's
-  safe-points voltage curve with enforced 700–1050 mV bounds; restarts the
-  governor and reapplies the saved freq setting.
-- **GPU load targets** (`load-target`) — the busy% band that decides when the
-  governor clocks up/down. `eager` preset (0.60/0.45) for light or frame-capped
-  games that never generate enough load to leave idle clocks; saved to
-  config.toml and applied live over D-Bus without a restart.
-- **GPU ramp tuning** (`ramp`) — takes one number (idle-to-max climb time in
-  ms) and derives step size, control interval, and down-events from the
-  no-hunting formula (a step above `f_min × (upper−lower)/upper` can oscillate
-  at steady load); requested climb time is auto-extended if it can't be met
-  smoothly at the current load-target band.
-- **CPU overclock/undervolt** (`cpu-oc`, wraps
-  [bc250_smu_oc](https://github.com/bc250-collective/bc250_smu_oc)) — max
-  boost clock + vid-curve scaling via SMU. Sources are fetched at a pinned
-  upstream commit with local patches overlaid from `smu-oc-patches/` (no
-  clone, pip, or git needed); the boot unit is ordered before the GPU
-  governor because both share the SMU indirect window.
-
-### `smu-oc-patches/`
-Overlay files + diffs applied on top of the pinned `bc250_smu_oc` fetch:
-transaction-level flock (SMU window race vs the running GPU governor) and a
-Python-native stress fallback (stock SteamOS ships no `stress`). See its
-README for the pin-bump procedure.
-
-### `bc250-audio-fix/`
-Patched `amdgpu.ko` fixing DisplayPort output running at ~82% speed — video
-and audio both, since every DP DTO (pixel and audio clock) was skewed.
-The BC-250's DCN 2.0.1 display block gets handed the dcn3 clock manager with a
-wrong hardcoded 730 MHz DP reference clock (real: 600 MHz), so the whole DP
-output ran at 600/730 of the requested rate.
-Two-hunk kernel patch, prebuilt module, and an installer with
-vermagic + real ABI guards. See `bc250-audio-fix/README.md` — including the
-build-environment trap (missing pahole silently breaking kernel ABI) that
-matters for anyone rebuilding kernel modules for SteamOS.
-
-Kernel-release-specific: rebuild after each SteamOS update (instructions in
-the subdirectory README).
-
-### `bc250-cec.sh`
-HDMI-CEC / TV control through a CEC-tunneling DP→HDMI adapter. Far less
-greenfield than expected: the kernel already ships `DRM_DISPLAY_DP_AUX_CEC`
-(so amdgpu exposes `/dev/cec0` on the DP AUX channel) and Valve's `cecd`
-daemon (D-Bus `com.steampowered.CecDaemon1`, CLI `cectool`) already wakes
-the TV on resume, suspends the console when the TV turns off, and relays
-the TV remote as an input device. The script configures cecd and fills its
-gaps:
-- **OSD name** — "BC-250" instead of "steamdeck" in the TV's device list.
-- **Behavior toggles** (TV standby on suspend, etc.) written to
-  `~/.config/cecd/config.d/99-zz-bc250.toml`, which sorts after — and
-  therefore outranks — Steam UI's `99-steamos-manager.toml` (verified;
-  `clear-overrides` hands control back).
-- **TV + receiver standby on poweroff** — system unit, ExecStop gated on
-  the poweroff/halt goal target so reboot and suspend are excluded; uses
-  root `cec-ctl`, no user-session coupling.
-- **TV wake at cold boot** — user unit calling cecd's D-Bus `Wake` with
-  retries, then claiming active source.
-- **Receiver power** — `amp-on` sends `<System Audio Mode Request>`, the
-  CEC-standard "amplifier, wake up and take the audio" command (verified
-  against a Yamaha RX-V381); `amp-off` sends it standby.
-- **Receiver follows the console** — `amp-follow {boot|poweroff|suspend|
-  resume}` toggles make the receiver's power track the console (poweroff
-  is on by default, the rest opt-in). Flags live in
-  `~/.config/bc250-cec.conf` and are read by the generated helpers at
-  runtime, so flipping never needs a unit reinstall; suspend/resume need
-  the one-time `amp-sleep install` hook (`/etc/systemd/system-sleep/`,
-  resume side retries in the background while the DP link renegotiates).
-- **Multi-device etiquette** — for setups where several sources share one
-  receiver and fight over the input (all verified live against an Apple TV
-  behind the same RX-V381):
-  - `active` — ask the bus who holds the input before touching anything;
-  - `handoff <dev>` — route the TV/receiver to another device (wakes it
-    first: devices ignore `<Set Stream Path>` while in standby);
-  - `release` — `<Inactive Source>`, give up the input and let the TV pick;
-  - both installed units are **polite by default**: boot-wake won't steal
-    the input if another device is actively showing (`install grab`
-    restores the old behavior), and poweroff-standby leaves the TV +
-    receiver on when someone else holds the input.
-- `status`/`test`/`scan`/`monitor`/`remote` tooling and one-shot verbs
-  (`tv-on`, `tv-off [hard]`, `amp-on`, `amp-off`, `switch`,
-  `vol-up`/`vol-down`/`mute`). `scan` renders the HDMI tree from physical
-  addresses — who's plugged into which receiver input — with vendor, power
-  state, and the active source marked.
-- **`repair`** — for "CEC stopped responding", typically after suspend:
-  some DP→HDMI adapters silently lose their CEC registration across sleep
-  (a failure mode reported in the field on TCL Roku + DP-adapter setups),
-  and a receiver's standby-passthrough drops `/dev/cec0` for ~20 s. Health
-  check, then a cecd restart to re-claim the logical address — the
-  cecd-safe equivalent of `cec-ctl --clear` + `--playback`, which repair
-  only uses raw when cecd is off (clearing a live cecd's address would
-  break it). `tv-off hard` sends the remote's discrete power-off key for
-  TVs that bounce back out of `<Standby>` (TCL Roku class).
-
-Runs as **deck, not root** (cecd lives on the user D-Bus session); only the
-poweroff unit install sudos, by itself. Adapter caveat: CEC over DP only
-works if the adapter implements CEC-Tunneling-over-AUX — most don't (known
-good: Club3D CAC-1080/1085 and other Parade PS176/PS186 designs). Debug
-notes (power-status reply parsing, `busctl -- -1`, monitor needs sudo) are
-in the script header and `help`.
-
-### `aic8800/`
-Working driver for AIC8800D80-based USB WiFi/BT dongles (the ones that boot
-as a fake `1111:1111` mass-storage device). Based on radxa-pkg/aic8800 with
-local SteamOS fixes. WiFi and Bluetooth both work.
-
-Setup / rebuild after a SteamOS update:
-
+```bash
+mkdir -p ~/.local/share/bc250-fixes
+git clone https://github.com/keyboardspecialist/bc250-steamos.git \
+  ~/.local/share/bc250-fixes/bc250-steamos
+cd ~/.local/share/bc250-fixes/bc250-steamos
 ```
+
+## Tools
+
+| Tool | Purpose |
+|---|---|
+| [`bc250-40cu.sh`](#compute-units) | Runtime 40 CU configuration and boot persistence |
+| [`bc250-cu-status.sh`](#compute-units) | CU dispatch status |
+| [`bc250-power.sh`](#power-management) | CPU power states, GPU governor, clock and voltage tuning, CPU overclocking |
+| [`bc250-cec.sh`](#cec) | TV, receiver, input, and power control over HDMI-CEC |
+| [`bc250-audio-fix/`](#display-clock) | DisplayPort video and audio clock correction |
+| [`aic8800/`](#wifi-and-bluetooth) | AIC8800D80 USB WiFi and Bluetooth driver |
+
+`bc250-40cu.sh`, `bc250-power.sh`, and `bc250-cec.sh` open an interactive menu when launched in a terminal. Each also provides a command interface through `<script> help`.
+
+## Compute Units
+
+Open the setup menu:
+
+```bash
+sudo ./bc250-40cu.sh
+```
+
+| Command | Action |
+|---|---|
+| `sudo ./bc250-40cu.sh check` | Show board, debugfs, UMR, and service state |
+| `sudo ./bc250-40cu.sh prep` | Build and install UMR |
+| `sudo ./bc250-40cu.sh manager` | Open the live CU manager |
+| `sudo ./bc250-40cu.sh persist` | Install the boot-persistent manager |
+| `sudo ./bc250-40cu.sh verify` | Verify registers and service state |
+| `sudo ./bc250-40cu.sh revert` | Restore the 24 CU dispatch state at the next boot |
+
+Review the harvest map in the live manager before selecting a dispatch layout. Prefer selective routing for scattered harvest patterns.
+
+CU status:
+
+```bash
+sudo ./bc250-cu-status.sh
+sudo ./bc250-cu-status.sh -q
+```
+
+## Power Management
+
+Open the setup and tuning menu:
+
+```bash
+sudo ./bc250-power.sh
+```
+
+### Setup
+
+| Command | Action |
+|---|---|
+| `sudo ./bc250-power.sh acpi` | Install CPU C-states and 800-3200 MHz P-states |
+| `sudo ./bc250-power.sh governor` | Install and start the adaptive GPU governor |
+| `sudo ./bc250-power.sh enable` | Enable the GPU governor and CPU frequency policy at boot |
+| `sudo ./bc250-power.sh all` | Install the ACPI tables and GPU governor |
+| `sudo ./bc250-power.sh status` | Show clocks, power states, temperatures, and services |
+
+Reboot after installing the ACPI tables.
+
+### GPU Tuning
+
+```bash
+sudo ./bc250-power.sh freq status
+sudo ./bc250-power.sh freq 1800
+sudo ./bc250-power.sh freq 0 2000
+sudo ./bc250-power.sh freq auto
+
+sudo ./bc250-power.sh gpu-volt show
+sudo ./bc250-power.sh gpu-volt offset -25
+sudo ./bc250-power.sh gpu-volt set 2000 985
+sudo ./bc250-power.sh gpu-volt reset
+
+sudo ./bc250-power.sh load-target eager
+sudo ./bc250-power.sh load-target set 70 55
+sudo ./bc250-power.sh load-target reset
+
+sudo ./bc250-power.sh ramp set 500
+sudo ./bc250-power.sh ramp reset
+```
+
+Frequency, voltage, load-target, and ramp settings persist across boots. GPU voltage points use a 700-1050 mV range.
+
+### CPU Tuning
+
+```bash
+sudo ./bc250-power.sh cpu-oc detect 4000 1275
+sudo ./bc250-power.sh cpu-oc enable
+sudo ./bc250-power.sh cpu-oc status
+sudo ./bc250-power.sh cpu-oc apply
+sudo ./bc250-power.sh cpu-oc off
+```
+
+`cpu-oc detect` stress-tests each frequency step. Keep the VID limit at or below 1325 mV.
+
+## CEC
+
+Run CEC commands from the logged-in user session:
+
+```bash
+./bc250-cec.sh
+./bc250-cec.sh setup
+```
+
+CEC requires a DP-to-HDMI adapter with CEC tunneling over AUX. Compatible designs include Club3D CAC-1080/CAC-1085 and Parade PS176/PS186 adapters.
+
+| Command | Action |
+|---|---|
+| `./bc250-cec.sh status` | Show adapter, daemon, bus, TV, and service state |
+| `./bc250-cec.sh scan` | Show the HDMI device tree and active source |
+| `./bc250-cec.sh tv-on` | Wake the TV and select this input |
+| `./bc250-cec.sh tv-off` | Put the TV in standby |
+| `./bc250-cec.sh amp-on` | Wake the receiver and enable system audio |
+| `./bc250-cec.sh amp-off` | Put the receiver in standby |
+| `./bc250-cec.sh vol-up` | Raise receiver volume |
+| `./bc250-cec.sh vol-down` | Lower receiver volume |
+| `./bc250-cec.sh mute` | Toggle receiver mute |
+| `./bc250-cec.sh active` | Show the active source |
+| `./bc250-cec.sh handoff` | Select another CEC source |
+| `./bc250-cec.sh release` | Release active-source ownership |
+| `./bc250-cec.sh repair` | Re-register CEC after a link interruption |
+
+Use `./bc250-cec.sh help` for boot, suspend, poweroff, receiver-follow, and behavior-toggle commands.
+
+## AMDGPU Driver
+
+Build and install the matching `amdgpu` module:
+
+```bash
+cd bc250-audio-fix
+./patch-driver.sh
+```
+
+The patch restores the DisplayPort pixel and audio reference clock. Builds are matched to the running kernel and checked for vermagic and ABI compatibility before installation.
+
+Rollback:
+
+```bash
+sudo ./rollback.sh
+```
+
+See [`bc250-audio-fix/README.md`](bc250-audio-fix/README.md) for kernel support, build controls, and clock-gating options.
+
+## AIC8800 Class WiFi and Bluetooth Driver
+
+Install the AIC8800D80 USB modules and firmware configuration:
+
+```bash
 sudo bash aic8800/steamdeck-setup.sh
 ```
 
-The script unlocks the rootfs, installs build tools, fetches matching kernel
-headers into the repo, builds and installs the modules, writes the
-usb_modeswitch/udev/modprobe configs to `/etc`, relocks the rootfs, and
-switches the dongle into WiFi mode. The `/etc` configs survive updates; the
-build/install steps must be re-run after each SteamOS update.
+Keep this checkout at `~/.local/share/bc250-fixes/bc250-steamos` so the module configuration can resolve its firmware path.
 
-Note: firmware is loaded at module-load time straight from this checkout
-(`aic8800/src/USB/driver_fw/fw/aic8800D80`), so keep the repo where
-`/etc/modprobe.d/aic8800.conf` points.
+## SteamOS Updates
+
+| Component | Update action |
+|---|---|
+| Compute-unit manager | Run `sudo ./bc250-40cu.sh verify` after a major SteamOS release |
+| Power management | The installed services restore persistent configuration at boot |
+| Display clock module | Run `bc250-audio-fix/patch-driver.sh` after each kernel update |
+| AIC8800 modules | Run `sudo bash aic8800/steamdeck-setup.sh` after each kernel update |
+
+Configuration and service files live under `/etc` and the user home directory.
