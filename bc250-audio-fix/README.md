@@ -4,13 +4,13 @@ Patched `amdgpu.ko` for the ASRock BC-250 on SteamOS. Fixes DisplayPort output
 running slow: **both video and audio played at ~82% speed** — everything in
 slow motion, audio pitched down.
 
-**This branch (`dcn201`)**: hunk 2 is the upstream-faithful fix — the same
+The clock-manager hunk is the upstream-faithful fix — the same
 reorder as mainline commit `9c7be0efa6f0` ("drm/amd: fix dcn 2.01 check",
 merged March 2026, first release after v6.19), which routes Cyan Skillfish to
-the dcn201 clock manager it was always meant to use. The module here is built
-and ABI-verified but **not yet boot-tested**; the conservative variant on
-`master` (keep dcn3 clk_mgr, pin dprefclk to 600 MHz) is the one **confirmed
-working** on `6.16.12-valve24.2-1-neptune-616-g57ac0765fe0d` as of 2026-07-05.
+the dcn201 clock manager it was always meant to use. This dcn201 variant is
+built and ABI-verified but **not yet boot-tested**; an earlier conservative
+variant (keep dcn3 clk_mgr, pin dprefclk to 600 MHz) was **confirmed working**
+on `6.16.12-valve24.2-1-neptune-616-g57ac0765fe0d` as of 2026-07-05.
 
 ## The bug
 
@@ -28,9 +28,9 @@ output — pixel clock and audio clock alike — ran at 600/730 ≈ **82% of the
 requested rate**. Video played in slow motion and audio with it, audibly slow
 and pitched flat.
 
-A second, smaller skew: the BC-250 VBIOS carries no DP spread-spectrum entry,
-and the driver's fallback SS data would also nudge the DP reference clock and
-audio DTO.
+A second, smaller skew: the BC-250 integrated VBIOS info reports DP spread
+spectrum disabled, but the generic SS reader can still leave DPREFCLK spread
+spectrum state enabled and nudge the DP reference clock and audio DTO.
 
 ## The fix
 
@@ -49,12 +49,13 @@ The full fix, as written against `linux-neptune-616` commit `57ac0765fe0d`:
    `dcn201_clk_mgr_construct` (backport of upstream `9c7be0efa6f0`). The
    dcn201 clock manager reads the real dprefclk from the chip's own CLK
    registers (`CLK4_CLK2_CURRENT_CNT`, falling back to 600 MHz — the same
-   value the master-branch variant pins) and actively manages
+   value the earlier conservative variant pinned) and actively manages
    dispclk/dppclk via DENTIST, which the mis-selected dcn3 clock manager
    never did on this ASIC (its SMU handshake fails, so its update path is
    inert).
-2. **`amdgpu_dm/amdgpu_dm.c`** — set `ignore_dpref_ss` for DCE IP 2.0.3 so the
-   bogus fallback spread-spectrum data is not applied.
+2. **`dc/clk_mgr/dcn201/dcn201_clk_mgr.c`** — after reading generic SS data,
+   clear both the DPREFCLK SS percentage and enabled state when the integrated
+   VBIOS info reports `dp_ss_control == 0`.
 
 The patch is small; getting a module that's safe to boot is the harder part.
 See "Why the build setup matters" below.
@@ -146,7 +147,7 @@ built module carries DWARF; `strip --strip-debug` before packaging
 | File | Purpose |
 |---|---|
 | `bc250-dp-audio-clock-6.16.patch` | Full two-hunk source patch (SteamOS 3.8.x) |
-| `bc250-dp-audio-clock-6.18.patch` | ignore_dpref_ss hunk only (SteamOS 3.9.x — clk_mgr hunk is upstream there) |
+| `bc250-dp-audio-clock-6.18.patch` | dcn201 spread-spectrum hunk only (SteamOS 3.9.x — clk_mgr selection hunk is upstream there) |
 | `amdgpu.ko.zst` | Local build product (untracked): `build.sh` writes it, `install.sh` installs it — always built fresh against *your* running kernel |
 | `patch-driver.sh` | Single entry point: fetch-sources.sh → build.sh → sudo install.sh |
 | `fetch-sources.sh` | Fetches kernel source (Evlav mirror), Module.symvers (headers package), and deps/ — runbook steps 1–2 as code |

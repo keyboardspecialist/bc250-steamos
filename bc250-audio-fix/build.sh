@@ -109,8 +109,8 @@ echo "Module.symvers present ($(wc -l < Module.symvers | tr -d ' ') symbols)"
 
 step "apply DP-audio patch (runbook step 7)"
 # SteamOS 3.8.x (6.16) needs both hunks; 3.9.x (6.18) already carries the
-# clk_mgr DCN 2.01 reorder upstream (was hunk 2), leaving only the
-# ignore_dpref_ss hunk. New kernel major: check which hunks are upstream
+# clk_mgr DCN 2.01 reorder upstream, leaving only the dcn201
+# spread-spectrum-state hunk. New kernel major: check which hunks are upstream
 # before adding a variant here.
 case "$BASE" in
     6.16.*) PATCH=$HERE/bc250-dp-audio-clock-6.16.patch ;;
