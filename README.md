@@ -211,6 +211,7 @@ Run the normal component setup commands afterward to regenerate services for the
 
 | Project | Resources | Used by |
 |---|---|---|
+| BC-250 40 CU Unlock | [Repository](https://github.com/duggasco/bc250-40cu-unlock) | Original Arch implementation for `bc250-40cu.sh` |
 | BC-250 CU Live Manager | [Repository](https://github.com/WinnieLV/bc250-cu-live-manager) · [Script](https://github.com/WinnieLV/bc250-cu-live-manager/blob/main/bc250-cu-live-manager.sh) | `bc250-40cu.sh` |
 | UMR | [Repository](https://gitlab.freedesktop.org/tomstdenis/umr) | `bc250-40cu.sh`, `bc250-cu-status.sh` |
 | BC-250 ACPI Fix | [Repository](https://github.com/bc250-collective/bc250-acpi-fix) · [SSDT-CST](https://github.com/bc250-collective/bc250-acpi-fix/blob/main/SSDT-CST.aml) · [SSDT-PST](https://github.com/bc250-collective/bc250-acpi-fix/blob/main/SSDT-PST.aml) | `bc250-power.sh` |
