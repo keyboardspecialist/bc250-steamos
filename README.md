@@ -174,23 +174,38 @@ Keep this checkout at `~/.local/share/bc250-fixes/bc250-steamos` so the module c
 | Display clock module | Run `bc250-audio-fix/patch-driver.sh` after each kernel update |
 | AIC8800 modules | Run `sudo bash aic8800/steamdeck-setup.sh` after each kernel update |
 
-Current installers preserve their configuration across atomic updates. Protect an installation created with an earlier toolkit release:
+Current installers preserve their configuration across atomic updates.
 
-```bash
-sudo ./bc250-update-persistence.sh install all
-```
+### Persistence Commands
+
+Run `./bc250-update-persistence.sh` to open the interactive menu with current protection status for each component.
+
+| Example | Action |
+|---|---|
+| `sudo ./bc250-update-persistence.sh install compute` | Protect compute-unit configuration |
+| `sudo ./bc250-update-persistence.sh install power` | Protect power and tuning configuration |
+| `sudo ./bc250-update-persistence.sh install cec` | Protect CEC system integration |
+| `sudo ./bc250-update-persistence.sh install aic` | Protect AIC8800 system integration |
+| `sudo ./bc250-update-persistence.sh install all` | Protect every component |
+| `./bc250-update-persistence.sh status` | Show protection and recovery status |
 
 ### Recover an Earlier Installation
 
-SteamOS stores edits from the previous image under `/etc/previous` and archives them in `/var/lib/steamos-atomupd/etc_backup`. Recover saved CU routing, GPU tuning, frequency state, and CPU tuning before reinstalling components:
+SteamOS stores edits from the previous image under `/etc/previous` and archives them in `/var/lib/steamos-atomupd/etc_backup`.
 
 ```bash
 cd ~/.local/share/bc250-fixes/bc250-steamos
 git pull
-sudo ./bc250-update-persistence.sh recover all
 ```
 
-Recovery accepts `compute`, `power`, or `all` and reads the newest atomupd snapshot. Add `--force` to replace current tuning files with that snapshot. Run the normal component setup commands afterward to regenerate services for the current image.
+| Example | Action |
+|---|---|
+| `sudo ./bc250-update-persistence.sh recover compute` | Recover CU routing configuration |
+| `sudo ./bc250-update-persistence.sh recover power` | Recover GPU and CPU tuning configuration |
+| `sudo ./bc250-update-persistence.sh recover all` | Recover compute and power configuration |
+| `sudo ./bc250-update-persistence.sh recover all --force` | Replace current configuration from the newest snapshot |
+
+Run the normal component setup commands afterward to regenerate services for the current image.
 
 ## References
 
