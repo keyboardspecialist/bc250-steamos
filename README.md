@@ -173,3 +173,16 @@ Keep this checkout at `~/.local/share/bc250-fixes/bc250-steamos` so the module c
 | AIC8800 modules | Run `sudo bash aic8800/steamdeck-setup.sh` after each kernel update |
 
 Configuration and service files live under `/etc` and the user home directory.
+
+## References
+
+| Project | Resources | Used by |
+|---|---|---|
+| BC-250 CU Live Manager | [Repository](https://github.com/WinnieLV/bc250-cu-live-manager) · [Script](https://github.com/WinnieLV/bc250-cu-live-manager/blob/main/bc250-cu-live-manager.sh) | `bc250-40cu.sh` |
+| UMR | [Repository](https://gitlab.freedesktop.org/tomstdenis/umr) | `bc250-40cu.sh`, `bc250-cu-status.sh` |
+| BC-250 ACPI Fix | [Repository](https://github.com/bc250-collective/bc250-acpi-fix) · [SSDT-CST](https://github.com/bc250-collective/bc250-acpi-fix/blob/main/SSDT-CST.aml) · [SSDT-PST](https://github.com/bc250-collective/bc250-acpi-fix/blob/main/SSDT-PST.aml) | `bc250-power.sh` |
+| Cyan Skillfish Governor | [Repository](https://github.com/filippor/cyan-skillfish-governor/tree/smu) · [Performance-mode script](https://github.com/filippor/cyan-skillfish-governor/blob/smu/scripts/cyan-skillfish-performance-mode) | `bc250-power.sh` |
+| BC-250 SMU OC | [Repository](https://github.com/bc250-collective/bc250_smu_oc) | `bc250-power.sh` |
+| Valve kernel mirror | [Repository](https://github.com/Evlav/linux-integration) | `bc250-audio-fix/fetch-sources.sh` |
+| SteamOS package mirror | [Package index](https://steamdeck-packages.steamos.cloud/archlinux-mirror/) | Audio-driver and AIC8800 build scripts |
+| AIC8800 | [Repository](https://github.com/radxa-pkg/aic8800) | `aic8800/steamdeck-setup.sh` |
