@@ -3,11 +3,11 @@
 #
 # All-in-one BC-250 40 CU unlock for SteamOS 3.8.x via the runtime UMR route.
 #
-# Everything lives in update-proof locations:
+# Runtime assets live in the home-backed toolkit directory:
 #   ~/.local/share/bc250-fixes/bc250-steamos  umr + database + manager
 #   /etc                                     systemd unit + boot table config
-# SteamOS updates wipe /usr (including /usr/local and pacman packages);
-# they do NOT touch /etc or /home.
+# SteamOS updates replace /usr and selectively retain /etc. The installer adds
+# toolkit-owned system files to SteamOS's atomic-update keep list.
 #
 # Lessons baked in from getting this working on a real SteamOS 3.8.10 box:
 #   * SteamOS strips headers and .pc files from image packages, including
@@ -50,6 +50,7 @@ if [[ "$REAL_USER" == root ]] && getent passwd deck >/dev/null 2>&1; then
 fi
 REAL_HOME="${REAL_HOME:-$(getent passwd "$REAL_USER" | cut -d: -f6)}"
 [[ "$REAL_HOME" == /* ]] || { echo "Could not resolve the real user's home directory." >&2; exit 1; }
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 FIXES_REPO_DIR="${FIXES_REPO_DIR:-$REAL_HOME/.local/share/bc250-fixes/bc250-steamos}"
 [[ "$FIXES_REPO_DIR" == /* && "$FIXES_REPO_DIR" != *[$'\n\r\t ']* ]] \
     || { echo "FIXES_REPO_DIR must be an absolute path without whitespace." >&2; exit 1; }
@@ -66,11 +67,23 @@ ROOTFS_MANAGER_BIN="/usr/local/bin/bc250-cu-live-manager"
 PERSIST_MANAGER_BIN="$PREFIX/bc250-cu-live-manager"
 LEGACY_PREFIX="/var/lib/bc250-40cu"
 MIGRATION_MARKER="$PREFIX/.var-lib-migrated"
+UPDATE_PERSIST_SH="$SCRIPT_DIR/bc250-update-persistence.sh"
+UPDATE_KEEP_FILE="/etc/atomic-update.conf.d/bc250-compute.conf"
 
 log()  { echo -e "\033[1;32m[bc250]\033[0m $*"; }
 warn() { echo -e "\033[1;33m[bc250]\033[0m $*"; }
 die()  { echo -e "\033[1;31m[bc250]\033[0m $*" >&2; exit 1; }
 require_root() { [[ $EUID -eq 0 ]] || die "Run as root (sudo)."; }
+install_update_persistence() {
+    [[ -f "$UPDATE_PERSIST_SH" ]] \
+        || die "Update persistence helper missing: $UPDATE_PERSIST_SH"
+    bash "$UPDATE_PERSIST_SH" install compute
+}
+recover_update_settings() {
+    [[ -f "$UPDATE_PERSIST_SH" ]] \
+        || die "Update persistence helper missing: $UPDATE_PERSIST_SH"
+    bash "$UPDATE_PERSIST_SH" recover compute
+}
 
 migrate_legacy_data() {
     [[ ! -L "$LEGACY_PREFIX" ]] || return 0
@@ -220,11 +233,12 @@ badge_service() {
     else b_off "no service yet"; fi
 }
 badge_persist() {
-    if [[ -f "$PERSIST_MANAGER_BIN" ]]; then b_ok "update-proof"
+    if [[ -f "$PERSIST_MANAGER_BIN" && -f "$UPDATE_KEEP_FILE" ]]; then b_ok "update protected"
+    elif [[ -f "$PERSIST_MANAGER_BIN" ]]; then b_mid "keep list pending"
     elif [[ -f "$ROOTFS_MANAGER_BIN" ]]; then b_mid "on wipeable rootfs"
     else b_off "nothing to persist yet"; fi
 }
-CU_STATUS_SH="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/bc250-cu-status.sh"
+CU_STATUS_SH="$SCRIPT_DIR/bc250-cu-status.sh"
 cu_count() {   # "38/40" on stdout; fails without root / umr / sibling script
     [[ $EUID -eq 0 && -f "$CU_STATUS_SH" && -x "$UMR_BIN" ]] || return 1
     bash "$CU_STATUS_SH" -q 2>/dev/null
@@ -410,6 +424,7 @@ cmd_prep() {
 cmd_manager() {
     require_root
     migrate_legacy_data
+    recover_update_settings
     [[ -x "$UMR_BIN" ]] || die "No umr at $UMR_BIN -- run: $0 prep"
 
     if [[ ! -f "$MANAGER_SH" ]]; then
@@ -489,9 +504,10 @@ cmd_persist() {
 
     systemctl daemon-reload
     systemctl enable bc250-cu-live-manager.service
+    install_update_persistence
     cleanup_legacy_data
-    log "Persisted. Unit + conf are in /etc; script + umr are in $PREFIX."
-    log "A SteamOS update cannot break any link. Verify after reboot: $0 verify"
+    log "Persisted. Unit + conf are protected by the SteamOS atomic-update keep list."
+    log "Verify after an update: $0 verify"
 }
 
 # =============================== verify ===================================
@@ -531,8 +547,8 @@ bc250-40cu.sh -- BC-250 40 CU unlock for SteamOS
 Re-enables the factory-harvested compute units at RUNTIME (no kernel
 rebuild) by writing the CC/SPI/RLC dispatch registers via umr, using
 WinnieLV's bc250-cu-live-manager. A boot service replays the saved WGP
-table every boot. Everything lives update-proof in /etc + the hidden
-per-user toolkit directory.
+table every boot. SteamOS's atomic-update keep list retains the unit and
+configuration; binaries live in the home-backed toolkit directory.
 
 GUIDED MENU
   Run with no arguments (or 'menu') in a terminal for an interactive,
@@ -576,10 +592,10 @@ COMMANDS (setup order)
               manager status
               manager enable-wgp 0.0.3 0.0.4 1.0.3 ...
 
-  persist   Make the boot service update-proof: relocates the manager
-            binary off /usr/local (wiped by SteamOS updates), rewrites
-            the unit's ExecStart, pins UMR= in the EnvironmentFile conf,
-            enables the service. Run once after [i].
+  persist   Protect the boot service across updates: relocates the manager
+            binary to the home-backed toolkit, rewrites the unit, pins UMR=
+            in the conf, installs the atomic-update keep list, and enables
+            the service. Run once after [i].
 
   verify    Read the live SPI dispatch masks per shader array
             (0x1f = all 5 WGPs; 0x1b = WGP2 masked) + service state.
@@ -599,8 +615,8 @@ FILE MAP
                                          ASIC database      (persists)
   ~/.local/share/bc250-fixes/bc250-steamos/bc250-cu-live-manager*
                                          manager            (persists)
-  /etc/systemd/system/bc250-cu-live-manager.service         (persists)
-  /etc/bc250-cu-live-manager.conf        WGP table + UMR=   (persists)
+  /etc/systemd/system/bc250-cu-live-manager.service   (atomic-update keep list)
+  /etc/bc250-cu-live-manager.conf        WGP table + UMR=   (atomic-update keep list)
   /usr/*                                 disposable -- wiped by updates
                                          and that's fine
 

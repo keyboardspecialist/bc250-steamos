@@ -15,7 +15,8 @@
 #
 # SteamOS persistence model used throughout:
 #   ~/.local/share/bc250-fixes/bc250-steamos  master copies and build artifacts
-#   /etc                                    configs, units, grub defaults
+#   /etc                                    configs and units, retained by an
+#                                           atomic-update keep list
 #   /boot                cpio must live here for GRUB           -- WIPED by updates
 #                        -> a boot-time self-heal service restores it
 #
@@ -33,6 +34,7 @@ if [[ "$REAL_USER" == root ]] && getent passwd deck >/dev/null 2>&1; then
 fi
 REAL_HOME="${REAL_HOME:-$(getent passwd "$REAL_USER" | cut -d: -f6)}"
 [[ "$REAL_HOME" == /* ]] || { echo "Could not resolve the real user's home directory." >&2; exit 1; }
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 FIXES_REPO_DIR="${FIXES_REPO_DIR:-$REAL_HOME/.local/share/bc250-fixes/bc250-steamos}"
 [[ "$FIXES_REPO_DIR" == /* && "$FIXES_REPO_DIR" != *[$'\n\r\t ']* ]] \
     || { echo "FIXES_REPO_DIR must be an absolute path without whitespace." >&2; exit 1; }
@@ -69,17 +71,28 @@ RESTORE_SVC="bc250-gpu-freq-restore.service"
 # script) are overlaid. No local clone is kept.
 OC_PIN="43d6b4c6e38c57bc9ec8908c44675ce7d5fd3d2f"
 OC_TARBALL="https://github.com/bc250-collective/bc250_smu_oc/archive/$OC_PIN.tar.gz"
-OC_PATCH_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/smu-oc-patches"
+OC_PATCH_DIR="$SCRIPT_DIR/smu-oc-patches"
 OC_DIR="$PREFIX/smu-oc"
 OC_STAGE_CONF="$OC_DIR/overclock.conf"
 OC_CONF="/etc/bc250-smu-oc.conf"
 OC_UNIT="/etc/systemd/system/bc250-smu-oc.service"
 OC_SVC="bc250-smu-oc.service"
+UPDATE_PERSIST_SH="$SCRIPT_DIR/bc250-update-persistence.sh"
 
 log()  { echo -e "\033[1;32m[power]\033[0m $*"; }
 warn() { echo -e "\033[1;33m[power]\033[0m $*"; }
 die()  { echo -e "\033[1;31m[power]\033[0m $*" >&2; exit 1; }
 require_root() { [[ $EUID -eq 0 ]] || die "Run as root (sudo)."; }
+install_update_persistence() {
+    [[ -f "$UPDATE_PERSIST_SH" ]] \
+        || die "Update persistence helper missing: $UPDATE_PERSIST_SH"
+    bash "$UPDATE_PERSIST_SH" install power
+}
+recover_update_settings() {
+    [[ -f "$UPDATE_PERSIST_SH" ]] \
+        || die "Update persistence helper missing: $UPDATE_PERSIST_SH"
+    bash "$UPDATE_PERSIST_SH" recover power
+}
 
 migrate_legacy_data() {
     [[ ! -L "$LEGACY_PREFIX" ]] || return 0
@@ -330,6 +343,7 @@ badge_oc_live() {   # live CPU voltage, for the status row
 # ============================== ACPI fix ==================================
 cmd_acpi() {
     require_root
+    install_update_persistence
     migrate_legacy_data
     mkdir -p "$ACPI_DIR"
 
@@ -361,8 +375,8 @@ cmd_acpi() {
     cp -f "$CPIO_MASTER" "$CPIO_BOOT"
     log "Installed -> $CPIO_BOOT"
 
-    # /etc/default/grub persists across updates; upstream grub-mkconfig
-    # honors GRUB_EARLY_INITRD_LINUX_CUSTOM (file must sit in /boot).
+    # Upstream grub-mkconfig honors GRUB_EARLY_INITRD_LINUX_CUSTOM (the file
+    # must sit in /boot). The heal helper recreates this setting after updates.
     if grep -q '^GRUB_EARLY_INITRD_LINUX_CUSTOM=' /etc/default/grub 2>/dev/null; then
         sed -i 's|^GRUB_EARLY_INITRD_LINUX_CUSTOM=.*|GRUB_EARLY_INITRD_LINUX_CUSTOM="acpi_override.cpio"|' \
             /etc/default/grub
@@ -402,12 +416,18 @@ relock() {
 trap relock EXIT
 
 if [[ ! -f $CPIO_BOOT ]] || ! cmp -s "$CPIO_MASTER" "$CPIO_BOOT" \
+   || ! grep -q '^GRUB_EARLY_INITRD_LINUX_CUSTOM="acpi_override.cpio"' /etc/default/grub 2>/dev/null \
    || ! grep -q acpi_override.cpio /boot/grub/grub.cfg 2>/dev/null; then
     if steamos-readonly status 2>/dev/null | grep -qi enabled; then
         steamos-readonly disable
         ROOTFS_WAS_READONLY=1
     fi
     cp -f "$CPIO_MASTER" "$CPIO_BOOT"
+    if grep -q '^GRUB_EARLY_INITRD_LINUX_CUSTOM=' /etc/default/grub 2>/dev/null; then
+        sed -i 's|^GRUB_EARLY_INITRD_LINUX_CUSTOM=.*|GRUB_EARLY_INITRD_LINUX_CUSTOM="acpi_override.cpio"|' /etc/default/grub
+    else
+        printf '%s\n' 'GRUB_EARLY_INITRD_LINUX_CUSTOM="acpi_override.cpio"' >> /etc/default/grub
+    fi
     if command -v update-grub >/dev/null; then
         update-grub
     else
@@ -508,6 +528,7 @@ check_conflicts() {
 cmd_governor() {
     require_root
     migrate_legacy_data
+    recover_update_settings
     mkdir -p "$BIN_DIR" "$GOV_CONF_DIR"
     check_conflicts
 
@@ -658,6 +679,7 @@ EOF
     systemctl daemon-reload
 
     install_freq_persistence force
+    install_update_persistence
 
     log "Test-starting (not yet enabled at boot)..."
     systemctl restart "$GOV_SVC"; sleep 2
@@ -1200,6 +1222,7 @@ cmd_ramp() {
 
 cmd_helpers() {
     require_root
+    install_update_persistence
     mkdir -p "$BIN_DIR" /etc/dbus-1/system.d
     # Pin to the latest release tag so helper and installed binary agree on
     # the D-Bus interface name (HEAD renamed it after v0.4.x).
@@ -1247,6 +1270,7 @@ EOF
 cmd_enable() {
     require_root
     systemctl enable "$GOV_SVC"
+    install_update_persistence
     log "Governor enabled at boot (order: CU table -> governor)."
     log "cpufreq + ACPI self-heal were enabled during 'acpi'. All set."
 }
@@ -1259,7 +1283,7 @@ cmd_enable() {
 # ordering. SteamOS-friendly: pure-stdlib python run straight from files
 # (no pip/git), sources fetched as a pinned-commit tarball with our patches
 # overlaid (see smu-oc-patches/README.md), master copies in the hidden toolkit,
-# config + unit in /etc -- all update-proof.
+# with the config and unit retained through the atomic-update keep list.
 
 fetch_oc_sources() {
     migrate_legacy_data
@@ -1361,6 +1385,7 @@ oc_apply() {
 
 oc_enable() {
     require_root
+    recover_update_settings
     install_oc_files
     [[ -f "$OC_STAGE_CONF" || -f "$OC_CONF" ]] \
         || die "No overclock config -- run '$0 cpu-oc detect' first."
@@ -1385,6 +1410,7 @@ WantedBy=multi-user.target
 EOF
     systemctl daemon-reload
     systemctl enable "$OC_SVC"
+    install_update_persistence
     log "CPU OC enabled at boot (ordered before the GPU governor)."
     oc_apply
 }
@@ -1680,8 +1706,8 @@ cmd_help() {
 bc250-power.sh -- BC-250 power management for SteamOS
 ==============================================================
 CPU C/P-states via ACPI SSDT override + adaptive GPU governor (SMU).
-Everything installs to update-proof locations (/etc + the hidden toolkit);
-SteamOS updates cannot break any of it.
+Toolkit-owned /etc files are registered in SteamOS's atomic-update keep list.
+Home-backed binaries and ACPI source data remain under the hidden toolkit.
 
 GUIDED MENU
   Run with no arguments (or 'menu') in a terminal for an interactive,
@@ -1812,7 +1838,7 @@ STEAM LAUNCH OPTION (per-game max clocks, auto-restores on exit)
   ~/.local/share/bc250-fixes/bc250-steamos/bin/cyan-skillfish-performance-mode %command%
   ~/.local/share/bc250-fixes/bc250-steamos/bin/cyan-skillfish-performance-mode --range 0 2000 %command%
 
-FILE MAP (what lives where, and why it survives OS updates)
+FILE MAP
   ~/.local/share/bc250-fixes/bc250-steamos/bin/
                                governor + helper binaries   (persists)
   ~/.local/share/bc250-fixes/bc250-steamos/acpi/
@@ -1820,11 +1846,12 @@ FILE MAP (what lives where, and why it survives OS updates)
   ~/.local/share/bc250-fixes/bc250-steamos/smu-oc/
                                CPU OC tool (fetched @ pinned commit,
                                patched from smu-oc-patches/)
-  /etc/bc250-smu-oc.conf       CPU OC config                (persists)
-  /etc/cyan-skillfish-governor-smu/config.toml              (persists)
+  /etc/bc250-smu-oc.conf       CPU OC config       (atomic-update keep list)
+  /etc/cyan-skillfish-governor-smu/config.toml     (atomic-update keep list)
   /etc/cyan-skillfish-governor-smu/freq-state  last 'freq' setting,
                                replayed at boot by bc250-gpu-freq-restore
-  /etc/systemd/system/*.service, /etc/dbus-1/system.d/      (persists)
+  /etc/systemd/system/*.service, /etc/dbus-1/system.d/
+                                      retained by atomic-update keep list
   /boot/acpi_override.cpio     WIPED by updates -- bc250-acpi-heal
                                restores it and warns in the journal
 

@@ -12,7 +12,9 @@
 #   6. write /etc configs (usb_modeswitch, udev rule, modprobe firmware path)
 #   7. relock the rootfs and switch the dongle to WiFi mode
 #
-# The /etc files survive updates; steps 1-5 must be re-run after each SteamOS update.
+# The setup registers its /etc files in SteamOS's atomic-update keep list.
+# Run setup after a kernel update; the boot service can also rebuild when its
+# matching headers and toolchain are available locally.
 set -euo pipefail
 
 [ "$(id -u)" = 0 ] || { echo "Please run with sudo."; exit 1; }
@@ -25,6 +27,9 @@ FIXES_REPO_DIR="${FIXES_REPO_DIR:-$REAL_HOME/.local/share/bc250-fixes/bc250-stea
     && [ "${FIXES_REPO_DIR#/}" != "$FIXES_REPO_DIR" ] \
     || { echo "FIXES_REPO_DIR must be an absolute path without whitespace."; exit 1; }
 SCRIPT_REPO_DIR=$(cd "$(dirname "$0")/.." && pwd)
+UPDATE_PERSIST_SH="$SCRIPT_REPO_DIR/bc250-update-persistence.sh"
+[ -f "$UPDATE_PERSIST_SH" ] \
+    || { echo "Update persistence helper missing: $UPDATE_PERSIST_SH"; exit 1; }
 if [ -d "$FIXES_REPO_DIR/aic8800" ]; then
     REPO="$FIXES_REPO_DIR/aic8800"
 else
@@ -146,6 +151,7 @@ sed -i "/^After=/a RequiresMountsFor=$REPO" /etc/systemd/system/aic8800-modules.
 udevadm control --reload
 systemctl daemon-reload
 systemctl enable aic8800-modules.service >/dev/null
+bash "$UPDATE_PERSIST_SH" install aic
 
 echo "== [7/7] Relocking rootfs =="
 relock_rootfs

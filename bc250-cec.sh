@@ -47,15 +47,15 @@
 # deck, NOT root. The one exception -- installing the poweroff standby
 # system unit -- shells out to sudo for just that action.
 #
-# SteamOS persistence: user config + user unit live in $HOME, the system
-# unit lives in /etc (writable overlay). Nothing touches /usr or /boot,
-# so no steamos-readonly handling is needed and updates can't break it.
+# User config and units live in $HOME. System integration lives in /etc and is
+# registered in SteamOS's atomic-update keep list during installation.
 set -euo pipefail
 
 REAL_USER=$(id -un)
 REAL_HOME="${REAL_HOME:-$(getent passwd "$REAL_USER" | cut -d: -f6)}"
 [[ "$REAL_HOME" == /* ]] || { echo "Could not resolve home for $REAL_USER" >&2; exit 1; }
 HOME=$REAL_HOME
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 CEC_DEV="/dev/cec0"
 TV_LA=0                                      # CEC logical address of the TV
@@ -84,12 +84,18 @@ STANDBY_HELPER="/etc/bc250-cec-poweroff-standby.sh"   # /etc = writable overlay
 # reinstall. Root helpers get the absolute path baked in at install.
 AMP_CONF="$HOME/.config/bc250-cec.conf"
 SLEEP_HOOK="/etc/systemd/system-sleep/bc250-cec-amp.sh"
+UPDATE_PERSIST_SH="$SCRIPT_DIR/bc250-update-persistence.sh"
 
 OSD_DEFAULT="BC-250"                         # CEC OSD name limit: 14 bytes
 
 log()  { echo -e "\033[1;32m[cec]\033[0m $*"; }
 warn() { echo -e "\033[1;33m[cec]\033[0m $*"; }
 die()  { echo -e "\033[1;31m[cec]\033[0m $*" >&2; exit 1; }
+install_update_persistence() {
+    [[ -f "$UPDATE_PERSIST_SH" ]] \
+        || die "Update persistence helper missing: $UPDATE_PERSIST_SH"
+    sudo bash "$UPDATE_PERSIST_SH" install cec
+}
 
 require_user() {
     [[ $EUID -ne 0 ]] || die "Run as deck, not root -- cecd lives on deck's user D-Bus session.
@@ -712,6 +718,7 @@ cmd_shutdown_standby() {
     case "$action" in
         install)
             require_user
+            install_update_persistence
             log "Installing $STANDBY_SVC + helper (sudo)..."
             { printf '#!/bin/bash\nconf=%q\n' "$AMP_CONF"; cat << 'EOF'
 # Written by bc250-cec.sh -- CEC standby to TV + receiver on poweroff.
@@ -1002,6 +1009,7 @@ cmd_amp_sleep() {
     case "$action" in
         install)
             require_user
+            install_update_persistence
             log "Installing $SLEEP_HOOK (sudo)..."
             sudo mkdir -p "$(dirname "$SLEEP_HOOK")"
             { printf '#!/bin/bash\nconf=%q\n' "$AMP_CONF"; cat << 'EOF'
@@ -1740,7 +1748,7 @@ TROUBLESHOOTING
     the TV remote as input, Steam UI integration and resume handling for
     free; raw cec-ctl scripts are the fallback when cecd itself is off.
 
-FILE MAP (everything survives SteamOS updates)
+FILE MAP (user files live in home; system files use the atomic-update keep list)
   ~/.config/cecd/config.d/50-bc250.toml       osd_name
   ~/.config/cecd/config.d/99-zz-bc250.toml    toggle overrides (outranks
                                               Steam UI's 99-steamos-manager.toml)

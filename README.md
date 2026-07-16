@@ -19,6 +19,7 @@ cd ~/.local/share/bc250-fixes/bc250-steamos
 | [`bc250-cu-status.sh`](#compute-units) | CU dispatch status |
 | [`bc250-power.sh`](#power-management) | CPU power states, GPU governor, clock and voltage tuning, CPU overclocking |
 | [`bc250-cec.sh`](#cec) | TV, receiver, input, and power control over HDMI-CEC |
+| [`bc250-update-persistence.sh`](#steamos-updates) | Atomic-update allowlist and tuning recovery |
 | [`bc250-audio-fix/`](#display-clock) | DisplayPort video and audio clock correction |
 | [`aic8800/`](#wifi-and-bluetooth) | AIC8800D80 USB WiFi and Bluetooth driver |
 
@@ -167,12 +168,54 @@ Keep this checkout at `~/.local/share/bc250-fixes/bc250-steamos` so the module c
 
 | Component | Update action |
 |---|---|
-| Compute-unit manager | Run `sudo ./bc250-40cu.sh verify` after a major SteamOS release |
-| Power management | The installed services restore persistent configuration at boot |
+| Compute-unit manager | Run `sudo ./bc250-40cu.sh verify` after an update |
+| Power management | The keep list retains tuning and the ACPI service restores its boot files |
+| CEC | Home configuration and allowlisted system integration carry forward |
 | Display clock module | Run `bc250-audio-fix/patch-driver.sh` after each kernel update |
 | AIC8800 modules | Run `sudo bash aic8800/steamdeck-setup.sh` after each kernel update |
 
-Configuration and service files live under `/etc` and the user home directory.
+Each installer registers its own system files under `/etc/atomic-update.conf.d/`:
+
+| Component | Drop-in |
+|---|---|
+| Compute units | `bc250-compute.conf` |
+| Power management | `bc250-power.conf` |
+| CEC | `bc250-cec.conf` |
+| AIC8800 | `bc250-aic.conf` |
+
+The allowlists carry installed component state into the next atomic image while home-backed assets remain in the user directory.
+
+Each installer writes only its component drop-in. Installing another component leaves existing drop-ins unchanged.
+
+| Command | Action |
+|---|---|
+| `sudo ./bc250-update-persistence.sh install compute` | Protect compute-unit state |
+| `sudo ./bc250-update-persistence.sh install power` | Protect power and tuning state |
+| `sudo ./bc250-update-persistence.sh install cec` | Protect CEC system integration |
+| `sudo ./bc250-update-persistence.sh install aic` | Protect AIC8800 system integration |
+| `sudo ./bc250-update-persistence.sh install all` | Write all four component drop-ins |
+| `./bc250-update-persistence.sh status` | Show installed drop-ins and recovery sources |
+
+The helper detects the former `bc250-steamos.conf`, creates drop-ins for the installed components, and removes the wholesale file.
+
+Protect an existing installation by selecting its installed components. For example:
+
+```bash
+sudo ./bc250-update-persistence.sh install compute
+sudo ./bc250-update-persistence.sh install power
+```
+
+### Recover an Earlier Installation
+
+SteamOS stores edits from the previous image under `/etc/previous` and archives them in `/var/lib/steamos-atomupd/etc_backup`. Recover saved CU routing, GPU tuning, frequency state, and CPU tuning before reinstalling components:
+
+```bash
+cd ~/.local/share/bc250-fixes/bc250-steamos
+git pull
+sudo ./bc250-update-persistence.sh recover all
+```
+
+Recovery accepts `compute`, `power`, or `all` and reads the newest atomupd snapshot. Add `--force` to replace current tuning files with that snapshot. Run the normal component setup commands afterward to regenerate services for the current image.
 
 ## References
 
@@ -185,4 +228,5 @@ Configuration and service files live under `/etc` and the user home directory.
 | BC-250 SMU OC | [Repository](https://github.com/bc250-collective/bc250_smu_oc) | `bc250-power.sh` |
 | Valve kernel mirror | [Repository](https://github.com/Evlav/linux-integration) | `bc250-audio-fix/fetch-sources.sh` |
 | SteamOS package mirror | [Package index](https://steamdeck-packages.steamos.cloud/archlinux-mirror/) | Audio-driver and AIC8800 build scripts |
+| SteamOS atomic-update keep list | [Defaults](https://github.com/evlaV/steamos-customizations/blob/master/atomic-update/rauc/atomic-update-keep.conf.in) · [Drop-in example](https://github.com/evlaV/steamos-customizations/blob/master/atomic-update/rauc/example-additional-keep-list.conf.in) | `bc250-update-persistence.sh` |
 | AIC8800 | [Repository](https://github.com/radxa-pkg/aic8800) | `aic8800/steamdeck-setup.sh` |
