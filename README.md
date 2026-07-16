@@ -1,6 +1,6 @@
 # bc250-steamos
 
-Management tools for SteamOS 3.8.x.
+Management tools for SteamOS 3.8.x and 3.9.x.
 
 ## Install
 
