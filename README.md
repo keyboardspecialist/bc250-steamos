@@ -174,35 +174,10 @@ Keep this checkout at `~/.local/share/bc250-fixes/bc250-steamos` so the module c
 | Display clock module | Run `bc250-audio-fix/patch-driver.sh` after each kernel update |
 | AIC8800 modules | Run `sudo bash aic8800/steamdeck-setup.sh` after each kernel update |
 
-Each installer registers its own system files under `/etc/atomic-update.conf.d/`:
-
-| Component | Drop-in |
-|---|---|
-| Compute units | `bc250-compute.conf` |
-| Power management | `bc250-power.conf` |
-| CEC | `bc250-cec.conf` |
-| AIC8800 | `bc250-aic.conf` |
-
-The allowlists carry installed component state into the next atomic image while home-backed assets remain in the user directory.
-
-Each installer writes only its component drop-in. Installing another component leaves existing drop-ins unchanged.
-
-| Command | Action |
-|---|---|
-| `sudo ./bc250-update-persistence.sh install compute` | Protect compute-unit state |
-| `sudo ./bc250-update-persistence.sh install power` | Protect power and tuning state |
-| `sudo ./bc250-update-persistence.sh install cec` | Protect CEC system integration |
-| `sudo ./bc250-update-persistence.sh install aic` | Protect AIC8800 system integration |
-| `sudo ./bc250-update-persistence.sh install all` | Write all four component drop-ins |
-| `./bc250-update-persistence.sh status` | Show installed drop-ins and recovery sources |
-
-The helper detects the former `bc250-steamos.conf`, creates drop-ins for the installed components, and removes the wholesale file.
-
-Protect an existing installation by selecting its installed components. For example:
+Current installers preserve their configuration across atomic updates. Protect an installation created with an earlier toolkit release:
 
 ```bash
-sudo ./bc250-update-persistence.sh install compute
-sudo ./bc250-update-persistence.sh install power
+sudo ./bc250-update-persistence.sh install all
 ```
 
 ### Recover an Earlier Installation
