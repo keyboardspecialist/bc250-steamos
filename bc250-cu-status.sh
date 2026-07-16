@@ -6,7 +6,18 @@
 #   -q   quiet: print only the total, e.g. "38/40"
 set -euo pipefail
 
-UMR="${UMR:-/var/lib/bc250-40cu/bin/umr}"
+REAL_USER="${SUDO_USER:-${USER:-$(id -un)}}"
+if [[ "$REAL_USER" == root ]] && getent passwd deck >/dev/null 2>&1; then
+    REAL_USER=deck
+fi
+REAL_HOME="${REAL_HOME:-$(getent passwd "$REAL_USER" | cut -d: -f6)}"
+[[ "$REAL_HOME" == /* ]] || { echo "cannot resolve the real user's home" >&2; exit 1; }
+FIXES_REPO_DIR="${FIXES_REPO_DIR:-$REAL_HOME/.local/share/bc250-fixes/bc250-steamos}"
+DEFAULT_UMR="$FIXES_REPO_DIR/bin/umr"
+if [[ ! -x "$DEFAULT_UMR" && -x /var/lib/bc250-40cu/bin/umr ]]; then
+    DEFAULT_UMR=/var/lib/bc250-40cu/bin/umr
+fi
+UMR="${UMR:-$DEFAULT_UMR}"
 ASIC="${UMR_ASIC:-cyan_skillfish.gfx1013}"
 REG_SPI="mmSPI_PG_ENABLE_STATIC_WGP_MASK"
 REG_CC="mmCC_GC_SHADER_ARRAY_CONFIG"

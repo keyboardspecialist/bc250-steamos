@@ -4,7 +4,8 @@ Local patches for [bc250-collective/bc250_smu_oc](https://github.com/bc250-colle
 (CPU overclock/undervolt via SMU). Consumed by `bc250-power.sh cpu-oc`,
 which fetches the upstream repo as a tarball **pinned to the commit in
 `OC_PIN`**, overlays the two `.py` files here on top, and stages the result to
-`/var/lib/bc250-40cu/smu-oc/`. No local clone is kept; `cpu-oc update`
+`~/.local/share/bc250-fixes/bc250-steamos/smu-oc/`. No local clone is kept;
+`cpu-oc update`
 re-fetches.
 
 The overlay files are canonical (what actually gets installed). The `.patch`

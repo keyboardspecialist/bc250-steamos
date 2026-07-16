@@ -2,6 +2,7 @@
 Description=AIC8800 dongle: rebuild and load WiFi/BT modules if missing
 After=local-fs.target network-online.target
 Wants=network-online.target
+ConditionPathExists=/etc/aic8800-paths.conf
 
 [Service]
 Type=oneshot

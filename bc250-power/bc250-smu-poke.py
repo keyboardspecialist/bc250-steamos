@@ -16,7 +16,12 @@
 #   live SMU state the driver assumes it controls. Untested; use on a box you
 #   can hard-reboot. Default action writes nothing.
 
-import os, struct, argparse, sys
+import argparse
+import fcntl
+import os
+import struct
+import sys
+from contextlib import contextmanager
 
 # (cmd, rsp, arg) SMN register addresses per queue (from bc250_smu_oc).
 QUEUE = {
@@ -39,6 +44,23 @@ class Smu:
 
     def _r32(self, off):
         return struct.unpack("<I", os.pread(self.fd, 4, off))[0]
+
+    @contextmanager
+    def transaction(self):
+        fcntl.flock(self.fd, fcntl.LOCK_EX)
+        try:
+            yield
+        finally:
+            fcntl.flock(self.fd, fcntl.LOCK_UN)
+
+    def close(self):
+        os.close(self.fd)
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, _exc_type, _exc_value, _traceback):
+        self.close()
 
     def rd(self, reg):                 # read SMN register via 0xB8/0xBC
         self._w32(0xB8, reg)
@@ -70,10 +92,11 @@ class Smu:
 
 def probe(smu):
     # TestMessage (Q3 msg 0x01) returns arg+1 — safe, Q3 is not driver-owned.
-    s = smu.send(3, 0x01, arg=123)
-    if s != OK:
-        sys.exit(f"probe failed: status 0x{s:02X} ({DONE.get(s,'?')})")
-    r = smu.read_arg(3)
+    with smu.transaction():
+        s = smu.send(3, 0x01, arg=123)
+        if s != OK:
+            sys.exit(f"probe failed: status 0x{s:02X} ({DONE.get(s,'?')})")
+        r = smu.read_arg(3)
     if r != 124:
         sys.exit(f"probe bad response: {r} (expected 124)")
     print("SMU probe OK (Q3 TestMessage 123 -> 124)")
@@ -82,10 +105,11 @@ def probe(smu):
 def read_features(smu):
     # GetEnabledSmuFeatures = Q0 msg 0x3D. Q0 is amdgpu-owned -> racy read.
     print("WARNING: reading on Q0 races amdgpu (usually tolerable for one read)")
-    s = smu.send(0, 0x3D)
-    if s != OK:
-        sys.exit(f"GetEnabledSmuFeatures failed: 0x{s:02X} ({DONE.get(s,'?')})")
-    lo, hi = smu.read_arg(0), smu.read_arg_high(0)
+    with smu.transaction():
+        s = smu.send(0, 0x3D)
+        if s != OK:
+            sys.exit(f"GetEnabledSmuFeatures failed: 0x{s:02X} ({DONE.get(s,'?')})")
+        lo, hi = smu.read_arg(0), smu.read_arg_high(0)
     mask = (hi << 32) | lo
     bits = [i for i in range(64) if mask & (1 << i)]
     print(f"enabled feature mask = 0x{mask:016X}")
@@ -108,22 +132,29 @@ def main():
     if os.geteuid() != 0:
         sys.exit("must run as root (PCI config space access)")
 
-    smu = Smu(args.bdf)
-    probe(smu)
+    with Smu(args.bdf) as smu:
+        probe(smu)
 
-    if args.read_features:
-        read_features(smu)
+        if args.read_features:
+            read_features(smu)
 
-    writes = [("--power-limit", args.power_limit, 2, 0x2C),
-              ("--enable-features", args.enable_features, 2, 0x05),
-              ("--disable-features", args.disable_features, 2, 0x06)]
-    pending = [(n, v, q, m) for (n, v, q, m) in writes if v is not None]
-    if pending and not args.yes:
-        sys.exit("refusing to write without --yes (writes can hang the GPU)")
-    for name, val, q, msg in pending:
-        print(f"WRITE {name}={val} -> Q{q} msg 0x{msg:02X}")
-        s = smu.send(q, msg, arg=val)
-        print(f"  status 0x{s:02X} ({DONE.get(s,'?')})")
+        writes = [("--power-limit", args.power_limit, 2, 0x2C),
+                  ("--enable-features", args.enable_features, 2, 0x05),
+                  ("--disable-features", args.disable_features, 2, 0x06)]
+        pending = [(n, v, q, m) for (n, v, q, m) in writes if v is not None]
+        if pending and not args.yes:
+            sys.exit("refusing to write without --yes (writes can hang the GPU)")
+        for name, val, q, msg in pending:
+            if val < 0 or val > 0xFFFFFFFF:
+                sys.exit(f"{name} must be between 0 and 0xffffffff")
+            if name == "--power-limit" and not 1 <= val <= 200:
+                sys.exit("--power-limit must be between 1 and 200 W")
+            print(f"WRITE {name}={val} -> Q{q} msg 0x{msg:02X}")
+            with smu.transaction():
+                s = smu.send(q, msg, arg=val)
+            print(f"  status 0x{s:02X} ({DONE.get(s,'?')})")
+            if s != OK:
+                sys.exit(1)
 
 
 if __name__ == "__main__":

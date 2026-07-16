@@ -1,3 +1,4 @@
+# shellcheck shell=bash
 # Source this before ANY make invocation in valve-kernel/.
 # The build deps (bc, pahole, libelf, openssl) live in deps/, not on the
 # system. If pahole is not visible to Kconfig, syncconfig SILENTLY disables

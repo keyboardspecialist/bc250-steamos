@@ -8,8 +8,8 @@
 #   0 — both guards pass
 #   1 — a guard FAILED: do not install this module
 #   2 — ABI guard could not run (stock module or objdump unavailable);
-#       vermagic guard passed. Caller decides whether that is fatal:
-#       build.sh treats it as fatal, install.sh warns and continues.
+#       vermagic guard passed. Both build.sh and install.sh treat this as
+#       fatal because the unchecked ABI mismatch can black-screen at boot.
 set -euo pipefail
 
 MOD=${1:?usage: check-module.sh <module.ko[.zst]> [kernel-release]}

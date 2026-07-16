@@ -33,12 +33,19 @@ def stress_stop():
     global _process
     if _process:
         _process.terminate()
-        _process.wait(timeout=1)
+        try:
+            _process.wait(timeout=1)
+        except subprocess.TimeoutExpired:
+            _process.kill()
+            _process.wait()
         _process = None
     for p in _burners:
         p.terminate()
     for p in _burners:
         p.join(timeout=1)
+        if p.is_alive():
+            p.kill()
+            p.join()
     _burners.clear()
 
 atexit.register(stress_stop)

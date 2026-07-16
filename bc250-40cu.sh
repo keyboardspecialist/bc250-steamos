@@ -4,10 +4,10 @@
 # All-in-one BC-250 40 CU unlock for SteamOS 3.8.x via the runtime UMR route.
 #
 # Everything lives in update-proof locations:
-#   /var/lib/bc250-40cu   umr binary + ASIC database + manager script
-#   /etc                  systemd unit + boot table config
+#   ~/.local/share/bc250-fixes/bc250-steamos  umr + database + manager
+#   /etc                                     systemd unit + boot table config
 # SteamOS updates wipe /usr (including /usr/local and pacman packages);
-# they do NOT touch /etc, /var, /home.
+# they do NOT touch /etc or /home.
 #
 # Lessons baked in from getting this working on a real SteamOS 3.8.10 box:
 #   * SteamOS strips headers and .pc files from image packages, including
@@ -35,7 +35,7 @@
 #
 # Usage (run as root):
 #   ./bc250-40cu.sh check      board / debugfs / install state
-#   ./bc250-40cu.sh prep       deps + build umr into /var/lib
+#   ./bc250-40cu.sh prep       deps + build umr into the persistent checkout
 #   ./bc250-40cu.sh manager    launch the live-manager TUI correctly
 #   ./bc250-40cu.sh persist    relocate service off the wipeable rootfs
 #   ./bc250-40cu.sh verify     registers + service + guidance
@@ -44,24 +44,65 @@
 #
 set -euo pipefail
 
-PREFIX="/var/lib/bc250-40cu"
+REAL_USER="${SUDO_USER:-${USER:-$(id -un)}}"
+if [[ "$REAL_USER" == root ]] && getent passwd deck >/dev/null 2>&1; then
+    REAL_USER=deck
+fi
+REAL_HOME="${REAL_HOME:-$(getent passwd "$REAL_USER" | cut -d: -f6)}"
+[[ "$REAL_HOME" == /* ]] || { echo "Could not resolve the real user's home directory." >&2; exit 1; }
+FIXES_REPO_DIR="${FIXES_REPO_DIR:-$REAL_HOME/.local/share/bc250-fixes/bc250-steamos}"
+[[ "$FIXES_REPO_DIR" == /* && "$FIXES_REPO_DIR" != *[$'\n\r\t ']* ]] \
+    || { echo "FIXES_REPO_DIR must be an absolute path without whitespace." >&2; exit 1; }
+PREFIX="$FIXES_REPO_DIR"
 UMR_BIN="$PREFIX/bin/umr"
 MANAGER_SH="$PREFIX/bc250-cu-live-manager.sh"
 MANAGER_URL="https://raw.githubusercontent.com/WinnieLV/bc250-cu-live-manager/refs/heads/main/bc250-cu-live-manager.sh"
 UMR_GIT="https://gitlab.freedesktop.org/tomstdenis/umr.git"
-SRC="/tmp/umr-build"
+SRC="$PREFIX/.build/umr"
 BLD="$SRC/b"
 SERVICE="/etc/systemd/system/bc250-cu-live-manager.service"
 SERVICE_CONF="/etc/bc250-cu-live-manager.conf"
 ROOTFS_MANAGER_BIN="/usr/local/bin/bc250-cu-live-manager"
 PERSIST_MANAGER_BIN="$PREFIX/bc250-cu-live-manager"
+LEGACY_PREFIX="/var/lib/bc250-40cu"
+MIGRATION_MARKER="$PREFIX/.var-lib-migrated"
 
 log()  { echo -e "\033[1;32m[bc250]\033[0m $*"; }
 warn() { echo -e "\033[1;33m[bc250]\033[0m $*"; }
 die()  { echo -e "\033[1;31m[bc250]\033[0m $*" >&2; exit 1; }
 require_root() { [[ $EUID -eq 0 ]] || die "Run as root (sudo)."; }
 
+migrate_legacy_data() {
+    [[ ! -L "$LEGACY_PREFIX" ]] || return 0
+    [[ -d "$LEGACY_PREFIX" ]] || return 0
+    [[ ! -e "$MIGRATION_MARKER" ]] || return 0
+    mkdir -p "$PREFIX"
+    log "Migrating legacy toolkit data from $LEGACY_PREFIX to $PREFIX..."
+    cp -a -n "$LEGACY_PREFIX/." "$PREFIX/"
+    touch "$MIGRATION_MARKER"
+}
+
+cleanup_legacy_data() {
+    local file
+    [[ -d "$LEGACY_PREFIX" ]] || return 0
+    for file in "$SERVICE" "$SERVICE_CONF" \
+        /etc/systemd/system/bc250-acpi-heal.service \
+        /etc/systemd/system/cyan-skillfish-governor-smu.service \
+        /etc/systemd/system/bc250-gpu-freq-restore.service \
+        /etc/systemd/system/bc250-smu-oc.service; do
+        if [[ -f "$file" ]] && grep -qF "$LEGACY_PREFIX" "$file"; then
+            warn "Legacy data retained while $file still references it."
+            return 0
+        fi
+    done
+    rm -rf "$LEGACY_PREFIX"
+    mkdir -p "${LEGACY_PREFIX%/*}"
+    ln -s "$PREFIX" "$LEGACY_PREFIX"
+    log "Replaced $LEGACY_PREFIX with a compatibility symlink to the home-backed data."
+}
+
 RO_WAS_DISABLED=0
+DEBUGFS_MOUNTED=0
 unlock_rootfs() {
     if steamos-readonly status 2>/dev/null | grep -qi enabled; then
         log "Disabling read-only rootfs (temporary)..."
@@ -76,7 +117,14 @@ relock_rootfs() {
         RO_WAS_DISABLED=0
     fi
 }
-cleanup() { tui_show_cursor; relock_rootfs; }
+cleanup() {
+    tui_show_cursor
+    if [[ $DEBUGFS_MOUNTED -eq 1 ]]; then
+        umount /sys/kernel/debug 2>/dev/null || true
+        DEBUGFS_MOUNTED=0
+    fi
+    relock_rootfs || true
+}
 trap cleanup EXIT
 
 # ========================= pure-bash TUI menu =============================
@@ -197,8 +245,9 @@ badge_cu() {   # live routed-CU count read from the SPI dispatch registers
 resolve_lib() {
     local base="$1"
     if [[ -e "${base}.so" ]]; then echo "${base}.so"; return; fi
-    local best
-    best=$(ls -1 "${base}".so.* 2>/dev/null | sort -V | tail -1 || true)
+    local best matches=("${base}".so.*)
+    [[ -e "${matches[0]}" ]] || return 1
+    best=$(printf '%s\n' "${matches[@]}" | sort -V | tail -1)
     [[ -n "$best" ]] || return 1
     echo "$best"
 }
@@ -243,32 +292,42 @@ quarantine_stale_umr() {
 cmd_check() {
     require_root   # debugfs mount + globbing inside /sys/kernel/debug need root
     log "Board:"
-    lspci -n | grep -qi '1002:13fe' \
-        && log "  BC-250 (0x13FE / Cyan Skillfish) detected." \
-        || die "  No 1002:13FE device found."
+    if lspci -n | grep -qi '1002:13fe'; then
+        log "  BC-250 (0x13FE / Cyan Skillfish) detected."
+    else
+        die "  No 1002:13FE device found."
+    fi
     log "Kernel: $(uname -r)"
 
     if ! mount | grep -q 'debugfs on /sys/kernel/debug'; then
         warn "debugfs not mounted; mounting..."
         mount -t debugfs none /sys/kernel/debug || die "Could not mount debugfs."
+        DEBUGFS_MOUNTED=1
     fi
     # NOTE: glob must run as root -- deck can't read inside /sys/kernel/debug
-    sh -c 'ls /sys/kernel/debug/dri/*/amdgpu_regs2' >/dev/null 2>&1 \
-        && log "amdgpu debugfs register interface present." \
-        || warn "amdgpu_regs2 not found under /sys/kernel/debug/dri -- umr banked reads may fail."
+    if compgen -G '/sys/kernel/debug/dri/*/amdgpu_regs2' >/dev/null; then
+        log "amdgpu debugfs register interface present."
+    else
+        warn "amdgpu_regs2 not found under /sys/kernel/debug/dri -- umr banked reads may fail."
+    fi
 
-    [[ -x "$UMR_BIN" ]] && log "Persistent umr: $UMR_BIN" \
-                        || warn "No umr at $UMR_BIN -- run: $0 prep"
-    [[ -f "$MANAGER_SH" ]] && log "Manager script cached." || warn "Manager not fetched yet."
-    [[ -f "$SERVICE" ]] && log "Boot service installed: $(systemctl is-enabled bc250-cu-live-manager.service 2>/dev/null || echo present)" \
-                        || warn "Boot service not installed yet."
+    if [[ -x "$UMR_BIN" ]]; then log "Persistent umr: $UMR_BIN"
+    else warn "No umr at $UMR_BIN -- run: $0 prep"; fi
+    if [[ -f "$MANAGER_SH" ]]; then log "Manager script cached."
+    else warn "Manager not fetched yet."; fi
+    if [[ -f "$SERVICE" ]]; then
+        log "Boot service installed: $(systemctl is-enabled bc250-cu-live-manager.service 2>/dev/null || echo present)"
+    else
+        warn "Boot service not installed yet."
+    fi
     [[ -f "$SERVICE_CONF" ]] && log "Boot table saved: $(grep BC250_WGP_MASKS "$SERVICE_CONF" || true)"
 }
 
 # ================================ prep ====================================
 cmd_prep() {
     require_root
-    mkdir -p "$PREFIX/bin"
+    migrate_legacy_data
+    mkdir -p "$PREFIX/bin" "$PREFIX/.build"
     unlock_rootfs
 
     if ! pacman-key --list-keys >/dev/null 2>&1; then
@@ -350,6 +409,7 @@ cmd_prep() {
 # =============================== manager ==================================
 cmd_manager() {
     require_root
+    migrate_legacy_data
     [[ -x "$UMR_BIN" ]] || die "No umr at $UMR_BIN -- run: $0 prep"
 
     if [[ ! -f "$MANAGER_SH" ]]; then
@@ -394,6 +454,7 @@ EOT
 # =============================== persist ==================================
 cmd_persist() {
     require_root
+    migrate_legacy_data
     [[ -f "$SERVICE" ]] || die "No service at $SERVICE -- install from the manager first ('i')."
 
     if [[ -f "$ROOTFS_MANAGER_BIN" ]]; then
@@ -409,6 +470,10 @@ cmd_persist() {
 
     sed -i "s|$ROOTFS_MANAGER_BIN|$PERSIST_MANAGER_BIN|g" "$SERVICE"
     sed -i "s|/var/usrlocal/bin/bc250-cu-live-manager|$PERSIST_MANAGER_BIN|g" "$SERVICE"
+    sed -i "s|$LEGACY_PREFIX/bc250-cu-live-manager|$PERSIST_MANAGER_BIN|g" "$SERVICE"
+    if ! grep -q '^RequiresMountsFor=' "$SERVICE"; then
+        sed -i "/^\[Unit\]/a RequiresMountsFor=$FIXES_REPO_DIR" "$SERVICE"
+    fi
 
     # Belt-and-suspenders: ensure the conf pins our persistent umr.
     # NB: sed exits 0 even with no match, so test with grep before choosing
@@ -424,7 +489,8 @@ cmd_persist() {
 
     systemctl daemon-reload
     systemctl enable bc250-cu-live-manager.service
-    log "Persisted. Chain is now: unit + conf in /etc, script + umr in /var/lib."
+    cleanup_legacy_data
+    log "Persisted. Unit + conf are in /etc; script + umr are in $PREFIX."
     log "A SteamOS update cannot break any link. Verify after reboot: $0 verify"
 }
 
@@ -465,7 +531,8 @@ bc250-40cu.sh -- BC-250 40 CU unlock for SteamOS
 Re-enables the factory-harvested compute units at RUNTIME (no kernel
 rebuild) by writing the CC/SPI/RLC dispatch registers via umr, using
 WinnieLV's bc250-cu-live-manager. A boot service replays the saved WGP
-table every boot. Everything lives update-proof in /etc + /var/lib.
+table every boot. Everything lives update-proof in /etc + the hidden
+per-user toolkit directory.
 
 GUIDED MENU
   Run with no arguments (or 'menu') in a terminal for an interactive,
@@ -481,7 +548,8 @@ COMMANDS (setup order)
   check     Preflight: BC-250 PCI ID present, debugfs + amdgpu register
             interface available, what's installed so far. Needs root.
 
-  prep      Build umr from source into /var/lib/bc250-40cu. Handles
+  prep      Build umr from source into
+            ~/.local/share/bc250-fixes/bc250-steamos. Handles
             every SteamOS landmine found the hard way:
               - reinstalls glibc/ncurses/libpciaccess/libdrm because the
                 SteamOS image STRIPS their headers and .pc files
@@ -490,7 +558,7 @@ COMMANDS (setup order)
               - injects libs into the link line (--no-as-needed)
               - installs the ASIC DATABASE next to the binary; a
                 binary-only umr knows zero ASICs and fails every read
-            Verify with: sudo /var/lib/bc250-40cu/bin/umr -e
+            Verify with: sudo ~/.local/share/bc250-fixes/bc250-steamos/bin/umr -e
             (this umr has no --list-asics; -e enumerates live hardware)
 
   manager   Launch the live-manager TUI the RIGHT way: UMR env var set
@@ -525,12 +593,15 @@ COMMANDS (setup order)
   all       check + prep + manager.
 
 FILE MAP
-  /var/lib/bc250-40cu/bin/umr            our umr build      (persists)
-  /var/lib/bc250-40cu/share/umr/         ASIC database      (persists)
-  /var/lib/bc250-40cu/bc250-cu-live-manager*  manager       (persists)
+  ~/.local/share/bc250-fixes/bc250-steamos/bin/umr
+                                         our umr build      (persists)
+  ~/.local/share/bc250-fixes/bc250-steamos/share/umr/
+                                         ASIC database      (persists)
+  ~/.local/share/bc250-fixes/bc250-steamos/bc250-cu-live-manager*
+                                         manager            (persists)
   /etc/systemd/system/bc250-cu-live-manager.service         (persists)
   /etc/bc250-cu-live-manager.conf        WGP table + UMR=   (persists)
-  /usr/*, /tmp/umr-build                 disposable -- wiped by updates
+  /usr/*                                 disposable -- wiped by updates
                                          and that's fine
 
   NB: umr links base-image libs (libdrm.so.2, libncursesw.so.6). Point
@@ -555,7 +626,7 @@ cmd_menu() {
     while true; do
         local items=(
             "Board / install check||Read-only report: board, debugfs, umr, service. Start here."
-            "Step 1 - Build umr|$(badge_umr)|Deps + build into /var/lib. Unlocks rootfs; takes a few minutes."
+            "Step 1 - Build umr|$(badge_umr)|Deps + build under the hidden toolkit directory. Unlocks rootfs; takes a few minutes."
             "Step 2 - Live CU manager|$(badge_service)|Dashboard TUI. READ the harvest map first: contiguous -> [f], scattered -> [e]."
             "Step 3 - Persist across updates|$(badge_persist)|Relocate the service off the wipeable rootfs. Run after 'i' in the manager."
             "Verify|$(badge_cu)|Read the live dispatch registers: routed CU count + guidance."
@@ -576,6 +647,10 @@ cmd_menu() {
 }
 
 # ================================ main ====================================
+if [[ $# -eq 0 && -t 0 && -t 1 ]]; then
+    cmd_menu
+    exit 0
+fi
 case "${1:-}" in
     check)   cmd_check ;;
     prep)    cmd_prep ;;
@@ -586,7 +661,6 @@ case "${1:-}" in
     all)     cmd_check; cmd_prep; cmd_manager ;;
     menu)    cmd_menu ;;
     help|-h|--help) cmd_help ;;
-    "") if [[ -t 0 && -t 1 ]]; then cmd_menu; exit 0; fi ;&
     *) echo "Usage: $0 {check|prep|manager|persist|verify|revert|all|menu|help}"
        echo "  (no arguments on a terminal opens the guided menu)"
        echo "Run '$0 help' for the full walkthrough of every command."

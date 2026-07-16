@@ -6,6 +6,15 @@ bc250-audio-fix/deps/
 
 __pycache__/
 
+# Runtime downloads/builds when this is the persistent SteamOS checkout
+/.build/
+/acpi/
+/bin/
+/smu-oc/
+/bc250-cu-live-manager
+/bc250-cu-live-manager.sh
+/.var-lib-migrated
+
 # macOS cruft
 .DS_Store
 

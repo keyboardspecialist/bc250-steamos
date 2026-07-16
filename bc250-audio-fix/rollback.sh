@@ -12,7 +12,11 @@ set -euo pipefail
 REL="${1:-$(uname -r)}"
 if [ ! -d "/usr/lib/modules/$REL/kernel" ]; then
     # uname -r doesn't match this system (recovery chroot) — detect instead
-    mapfile -t CANDIDATES < <(cd /usr/lib/modules && ls -d */ 2>/dev/null | tr -d /)
+    CANDIDATES=()
+    for candidate in /usr/lib/modules/*/; do
+        [ ! -d "$candidate" ] || CANDIDATES+=("${candidate%/}")
+    done
+    CANDIDATES=("${CANDIDATES[@]##*/}")
     if [ "${#CANDIDATES[@]}" = 1 ]; then
         REL="${CANDIDATES[0]}"
         echo "note: using detected kernel '$REL' (uname -r reports a different kernel)"
@@ -24,13 +28,16 @@ if [ ! -d "/usr/lib/modules/$REL/kernel" ]; then
     fi
 fi
 
-# tolerate failure in recovery chroots where / is already mounted rw
-steamos-readonly disable || echo "warn: steamos-readonly disable failed (already rw?) — continuing"
-trap 'steamos-readonly enable || true' EXIT
+ROOTFS_WAS_READONLY=0
+if steamos-readonly status 2>/dev/null | grep -qi enabled; then
+    steamos-readonly disable
+    ROOTFS_WAS_READONLY=1
+fi
+trap 'if [ "$ROOTFS_WAS_READONLY" = 1 ]; then steamos-readonly enable || true; fi' EXIT
 
-rm -f /usr/lib/modules/$REL/updates/amdgpu.ko.zst
+rm -f "/usr/lib/modules/$REL/updates/amdgpu.ko.zst"
 depmod "$REL"
-echo "amdgpu now resolves to: $(modinfo -F filename amdgpu)"
+echo "amdgpu now resolves to: $(modinfo -k "$REL" -F filename amdgpu)"
 
 # Preset name follows the kernel package (linux-neptune-616 -> -618 across
 # SteamOS 3.8 -> 3.9), so derive it from the kernel release being rolled back.

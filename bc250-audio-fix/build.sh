@@ -64,6 +64,7 @@ echo "tree commit matches running kernel: $SHA"
 step "build environment (runbook step 3)"
 # build-env.sh fails loudly if pahole/bc are missing — pahole invisible to
 # Kconfig means BTF and with it CONFIG_SCHED_CLASS_EXT get dropped SILENTLY.
+# shellcheck source=bc250-audio-fix/build-env.sh
 source "$HERE/build-env.sh"
 unset LOCALVERSION   # would silently append to vermagic
 

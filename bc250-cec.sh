@@ -52,6 +52,11 @@
 # so no steamos-readonly handling is needed and updates can't break it.
 set -euo pipefail
 
+REAL_USER=$(id -un)
+REAL_HOME="${REAL_HOME:-$(getent passwd "$REAL_USER" | cut -d: -f6)}"
+[[ "$REAL_HOME" == /* ]] || { echo "Could not resolve home for $REAL_USER" >&2; exit 1; }
+HOME=$REAL_HOME
+
 CEC_DEV="/dev/cec0"
 TV_LA=0                                      # CEC logical address of the TV
 
@@ -291,9 +296,9 @@ raw_send() {   # raw_send LA BYTE... -- fire-and-forget (LA 15 = broadcast)
 }
 
 dev_pa() {   # LA -> decimal physical address, via <Give Physical Address>
-    local r; r=$(raw_req "$1" 131 132) || return 1
-    set -- $r
-    echo $(( ${1:-0} * 256 + ${2:-0} ))
+    local r bytes; r=$(raw_req "$1" 131 132) || return 1
+    read -ra bytes <<< "$r"
+    echo $(( ${bytes[0]:-0} * 256 + ${bytes[1]:-0} ))
 }
 
 pa_depth() {   # decimal PA -> nesting depth in the HDMI tree (TV = 0)
@@ -307,16 +312,20 @@ pa_depth() {   # decimal PA -> nesting depth in the HDMI tree (TV = 0)
 }
 
 osd_of() {   # LA -> OSD name via <Give OSD Name>, "?" if no reply
-    local r b name=""
+    local r b hex char name=""
     r=$(raw_req "$1" 70 71) || { echo "?"; return 0; }
-    for b in $r; do name+=$(printf "\\x$(printf '%02x' "$b")"); done
+    for b in $r; do
+        printf -v hex '%02x' "$b"
+        printf -v char '%b' "\\x$hex"
+        name+="$char"
+    done
     echo "${name:-?}"
 }
 
 vendor_of() {   # LA -> brand via <Give Device Vendor ID>, IEEE OUI mapped
-    local r; r=$(raw_req "$1" 140 135) || { echo "-"; return 0; }
-    set -- $r
-    local id; id=$(printf '%02X%02X%02X' "${1:-0}" "${2:-0}" "${3:-0}")
+    local r bytes id; r=$(raw_req "$1" 140 135) || { echo "-"; return 0; }
+    read -ra bytes <<< "$r"
+    id=$(printf '%02X%02X%02X' "${bytes[0]:-0}" "${bytes[1]:-0}" "${bytes[2]:-0}")
     case "$id" in
         0010FA) echo "Apple" ;;      00A0DE) echo "Yamaha" ;;
         0000F0) echo "Samsung" ;;    00E091) echo "LG" ;;
@@ -341,9 +350,9 @@ vendor_of() {   # LA -> brand via <Give Device Vendor ID>, IEEE OUI mapped
 # DIFFERENT device answers, and that reply path is verified.
 active_source_pa() {
     if [[ "$(dev_prop Active)" == true ]]; then dev_prop PhysicalAddress; return 0; fi
-    local r; r=$(raw_req 15 133 130 2000) || return 1
-    set -- $r
-    echo $(( ${1:-0} * 256 + ${2:-0} ))
+    local r bytes; r=$(raw_req 15 133 130 2000) || return 1
+    read -ra bytes <<< "$r"
+    echo $(( ${bytes[0]:-0} * 256 + ${bytes[1]:-0} ))
 }
 
 # toml_set KEY VALUE FILE -- flat-key TOML edit, no /tmp round-trips
@@ -704,7 +713,7 @@ cmd_shutdown_standby() {
         install)
             require_user
             log "Installing $STANDBY_SVC + helper (sudo)..."
-            { printf '#!/bin/bash\nconf=%s\n' "$AMP_CONF"; cat << 'EOF'
+            { printf '#!/bin/bash\nconf=%q\n' "$AMP_CONF"; cat << 'EOF'
 # Written by bc250-cec.sh -- CEC standby to TV + receiver on poweroff.
 # Runs from the unit's ExecStop; regenerate via "bc250-cec.sh
 # shutdown-standby install"; do not edit.
@@ -804,8 +813,8 @@ write_wake_helper() {   # write_wake_helper polite|grab
         printf '#!/bin/bash\n'
         printf '# Written by bc250-cec.sh -- TV wake at session start. Regenerate with\n'
         printf '# "bc250-cec.sh boot-wake install [polite|grab]"; do not edit.\n'
-        printf 'MODE=%s\n' "$1"
-        printf 'CONF=%s\n' "$AMP_CONF"
+        printf 'MODE=%q\n' "$1"
+        printf 'CONF=%q\n' "$AMP_CONF"
         cat << 'EOF'
 D=(busctl --user --timeout=5 call com.steampowered.CecDaemon1
    /com/steampowered/CecDaemon1/Devices/Cec0
@@ -817,6 +826,10 @@ for i in 1 2 3 4 5; do
         && { st=${out##* }; break; }
     sleep 2
 done
+if [[ -z "$st" ]]; then
+    echo "bc250-cec: TV power probe got no reply after retries -- adapter/cecd may not be up; attempting wake anyway" \
+        | systemd-cat -t bc250-cec-boot-wake -p warning
+fi
 if [[ "$MODE" == polite && ( "$st" == 0 || "$st" == 2 ) ]]; then
     # TV is on (or waking): if any device answers <Request Active Source>,
     # someone else is watching -- leave the input alone.
@@ -845,6 +858,9 @@ if grep -qx 'amp_boot=1' "$CONF" 2>/dev/null; then
     if [[ "$pa" =~ ^[0-9]+$ ]] && (( pa != 65535 )); then
         "${D[@]}" SendRawMessage ayy 3 112 $(( (pa>>8)&255 )) $(( pa&255 )) 5 >/dev/null || true
         amp_sent=1
+    else
+        echo "bc250-cec: own physical address never registered -- receiver boot wake skipped" \
+            | systemd-cat -t bc250-cec-boot-wake -p warning
     fi
 fi
 # Hold ALL TV commands until the amp reports on (0x8f -> 0x90, status 0):
@@ -958,8 +974,13 @@ cmd_amp_follow() {
     log "receiver follow '$key': ${words[$cur]} -> ${words[$new]}"
     case "$key" in
         boot)
-            # regenerate the helper in case it predates amp support
-            [[ -x "$WAKE_HELPER" ]] && write_wake_helper "$(sed -n 's/^MODE=//p' "$WAKE_HELPER")"
+            # regenerate the helper in case it predates amp support; a
+            # pre-MODE helper reads back empty -- default that to polite
+            # rather than silently behaving as grab
+            if [[ -x "$WAKE_HELPER" ]]; then
+                local m; m=$(wake_mode)
+                write_wake_helper "${m:-polite}"
+            fi
             [[ "$(systemctl --user is-enabled "$WAKE_SVC" 2>/dev/null)" == enabled ]] \
                 || warn "Needs the boot-wake unit to act: $0 boot-wake install"
             ;;
@@ -983,7 +1004,7 @@ cmd_amp_sleep() {
             require_user
             log "Installing $SLEEP_HOOK (sudo)..."
             sudo mkdir -p "$(dirname "$SLEEP_HOOK")"
-            { printf '#!/bin/bash\nconf=%s\n' "$AMP_CONF"; cat << 'EOF'
+            { printf '#!/bin/bash\nconf=%q\n' "$AMP_CONF"; cat << 'EOF'
 # Written by bc250-cec.sh -- receiver (CEC audio system, LA 5) follows
 # console suspend/resume. Runs as root from systemd-sleep; the TV side is
 # cecd's job (wake_tv/suspend_tv). Toggles: bc250-cec.sh amp-follow
@@ -1061,6 +1082,15 @@ cmd_setup() {
     echo
     log "[4/4] Wake TV at boot"
     cmd_boot_wake install || warn "boot wake install failed -- continuing."
+    if [[ -t 0 ]]; then
+        echo
+        ask "Also wake the receiver (amp) at boot? [y/N]" "N"
+        if [[ "$REPLY" =~ ^[Yy] ]]; then
+            cmd_amp_follow boot on || warn "amp boot follow failed -- continuing."
+        else
+            log "Skipped -- flip later with: $0 amp-follow boot on"
+        fi
+    fi
     echo
     log "Done. Already on out of the box: wake TV on resume, suspend console"
     log "when the TV turns off, TV remote as input. Check with: $0 status"
@@ -1163,7 +1193,8 @@ cmd_scan() {
     # sweeping all 15 addresses is cheap; details are only fetched from
     # devices that ACK. Rows sort by physical address, which nests the
     # HDMI tree naturally (3.0.0.0 receiver, 3.4.0.0 = its input 4).
-    local ours=" $(dev_prop LogicalAddresses | cut -d' ' -f2- ) "
+    local ours
+    ours=" $(dev_prop LogicalAddresses | cut -d' ' -f2- ) "
     log "Scanning the CEC bus (logical addresses 0-14)..."
     local act; act=$(active_source_pa) || act=""
     local rows=() la pa
@@ -1211,7 +1242,8 @@ cmd_active() {
     fi
     # Name the holder: find the logical address reporting that physical
     # address (the <Active Source> broadcast doesn't carry identity).
-    local ours=" $(dev_prop LogicalAddresses | cut -d' ' -f2- ) " la hold=""
+    local ours la hold=""
+    ours=" $(dev_prop LogicalAddresses | cut -d' ' -f2- ) "
     for la in {0..14}; do
         [[ "$ours" == *" $la "* ]] && continue
         dev_call Poll y "$la" >/dev/null 2>&1 || continue
@@ -1238,7 +1270,8 @@ cmd_handoff() {
         IFS=. read -r a b c d <<< "$target"
         pa=$(( 16#$a<<12 | 16#$b<<8 | 16#$c<<4 | 16#$d ))
         # find the LA behind that PA -- needed for the wake step below
-        local ours=" $(dev_prop LogicalAddresses | cut -d' ' -f2- ) " cand
+        local ours cand
+        ours=" $(dev_prop LogicalAddresses | cut -d' ' -f2- ) "
         for cand in {0..14}; do
             [[ "$ours" == *" $cand "* ]] && continue
             dev_call Poll y "$cand" >/dev/null 2>&1 || continue
@@ -1286,8 +1319,9 @@ cmd_handoff() {
 cmd_release() {
     require_user; require_daemon
     local pa; pa=$(dev_prop PhysicalAddress)
-    [[ "$pa" =~ ^[0-9]+$ ]] && (( pa != 65535 )) \
-        || die "Own physical address unknown -- adapter detached? If it stays broken: $0 repair"
+    if [[ ! "$pa" =~ ^[0-9]+$ ]] || (( pa == 65535 )); then
+        die "Own physical address unknown -- adapter detached? If it stays broken: $0 repair"
+    fi
     # <Inactive Source> (0x9d), directed to the TV with our PA: "we're done,
     # you pick". The TV falls back to its previous input / home screen
     # instead of us force-routing anywhere. The politest exit there is.
@@ -1449,10 +1483,11 @@ cmd_amp_on() {
     local la pa out
     la=$(audio_la)
     pa=$(dev_prop PhysicalAddress)
-    [[ "$pa" =~ ^[0-9]+$ ]] && (( pa != 65535 )) \
-        || die "Own physical address unknown -- adapter detached, or the receiver's
+    if [[ ! "$pa" =~ ^[0-9]+$ ]] || (( pa == 65535 )); then
+        die "Own physical address unknown -- adapter detached, or the receiver's
       standby-passthrough is still renegotiating the link (takes ~20 s; retry).
       If it stays broken: $0 repair"
+    fi
     if out=$(dev_call SendReceiveRawMessage ayyyq 3 112 $(( (pa>>8)&255 )) $(( pa&255 )) "$la" 114 2000 2>/dev/null); then
         local sam=off; [[ "${out##* }" == 1 ]] && sam=on
         log "Receiver (LA $la) awake -- system audio mode: $sam."
@@ -1549,7 +1584,7 @@ cmd_menu() {
     while true; do
         local items=(
             "Status overview||Full health dump: device, daemon, TV power, config. Always safe."
-            "Recommended setup||One shot: OSD name + TV off on suspend/poweroff + wake at boot."
+            "Recommended setup||One shot: OSD name + TV off on suspend/poweroff + TV (and optionally receiver) wake at boot."
             "Set TV name (OSD)|$(badge_osd)|Name in the TV's device list. Default: $OSD_DEFAULT."
             "Behavior toggles|$(badge_overrides)|Wake/standby/remote toggles -- overrides Steam UI settings."
             "TV standby on power-off|$(badge_standby)|CEC standby on poweroff only -- skipped if another device holds the input. Uses sudo."
@@ -1615,7 +1650,8 @@ GUIDED MENU
 
 SETUP
   setup            Recommended one-shot: osd-name BC-250, TV standby on
-                   suspend + poweroff, wake TV at boot.
+                   suspend + poweroff, wake TV at boot, and (optional
+                   prompt) wake the receiver at boot too.
   osd-name [NAME]  Name shown in the TV's device/input list (max 14
                    bytes, default BC-250). 'osd-name --reset' removes it.
   toggle KEY [on|off]
@@ -1720,6 +1756,10 @@ EOF
 
 # ============================ dispatch ====================================
 
+if [[ $# -eq 0 && -t 0 && -t 1 ]]; then
+    cmd_menu
+    exit 0
+fi
 case "${1:-}" in
     status)            cmd_status ;;
     setup)             cmd_setup ;;
@@ -1748,7 +1788,6 @@ case "${1:-}" in
     mute)              cmd_mute ;;
     menu)              cmd_menu ;;
     help|-h|--help)    cmd_help ;;
-    "") if [[ -t 0 && -t 1 ]]; then cmd_menu; exit 0; fi ;&
     *) echo "Usage: $0 {status|setup|osd-name|toggle|clear-overrides|shutdown-standby|boot-wake|"
        echo "           active|handoff|release|amp-follow|amp-sleep|test|scan|repair|monitor|"
        echo "           remote|tv-on|tv-off|amp-on|amp-off|switch|vol-up|vol-down|mute|menu|help}"

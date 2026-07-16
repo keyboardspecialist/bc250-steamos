@@ -15,14 +15,44 @@
 # The /etc files survive updates; steps 1-5 must be re-run after each SteamOS update.
 set -euo pipefail
 
-REPO=/home/deck/tools/bc250/aic8800
+[ "$(id -u)" = 0 ] || { echo "Please run with sudo."; exit 1; }
+
+REAL_USER="${SUDO_USER:-deck}"
+REAL_HOME="${REAL_HOME:-$(getent passwd "$REAL_USER" | cut -d: -f6)}"
+[ -n "$REAL_HOME" ] || { echo "Could not resolve home for $REAL_USER"; exit 1; }
+FIXES_REPO_DIR="${FIXES_REPO_DIR:-$REAL_HOME/.local/share/bc250-fixes/bc250-steamos}"
+[ "$FIXES_REPO_DIR" = "${FIXES_REPO_DIR%[[:space:]]*}" ] \
+    && [ "${FIXES_REPO_DIR#/}" != "$FIXES_REPO_DIR" ] \
+    || { echo "FIXES_REPO_DIR must be an absolute path without whitespace."; exit 1; }
+SCRIPT_REPO_DIR=$(cd "$(dirname "$0")/.." && pwd)
+if [ -d "$FIXES_REPO_DIR/aic8800" ]; then
+    REPO="$FIXES_REPO_DIR/aic8800"
+else
+    REPO="$SCRIPT_REPO_DIR/aic8800"
+fi
+[ "$REPO" = "${REPO%[[:space:]]*}" ] \
+    || { echo "The AIC8800 source path cannot contain whitespace."; exit 1; }
 DRV=$REPO/src/USB/driver_fw/drivers/aic8800
 FW=$REPO/src/USB/driver_fw/fw/aic8800D80
-BUILD_USER=deck
+BUILD_USER=$REAL_USER
 KREL=$(uname -r)
 
-[ "$(id -u)" = 0 ] || { echo "Please run with sudo."; exit 1; }
 [ -d "$DRV" ] || { echo "Driver source not found at $DRV"; exit 1; }
+
+ROOTFS_WAS_READONLY=0
+unlock_rootfs() {
+    if steamos-readonly status 2>/dev/null | grep -qi enabled; then
+        steamos-readonly disable
+        ROOTFS_WAS_READONLY=1
+    fi
+}
+relock_rootfs() {
+    if [ "$ROOTFS_WAS_READONLY" = 1 ]; then
+        steamos-readonly enable
+        ROOTFS_WAS_READONLY=0
+    fi
+}
+trap relock_rootfs EXIT
 
 find_storage_device() {
     local device vendor product
@@ -40,7 +70,7 @@ find_storage_device() {
 }
 
 find_wifi_device_id() {
-    local expected_device="${1:-}" device vendor product alias
+    local expected_device="${1:-}" device vendor product vendor_upper product_upper alias
 
     for device in /sys/bus/usb/devices/*; do
         [ -r "$device/idVendor" ] && [ -r "$device/idProduct" ] || continue
@@ -50,9 +80,11 @@ find_wifi_device_id() {
 
         vendor=$(<"$device/idVendor")
         product=$(<"$device/idProduct")
+        vendor_upper=$(printf '%s' "$vendor" | tr '[:lower:]' '[:upper:]')
+        product_upper=$(printf '%s' "$product" | tr '[:lower:]' '[:upper:]')
         while IFS= read -r alias; do
             case "$alias" in
-                "usb:v${vendor^^}p${product^^}"*)
+                "usb:v${vendor_upper}p${product_upper}"*)
                     printf '%s:%s\n' "$vendor" "$product"
                     return 0
                     ;;
@@ -63,7 +95,7 @@ find_wifi_device_id() {
 }
 
 echo "== [1/7] Unlocking rootfs =="
-steamos-readonly disable
+unlock_rootfs
 
 echo "== [2/7] Installing build tools =="
 pacman-key --init >/dev/null 2>&1 || true
@@ -105,10 +137,18 @@ cat > /etc/modprobe.d/aic8800.conf <<EOF
 options aic_load_fw aic_fw_path=$FW
 EOF
 
+printf 'AIC8800_REPO=%q\nAIC8800_BUILD_USER=%q\n' "$REPO" "$BUILD_USER" \
+    > /etc/aic8800-paths.conf
+install -m 755 "$REPO/aic8800-ensure-modules.sh" /etc/aic8800-ensure-modules.sh
+install -m 644 "$REPO/aic8800-modules.service" /etc/systemd/system/aic8800-modules.service
+sed -i "/^After=/a RequiresMountsFor=$REPO" /etc/systemd/system/aic8800-modules.service
+
 udevadm control --reload
+systemctl daemon-reload
+systemctl enable aic8800-modules.service >/dev/null
 
 echo "== [7/7] Relocking rootfs =="
-steamos-readonly enable
+relock_rootfs
 
 if storage_device=$(find_storage_device); then
     echo "Switching dongle to WiFi mode..."

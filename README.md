@@ -2,7 +2,8 @@
 
 Scripts and drivers for running SteamOS 3.8.x on the ASRock BC-250 board.
 
-Everything installs to update-proof locations (`/etc`, `/var`, `/home`) where
+Everything installs to update-proof locations (`/etc` and the real user's
+`~/.local/share/bc250-fixes/bc250-steamos` toolkit directory) where
 possible — SteamOS updates wipe `/usr` (including `/usr/local` and pacman
 packages) but leave those alone.
 
@@ -15,8 +16,11 @@ so scripting/SSH use is unchanged.
 
 ### `bc250-40cu.sh`
 All-in-one 40 CU unlock via the runtime UMR route. Installs the umr binary,
-ASIC database, and a manager script to `/var/lib/bc250-40cu`, plus a systemd
-unit and boot table config in `/etc`.
+ASIC database, and a manager script under the hidden toolkit directory, plus
+a systemd unit and boot table config in `/etc`.
+Existing `/var/lib/bc250-40cu` data is migrated automatically; a tiny
+compatibility symlink preserves old Steam launch options without retaining
+artifacts on the `/var` partition.
 
 ### `bc250-cu-status.sh`
 Read-only CU dispatch report (e.g. `38/40`). No writes, safe to run any time.

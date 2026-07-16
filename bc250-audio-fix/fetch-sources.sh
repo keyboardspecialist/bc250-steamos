@@ -153,11 +153,10 @@ for pkg in "${DEP_PKGS[@]}"; do
     # exact-name match: a db entry dir is <name>-<ver>-<rel>/, so an entry
     # belongs to $pkg iff stripping the last two -fields leaves exactly $pkg
     # (a naive prefix grep matches openssl-1.1 when you want openssl)
-    ENTRY= REPO=
+    ENTRY='' REPO=''
     for repo in "${DEP_REPOS[@]}"; do
         ENTRY=$(tar -tf "$TMPD/$repo.db" | sed -n 's|/$||p' \
-            | awk -F- -v p="$pkg" 'NF>2 { n=""; for(i=1;i<=NF-2;i++) n=n (i>1?"-":"") $i; if (n==p) print }' \
-            | head -1)
+            | awk -F- -v p="$pkg" 'NF>2 { n=""; for(i=1;i<=NF-2;i++) n=n (i>1?"-":"") $i; if (n==p) { print; exit } }')
         [ -n "$ENTRY" ] && { REPO=$repo; break; }
     done
     [ -n "$ENTRY" ] || die "package '$pkg' not found in: ${DEP_REPOS[*]}"
@@ -184,6 +183,7 @@ for pkg in "${DEP_PKGS[@]}"; do
 done
 
 step "verify build environment"
+# shellcheck source=bc250-audio-fix/build-env.sh
 ( source "$HERE/build-env.sh" ) || die "build-env.sh still unhappy after dep extraction"
 echo "build-env.sh OK (pahole, bc on PATH)"
 

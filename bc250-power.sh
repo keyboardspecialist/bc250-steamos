@@ -14,8 +14,8 @@
 #     Without a governor the GPU is locked at 1500 MHz and idles hot.
 #
 # SteamOS persistence model used throughout:
-#   /var/lib/bc250-40cu  master copies (binaries, cpio, SSDTs)  -- survives updates
-#   /etc                 configs, systemd units, grub defaults  -- survives updates
+#   ~/.local/share/bc250-fixes/bc250-steamos  master copies and build artifacts
+#   /etc                                    configs, units, grub defaults
 #   /boot                cpio must live here for GRUB           -- WIPED by updates
 #                        -> a boot-time self-heal service restores it
 #
@@ -27,7 +27,18 @@
 #   ./bc250-power.sh all           acpi + governor
 set -euo pipefail
 
-PREFIX="/var/lib/bc250-40cu"
+REAL_USER="${SUDO_USER:-${USER:-$(id -un)}}"
+if [[ "$REAL_USER" == root ]] && getent passwd deck >/dev/null 2>&1; then
+    REAL_USER=deck
+fi
+REAL_HOME="${REAL_HOME:-$(getent passwd "$REAL_USER" | cut -d: -f6)}"
+[[ "$REAL_HOME" == /* ]] || { echo "Could not resolve the real user's home directory." >&2; exit 1; }
+FIXES_REPO_DIR="${FIXES_REPO_DIR:-$REAL_HOME/.local/share/bc250-fixes/bc250-steamos}"
+[[ "$FIXES_REPO_DIR" == /* && "$FIXES_REPO_DIR" != *[$'\n\r\t ']* ]] \
+    || { echo "FIXES_REPO_DIR must be an absolute path without whitespace." >&2; exit 1; }
+PREFIX="$FIXES_REPO_DIR"
+LEGACY_PREFIX="/var/lib/bc250-40cu"
+MIGRATION_MARKER="$PREFIX/.var-lib-migrated"
 BIN_DIR="$PREFIX/bin"
 ACPI_DIR="$PREFIX/acpi"
 CPIO_MASTER="$ACPI_DIR/acpi_override.cpio"
@@ -45,6 +56,7 @@ GOV_API="https://api.github.com/repos/filippor/cyan-skillfish-governor/releases/
 GOV_RAW="https://raw.githubusercontent.com/filippor/cyan-skillfish-governor/smu"
 
 HEAL_UNIT="/etc/systemd/system/bc250-acpi-heal.service"
+HEAL_HELPER="/etc/bc250-acpi-heal.sh"
 CPUFREQ_UNIT="/etc/systemd/system/bc250-cpufreq.service"
 
 FREQ_STATE="$GOV_CONF_DIR/freq-state"
@@ -68,6 +80,33 @@ log()  { echo -e "\033[1;32m[power]\033[0m $*"; }
 warn() { echo -e "\033[1;33m[power]\033[0m $*"; }
 die()  { echo -e "\033[1;31m[power]\033[0m $*" >&2; exit 1; }
 require_root() { [[ $EUID -eq 0 ]] || die "Run as root (sudo)."; }
+
+migrate_legacy_data() {
+    [[ ! -L "$LEGACY_PREFIX" ]] || return 0
+    [[ -d "$LEGACY_PREFIX" ]] || return 0
+    [[ ! -e "$MIGRATION_MARKER" ]] || return 0
+    mkdir -p "$PREFIX"
+    log "Migrating legacy toolkit data from $LEGACY_PREFIX to $PREFIX..."
+    cp -a -n "$LEGACY_PREFIX/." "$PREFIX/"
+    touch "$MIGRATION_MARKER"
+}
+
+cleanup_legacy_data() {
+    local file
+    [[ -d "$LEGACY_PREFIX" ]] || return 0
+    for file in /etc/systemd/system/bc250-cu-live-manager.service \
+        /etc/bc250-cu-live-manager.conf "$HEAL_UNIT" "$GOV_UNIT" \
+        "$RESTORE_UNIT" "$OC_UNIT"; do
+        if [[ -f "$file" ]] && grep -qF "$LEGACY_PREFIX" "$file"; then
+            warn "Legacy data retained while $file still references it."
+            return 0
+        fi
+    done
+    rm -rf "$LEGACY_PREFIX"
+    mkdir -p "${LEGACY_PREFIX%/*}"
+    ln -s "$PREFIX" "$LEGACY_PREFIX"
+    log "Replaced $LEGACY_PREFIX with a compatibility symlink to the home-backed data."
+}
 
 RO_WAS_DISABLED=0
 unlock_rootfs() {
@@ -95,12 +134,26 @@ pause_governor() {
 }
 resume_governor() {
     if [[ $GOV_STOPPED -eq 1 ]]; then
-        systemctl start "$GOV_SVC" && log "GPU governor resumed."
-        GOV_STOPPED=0
+        if systemctl start "$GOV_SVC"; then
+            log "GPU governor resumed."
+            GOV_STOPPED=0
+        else
+            warn "GPU governor failed to resume; run: systemctl start $GOV_SVC"
+            return 1
+        fi
     fi
 }
 
-cleanup() { tui_show_cursor; resume_governor; relock_rootfs; }
+TEMP_DIRS=()
+cleanup() {
+    local temp_dir
+    tui_show_cursor
+    resume_governor || true
+    for temp_dir in "${TEMP_DIRS[@]-}"; do
+        [[ -z "$temp_dir" ]] || rm -rf "$temp_dir"
+    done
+    relock_rootfs || true
+}
 trap cleanup EXIT
 
 # ========================= pure-bash TUI menu =============================
@@ -212,6 +265,7 @@ badge_gov_boot() {
 }
 badge_freq() {
     if [[ -f "$FREQ_STATE" ]]; then
+        # shellcheck source=/dev/null
         b_mid "saved: $( (. "$FREQ_STATE" && echo "$MODE ${A:-} ${B:-}") 2>/dev/null | xargs || true)"
     else b_off "config defaults"; fi
 }
@@ -276,13 +330,16 @@ badge_oc_live() {   # live CPU voltage, for the status row
 # ============================== ACPI fix ==================================
 cmd_acpi() {
     require_root
+    migrate_legacy_data
     mkdir -p "$ACPI_DIR"
 
-    # --- fetch SSDTs and build the override cpio (master in /var/lib) -----
+    # --- fetch SSDTs and build the persistent override cpio ---------------
     if [[ ! -f "$CPIO_MASTER" ]]; then
         log "Fetching SSDT tables (bc250-collective/bc250-acpi-fix)..."
-        local work=/tmp/bc250-acpi
-        rm -rf "$work"; mkdir -p "$work/kernel/firmware/acpi"
+        local work
+        work=$(mktemp -d /tmp/bc250-acpi.XXXXXX)
+        TEMP_DIRS+=("$work")
+        mkdir -p "$work/kernel/firmware/acpi"
         curl -fL -o "$work/kernel/firmware/acpi/SSDT-CST.aml" "$ACPI_RAW_BASE/SSDT-CST.aml"
         curl -fL -o "$work/kernel/firmware/acpi/SSDT-PST.aml" "$ACPI_RAW_BASE/SSDT-PST.aml"
         # keep master copies of the raw tables too
@@ -333,26 +390,48 @@ cmd_acpi() {
 
     # --- self-heal service: SteamOS updates wipe /boot --------------------
     log "Installing boot-time self-heal service..."
+    cat > "$HEAL_HELPER" << EOF
+#!/usr/bin/env bash
+set -euo pipefail
+ROOTFS_WAS_READONLY=0
+relock() {
+    if [[ \$ROOTFS_WAS_READONLY -eq 1 ]]; then
+        steamos-readonly enable || true
+    fi
+}
+trap relock EXIT
+
+if [[ ! -f $CPIO_BOOT ]] || ! cmp -s "$CPIO_MASTER" "$CPIO_BOOT" \
+   || ! grep -q acpi_override.cpio /boot/grub/grub.cfg 2>/dev/null; then
+    if steamos-readonly status 2>/dev/null | grep -qi enabled; then
+        steamos-readonly disable
+        ROOTFS_WAS_READONLY=1
+    fi
+    cp -f "$CPIO_MASTER" "$CPIO_BOOT"
+    if command -v update-grub >/dev/null; then
+        update-grub
+    else
+        grub-mkconfig -o /boot/grub/grub.cfg
+    fi
+    if grep -q acpi_override.cpio /boot/grub/grub.cfg 2>/dev/null; then
+        echo "bc250: ACPI override restored after OS update; REBOOT to re-activate C/P-states" | systemd-cat -p warning
+    else
+        echo "bc250: grub.cfg still lacks acpi_override.cpio after regen -- add the initrd line manually (see bc250-power.sh acpi output)" | systemd-cat -p err
+        exit 1
+    fi
+fi
+EOF
+    chmod 755 "$HEAL_HELPER"
+
     cat > "$HEAL_UNIT" << EOF
 [Unit]
 Description=BC-250 ACPI override self-heal (restore after SteamOS updates)
 After=local-fs.target
+RequiresMountsFor=$FIXES_REPO_DIR
 
 [Service]
 Type=oneshot
-ExecStart=/bin/bash -c '\
-  if [[ ! -f $CPIO_BOOT ]] || ! cmp -s "$CPIO_MASTER" "$CPIO_BOOT" \
-     || ! grep -q acpi_override.cpio /boot/grub/grub.cfg 2>/dev/null; then \
-    steamos-readonly disable; \
-    cp -f "$CPIO_MASTER" "$CPIO_BOOT"; \
-    command -v update-grub >/dev/null && update-grub || grub-mkconfig -o /boot/grub/grub.cfg; \
-    steamos-readonly enable; \
-    if grep -q acpi_override.cpio /boot/grub/grub.cfg 2>/dev/null; then \
-      echo "bc250: ACPI override restored after OS update; REBOOT to re-activate C/P-states" | systemd-cat -p warning; \
-    else \
-      echo "bc250: grub.cfg still lacks acpi_override.cpio after regen -- this grub ignores GRUB_EARLY_INITRD_LINUX_CUSTOM; add the initrd line manually (see bc250-power.sh acpi output)" | systemd-cat -p err; \
-    fi; \
-  fi'
+ExecStart=$HEAL_HELPER
 RemainAfterExit=yes
 
 [Install]
@@ -381,6 +460,7 @@ EOF
 
     systemctl daemon-reload
     systemctl enable bc250-acpi-heal.service bc250-cpufreq.service
+    cleanup_legacy_data
     relock_rootfs
 
     log "ACPI fix installed. REBOOT required, then verify:"
@@ -427,6 +507,7 @@ check_conflicts() {
 
 cmd_governor() {
     require_root
+    migrate_legacy_data
     mkdir -p "$BIN_DIR" "$GOV_CONF_DIR"
     check_conflicts
 
@@ -448,12 +529,13 @@ cmd_governor() {
 $(grep -oP '"browser_download_url":\s*"\K[^"]*' <<< "$api_json" || echo '  (none / API rate-limited)')"
     log "  $url"
 
-    local work=/tmp/csg-install
-    rm -rf "$work"; mkdir -p "$work"
+    local work
+    work=$(mktemp -d /tmp/csg-install.XXXXXX)
+    TEMP_DIRS+=("$work")
     curl -fL -o "$work/csg.tar.gz" "$url"
     tar -xf "$work/csg.tar.gz" -C "$work"
 
-    local bin perf policy
+    local bin perf
     bin=$(find "$work" -type f -name 'cyan-skillfish-governor-smu' \
               ! -name '*.service' ! -name '*.spec' | head -1 || true)
     [[ -n "$bin" ]] || die "No prebuilt binary in archive. Contents:
@@ -469,7 +551,8 @@ $(find "$work" -type f | head -20)"
         log "Helper not in tarball; fetching from repo..."
         curl -fL -o "$PERF_BIN" "$GOV_RAW/scripts/cyan-skillfish-performance-mode" \
             || warn "Could not fetch perf-mode helper; busctl SetRange works as a substitute."
-        [[ -s "$PERF_BIN" ]] && chmod 755 "$PERF_BIN" || rm -f "$PERF_BIN"
+        if [[ -s "$PERF_BIN" ]]; then chmod 755 "$PERF_BIN"
+        else rm -f "$PERF_BIN"; fi
     fi
     [[ -x "$PERF_BIN" ]] && log "Perf-mode helper -> $PERF_BIN"
 
@@ -561,6 +644,7 @@ EOF
 [Unit]
 Description=Cyan Skillfish GPU governor (SMU) -- BC-250
 After=multi-user.target bc250-cu-live-manager.service
+RequiresMountsFor=$FIXES_REPO_DIR
 
 [Service]
 Type=simple
@@ -581,6 +665,7 @@ EOF
         journalctl -u "$GOV_SVC" -n 30 --no-pager
         die "Governor failed to start -- log above."
     }
+    cleanup_legacy_data
     log "Running. Load the GPU for a few minutes; watch clocks and temps:"
     log "  watch -n1 'cat /sys/class/drm/card*/device/pp_dpm_sclk 2>/dev/null; sensors | grep -E \"edge|PPT\"'"
     log "Then lock it in: sudo $0 enable"
@@ -608,6 +693,7 @@ install_freq_persistence() {
         return 0
     fi
 
+    mkdir -p "$BIN_DIR"
     cat > "$RESTORE_BIN" << EOF
 #!/usr/bin/env bash
 # bc250: reapply the saved GPU freq setting after the governor starts.
@@ -650,6 +736,7 @@ EOF
 [Unit]
 Description=BC-250 restore saved GPU freq setting (survives reboots)
 After=$GOV_SVC
+RequiresMountsFor=$FIXES_REPO_DIR
 
 [Service]
 Type=oneshot
@@ -731,8 +818,8 @@ restart_governor_reapply() {
     systemctl restart "$GOV_SVC"
     log "Governor restarted with the new curve."
     if [[ -f "$FREQ_STATE" && -x "$RESTORE_BIN" ]]; then
-        "$RESTORE_BIN" && log "Saved freq setting reapplied." \
-            || warn "Could not reapply saved freq setting -- check 'freq status'."
+        if "$RESTORE_BIN"; then log "Saved freq setting reapplied."
+        else warn "Could not reapply saved freq setting -- check 'freq status'."; fi
     fi
 }
 
@@ -1120,9 +1207,12 @@ cmd_helpers() {
     rel_tag=$(curl -fsSL "$GOV_API" | grep -oP '"tag_name":\s*"\K[^"]+' | head -1 || true)
     [[ -n "$rel_tag" ]] && GOV_RAW="https://raw.githubusercontent.com/filippor/cyan-skillfish-governor/$rel_tag"
     log "Fetching helpers from ${rel_tag:-smu branch HEAD}..."
-    curl -fL -o "$PERF_BIN" "$GOV_RAW/scripts/cyan-skillfish-performance-mode" \
-        && chmod 755 "$PERF_BIN" && log "  -> $PERF_BIN" \
-        || warn "Helper fetch failed; check the scripts/ dir name on the smu branch."
+    if curl -fL -o "$PERF_BIN" "$GOV_RAW/scripts/cyan-skillfish-performance-mode"; then
+        chmod 755 "$PERF_BIN"
+        log "  -> $PERF_BIN"
+    else
+        warn "Helper fetch failed; check the scripts/ dir name on the smu branch."
+    fi
     if [[ ! -s "$DBUS_POLICY" ]] || ! grep -q 'com.cyanskillfish.Governor' "$DBUS_POLICY"; then
         log "Writing dual-name D-Bus policy (upstream's is stale vs its binary)..."
         cat > "$DBUS_POLICY" << 'EOF'
@@ -1168,14 +1258,16 @@ cmd_enable() {
 # resource is the SMU indirect window, handled by pause_governor + unit
 # ordering. SteamOS-friendly: pure-stdlib python run straight from files
 # (no pip/git), sources fetched as a pinned-commit tarball with our patches
-# overlaid (see smu-oc-patches/README.md), master copies in /var/lib,
+# overlaid (see smu-oc-patches/README.md), master copies in the hidden toolkit,
 # config + unit in /etc -- all update-proof.
 
 fetch_oc_sources() {
+    migrate_legacy_data
     [[ -f "$OC_PATCH_DIR/transport.py" && -f "$OC_PATCH_DIR/stress_helper.py" ]] \
         || die "Patch overlays not found at $OC_PATCH_DIR (should ship next to this script)."
-    local work=/tmp/bc250-smu-oc
-    rm -rf "$work"; mkdir -p "$work"
+    local work
+    work=$(mktemp -d /tmp/bc250-smu-oc.XXXXXX)
+    TEMP_DIRS+=("$work")
     log "Fetching bc250_smu_oc @ ${OC_PIN:0:7} (pinned)..."
     curl -fsSL "$OC_TARBALL" | tar -xz -C "$work" --strip-components=1 \
         || die "Fetch failed (network?): $OC_TARBALL"
@@ -1220,6 +1312,14 @@ oc_detect() {
     [[ -n "$freq" && -n "$vid" ]] || die "Usage: $0 cpu-oc detect <targetMHz> <vidLimit_mV> [tempC]
 Community reference: 4000 1275 (retry at 1300 mV if it crashes).
 NEVER above 1325 mV -- exceeding it has bricked boards."
+    [[ "$freq" =~ ^[0-9]+$ && "$vid" =~ ^[0-9]+$ && "$temp" =~ ^[0-9]+$ ]] \
+        || die "Frequency, voltage, and temperature must be positive integers."
+    (( freq >= 3500 && freq <= 4500 )) \
+        || die "Target frequency must be between 3500 and 4500 MHz."
+    (( vid >= 950 && vid <= 1325 )) \
+        || die "VID limit must be between 950 and the hard safety limit of 1325 mV."
+    (( temp >= 50 && temp <= 100 )) \
+        || die "Temperature limit must be between 50 and 100 C."
     install_oc_files
     ensure_stress
     warn "This stress-steps the CPU in 100 MHz increments and CAN hard-crash"
@@ -1273,6 +1373,7 @@ oc_enable() {
 Description=BC-250 CPU overclock/undervolt (bc250_smu_oc, SMU)
 # strictly before the GPU governor: both drive the same SMU indirect window
 Before=$GOV_SVC
+RequiresMountsFor=$FIXES_REPO_DIR
 
 [Service]
 Type=oneshot
@@ -1416,7 +1517,11 @@ cmd_status() {
     if compgen -G /sys/devices/system/cpu/cpu0/cpufreq >/dev/null; then
         echo "  governor: $(cat /sys/devices/system/cpu/cpu0/cpufreq/scaling_governor)"
         echo "  current:  $(cat /sys/devices/system/cpu/cpu0/cpufreq/scaling_cur_freq) kHz"
-        echo "  c-states: $(ls /sys/devices/system/cpu/cpu0/cpuidle/ 2>/dev/null | tr '\n' ' ')"
+        local state states=""
+        for state in /sys/devices/system/cpu/cpu0/cpuidle/*; do
+            [[ -e "$state" ]] && states+="${state##*/} "
+        done
+        echo "  c-states: $states"
     else
         echo "  cpufreq absent -- ACPI override not active (not installed, or reboot pending)"
     fi
@@ -1575,7 +1680,7 @@ cmd_help() {
 bc250-power.sh -- BC-250 power management for SteamOS
 ==============================================================
 CPU C/P-states via ACPI SSDT override + adaptive GPU governor (SMU).
-Everything installs to update-proof locations (/etc + /var/lib);
+Everything installs to update-proof locations (/etc + the hidden toolkit);
 SteamOS updates cannot break any of it.
 
 GUIDED MENU
@@ -1704,13 +1809,16 @@ PERMANENT TUNING (config file, not this script)
   then: systemctl restart cyan-skillfish-governor-smu
 
 STEAM LAUNCH OPTION (per-game max clocks, auto-restores on exit)
-  /var/lib/bc250-40cu/bin/cyan-skillfish-performance-mode %command%
-  /var/lib/bc250-40cu/bin/cyan-skillfish-performance-mode --range 0 2000 %command%
+  ~/.local/share/bc250-fixes/bc250-steamos/bin/cyan-skillfish-performance-mode %command%
+  ~/.local/share/bc250-fixes/bc250-steamos/bin/cyan-skillfish-performance-mode --range 0 2000 %command%
 
 FILE MAP (what lives where, and why it survives OS updates)
-  /var/lib/bc250-40cu/bin/     governor + helper binaries   (persists)
-  /var/lib/bc250-40cu/acpi/    SSDTs + master override cpio (persists)
-  /var/lib/bc250-40cu/smu-oc/  CPU OC tool (fetched @ pinned commit,
+  ~/.local/share/bc250-fixes/bc250-steamos/bin/
+                               governor + helper binaries   (persists)
+  ~/.local/share/bc250-fixes/bc250-steamos/acpi/
+                               SSDTs + master override cpio (persists)
+  ~/.local/share/bc250-fixes/bc250-steamos/smu-oc/
+                               CPU OC tool (fetched @ pinned commit,
                                patched from smu-oc-patches/)
   /etc/bc250-smu-oc.conf       CPU OC config                (persists)
   /etc/cyan-skillfish-governor-smu/config.toml              (persists)
@@ -1726,6 +1834,10 @@ RELATED (separate scripts, same family)
 EOF
 }
 
+if [[ $# -eq 0 && -t 0 && -t 1 ]]; then
+    cmd_menu
+    exit 0
+fi
 case "${1:-}" in
     acpi)         cmd_acpi ;;
     governor)     cmd_governor ;;
@@ -1740,7 +1852,6 @@ case "${1:-}" in
     all)          cmd_acpi; cmd_governor ;;
     menu)         cmd_menu ;;
     help|-h|--help) cmd_help ;;
-    "") if [[ -t 0 && -t 1 ]]; then cmd_menu; exit 0; fi ;&
     *) echo "Usage: $0 {acpi|governor|helpers|freq|gpu-volt|load-target|ramp|cpu-oc|enable|status|all|menu|help}"
        echo "  (no arguments on a terminal opens the guided menu)"
        echo "  freq                 show performance-mode state"
