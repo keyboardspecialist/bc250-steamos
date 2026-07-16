@@ -1,0 +1,17 @@
+import { callable } from "@decky/api";
+import type { Snapshot } from "./types";
+
+export const getSnapshot = callable<[], Snapshot>("get_snapshot");
+export const setGpuFrequency = callable<
+  [mode: string, minimum: number, maximum: number],
+  void
+>("set_gpu_frequency");
+export const setLoadTarget = callable<[preset: string], void>(
+  "set_load_target",
+);
+export const setRamp = callable<[climbMs: number], void>("set_ramp");
+export const cecAction = callable<[action: string], void>("cec_action");
+export const setCecToggle = callable<
+  [key: string, enabled: boolean],
+  void
+>("set_cec_toggle");

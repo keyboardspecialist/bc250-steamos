@@ -745,7 +745,7 @@ if [[ -x "\$PERF" ]]; then
     esac
 else
     case "\$MODE" in
-        max)   busctl --system call "\$BUS_NAME" "\$BUS_PATH" "\$BUS_IFACE" Enable ;;
+        max)   busctl --system set-property "\$BUS_NAME" "\$BUS_PATH" "\$BUS_IFACE" Enabled b true ;;
         pin)   busctl --system call "\$BUS_NAME" "\$BUS_PATH" "\$BUS_IFACE" SetFixedFrequency u "\$A" ;;
         range) busctl --system call "\$BUS_NAME" "\$BUS_PATH" "\$BUS_IFACE" SetRange uu "\$A" "\$B" ;;
         *)     exit 0 ;;
@@ -812,9 +812,11 @@ cmd_freq() {
         ""|status)
             busctl --system get-property "$BUS_NAME" "$BUS_PATH" "$BUS_IFACE" Enabled \
                 || warn "Bus name absent -- D-Bus policy not active? (reboot after policy install)" ;;
-        auto|off)  gov_dbus Disable && log "Adaptive scaling restored (config defaults apply)." \
+        auto|off)  busctl --system set-property "$BUS_NAME" "$BUS_PATH" "$BUS_IFACE" Enabled b false \
+                       && log "Adaptive scaling restored (config defaults apply)." \
                        && clear_freq_state ;;
-        max|on)    gov_dbus Enable  && log "Performance mode ON (max frequency, no idle downscale)." \
+        max|on)    busctl --system set-property "$BUS_NAME" "$BUS_PATH" "$BUS_IFACE" Enabled b true \
+                       && log "Performance mode ON (max frequency, no idle downscale)." \
                        && save_freq_state max ;;
         [0-9]*)
             if [[ -n "$b" ]]; then

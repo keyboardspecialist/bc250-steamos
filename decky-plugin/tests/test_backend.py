@@ -1,0 +1,203 @@
+import asyncio
+import tempfile
+import unittest
+from pathlib import Path
+from unittest.mock import AsyncMock, patch
+
+import bc250_control.backend as backend_module
+from bc250_control.backend import CommandError, ToolkitBackend
+
+
+class BackendParsingTests(unittest.TestCase):
+    def test_key_value_reader_ignores_shell_syntax(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "state"
+            path.write_text(
+                "MODE=range\nA=0\nB=2000\nBAD-KEY=value\nCOMMAND=$(id)\n",
+                encoding="utf-8",
+            )
+            self.assertEqual(
+                ToolkitBackend._read_key_values(path),
+                {
+                    "MODE": "range",
+                    "A": "0",
+                    "B": "2000",
+                    "COMMAND": "$(id)",
+                },
+            )
+
+    def test_safe_int_degrades_malformed_state(self):
+        self.assertEqual(ToolkitBackend._safe_int("oops"), 0)
+        self.assertEqual(ToolkitBackend._safe_int("1800"), 1800)
+
+    def test_bus_values(self):
+        self.assertTrue(ToolkitBackend._bus_value("b true"))
+        self.assertEqual(ToolkitBackend._bus_value('s "BC-250"'), "BC-250")
+        self.assertEqual(ToolkitBackend._bus_value("u 1200"), 1200)
+
+    def test_toml_updates_preserve_other_sections(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "config.toml"
+            path.write_text(
+                "[load-target]\nupper = 0.80\nlower = 0.65\n\n"
+                "[frequency-range]\nmax = 1500\n",
+                encoding="utf-8",
+            )
+            ToolkitBackend._update_toml_values(
+                path,
+                {
+                    "load-target": {"upper": "0.60", "lower": "0.45"},
+                    "timing": {"down-events": "5"},
+                },
+            )
+            content = path.read_text(encoding="utf-8")
+            self.assertIn("upper = 0.60", content)
+            self.assertIn("lower = 0.45", content)
+            self.assertIn("max = 1500", content)
+            self.assertIn("[timing]\ndown-events = 5", content)
+
+    def test_toml_update_rejects_duplicate_section(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "config.toml"
+            original = "[load-target] # existing\nupper = 0.80\nlower = 0.65\n"
+            path.write_text(original, encoding="utf-8")
+            with self.assertRaises(CommandError):
+                ToolkitBackend._update_toml_values(
+                    path, {"load-target": {"upper": "0.60"}}
+                )
+            self.assertEqual(path.read_text(encoding="utf-8"), original)
+
+    def test_atomic_write_rejects_symlink(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            target = root / "target"
+            target.write_text("original", encoding="utf-8")
+            link = root / "link"
+            link.symlink_to(target)
+            with self.assertRaises(CommandError):
+                ToolkitBackend._atomic_write(link, "replacement")
+
+    def test_atomic_write_preserves_mode(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "config"
+            path.write_text("old", encoding="utf-8")
+            path.chmod(0o640)
+            ToolkitBackend._atomic_write(path, "new")
+            self.assertEqual(path.stat().st_mode & 0o777, 0o640)
+
+    def test_user_command_has_clean_environment(self):
+        backend = object.__new__(ToolkitBackend)
+        backend.user = "deck"
+        backend.user_home = Path("/home/deck")
+        backend.user_uid = 1000
+        command = backend._user_argv(["/usr/bin/true"])
+        self.assertIn("-i", command)
+        self.assertIn("PATH=/usr/local/bin:/usr/bin", command)
+        self.assertIn("DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/1000/bus", command)
+
+
+class BackendMutationTests(unittest.IsolatedAsyncioTestCase):
+    async def test_performance_mode_uses_enabled_property(self):
+        backend = object.__new__(ToolkitBackend)
+        backend._exec = AsyncMock(return_value=(0, "", ""))
+
+        await backend._set_gpu_enabled(True)
+
+        argv = backend._exec.await_args.args[0]
+        self.assertIn("set-property", argv)
+        self.assertEqual(argv[-3:], ["Enabled", "b", "true"])
+
+    async def test_rpc_rejects_boolean_frequency(self):
+        backend = object.__new__(ToolkitBackend)
+        with self.assertRaises(CommandError):
+            await backend.set_gpu_frequency("pin", 0, True)
+
+    async def test_rpc_rejects_non_boolean_toggle(self):
+        backend = object.__new__(ToolkitBackend)
+        with self.assertRaises(CommandError):
+            await backend.set_cec_toggle("wake-tv", "true")
+
+    async def test_inactive_governor_config_update_does_not_start_service(self):
+        backend = object.__new__(ToolkitBackend)
+        backend._service = AsyncMock(
+            return_value={"enabled": "disabled", "active": "inactive"}
+        )
+        backend._restart_governor_and_reapply = AsyncMock()
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "config.toml"
+            path.write_text(
+                "[load-target]\nupper = 0.80\nlower = 0.65\n",
+                encoding="utf-8",
+            )
+            with patch.object(backend_module, "GPU_CONFIG_PATH", path):
+                await backend._update_gpu_config(
+                    {"load-target": {"upper": "0.60", "lower": "0.45"}},
+                    restart=True,
+                )
+            self.assertIn("upper = 0.60", path.read_text(encoding="utf-8"))
+            backend._restart_governor_and_reapply.assert_not_awaited()
+
+    async def test_config_update_rolls_back_after_restart_failure(self):
+        backend = object.__new__(ToolkitBackend)
+        backend._service = AsyncMock(
+            return_value={"enabled": "enabled", "active": "active"}
+        )
+        backend._restart_governor_and_reapply = AsyncMock(
+            side_effect=[CommandError("restart failed"), None]
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "config.toml"
+            original = "[load-target]\nupper = 0.80\nlower = 0.65\n"
+            path.write_text(original, encoding="utf-8")
+            with patch.object(backend_module, "GPU_CONFIG_PATH", path):
+                with self.assertRaisesRegex(CommandError, "restart failed"):
+                    await backend._update_gpu_config(
+                        {"load-target": {"upper": "0.60", "lower": "0.45"}},
+                        restart=True,
+                    )
+            self.assertEqual(path.read_text(encoding="utf-8"), original)
+            self.assertEqual(backend._restart_governor_and_reapply.await_count, 2)
+
+    async def test_cancelled_config_update_rolls_back(self):
+        backend = object.__new__(ToolkitBackend)
+        backend._service = AsyncMock(
+            return_value={"enabled": "enabled", "active": "active"}
+        )
+        backend._restart_governor_and_reapply = AsyncMock()
+        live_callback = AsyncMock(side_effect=asyncio.CancelledError)
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "config.toml"
+            original = "[load-target]\nupper = 0.80\nlower = 0.65\n"
+            path.write_text(original, encoding="utf-8")
+            with patch.object(backend_module, "GPU_CONFIG_PATH", path):
+                with self.assertRaises(asyncio.CancelledError):
+                    await backend._update_gpu_config(
+                        {"load-target": {"upper": "0.60", "lower": "0.45"}},
+                        live_callback=live_callback,
+                    )
+            self.assertEqual(path.read_text(encoding="utf-8"), original)
+            backend._restart_governor_and_reapply.assert_awaited_once()
+
+    async def test_frequency_state_rolls_back_after_live_failure(self):
+        backend = object.__new__(ToolkitBackend)
+        backend._mutation_lock = asyncio.Lock()
+        backend._apply_frequency = AsyncMock(
+            side_effect=[CommandError("D-Bus failed"), None]
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "freq-state"
+            original = "MODE=range\nA=500\nB=1500\n"
+            path.write_text(original, encoding="utf-8")
+            with patch.object(backend_module, "GPU_STATE_PATH", path):
+                with self.assertRaisesRegex(CommandError, "D-Bus failed"):
+                    await backend.set_gpu_frequency("max", 0, 0)
+            self.assertEqual(path.read_text(encoding="utf-8"), original)
+            self.assertEqual(backend._apply_frequency.await_count, 2)
+            self.assertEqual(
+                backend._apply_frequency.await_args_list[1].args,
+                ("range", 500, 1500),
+            )
+
+
+if __name__ == "__main__":
+    unittest.main()

@@ -20,6 +20,7 @@ cd ~/.local/share/bc250-fixes/bc250-steamos
 | [`bc250-power.sh`](#power-management) | CPU power states, GPU governor, clock and voltage tuning, CPU overclocking |
 | [`bc250-cec.sh`](#cec) | TV, receiver, input, and power control over HDMI-CEC |
 | [`bc250-update-persistence.sh`](#steamos-updates) | Atomic-update allowlist and tuning recovery |
+| [`decky-plugin/`](#big-picture-plugin) | Quick Access interface for daily controls |
 | [`bc250-audio-fix/`](#display-clock) | DisplayPort video and audio clock correction |
 | [`aic8800/`](#wifi-and-bluetooth) | AIC8800D80 USB WiFi and Bluetooth driver |
 
@@ -134,6 +135,12 @@ CEC requires a DP-to-HDMI adapter with CEC tunneling over AUX. Compatible design
 | `./bc250-cec.sh repair` | Re-register CEC after a link interruption |
 
 Use `./bc250-cec.sh help` for boot, suspend, poweroff, receiver-follow, and behavior-toggle commands.
+
+## Big Picture Plugin
+
+[`decky-plugin/`](decky-plugin/) provides a Decky Loader Quick Access interface with vertical sections for CU status, power health, GPU tuning, saved CPU tuning, and CEC controls.
+
+The plugin uses the toolkit checkout at `~/.local/share/bc250-fixes/bc250-steamos`. Build instructions are in [`decky-plugin/README.md`](decky-plugin/README.md).
 
 ## AMDGPU Driver
 
