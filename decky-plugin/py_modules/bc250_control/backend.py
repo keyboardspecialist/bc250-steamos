@@ -422,7 +422,7 @@ class ToolkitBackend:
                 ["-b", str(se), str(sh), "0xffffffff"],
                 ["-b", str(se), str(sh)],
             ):
-                rc, out, err = await self._exec(
+                _rc, out, err = await self._exec(
                     [
                         str(umr),
                         *database_args,
@@ -435,7 +435,10 @@ class ToolkitBackend:
                     check=False,
                 )
                 value = self._last_hex(f"{out}\n{err}")
-                if rc == 0 and value is not None:
+                # Some UMR builds return a nonzero status after printing a valid
+                # register value. The CU manager uses the parsed value as the
+                # success signal as well, so keep both callers consistent.
+                if value is not None:
                     return value
         return None
 

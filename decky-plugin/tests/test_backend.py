@@ -228,6 +228,22 @@ class BackendMutationTests(unittest.IsolatedAsyncioTestCase):
             backend._exec.await_args.args[0][-4:], ["-b", "1", "0", "0xffffffff"]
         )
 
+    async def test_umr_register_accepts_value_with_nonzero_status(self):
+        backend = object.__new__(ToolkitBackend)
+        backend.toolkit = Path("/toolkit")
+        backend._umr_lock = asyncio.Lock()
+        backend._exec = AsyncMock(return_value=(1, "value 0x1f", ""))
+        with (
+            patch.object(backend, "_trusted_umr", return_value=Path("/umr")),
+            patch.object(backend, "_umr_instance", return_value=None),
+            patch.object(backend, "_umr_database_args", return_value=[]),
+            patch("bc250_control.backend.os.geteuid", return_value=0),
+        ):
+            value = await backend._umr_register("register", 0, 0)
+
+        self.assertEqual(value, 0x1F)
+        self.assertEqual(backend._exec.await_count, 1)
+
     async def test_umr_register_retries_legacy_bank_syntax(self):
         backend = object.__new__(ToolkitBackend)
         backend.toolkit = Path("/toolkit")

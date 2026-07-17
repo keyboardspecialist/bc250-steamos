@@ -1,4 +1,4 @@
-import { Focusable } from "@decky/ui";
+import { Focusable, ScrollPanel } from "@decky/ui";
 import type { ReactNode } from "react";
 
 export interface VerticalTab {
@@ -80,34 +80,27 @@ export function VerticalTabs({
         })}
       </Focusable>
       <div
-        onFocusCapture={(event) =>
-          (event.target as HTMLElement).scrollIntoView({
-            block: "nearest",
-            inline: "nearest",
-          })
-        }
         style={{
           minWidth: 0,
           minHeight: 0,
           height: "100%",
           flex: 1,
-          overflowX: "hidden",
-          overflowY: "auto",
-          overscrollBehavior: "contain",
-          scrollbarGutter: "stable",
+          overflow: "hidden",
         }}
       >
-        <Focusable
-          key={selected.id}
-          flow-children="down"
-          style={{
-            boxSizing: "border-box",
-            width: "100%",
-            padding: "14px 24px 96px",
-          }}
-        >
-          {selected.content}
-        </Focusable>
+        <ScrollPanel>
+          <Focusable
+            key={selected.id}
+            flow-children="down"
+            style={{
+              boxSizing: "border-box",
+              width: "100%",
+              padding: "14px 24px 96px",
+            }}
+          >
+            {selected.content}
+          </Focusable>
+        </ScrollPanel>
       </div>
     </Focusable>
   );
