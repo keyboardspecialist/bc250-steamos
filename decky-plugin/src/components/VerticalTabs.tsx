@@ -23,14 +23,14 @@ export function VerticalTabs({
   return (
     <Focusable
       flow-children="right"
-      style={{ display: "flex", alignItems: "stretch", minHeight: 470 }}
+      style={{ display: "flex", alignItems: "stretch", height: "100%", minHeight: 0 }}
     >
       <Focusable
         flow-children="down"
         style={{
-          width: 84,
-          flex: "0 0 84px",
-          padding: "8px 6px",
+          width: 132,
+          flex: "0 0 132px",
+          padding: "14px 8px",
           borderRight: "1px solid rgba(255,255,255,0.10)",
           background: "rgba(0,0,0,0.12)",
         }}
@@ -42,27 +42,27 @@ export function VerticalTabs({
               key={tab.id}
               tabIndex={0}
               role="button"
+              aria-selected={isActive}
+              onFocus={() => onChange(tab.id)}
               onActivate={() => onChange(tab.id)}
               onClick={() => onChange(tab.id)}
               style={{
                 position: "relative",
                 display: "flex",
-                minHeight: 56,
-                marginBottom: 5,
-                padding: "7px 4px",
-                flexDirection: "column",
+                minHeight: 50,
+                marginBottom: 6,
+                padding: "8px 12px",
                 alignItems: "center",
-                justifyContent: "center",
-                gap: 4,
+                gap: 10,
                 borderRadius: 6,
                 color: isActive ? "#fff" : "#aeb3b8",
                 background: isActive ? "rgba(64, 148, 255, 0.30)" : "transparent",
-                fontSize: 11,
+                fontSize: 13,
                 fontWeight: isActive ? 700 : 500,
                 textAlign: "center",
               }}
             >
-              <span style={{ fontSize: 18, lineHeight: 1 }}>{tab.icon}</span>
+              <span style={{ fontSize: 17, lineHeight: 1 }}>{tab.icon}</span>
               <span>{tab.label}</span>
               <span
                 style={{
@@ -81,9 +81,24 @@ export function VerticalTabs({
       </Focusable>
       <Focusable
         flow-children="down"
-        style={{ minWidth: 0, flex: 1, overflowY: "auto", paddingBottom: 10 }}
+        style={{
+          minWidth: 0,
+          minHeight: 0,
+          flex: 1,
+          overflowY: "auto",
+          overscrollBehavior: "contain",
+        }}
       >
-        {selected.content}
+        <div
+          style={{
+            boxSizing: "border-box",
+            width: "100%",
+            maxWidth: 860,
+            padding: "14px 24px 96px",
+          }}
+        >
+          {selected.content}
+        </div>
       </Focusable>
     </Focusable>
   );

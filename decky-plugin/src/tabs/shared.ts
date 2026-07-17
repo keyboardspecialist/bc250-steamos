@@ -6,10 +6,16 @@ export interface Confirmation {
   destructive?: boolean;
 }
 
+export interface MutationOptions {
+  refresh?: boolean;
+  successToast?: boolean;
+}
+
 export type MutationRunner = (
   label: string,
   operation: () => Promise<void>,
   confirmation?: Confirmation,
+  options?: MutationOptions,
 ) => void;
 
 export interface TabProps {

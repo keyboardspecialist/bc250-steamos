@@ -1,8 +1,8 @@
 import { PanelSection } from "@decky/ui";
 import { StatusRow } from "../components/Common";
-import type { TabProps } from "./shared";
+import type { Snapshot } from "../types";
 
-export function PowerTab({ snapshot }: TabProps) {
+export function PowerTab({ snapshot }: { snapshot: Snapshot }) {
   const { power } = snapshot;
   const governorEnabled = power.governor.enabled === "enabled";
   const relevantTemps = power.temperatures
@@ -29,8 +29,14 @@ export function PowerTab({ snapshot }: TabProps) {
         <StatusRow label="Idle states" value={`${power.cStates} states`} good={power.cStates >= 3} />
         <StatusRow
           label="GPU governor"
-          value={power.governor.active}
-          good={power.governor.active === "active"}
+          value={
+            power.governor.active !== "active"
+              ? power.governor.active
+              : snapshot.gpu.dbusReady
+                ? "Active · D-Bus ready"
+                : "Active · D-Bus unavailable"
+          }
+          good={power.governor.active === "active" && snapshot.gpu.dbusReady}
         />
       </PanelSection>
 

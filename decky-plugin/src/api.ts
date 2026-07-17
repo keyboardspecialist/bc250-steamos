@@ -10,6 +10,10 @@ export const setLoadTarget = callable<[preset: string], void>(
   "set_load_target",
 );
 export const setRamp = callable<[climbMs: number], void>("set_ramp");
+export const cpuOcAction = callable<
+  [action: string, frequency: number, voltage: number, temperature: number],
+  void
+>("cpu_oc_action");
 export const cecAction = callable<[action: string], void>("cec_action");
 export const setCecToggle = callable<
   [key: string, enabled: boolean],

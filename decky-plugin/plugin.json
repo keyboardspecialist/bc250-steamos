@@ -1,7 +1,7 @@
 {
   "name": "BC-250 Control",
   "author": "keyboardspecialist",
-  "flags": ["root"],
+  "flags": ["_root"],
   "api_version": 1,
   "publish": {
     "tags": ["utility", "root", "power-management"],

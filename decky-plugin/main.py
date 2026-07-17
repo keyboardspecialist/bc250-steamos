@@ -22,6 +22,13 @@ class Plugin:
     async def set_ramp(self, climb_ms: int):
         return await self.backend.set_ramp(climb_ms)
 
+    async def cpu_oc_action(
+        self, action: str, frequency: int, voltage: int, temperature: int
+    ):
+        return await self.backend.cpu_oc_action(
+            action, frequency, voltage, temperature
+        )
+
     async def cec_action(self, action: str):
         return await self.backend.cec_action(action)
 

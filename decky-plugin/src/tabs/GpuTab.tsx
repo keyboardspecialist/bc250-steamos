@@ -53,11 +53,36 @@ export function GpuTab({ snapshot, busy, runMutation }: TabProps) {
           label="Active clock"
           value={gpu.activeMhz ? `${gpu.activeMhz} MHz` : "Unavailable"}
         />
-        <StatusRow label="Requested mode" value={gpu.mode} />
+        <StatusRow label="Live mode" value={gpu.mode} good={gpu.dbusReady} />
+        <StatusRow
+          label="Saved replay"
+          value={
+            gpu.requestedMode === "range"
+              ? `${gpu.requestedMinimum}-${gpu.requestedMaximum} MHz`
+              : gpu.requestedMode === "pin"
+                ? `${gpu.requestedMaximum} MHz pinned`
+                : gpu.requestedMode
+          }
+        />
+        <StatusRow
+          label="Live range"
+          value={
+            gpu.liveMinimum !== null && gpu.liveMaximum !== null
+              ? `${gpu.liveMinimum}-${gpu.liveMaximum} MHz`
+              : "D-Bus unavailable"
+          }
+          good={gpu.dbusReady}
+        />
         <StatusRow
           label="Boot replay"
-          value={gpu.persistent ? "Enabled" : "Pending setup"}
-          good={gpu.persistent}
+          value={
+            !gpu.persistent
+              ? "Pending setup"
+              : gpu.replayApplied
+                ? "Applied"
+                : "Enabled, not live"
+          }
+          good={gpu.persistent && gpu.replayApplied}
         />
         <StatusRow
           label="Configured ceiling"
@@ -157,15 +182,17 @@ export function GpuTab({ snapshot, busy, runMutation }: TabProps) {
         />
       </PanelSection>
 
-      <PanelSection title="Voltage Curve">
-        {gpu.safePoints.map((point, index) => (
-          <StatusRow
-            key={`${point.frequency}-${index}`}
-            label={point.frequency ? `${point.frequency} MHz` : `Point ${index + 1}`}
-            value={point.voltage ? `${point.voltage} mV` : "Unavailable"}
-          />
-        ))}
-      </PanelSection>
+      {gpu.safePoints.length > 0 && (
+        <PanelSection title="Voltage Curve">
+          {gpu.safePoints.map((point, index) => (
+            <StatusRow
+              key={`${point.frequency}-${index}`}
+              label={point.frequency ? `${point.frequency} MHz` : `Point ${index + 1}`}
+              value={point.voltage ? `${point.voltage} mV` : "Unavailable"}
+            />
+          ))}
+        </PanelSection>
+      )}
     </>
   );
 }

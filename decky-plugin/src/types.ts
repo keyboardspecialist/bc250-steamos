@@ -52,9 +52,15 @@ export type GpuMode = "adaptive" | "max" | "pin" | "range";
 export interface GpuStatus {
   available: boolean;
   controllable: boolean;
+  dbusReady: boolean;
   mode: GpuMode;
+  requestedMode: GpuMode;
+  requestedMinimum: number;
+  requestedMaximum: number;
   minimum: number;
   maximum: number;
+  liveMinimum: number | null;
+  liveMaximum: number | null;
   activeMhz: number | null;
   levels: string[];
   allowedMinimum: number | null;
@@ -62,6 +68,7 @@ export interface GpuStatus {
   climbMs: number | null;
   frequencyRestore: ServiceState;
   persistent: boolean;
+  replayApplied: boolean;
   safePoints: SafePoint[];
   configuredMax: number | null;
   loadUpper: number | null;
@@ -102,6 +109,8 @@ export interface CecStatus {
 export interface Snapshot {
   toolkit: {
     available: boolean;
+    powerAvailable: boolean;
+    cpuControlAvailable: boolean;
     cecAvailable: boolean;
     path: string;
   };

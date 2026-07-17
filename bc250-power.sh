@@ -72,7 +72,7 @@ RESTORE_SVC="bc250-gpu-freq-restore.service"
 OC_PIN="43d6b4c6e38c57bc9ec8908c44675ce7d5fd3d2f"
 OC_TARBALL="https://github.com/bc250-collective/bc250_smu_oc/archive/$OC_PIN.tar.gz"
 OC_PATCH_DIR="$SCRIPT_DIR/smu-oc-patches"
-OC_DIR="$PREFIX/smu-oc"
+OC_DIR="${BC250_OC_DIR:-$PREFIX/smu-oc}"
 OC_STAGE_CONF="$OC_DIR/overclock.conf"
 OC_CONF="/etc/bc250-smu-oc.conf"
 OC_UNIT="/etc/systemd/system/bc250-smu-oc.service"
@@ -150,6 +150,10 @@ resume_governor() {
         if systemctl start "$GOV_SVC"; then
             log "GPU governor resumed."
             GOV_STOPPED=0
+            if [[ -f "$FREQ_STATE" && -f "$RESTORE_UNIT" ]]; then
+                systemctl restart "$RESTORE_SVC" \
+                    || warn "GPU governor resumed, but the saved frequency range was not restored."
+            fi
         else
             warn "GPU governor failed to resume; run: systemctl start $GOV_SVC"
             return 1
@@ -687,6 +691,8 @@ EOF
         journalctl -u "$GOV_SVC" -n 30 --no-pager
         die "Governor failed to start -- log above."
     }
+    systemctl restart "$RESTORE_SVC" \
+        || warn "Governor started, but the saved frequency range was not restored."
     cleanup_legacy_data
     log "Running. Load the GPU for a few minutes; watch clocks and temps:"
     log "  watch -n1 'cat /sys/class/drm/card*/device/pp_dpm_sclk 2>/dev/null; sensors | grep -E \"edge|PPT\"'"
@@ -758,6 +764,7 @@ EOF
 [Unit]
 Description=BC-250 restore saved GPU freq setting (survives reboots)
 After=$GOV_SVC
+PartOf=$GOV_SVC
 RequiresMountsFor=$FIXES_REPO_DIR
 
 [Service]
@@ -1271,7 +1278,12 @@ EOF
 
 cmd_enable() {
     require_root
+    install_freq_persistence force
     systemctl enable "$GOV_SVC"
+    if systemctl is-active "$GOV_SVC" >/dev/null 2>&1; then
+        systemctl restart "$RESTORE_SVC" \
+            || warn "Governor enabled, but the saved frequency range was not restored."
+    fi
     install_update_persistence
     log "Governor enabled at boot (order: CU table -> governor)."
     log "cpufreq + ACPI self-heal were enabled during 'acpi'. All set."
@@ -1420,6 +1432,7 @@ EOF
 oc_off() {
     require_root
     systemctl disable --now "$OC_SVC" 2>/dev/null || true
+    install_oc_files
     if [[ -d "$OC_DIR/bc250_smu" ]]; then
         pause_governor
         PYTHONPATH="$OC_DIR" python3 - << 'EOF'

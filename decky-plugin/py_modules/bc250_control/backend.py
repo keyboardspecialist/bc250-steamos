@@ -26,6 +26,8 @@ RUNUSER = "/usr/bin/runuser"
 SYSTEMCTL = "/usr/bin/systemctl"
 GPU_CONFIG_PATH = Path("/etc/cyan-skillfish-governor-smu/config.toml")
 GPU_STATE_PATH = Path("/etc/cyan-skillfish-governor-smu/freq-state")
+CPU_HELPER_PATH = Path("/var/lib/bc250-control/helper/bc250-power.sh")
+CPU_STATE_DIR = Path("/var/lib/bc250-control/smu-oc")
 
 
 class CommandError(RuntimeError):
@@ -61,18 +63,10 @@ class ToolkitBackend:
         try:
             stdout, stderr = await asyncio.wait_for(process.communicate(), timeout)
         except asyncio.CancelledError:
-            try:
-                os.killpg(process.pid, signal.SIGKILL)
-            except ProcessLookupError:
-                pass
-            await process.wait()
+            await asyncio.shield(self._terminate(process))
             raise
         except asyncio.TimeoutError as error:
-            try:
-                os.killpg(process.pid, signal.SIGKILL)
-            except ProcessLookupError:
-                pass
-            await process.wait()
+            await self._terminate(process)
             raise CommandError(f"Command timed out: {argv[0]}") from error
         out = stdout.decode("utf-8", "replace").strip()
         err = stderr.decode("utf-8", "replace").strip()
@@ -80,6 +74,23 @@ class ToolkitBackend:
             detail = err or out or f"exit {process.returncode}"
             raise CommandError(detail[-1200:])
         return process.returncode or 0, out, err
+
+    @staticmethod
+    async def _terminate(process: asyncio.subprocess.Process) -> None:
+        if process.returncode is not None:
+            return
+        try:
+            os.killpg(process.pid, signal.SIGTERM)
+        except ProcessLookupError:
+            return
+        try:
+            await asyncio.wait_for(process.wait(), 10)
+        except asyncio.TimeoutError:
+            try:
+                os.killpg(process.pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+            await process.wait()
 
     def _user_argv(self, argv: list[str]) -> list[str]:
         runtime = f"/run/user/{self.user_uid}"
@@ -119,6 +130,42 @@ class ToolkitBackend:
     async def _user_tool(self, name: str, *args: str, timeout: float = 30) -> str:
         argv = [BASH, str(self._user_script(name)), *args]
         _, out, _ = await self._user_exec(argv, timeout=timeout)
+        return out
+
+    @staticmethod
+    def _trusted_root_file(path: Path) -> bool:
+        try:
+            metadata = path.stat()
+            parent = path.parent.stat()
+        except OSError:
+            return False
+        return (
+            path.is_file()
+            and not path.is_symlink()
+            and not path.parent.is_symlink()
+            and metadata.st_uid == 0
+            and parent.st_uid == 0
+            and metadata.st_mode & 0o022 == 0
+            and parent.st_mode & 0o022 == 0
+        )
+
+    async def _cpu_tool(self, *args: str, timeout: float = 30) -> str:
+        if not self._trusted_root_file(CPU_HELPER_PATH):
+            raise CommandError(
+                "CPU tuning helper is missing or unsafe; reinstall the plugin."
+            )
+        env = {
+            "PATH": "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+            "HOME": "/root",
+            "USER": "root",
+            "LOGNAME": "root",
+            "REAL_HOME": str(self.user_home),
+            "FIXES_REPO_DIR": str(self.toolkit),
+            "BC250_OC_DIR": str(CPU_STATE_DIR),
+        }
+        _, out, _ = await self._exec(
+            [BASH, str(CPU_HELPER_PATH), *args], timeout=timeout, env=env
+        )
         return out
 
     async def _service(self, name: str, *, user: bool = False) -> dict[str, str]:
@@ -595,17 +642,47 @@ class ToolkitBackend:
             if match:
                 active_mhz = int(match.group(1))
                 break
-        mode = state.get("MODE", "adaptive")
-        allowed_min, allowed_max, enabled = await asyncio.gather(
+        requested_mode = state.get("MODE", "adaptive")
+        requested_min = self._safe_int(state.get("A"))
+        requested_max = self._safe_int(state.get("B") or state.get("A"))
+        (
+            allowed_min,
+            allowed_max,
+            current_min,
+            current_max,
+            initial_min,
+            initial_max,
+            enabled,
+        ) = await asyncio.gather(
             self._system_bus_property(
                 "/com/cyanskillfish/Governor/Range/Allowed",
                 "com.cyanskillfish.Governor.Range",
-                "min",
+                "Min",
             ),
             self._system_bus_property(
                 "/com/cyanskillfish/Governor/Range/Allowed",
                 "com.cyanskillfish.Governor.Range",
-                "max",
+                "Max",
+            ),
+            self._system_bus_property(
+                "/com/cyanskillfish/Governor/Range/Current",
+                "com.cyanskillfish.Governor.Range",
+                "Min",
+            ),
+            self._system_bus_property(
+                "/com/cyanskillfish/Governor/Range/Current",
+                "com.cyanskillfish.Governor.Range",
+                "Max",
+            ),
+            self._system_bus_property(
+                "/com/cyanskillfish/Governor/Range/Initial",
+                "com.cyanskillfish.Governor.Range",
+                "Min",
+            ),
+            self._system_bus_property(
+                "/com/cyanskillfish/Governor/Range/Initial",
+                "com.cyanskillfish.Governor.Range",
+                "Max",
             ),
             self._system_bus_property(
                 "/com/cyanskillfish/Governor",
@@ -613,6 +690,27 @@ class ToolkitBackend:
                 "Enabled",
             ),
         )
+        dbus_ready = enabled is not None
+        mode = requested_mode
+        if dbus_ready and current_min is not None and current_max is not None:
+            if enabled is True:
+                mode = "max"
+            elif current_min == current_max:
+                mode = "pin"
+            elif current_min == initial_min and current_max == initial_max:
+                mode = "adaptive"
+            else:
+                mode = "range"
+        replay_applied = dbus_ready and mode == requested_mode
+        if replay_applied and requested_mode == "pin":
+            replay_applied = (
+                current_min == requested_max and current_max == requested_max
+            )
+        elif replay_applied and requested_mode == "range":
+            replay_applied = (
+                current_max == requested_max
+                and (requested_min == 0 or current_min == requested_min)
+            )
         span_min = allowed_min or 500
         span_max = config.get("configuredMax") or allowed_max or 2200
         normal = config.get("rampNormal")
@@ -623,10 +721,20 @@ class ToolkitBackend:
         )
         return {
             "available": GPU_CONFIG_PATH.is_file(),
-            "controllable": enabled is not None,
+            "controllable": dbus_ready,
+            "dbusReady": dbus_ready,
             "mode": mode,
-            "minimum": self._safe_int(state.get("A")),
-            "maximum": self._safe_int(state.get("B") or state.get("A")),
+            "requestedMode": requested_mode,
+            "requestedMinimum": requested_min,
+            "requestedMaximum": requested_max,
+            "minimum": current_min
+            if dbus_ready and current_min is not None
+            else self._safe_int(state.get("A")),
+            "maximum": current_max
+            if dbus_ready and current_max is not None
+            else self._safe_int(state.get("B") or state.get("A")),
+            "liveMinimum": current_min,
+            "liveMaximum": current_max,
             "activeMhz": active_mhz,
             "levels": levels.splitlines(),
             "allowedMinimum": allowed_min,
@@ -634,6 +742,7 @@ class ToolkitBackend:
             "climbMs": climb_ms,
             "frequencyRestore": restore_service,
             "persistent": restore_service["enabled"] == "enabled",
+            "replayApplied": replay_applied,
             **config,
         }
 
@@ -662,17 +771,17 @@ class ToolkitBackend:
     async def get_cpu_status(self) -> dict[str, Any]:
         service = await self._service("bc250-smu-oc.service")
         installed_path = Path("/etc/bc250-smu-oc.conf")
-        staged_path = self.toolkit / "smu-oc/overclock.conf"
+        staged_path = CPU_STATE_DIR / "overclock.conf"
         return {
             "service": service,
             "installed": self._cpu_config(installed_path)
             if installed_path.is_file()
             else None,
             "staged": self._cpu_config(staged_path)
-            if self._toolkit_file(staged_path)
+            if self._trusted_root_file(staged_path)
             else None,
-            "toolAvailable": self._toolkit_file(
-                self.toolkit / "smu-oc/bc250_apply.py"
+            "toolAvailable": self._trusted_root_file(
+                CPU_STATE_DIR / "bc250_apply.py"
             ),
         }
 
@@ -751,9 +860,13 @@ class ToolkitBackend:
         }
 
     async def _get_snapshot(self) -> dict[str, Any]:
-        toolkit_available = all(
-            self._user_script_available(name)
-            for name in ("bc250-40cu.sh", "bc250-power.sh", "bc250-cec.sh")
+        power_available = self._user_script_available("bc250-power.sh")
+        cec_available = self._user_script_available("bc250-cec.sh")
+        cpu_control_available = self._trusted_root_file(CPU_HELPER_PATH)
+        toolkit_available = (
+            self._user_script_available("bc250-40cu.sh")
+            and power_available
+            and cec_available
         )
         cu, power, gpu, cpu, cec = await asyncio.gather(
             self.get_cu_status(),
@@ -765,7 +878,9 @@ class ToolkitBackend:
         return {
             "toolkit": {
                 "available": toolkit_available,
-                "cecAvailable": self._user_script_available("bc250-cec.sh"),
+                "powerAvailable": power_available,
+                "cpuControlAvailable": cpu_control_available,
+                "cecAvailable": cec_available,
                 "path": str(self.toolkit),
             },
             "cu": cu,
@@ -871,12 +986,12 @@ class ToolkitBackend:
                 self._system_bus_property(
                     "/com/cyanskillfish/Governor/Range/Allowed",
                     "com.cyanskillfish.Governor.Range",
-                    "min",
+                    "Min",
                 ),
                 self._system_bus_property(
                     "/com/cyanskillfish/Governor/Range/Allowed",
                     "com.cyanskillfish.Governor.Range",
-                    "max",
+                    "Max",
                 ),
             )
             configured_min = (
@@ -931,6 +1046,42 @@ class ToolkitBackend:
                     "timing": {"down-events": str(down_events)},
                 },
                 restart=True,
+            )
+
+        return await self._mutate(action)
+
+    async def cpu_oc_action(
+        self, action_name: str, frequency: int, voltage: int, temperature: int
+    ) -> None:
+        if type(action_name) is not str or action_name not in {
+            "detect",
+            "apply",
+            "enable",
+            "off",
+        }:
+            raise CommandError("Unknown CPU overclock action.")
+        if action_name == "detect":
+            if any(
+                type(value) is not int
+                for value in (frequency, voltage, temperature)
+            ):
+                raise CommandError("CPU tuning values must be whole numbers.")
+            if not 3500 <= frequency <= 4500:
+                raise CommandError("CPU target must be between 3500 and 4500 MHz.")
+            if not 950 <= voltage <= 1325:
+                raise CommandError("CPU VID limit must be between 950 and 1325 mV.")
+            if not 50 <= temperature <= 100:
+                raise CommandError(
+                    "CPU temperature limit must be between 50 and 100 C."
+                )
+
+        async def action() -> None:
+            args = ["cpu-oc", action_name]
+            if action_name == "detect":
+                args.extend((str(frequency), str(voltage), str(temperature)))
+            await self._cpu_tool(
+                *args,
+                timeout=1800 if action_name == "detect" else 180,
             )
 
         return await self._mutate(action)

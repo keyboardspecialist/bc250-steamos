@@ -2,7 +2,8 @@ import asyncio
 import tempfile
 import unittest
 from pathlib import Path
-from unittest.mock import AsyncMock, patch
+from types import SimpleNamespace
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import bc250_control.backend as backend_module
 from bc250_control.backend import CommandError, ToolkitBackend
@@ -95,6 +96,20 @@ class BackendParsingTests(unittest.TestCase):
         self.assertIn("PATH=/usr/local/bin:/usr/bin", command)
         self.assertIn("DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/1000/bus", command)
 
+    def test_root_helper_rejects_writable_files(self):
+        path = MagicMock()
+        parent = MagicMock()
+        path.parent = parent
+        path.is_file.return_value = True
+        path.is_symlink.return_value = False
+        parent.is_symlink.return_value = False
+        parent.stat.return_value = SimpleNamespace(st_uid=0, st_mode=0o40755)
+        path.stat.return_value = SimpleNamespace(st_uid=0, st_mode=0o100755)
+        self.assertTrue(ToolkitBackend._trusted_root_file(path))
+
+        path.stat.return_value = SimpleNamespace(st_uid=0, st_mode=0o100777)
+        self.assertFalse(ToolkitBackend._trusted_root_file(path))
+
 
 class BackendMutationTests(unittest.IsolatedAsyncioTestCase):
     async def test_performance_mode_uses_enabled_property(self):
@@ -116,6 +131,42 @@ class BackendMutationTests(unittest.IsolatedAsyncioTestCase):
         backend = object.__new__(ToolkitBackend)
         with self.assertRaises(CommandError):
             await backend.set_cec_toggle("wake-tv", "true")
+
+    async def test_cpu_oc_rejects_unsafe_values(self):
+        backend = object.__new__(ToolkitBackend)
+        with self.assertRaisesRegex(CommandError, "Unknown"):
+            await backend.cpu_oc_action("detect; reboot", 4000, 1275, 90)
+        with self.assertRaisesRegex(CommandError, "1325"):
+            await backend.cpu_oc_action("detect", 4000, 1350, 90)
+        with self.assertRaisesRegex(CommandError, "whole numbers"):
+            await backend.cpu_oc_action("detect", True, 1275, 90)
+
+    async def test_cpu_oc_uses_allowlisted_tool_arguments(self):
+        backend = object.__new__(ToolkitBackend)
+        backend._mutation_lock = asyncio.Lock()
+        backend._cpu_tool = AsyncMock(return_value="")
+
+        await backend.cpu_oc_action("detect", 4000, 1275, 90)
+
+        backend._cpu_tool.assert_awaited_once_with(
+            "cpu-oc",
+            "detect",
+            "4000",
+            "1275",
+            "90",
+            timeout=1800,
+        )
+
+    async def test_cpu_stock_restore_ignores_detection_values(self):
+        backend = object.__new__(ToolkitBackend)
+        backend._mutation_lock = asyncio.Lock()
+        backend._cpu_tool = AsyncMock(return_value="")
+
+        await backend.cpu_oc_action("off", None, None, None)
+
+        backend._cpu_tool.assert_awaited_once_with(
+            "cpu-oc", "off", timeout=180
+        )
 
     async def test_inactive_governor_config_update_does_not_start_service(self):
         backend = object.__new__(ToolkitBackend)
