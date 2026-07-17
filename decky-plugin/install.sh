@@ -39,6 +39,12 @@ die() { printf 'error: %s\n' "$*" >&2; exit 1; }
 cleanup() {
     [[ -z "$UMR_STAGE" ]] || sudo rm -rf "$UMR_STAGE"
 }
+umr_database_complete() {
+    local database="$1"
+    [[ -s "$database/cyan_skillfish.asic" \
+        && -s "$database/cyan_skillfish.soc15" \
+        && -s "$database/ip/gc_10_1_0.reg" ]]
+}
 trap cleanup EXIT
 
 [[ $EUID -ne 0 ]] || die "run as the deck user, not root (sudo is used where needed)"
@@ -103,9 +109,8 @@ sudo install -m 0755 "$SRC_DIR/../bc250-storage.sh" "$ROOT_HELPER_DIR/bc250-stor
 sudo install -m 0644 "$SRC_DIR"/../smu-oc-patches/* "$ROOT_HELPER_DIR/smu-oc-patches/"
 
 for prefix in "$ROOT_UMR_DIR" /etc/bc250-control/umr "$TOOLKIT_DIR" /var/lib/bc250-40cu /usr /usr/local; do
-    if [[ -x "$prefix/bin/umr" \
-        && -f "$prefix/share/umr/database/cyan_skillfish.asic" \
-        && -f "$prefix/share/umr/database/cyan_skillfish.soc15" ]]; then
+    if [[ -x "$prefix/bin/umr" ]] \
+        && umr_database_complete "$prefix/share/umr/database"; then
         UMR_SOURCE="$prefix/bin/umr"
         UMR_DATABASE_SOURCE="$prefix/share/umr/database"
         break
@@ -118,10 +123,15 @@ if [[ -n "$UMR_SOURCE" ]]; then
         sudo install -d -m 0755 "$UMR_STAGE/bin" "$UMR_STAGE/share/umr/database"
         sudo install -m 0755 "$UMR_SOURCE" "$UMR_STAGE/bin/umr"
         sudo cp -RL "$UMR_DATABASE_SOURCE"/. "$UMR_STAGE/share/umr/database/"
+        sudo test -s "$UMR_STAGE/share/umr/database/cyan_skillfish.asic"
+        sudo test -s "$UMR_STAGE/share/umr/database/cyan_skillfish.soc15"
+        sudo test -s "$UMR_STAGE/share/umr/database/ip/gc_10_1_0.reg"
         sudo chown -R root:root "$UMR_STAGE"
         sudo chmod -R go-w "$UMR_STAGE"
+        sudo sync "$UMR_STAGE"
         sudo rm -rf "$ROOT_UMR_DIR"
         sudo mv "$UMR_STAGE" "$ROOT_UMR_DIR"
+        sudo sync "$ROOT_UMR_DIR"
         UMR_STAGE=""
     fi
     sudo chown -R root:root "$ROOT_UMR_DIR"

@@ -5,7 +5,6 @@ import {
   Navigation,
   PanelSection,
   PanelSectionRow,
-  ScrollPanel,
   showModal,
   Spinner,
   staticClasses,
@@ -22,6 +21,7 @@ import {
 } from "react-icons/fa";
 import { getSnapshot, getTelemetry } from "./api";
 import { EmptyState, StatusRow } from "./components/Common";
+import { ScrollViewport } from "./components/ScrollViewport";
 import { VerticalTabs, type VerticalTab } from "./components/VerticalTabs";
 import { CecTab } from "./tabs/CecTab";
 import { CpuTab } from "./tabs/CpuTab";
@@ -420,7 +420,7 @@ function QuickPanel() {
 
   return (
     <div style={{ height: "100%", minHeight: 0, overflow: "hidden" }}>
-      <ScrollPanel>
+      <ScrollViewport>
         <Focusable flow-children="down" style={{ paddingBottom: 64 }}>
           <Focusable
             flow-children="right"
@@ -490,7 +490,7 @@ function QuickPanel() {
             </PanelSectionRow>
           </PanelSection>
         </Focusable>
-      </ScrollPanel>
+      </ScrollViewport>
     </div>
   );
 }

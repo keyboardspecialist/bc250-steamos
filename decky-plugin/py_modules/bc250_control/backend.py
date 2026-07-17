@@ -31,6 +31,10 @@ CPU_HELPER_PATH = Path("/var/lib/bc250-control/helper/bc250-power.sh")
 CPU_STATE_DIR = Path("/var/lib/bc250-control/smu-oc")
 ROOT_UMR_PATH = Path("/var/lib/bc250-control/umr/bin/umr")
 ROOT_UMR_DATABASE_PATH = Path("/var/lib/bc250-control/umr/share/umr/database")
+MIGRATED_UMR_DATABASE_PATH = Path(
+    "/var/lib/bc250-control/legacy-bc250-40cu/share/umr/database"
+)
+LEGACY_UMR_DATABASE_PATH = Path("/var/lib/bc250-40cu/share/umr/database")
 CU_CONFIG_PATH = Path("/etc/bc250-cu-live-manager.conf")
 CU_MANAGER_PATHS = (
     Path("/var/lib/bc250-control/helper/bc250-cu-live-manager"),
@@ -348,14 +352,42 @@ class ToolkitBackend:
                 continue
         return None
 
-    @staticmethod
-    def _umr_database_args(umr: Path) -> list[str]:
-        if (
-            umr == ROOT_UMR_PATH
-            and ToolkitBackend._trusted_root_directory(ROOT_UMR_DATABASE_PATH)
-        ):
-            return ["--database-path", str(ROOT_UMR_DATABASE_PATH)]
-        return []
+    def _trusted_umr_database(self, umr: Path) -> Path | None:
+        configured = self._read_key_values(CU_CONFIG_PATH).get(
+            "UMR_DATABASE_PATH", ""
+        )
+        candidates = [
+            Path(configured) if configured.startswith("/") else None,
+            ROOT_UMR_DATABASE_PATH,
+            umr.parent.parent / "share/umr/database",
+            MIGRATED_UMR_DATABASE_PATH,
+            LEGACY_UMR_DATABASE_PATH,
+        ]
+        seen: set[Path] = set()
+        for candidate in candidates:
+            if candidate is None or candidate in seen:
+                continue
+            seen.add(candidate)
+            required = (
+                candidate / "cyan_skillfish.asic",
+                candidate / "cyan_skillfish.soc15",
+                candidate / "ip/gc_10_1_0.reg",
+            )
+            if not self._trusted_root_directory(candidate):
+                continue
+            try:
+                if all(
+                    self._trusted_root_file(path) and path.stat().st_size > 0
+                    for path in required
+                ):
+                    return candidate
+            except OSError:
+                continue
+        return None
+
+    def _umr_database_args(self, umr: Path) -> list[str]:
+        database = self._trusted_umr_database(umr)
+        return ["--database-path", str(database)] if database is not None else []
 
     def _trusted_cu_manager(self) -> Path | None:
         for candidate in CU_MANAGER_PATHS:
@@ -476,15 +508,12 @@ class ToolkitBackend:
         for se in range(2):
             for sh in range(2):
                 reads.append(
-                    asyncio.gather(
-                        self._umr_register("mmSPI_PG_ENABLE_STATIC_WGP_MASK", se, sh),
-                        self._umr_register("mmCC_GC_SHADER_ARRAY_CONFIG", se, sh),
-                    )
+                    self._umr_register("mmSPI_PG_ENABLE_STATIC_WGP_MASK", se, sh)
                 )
         values = await asyncio.gather(*reads)
         rows = []
         total = 0
-        for index, (spi, cc) in enumerate(values):
+        for index, spi in enumerate(values):
             mask = (spi or 0) & 0x1F
             factory_mask = factory_masks[index] if factory_masks is not None else None
             count = bin(mask).count("1") * 2 if spi is not None else 0
@@ -494,7 +523,7 @@ class ToolkitBackend:
                     "se": index // 2,
                     "sh": index % 2,
                     "spi": spi,
-                    "cc": cc,
+                    "cc": None,
                     "wgps": [bool(mask & (1 << bit)) for bit in range(5)],
                     "cus": count,
                     "factoryCuMask": factory_mask,
@@ -518,6 +547,11 @@ class ToolkitBackend:
         available = all(row["spi"] is not None for row in rows)
         privileged = os.geteuid() == 0
         trusted_umr = self._trusted_umr()
+        trusted_database = (
+            self._trusted_umr_database(trusted_umr)
+            if trusted_umr is not None
+            else None
+        )
         return {
             "available": available,
             "controllable": (
@@ -534,6 +568,8 @@ class ToolkitBackend:
                 if not privileged
                 else "Live status requires the plugin's root-owned UMR copy; reinstall the plugin after installing UMR."
                 if trusted_umr is None
+                else "The trusted UMR ASIC database is incomplete; reinstall the plugin."
+                if trusted_database is None
                 else "The trusted UMR installation could not read GPU registers."
             ),
             "total": total,
@@ -1247,11 +1283,9 @@ class ToolkitBackend:
                 "UMR": str(umr),
                 "UMR_ASIC": asic,
             }
-            if (
-                umr == ROOT_UMR_PATH
-                and self._trusted_root_directory(ROOT_UMR_DATABASE_PATH)
-            ):
-                env["UMR_DATABASE_PATH"] = str(ROOT_UMR_DATABASE_PATH)
+            database = self._trusted_umr_database(umr)
+            if database is not None:
+                env["UMR_DATABASE_PATH"] = str(database)
             instance = self._umr_instance()
             if instance is not None:
                 env["UMR_INSTANCE"] = str(instance)

@@ -1,5 +1,6 @@
-import { Focusable, ScrollPanel } from "@decky/ui";
+import { Focusable } from "@decky/ui";
 import type { ReactNode } from "react";
+import { ScrollViewport } from "./ScrollViewport";
 
 export interface VerticalTab {
   id: string;
@@ -88,7 +89,7 @@ export function VerticalTabs({
           overflow: "hidden",
         }}
       >
-        <ScrollPanel>
+        <ScrollViewport>
           <Focusable
             key={selected.id}
             flow-children="down"
@@ -100,7 +101,7 @@ export function VerticalTabs({
           >
             {selected.content}
           </Focusable>
-        </ScrollPanel>
+        </ScrollViewport>
       </div>
     </Focusable>
   );

@@ -162,6 +162,39 @@ class BackendParsingTests(unittest.TestCase):
             ):
                 self.assertEqual(backend._trusted_umr(), umr)
 
+    def test_umr_database_skips_incomplete_canonical_copy(self):
+        backend = object.__new__(ToolkitBackend)
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            canonical = root / "canonical"
+            legacy = root / "legacy"
+            config = root / "manager.conf"
+            config.write_text(
+                f"UMR_DATABASE_PATH={canonical}\n", encoding="utf-8"
+            )
+            for database, complete in ((canonical, False), (legacy, True)):
+                (database / "ip").mkdir(parents=True)
+                for relative in (
+                    "cyan_skillfish.asic",
+                    "cyan_skillfish.soc15",
+                    "ip/gc_10_1_0.reg",
+                ):
+                    (database / relative).write_text(
+                        "data" if complete else "", encoding="utf-8"
+                    )
+            with (
+                patch.object(backend_module, "CU_CONFIG_PATH", config),
+                patch.object(backend_module, "ROOT_UMR_DATABASE_PATH", canonical),
+                patch.object(backend_module, "MIGRATED_UMR_DATABASE_PATH", legacy),
+                patch.object(backend_module, "LEGACY_UMR_DATABASE_PATH", legacy),
+                patch.object(ToolkitBackend, "_trusted_root_directory", return_value=True),
+                patch.object(ToolkitBackend, "_trusted_root_file", return_value=True),
+            ):
+                self.assertEqual(
+                    backend._umr_database_args(root / "bin/umr"),
+                    ["--database-path", str(legacy)],
+                )
+
 
 class BackendMutationTests(unittest.IsolatedAsyncioTestCase):
     async def test_exec_strips_decky_library_path(self):
@@ -207,7 +240,9 @@ class BackendMutationTests(unittest.IsolatedAsyncioTestCase):
                 value = await backend._umr_register("register", 0, 1)
 
         self.assertEqual(value, 0x1F)
-        self.assertEqual(backend._exec.await_args.args[0][1:3], ["-i", "3"])
+        argv = backend._exec.await_args.args[0]
+        instance_index = argv.index("-i")
+        self.assertEqual(argv[instance_index : instance_index + 2], ["-i", "3"])
 
     async def test_umr_register_parses_stderr(self):
         backend = object.__new__(ToolkitBackend)
