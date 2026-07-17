@@ -10,6 +10,8 @@ export interface CuRow {
   cc: number | null;
   wgps: boolean[];
   cus: number;
+  factoryCuMask: number | null;
+  factoryWgps: boolean[];
 }
 
 export interface CuStatus {
@@ -20,6 +22,8 @@ export interface CuStatus {
   maximum: number;
   rows: CuRow[];
   savedMasks: number[];
+  factoryMapAvailable: boolean;
+  factoryTotal: number | null;
   service: ServiceState;
   protected: boolean;
 }

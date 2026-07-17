@@ -5,9 +5,12 @@ import { EmptyState, StatusRow } from "../components/Common";
 import type { CuRow } from "../types";
 import type { TabProps } from "./shared";
 
-function savedRows(masks: number[]): CuRow[] {
+function savedRows(masks: number[], liveRows: CuRow[]): CuRow[] {
   return masks.slice(0, 4).map((value, index) => {
     const mask = value & 0x1f;
+    const factory = liveRows.find(
+      (row) => row.se === Math.floor(index / 2) && row.sh === index % 2,
+    );
     return {
       se: Math.floor(index / 2),
       sh: index % 2,
@@ -15,6 +18,8 @@ function savedRows(masks: number[]): CuRow[] {
       cc: null,
       wgps: Array.from({ length: 5 }, (_, wgp) => Boolean(mask & (1 << wgp))),
       cus: mask.toString(2).replace(/0/g, "").length * 2,
+      factoryCuMask: factory?.factoryCuMask ?? null,
+      factoryWgps: factory?.factoryWgps ?? Array(5).fill(false),
     };
   });
 }
@@ -63,19 +68,32 @@ function CuGrid({
         >
           <span style={{ color: "#aeb3b8" }}>SE{row.se}.SH{row.sh}</span>
           {row.wgps.map((enabled, wgp) => {
+            const factory = row.factoryWgps[wgp] === true;
             const style = {
               minHeight: 30,
               boxSizing: "border-box" as const,
               padding: "7px 2px",
-              border: editable ? "1px solid rgba(255,255,255,.14)" : "1px solid transparent",
+              border: editable && !factory
+                ? "1px solid rgba(255,255,255,.14)"
+                : factory
+                  ? "1px solid rgba(96,165,250,.42)"
+                  : "1px solid transparent",
               borderRadius: 5,
               textAlign: "center" as const,
-              background: enabled ? "rgba(89,209,133,.28)" : "rgba(255,255,255,.06)",
-              color: enabled ? "#82e8a7" : "#777f86",
+              background: factory
+                ? enabled
+                  ? "rgba(64,148,255,.30)"
+                  : "rgba(230,173,85,.22)"
+                : enabled
+                  ? "rgba(89,209,133,.28)"
+                  : "rgba(255,255,255,.06)",
+              color: factory
+                ? enabled ? "#91c5ff" : "#e6c48f"
+                : enabled ? "#82e8a7" : "#777f86",
               fontWeight: 700,
             };
-            const label = enabled ? "ON" : "OFF";
-            return editable ? (
+            const label = factory ? enabled ? "OEM" : "OEM!" : enabled ? "ON" : "OFF";
+            return editable && !factory ? (
               <Focusable
                 key={wgp}
                 role="button"
@@ -92,6 +110,18 @@ function CuGrid({
           <span style={{ textAlign: "right", color: "#f2f2f2" }}>{row.cus}/10</span>
         </div>
       ))}
+      <div
+        style={{
+          display: "flex",
+          gap: 14,
+          padding: "2px 68px 0",
+          color: "#87919a",
+          fontSize: 10,
+        }}
+      >
+        <span style={{ color: "#91c5ff" }}>OEM factory, locked</span>
+        <span style={{ color: "#82e8a7" }}>Unlocked and routed</span>
+      </div>
     </div>
   );
 }
@@ -101,7 +131,9 @@ export function CuTab({ snapshot, busy, runMutation }: TabProps) {
   const bootEnabled = cu.service.enabled === "enabled";
   const [advanced, setAdvanced] = useState(false);
   const hasSavedTable = cu.savedMasks.length === 4;
-  const rows = cu.available ? cu.rows : hasSavedTable ? savedRows(cu.savedMasks) : [];
+  const rows = cu.available
+    ? cu.rows
+    : hasSavedTable ? savedRows(cu.savedMasks, cu.rows) : [];
 
   const toggleWgp = (row: CuRow, wgp: number, enabled: boolean) => {
     if (busy || !cu.controllable) return;
@@ -129,6 +161,11 @@ export function CuTab({ snapshot, busy, runMutation }: TabProps) {
           label="Boot replay"
           value={bootEnabled ? "Enabled" : "Disabled"}
           good={bootEnabled}
+        />
+        <StatusRow
+          label="Factory lock"
+          value={cu.factoryMapAvailable ? `${cu.factoryTotal}/40 CU locked` : "Map unavailable"}
+          good={cu.factoryMapAvailable}
         />
         <StatusRow
           label="Update protection"
@@ -165,7 +202,7 @@ export function CuTab({ snapshot, busy, runMutation }: TabProps) {
         />
         {!cu.controllable && (
           <EmptyState>
-            Live editing requires readable GPU registers and a root-owned CU manager installation.
+            Live editing requires readable GPU registers, the verified factory 24-CU map, and a root-owned CU manager installation.
           </EmptyState>
         )}
         <EmptyState>

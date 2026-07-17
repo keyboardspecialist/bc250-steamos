@@ -1,6 +1,11 @@
 import { DropdownItem, PanelSection, SliderField } from "@decky/ui";
 import { useEffect, useState } from "react";
-import { setGpuFrequency, setLoadTarget, setRamp } from "../api";
+import {
+  setCustomLoadTarget,
+  setGpuFrequency,
+  setLoadTarget,
+  setRamp,
+} from "../api";
 import { ActionButton, EmptyState, StatusRow } from "../components/Common";
 import type { GpuMode } from "../types";
 import type { TabProps } from "./shared";
@@ -19,6 +24,12 @@ export function GpuTab({ snapshot, busy, runMutation }: TabProps) {
   const [minimum, setMinimum] = useState(gpu.minimum || 0);
   const [maximum, setMaximum] = useState(initialMax);
   const [rampMs, setRampMs] = useState(gpu.climbMs || 500);
+  const [loadMinimum, setLoadMinimum] = useState(
+    Math.round((gpu.loadLower ?? 0.65) * 100),
+  );
+  const [loadMaximum, setLoadMaximum] = useState(
+    Math.round((gpu.loadUpper ?? 0.80) * 100),
+  );
   const frequencyDisabled = busy || !gpu.controllable;
   const frequencyMaximum = Math.min(gpu.allowedMaximum || 2150, 2150);
   const frequencyMinimum = Math.max(gpu.allowedMinimum || 100, 100);
@@ -28,7 +39,17 @@ export function GpuTab({ snapshot, busy, runMutation }: TabProps) {
     setMinimum(gpu.minimum || 0);
     setMaximum(gpu.maximum || gpu.configuredMax || 1500);
     setRampMs(gpu.climbMs || 500);
-  }, [gpu.mode, gpu.minimum, gpu.maximum, gpu.configuredMax, gpu.climbMs]);
+    setLoadMinimum(Math.round((gpu.loadLower ?? 0.65) * 100));
+    setLoadMaximum(Math.round((gpu.loadUpper ?? 0.80) * 100));
+  }, [
+    gpu.mode,
+    gpu.minimum,
+    gpu.maximum,
+    gpu.configuredMax,
+    gpu.climbMs,
+    gpu.loadLower,
+    gpu.loadUpper,
+  ]);
 
   if (!gpu.available) {
     return <EmptyState>Install the GPU governor through `bc250-power.sh governor`.</EmptyState>;
@@ -161,6 +182,45 @@ export function GpuTab({ snapshot, busy, runMutation }: TabProps) {
           disabled={busy || !gpu.controllable}
           onClick={() =>
             runMutation("Balanced load target applied", () => setLoadTarget("reset"))
+          }
+        />
+        <SliderField
+          label="Minimum load"
+          description="Clock down when GPU load falls below this threshold."
+          value={loadMinimum}
+          min={1}
+          max={99}
+          step={1}
+          valueSuffix="%"
+          editableValue
+          disabled={busy || !gpu.controllable}
+          onChange={setLoadMinimum}
+        />
+        <SliderField
+          label="Maximum load"
+          description="Clock up when GPU load rises above this threshold."
+          value={loadMaximum}
+          min={1}
+          max={99}
+          step={1}
+          valueSuffix="%"
+          editableValue
+          disabled={busy || !gpu.controllable}
+          onChange={setLoadMaximum}
+        />
+        {loadMinimum >= loadMaximum && (
+          <EmptyState>Minimum load must be lower than maximum load.</EmptyState>
+        )}
+        <ActionButton
+          label="Apply custom load target"
+          disabled={
+            busy || !gpu.controllable || loadMinimum >= loadMaximum
+          }
+          onClick={() =>
+            runMutation(
+              "Custom load target applied",
+              () => setCustomLoadTarget(loadMinimum, loadMaximum),
+            )
           }
         />
       </PanelSection>

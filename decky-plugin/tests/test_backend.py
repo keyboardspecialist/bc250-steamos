@@ -194,6 +194,7 @@ class BackendMutationTests(unittest.IsolatedAsyncioTestCase):
     async def test_umr_register_uses_configured_instance(self):
         backend = object.__new__(ToolkitBackend)
         backend.toolkit = Path("/toolkit")
+        backend._umr_lock = asyncio.Lock()
         backend._exec = AsyncMock(return_value=(0, "value 0x1f", ""))
         with tempfile.TemporaryDirectory() as directory:
             config = Path(directory) / "manager.conf"
@@ -208,15 +209,11 @@ class BackendMutationTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(value, 0x1F)
         self.assertEqual(backend._exec.await_args.args[0][1:3], ["-i", "3"])
 
-    async def test_umr_register_retries_legacy_bank_syntax_and_parses_stderr(self):
+    async def test_umr_register_parses_stderr(self):
         backend = object.__new__(ToolkitBackend)
         backend.toolkit = Path("/toolkit")
-        backend._exec = AsyncMock(
-            side_effect=[
-                (1, "", "unsupported bank mask"),
-                (0, "", "value 0x1f"),
-            ]
-        )
+        backend._umr_lock = asyncio.Lock()
+        backend._exec = AsyncMock(return_value=(0, "", "value 0x1f"))
         with (
             patch.object(backend, "_trusted_umr", return_value=Path("/umr")),
             patch.object(backend, "_umr_instance", return_value=None),
@@ -226,8 +223,62 @@ class BackendMutationTests(unittest.IsolatedAsyncioTestCase):
             value = await backend._umr_register("register", 1, 0)
 
         self.assertEqual(value, 0x1F)
-        self.assertEqual(backend._exec.await_count, 2)
-        self.assertEqual(backend._exec.await_args.args[0][-3:], ["-b", "1", "0"])
+        self.assertEqual(backend._exec.await_count, 1)
+        self.assertEqual(
+            backend._exec.await_args.args[0][-4:], ["-b", "1", "0", "0xffffffff"]
+        )
+
+    async def test_umr_register_serializes_concurrent_reads(self):
+        backend = object.__new__(ToolkitBackend)
+        backend.toolkit = Path("/toolkit")
+        backend._umr_lock = asyncio.Lock()
+        active = 0
+        maximum = 0
+
+        async def execute(*_args, **_kwargs):
+            nonlocal active, maximum
+            active += 1
+            maximum = max(maximum, active)
+            await asyncio.sleep(0.01)
+            active -= 1
+            return 0, "value 0x1f", ""
+
+        backend._exec = AsyncMock(side_effect=execute)
+        with (
+            patch.object(backend, "_trusted_umr", return_value=Path("/umr")),
+            patch.object(backend, "_umr_instance", return_value=0),
+            patch.object(backend, "_umr_database_args", return_value=[]),
+            patch("bc250_control.backend.os.geteuid", return_value=0),
+        ):
+            await asyncio.gather(
+                *(backend._umr_register("register", se, sh) for se in range(2) for sh in range(2))
+            )
+
+        self.assertEqual(maximum, 1)
+
+    async def test_factory_cu_masks_parse_cu_map_output(self):
+        backend = object.__new__(ToolkitBackend)
+        backend._exec = AsyncMock(
+            return_value=(
+                0,
+                "0 0 0x03f\n0 1 0x03f\n1 0 0x03f\n1 1 0x03f",
+                "",
+            )
+        )
+
+        self.assertEqual(await backend._factory_cu_masks(), [0x3F] * 4)
+
+    async def test_factory_cu_masks_reject_non_stock_total(self):
+        backend = object.__new__(ToolkitBackend)
+        backend._exec = AsyncMock(
+            return_value=(
+                0,
+                "0 0 0x3ff\n0 1 0x3ff\n1 0 0x3ff\n1 1 0x3ff",
+                "",
+            )
+        )
+
+        self.assertIsNone(await backend._factory_cu_masks())
 
     async def test_cu_status_rejects_partially_malformed_saved_table(self):
         backend = object.__new__(ToolkitBackend)
@@ -235,6 +286,7 @@ class BackendMutationTests(unittest.IsolatedAsyncioTestCase):
         backend._service = AsyncMock(
             return_value={"enabled": "enabled", "active": "active"}
         )
+        backend._factory_cu_masks = AsyncMock(return_value=None)
         backend._umr_register = AsyncMock(return_value=None)
         backend._trusted_umr = MagicMock(return_value=None)
         with tempfile.TemporaryDirectory() as directory:
@@ -272,6 +324,30 @@ class BackendMutationTests(unittest.IsolatedAsyncioTestCase):
         with self.assertRaises(CommandError):
             await backend.set_cec_toggle("wake-tv", "true")
 
+    async def test_custom_load_target_rejects_inverted_range(self):
+        backend = object.__new__(ToolkitBackend)
+        with self.assertRaisesRegex(CommandError, "below maximum"):
+            await backend.set_custom_load_target(80, 60)
+
+    async def test_custom_load_target_updates_percentages(self):
+        backend = object.__new__(ToolkitBackend)
+        backend._mutation_lock = asyncio.Lock()
+        backend._update_gpu_config = AsyncMock()
+        backend._gpu_call = AsyncMock()
+
+        await backend.set_custom_load_target(35, 70)
+
+        backend._update_gpu_config.assert_awaited_once()
+        self.assertEqual(
+            backend._update_gpu_config.await_args.args[0],
+            {"load-target": {"upper": "0.70", "lower": "0.35"}},
+        )
+        callback = backend._update_gpu_config.await_args.kwargs["live_callback"]
+        await callback()
+        backend._gpu_call.assert_awaited_once_with(
+            "SetLoadTarget", "dd", "0.35", "0.70"
+        )
+
     async def test_cu_rpc_rejects_boolean_coordinate(self):
         backend = object.__new__(ToolkitBackend)
         with self.assertRaisesRegex(CommandError, "whole numbers"):
@@ -286,6 +362,7 @@ class BackendMutationTests(unittest.IsolatedAsyncioTestCase):
             return_value=Path("/trusted/cu-manager")
         )
         backend._umr_register = AsyncMock(return_value=0x07)
+        backend._factory_cu_masks = AsyncMock(return_value=[0x3F] * 4)
         backend._umr_instance = MagicMock(return_value=2)
         backend._exec = AsyncMock(return_value=(0, "", ""))
 
@@ -312,13 +389,29 @@ class BackendMutationTests(unittest.IsolatedAsyncioTestCase):
             return_value=Path("/trusted/cu-manager")
         )
         backend._umr_register = AsyncMock(return_value=0x07)
+        backend._factory_cu_masks = AsyncMock(return_value=[0x3F] * 4)
         backend._umr_instance = MagicMock(return_value=None)
         backend._exec = AsyncMock(return_value=(0, "", ""))
 
         with patch.object(backend_module, "CLEAN_ENV", {"UMR_INSTANCE": "99"}):
-            await backend.set_cu_wgp(0, 0, 0, False)
+            await backend.set_cu_wgp(0, 0, 4, False)
 
         self.assertNotIn("UMR_INSTANCE", backend._exec.await_args.kwargs["env"])
+
+    async def test_cu_rpc_rejects_factory_wgp(self):
+        backend = object.__new__(ToolkitBackend)
+        backend._mutation_lock = asyncio.Lock()
+        backend._bc250_present = MagicMock(return_value=True)
+        backend._trusted_umr = MagicMock(return_value=Path("/trusted/umr"))
+        backend._trusted_cu_manager = MagicMock(return_value=Path("/trusted/cu-manager"))
+        backend._umr_register = AsyncMock(return_value=0x1F)
+        backend._factory_cu_masks = AsyncMock(return_value=[0x3F] * 4)
+        backend._exec = AsyncMock(return_value=(0, "", ""))
+
+        with self.assertRaisesRegex(CommandError, "Factory-enabled"):
+            await backend.set_cu_wgp(1, 1, 2, False)
+
+        backend._exec.assert_not_awaited()
 
     async def test_cpu_oc_rejects_unsafe_values(self):
         backend = object.__new__(ToolkitBackend)

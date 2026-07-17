@@ -5,6 +5,7 @@ import {
   Navigation,
   PanelSection,
   PanelSectionRow,
+  ScrollPanel,
   showModal,
   Spinner,
   staticClasses,
@@ -418,75 +419,79 @@ function QuickPanel() {
   }
 
   return (
-    <>
-      <Focusable
-        flow-children="right"
-        style={{ display: "flex", gap: 6, margin: "8px 8px 12px" }}
-      >
-        {[
-          ["summary", "Summary"],
-          ["cec", "CEC"],
-        ].map(([id, label]) => (
+    <div style={{ height: "100%", minHeight: 0, overflow: "hidden" }}>
+      <ScrollPanel>
+        <Focusable flow-children="down" style={{ paddingBottom: 64 }}>
           <Focusable
-            key={id}
-            tabIndex={0}
-            role="button"
-            aria-selected={activeTab === id}
-            onFocus={() => setActiveTab(id)}
-            onActivate={() => setActiveTab(id)}
-            onClick={() => setActiveTab(id)}
-            style={{
-              flex: 1,
-              padding: "9px 12px",
-              borderRadius: 6,
-              textAlign: "center",
-              color: activeTab === id ? "#fff" : "#aeb3b8",
-              background: activeTab === id
-                ? "rgba(64, 148, 255, 0.30)"
-                : "rgba(255,255,255,.05)",
-              fontSize: 13,
-              fontWeight: activeTab === id ? 700 : 500,
-            }}
+            flow-children="right"
+            style={{ display: "flex", gap: 6, margin: "8px 8px 12px" }}
           >
-            {label}
+            {[
+              ["summary", "Summary"],
+              ["cec", "CEC"],
+            ].map(([id, label]) => (
+              <Focusable
+                key={id}
+                tabIndex={0}
+                role="button"
+                aria-selected={activeTab === id}
+                onFocus={() => setActiveTab(id)}
+                onActivate={() => setActiveTab(id)}
+                onClick={() => setActiveTab(id)}
+                style={{
+                  flex: 1,
+                  padding: "9px 12px",
+                  borderRadius: 6,
+                  textAlign: "center",
+                  color: activeTab === id ? "#fff" : "#aeb3b8",
+                  background: activeTab === id
+                    ? "rgba(64, 148, 255, 0.30)"
+                    : "rgba(255,255,255,.05)",
+                  fontSize: 13,
+                  fontWeight: activeTab === id ? 700 : 500,
+                }}
+              >
+                {label}
+              </Focusable>
+            ))}
           </Focusable>
-        ))}
-      </Focusable>
-      <PanelSection>
-        <PanelSectionRow>
-          <ButtonItem layout="below" onClick={openControls}>
-            Open full controls
-          </ButtonItem>
-        </PanelSectionRow>
-      </PanelSection>
-      {snapshot ? (
-        activeTab === "cec" ? (
-          <CecTab
-            snapshot={snapshot}
-            busy={Boolean(busyLabel)}
-            runMutation={runMutation}
-            compact
-          />
-        ) : (
-          <OverviewSummary snapshot={snapshot} history={history} compact />
-        )
-      ) : (
-        <EmptyState>{error || "Unable to load toolkit status."}</EmptyState>
-      )}
-      {busyLabel && <StatusRow label="Working" value={busyLabel} />}
-      {error && snapshot && <EmptyState>{error}</EmptyState>}
-      <PanelSection>
-        <PanelSectionRow>
-          <ButtonItem
-            layout="below"
-            disabled={loading || Boolean(busyLabel)}
-            onClick={() => void refresh()}
-          >
-            <FaSyncAlt /> Refresh status
-          </ButtonItem>
-        </PanelSectionRow>
-      </PanelSection>
-    </>
+          <PanelSection>
+            <PanelSectionRow>
+              <ButtonItem layout="below" onClick={openControls}>
+                Open full controls
+              </ButtonItem>
+            </PanelSectionRow>
+          </PanelSection>
+          {snapshot ? (
+            activeTab === "cec" ? (
+              <CecTab
+                snapshot={snapshot}
+                busy={Boolean(busyLabel)}
+                runMutation={runMutation}
+                compact
+              />
+            ) : (
+              <OverviewSummary snapshot={snapshot} history={history} compact />
+            )
+          ) : (
+            <EmptyState>{error || "Unable to load toolkit status."}</EmptyState>
+          )}
+          {busyLabel && <StatusRow label="Working" value={busyLabel} />}
+          {error && snapshot && <EmptyState>{error}</EmptyState>}
+          <PanelSection>
+            <PanelSectionRow>
+              <ButtonItem
+                layout="below"
+                disabled={loading || Boolean(busyLabel)}
+                onClick={() => void refresh()}
+              >
+                <FaSyncAlt /> Refresh status
+              </ButtonItem>
+            </PanelSectionRow>
+          </PanelSection>
+        </Focusable>
+      </ScrollPanel>
+    </div>
   );
 }
 

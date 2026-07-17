@@ -25,6 +25,9 @@ class Plugin:
     async def set_load_target(self, preset: str):
         return await self.backend.set_load_target(preset)
 
+    async def set_custom_load_target(self, minimum: int, maximum: int):
+        return await self.backend.set_custom_load_target(minimum, maximum)
+
     async def set_ramp(self, climb_ms: int):
         return await self.backend.set_ramp(climb_ms)
 

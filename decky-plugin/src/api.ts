@@ -14,6 +14,10 @@ export const setGpuFrequency = callable<
 export const setLoadTarget = callable<[preset: string], void>(
   "set_load_target",
 );
+export const setCustomLoadTarget = callable<
+  [minimum: number, maximum: number],
+  void
+>("set_custom_load_target");
 export const setRamp = callable<[climbMs: number], void>("set_ramp");
 export const cpuOcAction = callable<
   [action: string, frequency: number, voltage: number, temperature: number],

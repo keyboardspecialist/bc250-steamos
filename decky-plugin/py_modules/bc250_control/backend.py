@@ -23,6 +23,7 @@ BASH = "/usr/bin/bash"
 BUSCTL = "/usr/bin/busctl"
 ENV = "/usr/bin/env"
 RUNUSER = "/usr/bin/runuser"
+PYTHON3 = "/usr/bin/python3"
 SYSTEMCTL = "/usr/bin/systemctl"
 GPU_CONFIG_PATH = Path("/etc/cyan-skillfish-governor-smu/config.toml")
 GPU_STATE_PATH = Path("/var/lib/bc250-control/governor/freq-state")
@@ -38,6 +39,61 @@ CU_MANAGER_PATHS = (
     Path("/usr/local/bin/bc250-cu-live-manager"),
     Path("/var/usrlocal/bin/bc250-cu-live-manager"),
 )
+
+CU_MAP_SCRIPT = r"""
+import ctypes
+import glob
+import os
+import struct
+import sys
+
+render_nodes = []
+for device in glob.glob("/sys/class/drm/renderD*/device"):
+    try:
+        with open(os.path.join(device, "vendor"), encoding="ascii") as stream:
+            vendor = stream.read().strip().lower()
+        with open(os.path.join(device, "device"), encoding="ascii") as stream:
+            product = stream.read().strip().lower()
+    except OSError:
+        continue
+    if vendor == "0x1002" and product == "0x13fe":
+        render_nodes.append("/dev/dri/" + os.path.basename(os.path.dirname(device)))
+
+if len(render_nodes) != 1:
+    sys.exit(1)
+
+fd = -1
+dev = ctypes.c_void_p()
+try:
+    libdrm = ctypes.CDLL("libdrm_amdgpu.so.1")
+    fd = os.open(render_nodes[0], os.O_RDWR)
+    major = ctypes.c_uint32()
+    minor = ctypes.c_uint32()
+    if libdrm.amdgpu_device_initialize(
+        fd, ctypes.byref(major), ctypes.byref(minor), ctypes.byref(dev)
+    ) != 0:
+        sys.exit(1)
+    buffer = (ctypes.c_uint8 * 1024)()
+    if libdrm.amdgpu_query_info(dev, 0x16, 1024, ctypes.byref(buffer)) != 0:
+        sys.exit(1)
+    raw = bytes(buffer)
+    if struct.unpack_from("<I", raw, 20)[0] < 2:
+        sys.exit(1)
+    if struct.unpack_from("<I", raw, 24)[0] < 2:
+        sys.exit(1)
+    for se in range(2):
+        for sh in range(2):
+            mask = struct.unpack_from("<I", raw, 56 + (se * 4 + sh) * 4)[0]
+            print(f"{se} {sh} 0x{mask & 0x3ff:03x}")
+finally:
+    if dev:
+        try:
+            libdrm.amdgpu_device_deinitialize(dev)
+        except Exception:
+            pass
+    if fd >= 0:
+        os.close(fd)
+"""
 
 # Decky Loader's PyInstaller environment can shadow system libraries used by
 # busctl and systemctl. Subprocesses must resolve the SteamOS libraries instead.
@@ -60,6 +116,7 @@ class ToolkitBackend:
             self.user_home / ".local/share/bc250-fixes/bc250-steamos"
         )
         self._mutation_lock = asyncio.Lock()
+        self._umr_lock = asyncio.Lock()
 
     async def _exec(
         self,
@@ -360,10 +417,7 @@ class ToolkitBackend:
         )
         if not re.fullmatch(r"[A-Za-z0-9_.-]+", asic):
             return None
-        for bank_args in (
-            ["-b", str(se), str(sh), "0xffffffff"],
-            ["-b", str(se), str(sh)],
-        ):
+        async with self._umr_lock:
             rc, out, err = await self._exec(
                 [
                     str(umr),
@@ -371,7 +425,10 @@ class ToolkitBackend:
                     *instance_args,
                     "-r",
                     f"{asic}.{register}",
-                    *bank_args,
+                    "-b",
+                    str(se),
+                    str(sh),
+                    "0xffffffff",
                 ],
                 timeout=5,
                 check=False,
@@ -381,10 +438,36 @@ class ToolkitBackend:
                 return value
         return None
 
+    async def _factory_cu_masks(self) -> list[int] | None:
+        try:
+            rc, out, _ = await self._exec(
+                [PYTHON3, "-c", CU_MAP_SCRIPT], timeout=5, check=False
+            )
+        except (CommandError, OSError):
+            return None
+        if rc != 0:
+            return None
+        rows: dict[tuple[int, int], int] = {}
+        for line in out.splitlines():
+            match = re.fullmatch(r"([01]) ([01]) (0x[0-9a-fA-F]+)", line.strip())
+            if match is None:
+                return None
+            se, sh, mask = int(match[1]), int(match[2]), int(match[3], 16)
+            if mask > 0x3FF or (se, sh) in rows:
+                return None
+            rows[(se, sh)] = mask
+        if set(rows) != {(0, 0), (0, 1), (1, 0), (1, 1)}:
+            return None
+        masks = [rows[(se, sh)] for se in range(2) for sh in range(2)]
+        if sum(mask.bit_count() for mask in masks) != 24:
+            return None
+        return masks
+
     async def get_cu_status(self) -> dict[str, Any]:
         service_task = asyncio.create_task(
             self._service("bc250-cu-live-manager.service")
         )
+        factory_masks = await self._factory_cu_masks()
         reads = []
         for se in range(2):
             for sh in range(2):
@@ -399,6 +482,7 @@ class ToolkitBackend:
         total = 0
         for index, (spi, cc) in enumerate(values):
             mask = (spi or 0) & 0x1F
+            factory_mask = factory_masks[index] if factory_masks is not None else None
             count = bin(mask).count("1") * 2 if spi is not None else 0
             total += count
             rows.append(
@@ -409,6 +493,13 @@ class ToolkitBackend:
                     "cc": cc,
                     "wgps": [bool(mask & (1 << bit)) for bit in range(5)],
                     "cus": count,
+                    "factoryCuMask": factory_mask,
+                    "factoryWgps": [
+                        bool(factory_mask & (0x3 << (bit * 2)))
+                        for bit in range(5)
+                    ]
+                    if factory_mask is not None
+                    else [False] * 5,
                 }
             )
         saved = self._read_key_values(CU_CONFIG_PATH)
@@ -428,6 +519,7 @@ class ToolkitBackend:
             "controllable": (
                 available
                 and privileged
+                and factory_masks is not None
                 and self._trusted_cu_manager() is not None
                 and self._bc250_present()
             ),
@@ -444,6 +536,8 @@ class ToolkitBackend:
             "maximum": 40,
             "rows": rows,
             "savedMasks": saved_masks,
+            "factoryMapAvailable": factory_masks is not None,
+            "factoryTotal": 24 if factory_masks is not None else None,
             "service": await service_task,
             "protected": Path(
                 "/etc/atomic-update.conf.d/bc250-compute.conf"
@@ -1128,6 +1222,14 @@ class ToolkitBackend:
                 raise CommandError(
                     "UMR could not verify the live routing register; no change was made."
                 )
+            factory_masks = await self._factory_cu_masks()
+            if factory_masks is None:
+                raise CommandError(
+                    "The factory 24-CU map is unavailable; no change was made."
+                )
+            factory_mask = factory_masks[se * 2 + sh]
+            if factory_mask & (0x3 << (wgp * 2)):
+                raise CommandError("Factory-enabled CUs are locked and cannot be changed.")
 
             config = self._read_key_values(CU_CONFIG_PATH)
             asic = config.get("UMR_ASIC", "cyan_skillfish.gfx1013")
@@ -1221,6 +1323,30 @@ class ToolkitBackend:
 
         async def action() -> None:
             upper, lower = (0.60, 0.45) if preset == "eager" else (0.80, 0.65)
+
+            async def apply_live() -> None:
+                await self._gpu_call(
+                    "SetLoadTarget", "dd", f"{lower:.2f}", f"{upper:.2f}"
+                )
+
+            await self._update_gpu_config(
+                {"load-target": {"upper": f"{upper:.2f}", "lower": f"{lower:.2f}"}},
+                live_callback=apply_live,
+            )
+
+        return await self._mutate(action)
+
+    async def set_custom_load_target(self, minimum: int, maximum: int) -> None:
+        if type(minimum) is not int or type(maximum) is not int:
+            raise CommandError("GPU load targets must be whole percentages.")
+        if not 0 < minimum < maximum < 100:
+            raise CommandError(
+                "Minimum GPU load must be below maximum load and both must be 1-99%."
+            )
+
+        async def action() -> None:
+            lower = minimum / 100
+            upper = maximum / 100
 
             async def apply_live() -> None:
                 await self._gpu_call(
