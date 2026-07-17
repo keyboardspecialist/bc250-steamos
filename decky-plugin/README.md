@@ -30,8 +30,8 @@ Decky starts `main.py` as root because `plugin.json` declares the `_root` flag.
 Privileged operations use typed RPC methods, validated arguments, fixed command
 paths, and argument allowlists. CEC operations use `runuser` with a clean user
 session environment. Live WGP changes are delegated to a root-owned CU manager;
-user-writable copies are rejected. CPU tuning uses a separate root-owned helper
-and state directory installed under `/var/lib/bc250-control/`.
+user-writable copies are rejected. Privileged helpers, UMR, and state use the
+root-owned `/var/lib/bc250-control/` SteamOS offload mount.
 
 ## Install
 

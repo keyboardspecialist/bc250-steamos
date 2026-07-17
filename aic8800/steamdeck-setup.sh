@@ -28,6 +28,7 @@ FIXES_REPO_DIR="${FIXES_REPO_DIR:-$REAL_HOME/.local/share/bc250-fixes/bc250-stea
     || { echo "FIXES_REPO_DIR must be an absolute path without whitespace."; exit 1; }
 SCRIPT_REPO_DIR=$(cd "$(dirname "$0")/.." && pwd)
 UPDATE_PERSIST_SH="$SCRIPT_REPO_DIR/bc250-update-persistence.sh"
+STORAGE_SH="$SCRIPT_REPO_DIR/bc250-storage.sh"
 [ -f "$UPDATE_PERSIST_SH" ] \
     || { echo "Update persistence helper missing: $UPDATE_PERSIST_SH"; exit 1; }
 if [ -d "$FIXES_REPO_DIR/aic8800" ]; then
@@ -38,11 +39,22 @@ fi
 [ "$REPO" = "${REPO%[[:space:]]*}" ] \
     || { echo "The AIC8800 source path cannot contain whitespace."; exit 1; }
 DRV=$REPO/src/USB/driver_fw/drivers/aic8800
-FW=$REPO/src/USB/driver_fw/fw/aic8800D80
+FW_SOURCE=$REPO/src/USB/driver_fw/fw/aic8800D80
+ROOT_DATA_DIR=/var/lib/bc250-control
+FW=$ROOT_DATA_DIR/aic8800/firmware/aic8800D80
+ROOT_SOURCE=$ROOT_DATA_DIR/aic8800/source
+ROOT_HELPER=$ROOT_DATA_DIR/helper/aic8800-ensure-modules
 BUILD_USER=$REAL_USER
 KREL=$(uname -r)
 
 [ -d "$DRV" ] || { echo "Driver source not found at $DRV"; exit 1; }
+[ -d "$FW_SOURCE" ] || { echo "Firmware source not found at $FW_SOURCE"; exit 1; }
+[ -f "$STORAGE_SH" ] || { echo "Storage helper missing: $STORAGE_SH"; exit 1; }
+if find "$DRV" "$FW_SOURCE" -type l -print -quit | grep -q .; then
+    echo "Refusing to install AIC8800 source containing symlinks."
+    exit 1
+fi
+bash "$STORAGE_SH" install
 
 ROOTFS_WAS_READONLY=0
 unlock_rootfs() {
@@ -142,11 +154,18 @@ cat > /etc/modprobe.d/aic8800.conf <<EOF
 options aic_load_fw aic_fw_path=$FW
 EOF
 
-printf 'AIC8800_REPO=%q\nAIC8800_BUILD_USER=%q\n' "$REPO" "$BUILD_USER" \
-    > /etc/aic8800-paths.conf
-install -m 755 "$REPO/aic8800-ensure-modules.sh" /etc/aic8800-ensure-modules.sh
+rm -rf "$FW" "$ROOT_SOURCE"
+install -d -o root -g root -m 0755 "$FW" "$ROOT_SOURCE" \
+    "$(dirname "$ROOT_HELPER")"
+cp -RL "$FW_SOURCE"/. "$FW"/
+cp -a "$DRV"/. "$ROOT_SOURCE"/
+chown -R root:root "$ROOT_DATA_DIR/aic8800"
+chmod -R go-w "$ROOT_DATA_DIR/aic8800"
+install -o root -g root -m 0755 "$REPO/aic8800-ensure-modules.sh" "$ROOT_HELPER"
 install -m 644 "$REPO/aic8800-modules.service" /etc/systemd/system/aic8800-modules.service
-sed -i "/^After=/a RequiresMountsFor=$REPO" /etc/systemd/system/aic8800-modules.service
+sed -i "/^RequiresMountsFor=/c RequiresMountsFor=$ROOT_DATA_DIR" /etc/systemd/system/aic8800-modules.service
+rm -f /etc/aic8800-ensure-modules.sh
+rm -f /etc/aic8800-paths.conf
 
 udevadm control --reload
 systemctl daemon-reload

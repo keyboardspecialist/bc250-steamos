@@ -24,17 +24,22 @@ PLUGINS_DIR="$HOME/homebrew/plugins"
 DEST_DIR="$PLUGINS_DIR/$PLUGIN_NAME"
 ROOT_HELPER_DIR="/var/lib/bc250-control/helper"
 ROOT_STATE_DIR="/var/lib/bc250-control/smu-oc"
-ROOT_UMR_DIR="/etc/bc250-control/umr"
+ROOT_UMR_DIR="/var/lib/bc250-control/umr"
 CU_CONFIG="/etc/bc250-cu-live-manager.conf"
 TOOLKIT_DIR="$HOME/.local/share/bc250-fixes/bc250-steamos"
 CU_MANAGER_SOURCE=""
 UMR_SOURCE=""
 UMR_DATABASE_SOURCE=""
+UMR_STAGE=""
 export PNPM_HOME="${PNPM_HOME:-$HOME/.local/share/pnpm}"
 export PATH="$PNPM_HOME/bin:$PATH"
 
 log() { printf '\n==> %s\n' "$*"; }
 die() { printf 'error: %s\n' "$*" >&2; exit 1; }
+cleanup() {
+    [[ -z "$UMR_STAGE" ]] || sudo rm -rf "$UMR_STAGE"
+}
+trap cleanup EXIT
 
 [[ $EUID -ne 0 ]] || die "run as the deck user, not root (sudo is used where needed)"
 [[ -f "$SRC_DIR/plugin.json" ]] || die "plugin.json not found next to this script"
@@ -89,14 +94,18 @@ PYTHONPATH=py_modules python3 -m unittest discover -s tests
 # Only the runtime files ship; node_modules/src/tests stay in the checkout.
 
 log "Installing root-owned CPU tuning helper (sudo)"
-sudo rm -rf "$ROOT_HELPER_DIR"
-sudo install -d -m 0755 "$ROOT_HELPER_DIR/smu-oc-patches" "$ROOT_STATE_DIR"
+sudo bash "$SRC_DIR/../bc250-storage.sh" install
+sudo install -d -m 0755 "$ROOT_HELPER_DIR/smu-oc-patches" "$ROOT_STATE_DIR" \
+    /var/lib/bc250-control/governor
 sudo install -m 0755 "$SRC_DIR/../bc250-power.sh" "$ROOT_HELPER_DIR/bc250-power.sh"
 sudo install -m 0755 "$SRC_DIR/../bc250-update-persistence.sh" "$ROOT_HELPER_DIR/bc250-update-persistence.sh"
+sudo install -m 0755 "$SRC_DIR/../bc250-storage.sh" "$ROOT_HELPER_DIR/bc250-storage.sh"
 sudo install -m 0644 "$SRC_DIR"/../smu-oc-patches/* "$ROOT_HELPER_DIR/smu-oc-patches/"
 
-for prefix in "$ROOT_UMR_DIR" /var/lib/bc250-control/umr "$TOOLKIT_DIR" /var/lib/bc250-40cu /usr /usr/local; do
-    if [[ -x "$prefix/bin/umr" && -d "$prefix/share/umr/database" ]]; then
+for prefix in "$ROOT_UMR_DIR" /etc/bc250-control/umr "$TOOLKIT_DIR" /var/lib/bc250-40cu /usr /usr/local; do
+    if [[ -x "$prefix/bin/umr" \
+        && -f "$prefix/share/umr/database/cyan_skillfish.asic" \
+        && -f "$prefix/share/umr/database/cyan_skillfish.soc15" ]]; then
         UMR_SOURCE="$prefix/bin/umr"
         UMR_DATABASE_SOURCE="$prefix/share/umr/database"
         break
@@ -105,13 +114,19 @@ done
 if [[ -n "$UMR_SOURCE" ]]; then
     log "Installing root-owned UMR and ASIC database (sudo)"
     if [[ "$UMR_SOURCE" != "$ROOT_UMR_DIR/bin/umr" ]]; then
+        UMR_STAGE=$(sudo mktemp -d /var/lib/bc250-control/.umr-install.XXXXXX)
+        sudo install -d -m 0755 "$UMR_STAGE/bin" "$UMR_STAGE/share/umr/database"
+        sudo install -m 0755 "$UMR_SOURCE" "$UMR_STAGE/bin/umr"
+        sudo cp -RL "$UMR_DATABASE_SOURCE"/. "$UMR_STAGE/share/umr/database/"
+        sudo chown -R root:root "$UMR_STAGE"
+        sudo chmod -R go-w "$UMR_STAGE"
         sudo rm -rf "$ROOT_UMR_DIR"
-        sudo install -d -m 0755 "$ROOT_UMR_DIR/bin" "$ROOT_UMR_DIR/share/umr/database"
-        sudo install -m 0755 "$UMR_SOURCE" "$ROOT_UMR_DIR/bin/umr"
-        sudo cp -RL "$UMR_DATABASE_SOURCE"/. "$ROOT_UMR_DIR/share/umr/database/"
+        sudo mv "$UMR_STAGE" "$ROOT_UMR_DIR"
+        UMR_STAGE=""
     fi
     sudo chown -R root:root "$ROOT_UMR_DIR"
     sudo chmod -R go-w "$ROOT_UMR_DIR"
+    sudo rm -rf /etc/bc250-control/umr
     if sudo test -f "$CU_CONFIG" && ! sudo test -L "$CU_CONFIG"; then
         if sudo grep -q '^UMR=' "$CU_CONFIG"; then
             sudo sed -i "s|^UMR=.*|UMR=$ROOT_UMR_DIR/bin/umr|" "$CU_CONFIG"

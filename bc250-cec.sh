@@ -77,7 +77,7 @@ WAKE_SVC="bc250-cec-boot-wake.service"
 WAKE_HELPER="$HOME/.local/bin/bc250-cec-boot-wake"
 STANDBY_UNIT="/etc/systemd/system/bc250-cec-poweroff-standby.service"
 STANDBY_SVC="bc250-cec-poweroff-standby.service"
-STANDBY_HELPER="/etc/bc250-cec-poweroff-standby.sh"   # /etc = writable overlay
+STANDBY_HELPER="/var/lib/bc250-control/helper/bc250-cec-poweroff-standby"
 
 # Receiver-follow toggles live in our own flat key=value file, read by the
 # generated helpers AT RUNTIME -- flipping a toggle never needs a unit
@@ -85,6 +85,7 @@ STANDBY_HELPER="/etc/bc250-cec-poweroff-standby.sh"   # /etc = writable overlay
 AMP_CONF="$HOME/.config/bc250-cec.conf"
 SLEEP_HOOK="/etc/systemd/system-sleep/bc250-cec-amp.sh"
 UPDATE_PERSIST_SH="$SCRIPT_DIR/bc250-update-persistence.sh"
+STORAGE_SH="$SCRIPT_DIR/bc250-storage.sh"
 
 OSD_DEFAULT="BC-250"                         # CEC OSD name limit: 14 bytes
 
@@ -718,6 +719,8 @@ cmd_shutdown_standby() {
     case "$action" in
         install)
             require_user
+            [[ -f "$STORAGE_SH" ]] || die "Storage helper missing: $STORAGE_SH"
+            sudo bash "$STORAGE_SH" install
             install_update_persistence
             log "Installing $STANDBY_SVC + helper (sudo)..."
             { printf '#!/bin/bash\nconf=%q\n' "$AMP_CONF"; cat << 'EOF'
@@ -744,6 +747,7 @@ grep -qx 'amp_poweroff=0' "$conf" 2>/dev/null \
 EOF
             } | sudo tee "$STANDBY_HELPER" >/dev/null
             sudo chmod +x "$STANDBY_HELPER"
+            sudo rm -f /etc/bc250-cec-poweroff-standby.sh
             sudo tee "$STANDBY_UNIT" >/dev/null << EOF
 [Unit]
 Description=BC-250: CEC standby to TV + receiver on poweroff (polite)
@@ -770,7 +774,8 @@ EOF
             require_user
             log "Removing $STANDBY_SVC (sudo)..."
             sudo systemctl disable --now "$STANDBY_SVC" >/dev/null 2>&1 || true
-            sudo rm -f "$STANDBY_UNIT" "$STANDBY_HELPER"
+            sudo rm -f "$STANDBY_UNIT" "$STANDBY_HELPER" \
+                /etc/bc250-cec-poweroff-standby.sh
             sudo systemctl daemon-reload
             log "Removed."
             ;;
@@ -1756,7 +1761,8 @@ FILE MAP (user files live in home; system files use the atomic-update keep list)
   ~/.config/systemd/user/bc250-cec-boot-wake.service
   ~/.local/bin/bc250-cec-boot-wake            its helper (polite/grab + amp)
   /etc/systemd/system/bc250-cec-poweroff-standby.service
-  /etc/bc250-cec-poweroff-standby.sh          its helper (polite gate)
+  /var/lib/bc250-control/helper/bc250-cec-poweroff-standby
+                                                 root-owned helper (polite gate)
   /etc/systemd/system-sleep/bc250-cec-amp.sh  amp suspend/resume hook
   (nothing in /usr or /boot; cecd itself is part of the OS image)
 EOF

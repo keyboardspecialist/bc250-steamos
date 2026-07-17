@@ -169,7 +169,9 @@ Install the AIC8800D80 USB modules and firmware configuration:
 sudo bash aic8800/steamdeck-setup.sh
 ```
 
-Keep this checkout at `~/.local/share/bc250-fixes/bc250-steamos` so the module configuration can resolve its firmware path.
+The installer snapshots driver source and firmware into root-owned storage. The
+boot helper rebuilds from that trusted snapshot for a new kernel, then validates
+and stages the exact module files it loads.
 
 ## SteamOS Updates
 
@@ -179,9 +181,27 @@ Keep this checkout at `~/.local/share/bc250-fixes/bc250-steamos` so the module c
 | Power management | The keep list retains tuning and the ACPI service restores its boot files |
 | CEC | Home configuration and allowlisted system integration carry forward |
 | Display clock module | Run `bc250-audio-fix/patch-driver.sh` after each kernel update |
-| AIC8800 modules | Run `sudo bash aic8800/steamdeck-setup.sh` after each kernel update |
+| AIC8800 modules | The root-owned boot helper rebuilds for a new kernel; rerun setup only if it reports a missing source snapshot or build failure |
 
 Current installers preserve their configuration across atomic updates.
+
+Privileged executables, firmware, and state live at `/var/lib/bc250-control`.
+On SteamOS this is a bind mount backed by
+`/home/.steamos/offload/var/lib/bc250-control`, following Valve's offload
+layout. The backing path and all of its ancestors are root-owned, so the Deck
+user cannot replace code later executed by a root service. The mount unit and
+its enablement symlink are included in a dedicated atomic-update drop-in and
+in every component drop-in.
+
+```bash
+sudo bash ./bc250-storage.sh status
+sudo bash ./bc250-storage.sh repair
+```
+
+`repair` is idempotent and recreates the backing directory, mount unit,
+enablement symlink, and atomic-update drop-in if an update removed integration
+files. The backing data survives normal atomic updates because `/home` is the
+shared partition; reinstalling or reimaging the device is outside that guarantee.
 
 ### Persistence Commands
 

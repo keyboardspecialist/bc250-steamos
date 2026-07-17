@@ -25,11 +25,11 @@ ENV = "/usr/bin/env"
 RUNUSER = "/usr/bin/runuser"
 SYSTEMCTL = "/usr/bin/systemctl"
 GPU_CONFIG_PATH = Path("/etc/cyan-skillfish-governor-smu/config.toml")
-GPU_STATE_PATH = Path("/etc/cyan-skillfish-governor-smu/freq-state")
+GPU_STATE_PATH = Path("/var/lib/bc250-control/governor/freq-state")
 CPU_HELPER_PATH = Path("/var/lib/bc250-control/helper/bc250-power.sh")
 CPU_STATE_DIR = Path("/var/lib/bc250-control/smu-oc")
-ROOT_UMR_PATH = Path("/etc/bc250-control/umr/bin/umr")
-ROOT_UMR_DATABASE_PATH = Path("/etc/bc250-control/umr/share/umr/database")
+ROOT_UMR_PATH = Path("/var/lib/bc250-control/umr/bin/umr")
+ROOT_UMR_DATABASE_PATH = Path("/var/lib/bc250-control/umr/share/umr/database")
 CU_CONFIG_PATH = Path("/etc/bc250-cu-live-manager.conf")
 CU_MANAGER_PATHS = (
     Path("/var/lib/bc250-control/helper/bc250-cu-live-manager"),
@@ -707,6 +707,12 @@ class ToolkitBackend:
         self, mode: str, first: int = 0, second: int = 0
     ) -> None:
         state = GPU_STATE_PATH
+        if str(state).startswith("/var/lib/bc250-control/"):
+            parent = state.parent
+            if not self._trusted_root_directory(parent):
+                raise CommandError(f"GPU frequency state directory is unsafe: {parent}")
+            if state.exists() and not self._trusted_root_file(state):
+                raise CommandError(f"GPU frequency state is unsafe: {state}")
         if state.is_symlink():
             raise CommandError(f"Refusing to modify symlink: {state}")
         if mode == "adaptive":
@@ -716,6 +722,9 @@ class ToolkitBackend:
                 state.unlink()
             return
         self._atomic_write(state, f"MODE={mode}\nA={first or ''}\nB={second or ''}\n")
+        if os.geteuid() == 0:
+            os.chown(state, 0, 0)
+            os.chmod(state, 0o644)
 
     async def _apply_frequency(
         self, mode: str, first: int = 0, second: int = 0

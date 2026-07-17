@@ -14,9 +14,10 @@
 #     Without a governor the GPU is locked at 1500 MHz and idles hot.
 #
 # SteamOS persistence model used throughout:
-#   ~/.local/share/bc250-fixes/bc250-steamos  master copies and build artifacts
-#   /etc                                    configs and units, retained by an
-#                                           atomic-update keep list
+#   ~/.local/share/bc250-fixes/bc250-steamos  source and build inputs
+#   /var/lib/bc250-control                    trusted executables and state
+#   /etc                                      configs and units, retained by an
+#                                             atomic-update keep list
 #   /boot                cpio must live here for GRUB           -- WIPED by updates
 #                        -> a boot-time self-heal service restores it
 #
@@ -39,10 +40,12 @@ FIXES_REPO_DIR="${FIXES_REPO_DIR:-$REAL_HOME/.local/share/bc250-fixes/bc250-stea
 [[ "$FIXES_REPO_DIR" == /* && "$FIXES_REPO_DIR" != *[$'\n\r\t ']* ]] \
     || { echo "FIXES_REPO_DIR must be an absolute path without whitespace." >&2; exit 1; }
 PREFIX="$FIXES_REPO_DIR"
+ROOT_DATA_DIR="/var/lib/bc250-control"
+COMPUTE_MIGRATION_MARKER="$ROOT_DATA_DIR/.legacy-compute-migrated"
+POWER_MIGRATION_MARKER="$ROOT_DATA_DIR/.legacy-power-migrated"
 LEGACY_PREFIX="/var/lib/bc250-40cu"
-MIGRATION_MARKER="$PREFIX/.var-lib-migrated"
-BIN_DIR="$PREFIX/bin"
-ACPI_DIR="$PREFIX/acpi"
+BIN_DIR="$ROOT_DATA_DIR/bin"
+ACPI_DIR="$ROOT_DATA_DIR/acpi"
 CPIO_MASTER="$ACPI_DIR/acpi_override.cpio"
 CPIO_BOOT="/boot/acpi_override.cpio"
 ACPI_RAW_BASE="https://raw.githubusercontent.com/bc250-collective/bc250-acpi-fix/main"
@@ -58,10 +61,10 @@ GOV_API="https://api.github.com/repos/filippor/cyan-skillfish-governor/releases/
 GOV_RAW="https://raw.githubusercontent.com/filippor/cyan-skillfish-governor/smu"
 
 HEAL_UNIT="/etc/systemd/system/bc250-acpi-heal.service"
-HEAL_HELPER="/etc/bc250-acpi-heal.sh"
+HEAL_HELPER="$ROOT_DATA_DIR/helper/bc250-acpi-heal"
 CPUFREQ_UNIT="/etc/systemd/system/bc250-cpufreq.service"
 
-FREQ_STATE="$GOV_CONF_DIR/freq-state"
+FREQ_STATE="$ROOT_DATA_DIR/governor/freq-state"
 RESTORE_BIN="$BIN_DIR/bc250-gpu-freq-restore"
 RESTORE_UNIT="/etc/systemd/system/bc250-gpu-freq-restore.service"
 RESTORE_SVC="bc250-gpu-freq-restore.service"
@@ -72,12 +75,13 @@ RESTORE_SVC="bc250-gpu-freq-restore.service"
 OC_PIN="43d6b4c6e38c57bc9ec8908c44675ce7d5fd3d2f"
 OC_TARBALL="https://github.com/bc250-collective/bc250_smu_oc/archive/$OC_PIN.tar.gz"
 OC_PATCH_DIR="$SCRIPT_DIR/smu-oc-patches"
-OC_DIR="${BC250_OC_DIR:-$PREFIX/smu-oc}"
+OC_DIR="${BC250_OC_DIR:-$ROOT_DATA_DIR/smu-oc}"
 OC_STAGE_CONF="$OC_DIR/overclock.conf"
 OC_CONF="/etc/bc250-smu-oc.conf"
 OC_UNIT="/etc/systemd/system/bc250-smu-oc.service"
 OC_SVC="bc250-smu-oc.service"
 UPDATE_PERSIST_SH="$SCRIPT_DIR/bc250-update-persistence.sh"
+STORAGE_SH="$SCRIPT_DIR/bc250-storage.sh"
 
 log()  { echo -e "\033[1;32m[power]\033[0m $*"; }
 warn() { echo -e "\033[1;33m[power]\033[0m $*"; }
@@ -95,13 +99,28 @@ recover_update_settings() {
 }
 
 migrate_legacy_data() {
-    [[ ! -L "$LEGACY_PREFIX" ]] || return 0
-    [[ -d "$LEGACY_PREFIX" ]] || return 0
-    [[ ! -e "$MIGRATION_MARKER" ]] || return 0
-    mkdir -p "$PREFIX"
-    log "Migrating legacy toolkit data from $LEGACY_PREFIX to $PREFIX..."
-    cp -a -n "$LEGACY_PREFIX/." "$PREFIX/"
-    touch "$MIGRATION_MARKER"
+    local file marker="$POWER_MIGRATION_MARKER"
+    [[ -f "$STORAGE_SH" ]] || die "Storage helper missing: $STORAGE_SH"
+    bash "$STORAGE_SH" install
+    install -d -o root -g root -m 0755 "$BIN_DIR" "$ACPI_DIR" \
+        "$ROOT_DATA_DIR/helper" "$ROOT_DATA_DIR/governor" "$OC_DIR"
+    if [[ -d "$LEGACY_PREFIX" && ! -e "$marker" ]]; then
+        [[ ! -d "$LEGACY_PREFIX/acpi" ]] \
+            || cp -a "$LEGACY_PREFIX/acpi"/. "$ACPI_DIR"/
+        [[ ! -d "$LEGACY_PREFIX/smu-oc" ]] \
+            || cp -a "$LEGACY_PREFIX/smu-oc"/. "$OC_DIR"/
+        for file in cyan-skillfish-governor-smu cyan-skillfish-performance-mode \
+            bc250-gpu-freq-restore; do
+            if [[ ! -e "$BIN_DIR/$file" && -f "$LEGACY_PREFIX/bin/$file" ]]; then
+                install -o root -g root -m 0755 "$LEGACY_PREFIX/bin/$file" "$BIN_DIR/$file"
+            fi
+        done
+        touch "$marker"
+    fi
+    if [[ ! -e "$FREQ_STATE" && -f "$GOV_CONF_DIR/freq-state" && ! -L "$GOV_CONF_DIR/freq-state" ]]; then
+        install -o root -g root -m 0644 "$GOV_CONF_DIR/freq-state" "$FREQ_STATE"
+        rm -f "$GOV_CONF_DIR/freq-state"
+    fi
 }
 
 cleanup_legacy_data() {
@@ -115,10 +134,9 @@ cleanup_legacy_data() {
             return 0
         fi
     done
-    rm -rf "$LEGACY_PREFIX"
-    mkdir -p "${LEGACY_PREFIX%/*}"
-    ln -s "$PREFIX" "$LEGACY_PREFIX"
-    log "Replaced $LEGACY_PREFIX with a compatibility symlink to the home-backed data."
+    [[ -e "$COMPUTE_MIGRATION_MARKER" && -e "$POWER_MIGRATION_MARKER" ]] || return 0
+    rm -rf "$LEGACY_PREFIX" "$ROOT_DATA_DIR/legacy-bc250-40cu"
+    log "Removed fully migrated legacy data at $LEGACY_PREFIX."
 }
 
 RO_WAS_DISABLED=0
@@ -283,7 +301,7 @@ badge_gov_boot() {
 badge_freq() {
     if [[ -f "$FREQ_STATE" ]]; then
         # shellcheck source=/dev/null
-        b_mid "saved: $( (. "$FREQ_STATE" && echo "$MODE ${A:-} ${B:-}") 2>/dev/null | xargs || true)"
+        b_mid "saved: $(tr '\n' ' ' < "$FREQ_STATE" | xargs || true)"
     else b_off "config defaults"; fi
 }
 badge_load_target() {
@@ -446,12 +464,13 @@ if [[ ! -f $CPIO_BOOT ]] || ! cmp -s "$CPIO_MASTER" "$CPIO_BOOT" \
 fi
 EOF
     chmod 755 "$HEAL_HELPER"
+    rm -f /etc/bc250-acpi-heal.sh
 
     cat > "$HEAL_UNIT" << EOF
 [Unit]
 Description=BC-250 ACPI override self-heal (restore after SteamOS updates)
 After=local-fs.target
-RequiresMountsFor=$FIXES_REPO_DIR
+RequiresMountsFor=$ROOT_DATA_DIR
 
 [Service]
 Type=oneshot
@@ -669,7 +688,7 @@ EOF
 [Unit]
 Description=Cyan Skillfish GPU governor (SMU) -- BC-250
 After=multi-user.target bc250-cu-live-manager.service
-RequiresMountsFor=$FIXES_REPO_DIR
+RequiresMountsFor=$ROOT_DATA_DIR
 
 [Service]
 Type=simple
@@ -721,7 +740,7 @@ install_freq_persistence() {
         return 0
     fi
 
-    mkdir -p "$BIN_DIR"
+    mkdir -p "$BIN_DIR" "$ROOT_DATA_DIR/governor"
     cat > "$RESTORE_BIN" << EOF
 #!/usr/bin/env bash
 # bc250: reapply the saved GPU freq setting after the governor starts.
@@ -731,7 +750,20 @@ STATE="$FREQ_STATE"
 PERF="$PERF_BIN"
 BUS_NAME="$BUS_NAME"; BUS_PATH="$BUS_PATH"; BUS_IFACE="$BUS_IFACE"
 [[ -f "\$STATE" ]] || exit 0
-. "\$STATE"
+MODE= A= B=
+while IFS='=' read -r key value; do
+    case "\$key" in
+        MODE) MODE="\$value" ;;
+        A) A="\$value" ;;
+        B) B="\$value" ;;
+    esac
+done < "\$STATE"
+case "\$MODE" in
+    max) A= B= ;;
+    pin) [[ "\$A" =~ ^[0-9]+$ ]] || exit 1; B= ;;
+    range) [[ "\$A" =~ ^[0-9]+$ && "\$B" =~ ^[0-9]+$ ]] || exit 1 ;;
+    *) exit 1 ;;
+esac
 # governor registers its bus name shortly after start; give it up to 30 s
 for _ in \$(seq 1 30); do
     busctl --system status "\$BUS_NAME" >/dev/null 2>&1 && break
@@ -765,7 +797,7 @@ EOF
 Description=BC-250 restore saved GPU freq setting (survives reboots)
 After=$GOV_SVC
 PartOf=$GOV_SVC
-RequiresMountsFor=$FIXES_REPO_DIR
+RequiresMountsFor=$ROOT_DATA_DIR
 
 [Service]
 Type=oneshot
@@ -782,7 +814,10 @@ EOF
 
 save_freq_state() {           # save_freq_state <max|pin|range> [a] [b]
     install_freq_persistence
+    install -d -o root -g root -m 0755 "$(dirname "$FREQ_STATE")"
     printf 'MODE=%s\nA=%s\nB=%s\n' "$1" "${2:-}" "${3:-}" > "$FREQ_STATE"
+    chown root:root "$FREQ_STATE"
+    chmod 0644 "$FREQ_STATE"
     log "Saved -- reapplied automatically at boot ('$0 freq auto' to clear)."
 }
 
@@ -1231,6 +1266,7 @@ cmd_ramp() {
 
 cmd_helpers() {
     require_root
+    migrate_legacy_data
     install_update_persistence
     mkdir -p "$BIN_DIR" /etc/dbus-1/system.d
     # Pin to the latest release tag so helper and installed binary agree on
@@ -1278,6 +1314,7 @@ EOF
 
 cmd_enable() {
     require_root
+    migrate_legacy_data
     install_freq_persistence force
     systemctl enable "$GOV_SVC"
     if systemctl is-active "$GOV_SVC" >/dev/null 2>&1; then
@@ -1412,7 +1449,7 @@ oc_enable() {
 Description=BC-250 CPU overclock/undervolt (bc250_smu_oc, SMU)
 # strictly before the GPU governor: both drive the same SMU indirect window
 Before=$GOV_SVC
-RequiresMountsFor=$FIXES_REPO_DIR
+RequiresMountsFor=$ROOT_DATA_DIR
 
 [Service]
 Type=oneshot
@@ -1722,7 +1759,7 @@ bc250-power.sh -- BC-250 power management for SteamOS
 ==============================================================
 CPU C/P-states via ACPI SSDT override + adaptive GPU governor (SMU).
 Toolkit-owned /etc files are registered in SteamOS's atomic-update keep list.
-Home-backed binaries and ACPI source data remain under the hidden toolkit.
+Privileged binaries and state live in root-owned, offloaded /var/lib storage.
 
 GUIDED MENU
   Run with no arguments (or 'menu') in a terminal for an interactive,
@@ -1797,7 +1834,7 @@ EVERYDAY COMMANDS
     freq max          performance mode at the top of the voltage curve
     freq auto         back to adaptive + config defaults (1500 cap)
               Settings PERSIST across reboots: each set is saved to
-              /etc/cyan-skillfish-governor-smu/freq-state and the
+              /var/lib/bc250-control/governor/freq-state and the
               bc250-gpu-freq-restore service reapplies it once the
               governor is up. 'freq auto' clears the saved state.
               Thermal throttling (85C) applies no matter what you set.
@@ -1850,20 +1887,20 @@ PERMANENT TUNING (config file, not this script)
   then: systemctl restart cyan-skillfish-governor-smu
 
 STEAM LAUNCH OPTION (per-game max clocks, auto-restores on exit)
-  ~/.local/share/bc250-fixes/bc250-steamos/bin/cyan-skillfish-performance-mode %command%
-  ~/.local/share/bc250-fixes/bc250-steamos/bin/cyan-skillfish-performance-mode --range 0 2000 %command%
+  /var/lib/bc250-control/bin/cyan-skillfish-performance-mode %command%
+  /var/lib/bc250-control/bin/cyan-skillfish-performance-mode --range 0 2000 %command%
 
 FILE MAP
-  ~/.local/share/bc250-fixes/bc250-steamos/bin/
+  /var/lib/bc250-control/bin/
                                governor + helper binaries   (persists)
-  ~/.local/share/bc250-fixes/bc250-steamos/acpi/
+  /var/lib/bc250-control/acpi/
                                SSDTs + master override cpio (persists)
-  ~/.local/share/bc250-fixes/bc250-steamos/smu-oc/
+  /var/lib/bc250-control/smu-oc/
                                CPU OC tool (fetched @ pinned commit,
                                patched from smu-oc-patches/)
   /etc/bc250-smu-oc.conf       CPU OC config       (atomic-update keep list)
   /etc/cyan-skillfish-governor-smu/config.toml     (atomic-update keep list)
-  /etc/cyan-skillfish-governor-smu/freq-state  last 'freq' setting,
+  /var/lib/bc250-control/governor/freq-state  last 'freq' setting,
                                replayed at boot by bc250-gpu-freq-restore
   /etc/systemd/system/*.service, /etc/dbus-1/system.d/
                                       retained by atomic-update keep list

@@ -3,9 +3,9 @@
 #
 # All-in-one BC-250 40 CU unlock for SteamOS 3.8.x via the runtime UMR route.
 #
-# Runtime assets are split between the home-backed toolkit and root-owned /etc:
-#   ~/.local/share/bc250-fixes/bc250-steamos  source/build tree + manager
-#   /etc/bc250-control/umr                    trusted umr + ASIC database
+# Runtime assets are split between the home-backed source tree and root storage:
+#   ~/.local/share/bc250-fixes/bc250-steamos  source/build tree
+#   /var/lib/bc250-control                    trusted executables + UMR database
 #   /etc                                      systemd unit + boot table config
 # SteamOS updates replace /usr and selectively retain /etc. The installer adds
 # toolkit-owned system files to SteamOS's atomic-update keep list.
@@ -56,10 +56,14 @@ FIXES_REPO_DIR="${FIXES_REPO_DIR:-$REAL_HOME/.local/share/bc250-fixes/bc250-stea
 [[ "$FIXES_REPO_DIR" == /* && "$FIXES_REPO_DIR" != *[$'\n\r\t ']* ]] \
     || { echo "FIXES_REPO_DIR must be an absolute path without whitespace." >&2; exit 1; }
 PREFIX="$FIXES_REPO_DIR"
-UMR_PREFIX="/etc/bc250-control/umr"
+ROOT_DATA_DIR="/var/lib/bc250-control"
+COMPUTE_MIGRATION_MARKER="$ROOT_DATA_DIR/.legacy-compute-migrated"
+POWER_MIGRATION_MARKER="$ROOT_DATA_DIR/.legacy-power-migrated"
+UMR_PREFIX="$ROOT_DATA_DIR/umr"
 UMR_BIN="$UMR_PREFIX/bin/umr"
 UMR_DATABASE="$UMR_PREFIX/share/umr/database"
 OLD_UMR_PREFIX="$PREFIX"
+LEGACY_ETC_UMR_PREFIX="/etc/bc250-control/umr"
 MANAGER_SH="$PREFIX/bc250-cu-live-manager.sh"
 MANAGER_URL="https://raw.githubusercontent.com/WinnieLV/bc250-cu-live-manager/refs/heads/main/bc250-cu-live-manager.sh"
 UMR_GIT="https://gitlab.freedesktop.org/tomstdenis/umr.git"
@@ -68,9 +72,9 @@ BLD="$SRC/b"
 SERVICE="/etc/systemd/system/bc250-cu-live-manager.service"
 SERVICE_CONF="/etc/bc250-cu-live-manager.conf"
 ROOTFS_MANAGER_BIN="/usr/local/bin/bc250-cu-live-manager"
-PERSIST_MANAGER_BIN="$PREFIX/bc250-cu-live-manager"
+PERSIST_MANAGER_BIN="$ROOT_DATA_DIR/helper/bc250-cu-live-manager"
 LEGACY_PREFIX="/var/lib/bc250-40cu"
-MIGRATION_MARKER="$PREFIX/.var-lib-migrated"
+STORAGE_SH="$SCRIPT_DIR/bc250-storage.sh"
 UPDATE_PERSIST_SH="$SCRIPT_DIR/bc250-update-persistence.sh"
 UPDATE_KEEP_FILE="/etc/atomic-update.conf.d/bc250-compute.conf"
 
@@ -90,13 +94,17 @@ recover_update_settings() {
 }
 
 migrate_legacy_data() {
-    [[ ! -L "$LEGACY_PREFIX" ]] || return 0
-    [[ -d "$LEGACY_PREFIX" ]] || return 0
-    [[ ! -e "$MIGRATION_MARKER" ]] || return 0
-    mkdir -p "$PREFIX"
-    log "Migrating legacy toolkit data from $LEGACY_PREFIX to $PREFIX..."
-    cp -a -n "$LEGACY_PREFIX/." "$PREFIX/"
-    touch "$MIGRATION_MARKER"
+    [[ -f "$STORAGE_SH" ]] || die "Storage helper missing: $STORAGE_SH"
+    bash "$STORAGE_SH" install
+    if [[ ! -e "$PERSIST_MANAGER_BIN" ]]; then
+        if [[ -f "$LEGACY_PREFIX/bc250-cu-live-manager" ]]; then
+            install -D -o root -g root -m 0755 \
+                "$LEGACY_PREFIX/bc250-cu-live-manager" "$PERSIST_MANAGER_BIN"
+        elif [[ -f "$LEGACY_PREFIX/bc250-cu-live-manager.sh" ]]; then
+            install -D -o root -g root -m 0755 \
+                "$LEGACY_PREFIX/bc250-cu-live-manager.sh" "$PERSIST_MANAGER_BIN"
+        fi
+    fi
 }
 
 cleanup_legacy_data() {
@@ -112,23 +120,41 @@ cleanup_legacy_data() {
             return 0
         fi
     done
-    rm -rf "$LEGACY_PREFIX"
-    mkdir -p "${LEGACY_PREFIX%/*}"
-    ln -s "$PREFIX" "$LEGACY_PREFIX"
-    log "Replaced $LEGACY_PREFIX with a compatibility symlink to the home-backed data."
+    [[ -e "$COMPUTE_MIGRATION_MARKER" && -e "$POWER_MIGRATION_MARKER" ]] || return 0
+    rm -rf "$LEGACY_PREFIX" "$ROOT_DATA_DIR/legacy-bc250-40cu"
+    log "Removed fully migrated legacy data at $LEGACY_PREFIX."
 }
 
 migrate_home_umr() {
-    [[ -x "$UMR_BIN" ]] && return 0
-    [[ -x "$OLD_UMR_PREFIX/bin/umr" \
-        && -d "$OLD_UMR_PREFIX/share/umr/database" ]] || return 0
+    local source="" candidate stage
+    if [[ -x "$UMR_BIN" \
+        && -f "$UMR_DATABASE/cyan_skillfish.asic" \
+        && -f "$UMR_DATABASE/cyan_skillfish.soc15" ]]; then
+        touch "$COMPUTE_MIGRATION_MARKER"
+        return 0
+    fi
+    for candidate in "$LEGACY_ETC_UMR_PREFIX" "$OLD_UMR_PREFIX" "$LEGACY_PREFIX"; do
+        if [[ -x "$candidate/bin/umr" \
+            && -f "$candidate/share/umr/database/cyan_skillfish.asic" \
+            && -f "$candidate/share/umr/database/cyan_skillfish.soc15" ]]; then
+            source="$candidate"
+            break
+        fi
+    done
+    [[ -n "$source" ]] || return 0
     log "Migrating umr and its ASIC database to trusted storage at $UMR_PREFIX..."
+    stage=$(mktemp -d "$ROOT_DATA_DIR/.umr-migrate.XXXXXX")
+    install -d -o root -g root -m 0755 "$stage/bin" "$stage/share/umr/database"
+    install -o root -g root -m 0755 "$source/bin/umr" "$stage/bin/umr"
+    cp -RL "$source/share/umr/database"/. "$stage/share/umr/database/"
+    chown -R root:root "$stage"
+    chmod -R go-w "$stage"
     rm -rf "$UMR_PREFIX"
-    install -d -m 0755 "$UMR_PREFIX/bin" "$UMR_PREFIX/share/umr/database"
-    install -m 0755 "$OLD_UMR_PREFIX/bin/umr" "$UMR_BIN"
-    cp -RL "$OLD_UMR_PREFIX/share/umr/database"/. "$UMR_PREFIX/share/umr/database/"
-    chown -R root:root "$UMR_PREFIX"
-    chmod -R go-w "$UMR_PREFIX"
+    mv "$stage" "$UMR_PREFIX"
+    if [[ "$source" == "$LEGACY_ETC_UMR_PREFIX" ]]; then
+        rm -rf "$LEGACY_ETC_UMR_PREFIX"
+    fi
+    touch "$COMPUTE_MIGRATION_MARKER"
 }
 
 RO_WAS_DISABLED=0
@@ -344,7 +370,8 @@ cmd_check() {
 
     if [[ -x "$UMR_BIN" ]]; then log "Persistent umr: $UMR_BIN"
     else warn "No umr at $UMR_BIN -- run: $0 prep"; fi
-    if [[ -f "$MANAGER_SH" ]]; then log "Manager script cached."
+    if [[ -f "$PERSIST_MANAGER_BIN" ]]; then log "Trusted manager installed."
+    elif [[ -f "$MANAGER_SH" ]]; then warn "Manager is cached but not installed to trusted storage."
     else warn "Manager not fetched yet."; fi
     if [[ -f "$SERVICE" ]]; then
         log "Boot service installed: $(systemctl is-enabled bc250-cu-live-manager.service 2>/dev/null || echo present)"
@@ -454,6 +481,7 @@ cmd_manager() {
         curl -fL -o "$MANAGER_SH" "$MANAGER_URL"
         chmod +x "$MANAGER_SH"
     fi
+    install -D -o root -g root -m 0755 "$MANAGER_SH" "$PERSIST_MANAGER_BIN"
 
     cat << 'EOT'
 ------------------------------------------------------------------------
@@ -483,7 +511,7 @@ EOT
     quarantine_stale_umr
     # find_umr() ignores PATH; the UMR env var is the supported override
     # and write-service-table persists it into the EnvironmentFile conf.
-    UMR="$UMR_BIN" UMR_DATABASE_PATH="$UMR_DATABASE" "$MANAGER_SH" "$@"
+    UMR="$UMR_BIN" UMR_DATABASE_PATH="$UMR_DATABASE" "$PERSIST_MANAGER_BIN" "$@"
     relock_rootfs
     log "If you installed the service ('i'), now run: $0 persist"
 }
@@ -497,20 +525,23 @@ cmd_persist() {
 
     if [[ -f "$ROOTFS_MANAGER_BIN" ]]; then
         log "Relocating service binary off the wipeable rootfs..."
-        cp -f "$ROOTFS_MANAGER_BIN" "$PERSIST_MANAGER_BIN"
+        install -D -o root -g root -m 0755 "$ROOTFS_MANAGER_BIN" "$PERSIST_MANAGER_BIN"
     elif [[ -f "$MANAGER_SH" && ! -f "$PERSIST_MANAGER_BIN" ]]; then
         warn "/usr/local copy missing (already wiped?); using cached manager script."
-        cp -f "$MANAGER_SH" "$PERSIST_MANAGER_BIN"
+        install -D -o root -g root -m 0755 "$MANAGER_SH" "$PERSIST_MANAGER_BIN"
     fi
     [[ -f "$PERSIST_MANAGER_BIN" ]] \
         || die "No manager binary found anywhere ($ROOTFS_MANAGER_BIN, $MANAGER_SH). Re-run: $0 manager"
+    chown root:root "$PERSIST_MANAGER_BIN"
     chmod 755 "$PERSIST_MANAGER_BIN"
 
     sed -i "s|$ROOTFS_MANAGER_BIN|$PERSIST_MANAGER_BIN|g" "$SERVICE"
     sed -i "s|/var/usrlocal/bin/bc250-cu-live-manager|$PERSIST_MANAGER_BIN|g" "$SERVICE"
     sed -i "s|$LEGACY_PREFIX/bc250-cu-live-manager|$PERSIST_MANAGER_BIN|g" "$SERVICE"
-    if ! grep -q '^RequiresMountsFor=' "$SERVICE"; then
-        sed -i "/^\[Unit\]/a RequiresMountsFor=$FIXES_REPO_DIR" "$SERVICE"
+    if grep -q '^RequiresMountsFor=' "$SERVICE"; then
+        sed -i "s|^RequiresMountsFor=.*|RequiresMountsFor=$ROOT_DATA_DIR|" "$SERVICE"
+    else
+        sed -i "/^\[Unit\]/a RequiresMountsFor=$ROOT_DATA_DIR" "$SERVICE"
     fi
 
     # Belt-and-suspenders: ensure the conf pins our persistent umr.
@@ -579,8 +610,8 @@ Re-enables the factory-harvested compute units at RUNTIME (no kernel
 rebuild) by writing the CC/SPI/RLC dispatch registers via umr, using
 WinnieLV's bc250-cu-live-manager. A boot service replays the saved WGP
 table every boot. SteamOS's atomic-update keep list retains the unit and
-configuration, trusted UMR binary, and ASIC database. Build sources and
-the CU manager live in the home-backed toolkit directory.
+configuration and mount unit. Trusted UMR data and the CU manager live in
+the root-owned, SteamOS-offloaded /var/lib/bc250-control tree.
 
 GUIDED MENU
   Run with no arguments (or 'menu') in a terminal for an interactive,
@@ -596,8 +627,7 @@ COMMANDS (setup order)
   check     Preflight: BC-250 PCI ID present, debugfs + amdgpu register
             interface available, what's installed so far. Needs root.
 
-  prep      Build umr from source into
-            ~/.local/share/bc250-fixes/bc250-steamos. Handles
+  prep      Build umr from source into /var/lib/bc250-control. Handles
             every SteamOS landmine found the hard way:
               - reinstalls glibc/ncurses/libpciaccess/libdrm because the
                 SteamOS image STRIPS their headers and .pc files
@@ -606,7 +636,7 @@ COMMANDS (setup order)
               - injects libs into the link line (--no-as-needed)
               - installs the ASIC DATABASE next to the binary; a
                 binary-only umr knows zero ASICs and fails every read
-            Verify with: sudo /etc/bc250-control/umr/bin/umr -e
+            Verify with: sudo /var/lib/bc250-control/umr/bin/umr -e
             (this umr has no --list-asics; -e enumerates live hardware)
 
   manager   Launch the live-manager TUI the RIGHT way: UMR env var set
@@ -625,7 +655,7 @@ COMMANDS (setup order)
               manager enable-wgp 0.0.3 0.0.4 1.0.3 ...
 
   persist   Protect the boot service across updates: relocates the manager
-            binary to the home-backed toolkit, rewrites the unit, pins UMR=
+            binary to root-owned storage, rewrites the unit, pins UMR=
             in the conf, installs the atomic-update keep list, and enables
             the service. Run once after [i].
 
@@ -641,10 +671,10 @@ COMMANDS (setup order)
   all       check + prep + manager.
 
 FILE MAP
-  /etc/bc250-control/umr/bin/umr         trusted umr build  (atomic-update keep list)
-  /etc/bc250-control/umr/share/umr/      ASIC database      (atomic-update keep list)
-  ~/.local/share/bc250-fixes/bc250-steamos/bc250-cu-live-manager*
-                                         manager            (persists)
+  /var/lib/bc250-control/umr/bin/umr     trusted umr build
+  /var/lib/bc250-control/umr/share/umr/  ASIC database
+  /var/lib/bc250-control/helper/bc250-cu-live-manager
+                                         trusted manager
   /etc/systemd/system/bc250-cu-live-manager.service   (atomic-update keep list)
   /etc/bc250-cu-live-manager.conf        WGP table + UMR=   (atomic-update keep list)
   /usr/*                                 disposable -- wiped by updates

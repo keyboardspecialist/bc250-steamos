@@ -1,22 +1,20 @@
 #!/bin/bash
 # Ensure the AIC8800 dongle's kernel modules are built for and loaded on the
 # running kernel. SteamOS updates wipe /lib/modules extras and the pacman
-# toolchain; this rebuilds from the repo checkout and loads with insmod so the
-# rootfs can stay read-only (except while reinstalling the toolchain).
+# toolchain; this rebuilds from the root-owned source snapshot and loads with
+# insmod so the rootfs can stay read-only (except while reinstalling tools).
 set -euo pipefail
 KVER="$(uname -r)"
-PATH_CONF=/etc/aic8800-paths.conf
-[ -r "$PATH_CONF" ] || { echo "missing $PATH_CONF; rerun steamdeck-setup.sh"; exit 1; }
-# shellcheck source=/dev/null
-. "$PATH_CONF"
-: "${AIC8800_REPO:?missing AIC8800_REPO in $PATH_CONF}"
-: "${AIC8800_BUILD_USER:?missing AIC8800_BUILD_USER in $PATH_CONF}"
-DRV="$AIC8800_REPO/src/USB/driver_fw/drivers/aic8800"
-FWDIR="$AIC8800_REPO/src/USB/driver_fw/fw/aic8800D80"
-LOADFW_KO="$DRV/aic_load_fw/aic_load_fw.ko"
-FDRV_KO="$DRV/aic8800_fdrv/aic8800_fdrv.ko"
+DRV=/var/lib/bc250-control/aic8800/source
+FWDIR=/var/lib/bc250-control/aic8800/firmware/aic8800D80
+STAGE=/var/lib/bc250-control/aic8800/modules/$KVER
+BUILD_LOADFW_KO="$DRV/aic_load_fw/aic_load_fw.ko"
+BUILD_FDRV_KO="$DRV/aic8800_fdrv/aic8800_fdrv.ko"
+LOADFW_KO="$STAGE/aic_load_fw.ko"
+FDRV_KO="$STAGE/aic8800_fdrv.ko"
 
 log() { echo "$*"; }
+[ -f "$DRV/Makefile" ] || { log "trusted AIC8800 source is missing; rerun steamdeck-setup.sh"; exit 1; }
 
 ROOTFS_WAS_READONLY=0
 unlock_rootfs() {
@@ -43,8 +41,8 @@ fi
 
 ko_kver() { modinfo -F vermagic "$1" 2>/dev/null | cut -d' ' -f1; }
 
-if [ "$(ko_kver "$LOADFW_KO")" != "$KVER" ] \
-   || [ "$(ko_kver "$FDRV_KO")" != "$KVER" ]; then
+if [ "$(ko_kver "$BUILD_LOADFW_KO")" != "$KVER" ] \
+   || [ "$(ko_kver "$BUILD_FDRV_KO")" != "$KVER" ]; then
     if ! command -v gcc >/dev/null || ! command -v make >/dev/null; then
         log "toolchain missing (wiped by OS update); reinstalling base-devel"
         unlock_rootfs
@@ -58,17 +56,27 @@ if [ "$(ko_kver "$LOADFW_KO")" != "$KVER" ] \
     if [ ! -d "$DRV/steamos-headers/usr/lib/modules/$KVER/build" ] \
        && [ ! -d "/lib/modules/$KVER/build" ]; then
         log "fetching kernel headers for $KVER"
-        runuser -u "$AIC8800_BUILD_USER" -- make -C "$DRV" steamos-headers
+        make -C "$DRV" steamos-headers
     fi
 
     log "building modules for $KVER"
-    runuser -u "$AIC8800_BUILD_USER" -- make -C "$DRV" clean || true
-    runuser -u "$AIC8800_BUILD_USER" -- make -C "$DRV"
-    [ "$(ko_kver "$LOADFW_KO")" = "$KVER" ] \
+    make -C "$DRV" clean || true
+    make -C "$DRV"
+    [ "$(ko_kver "$BUILD_LOADFW_KO")" = "$KVER" ] \
         || { log "built firmware-loader module does not match $KVER"; exit 1; }
-    [ "$(ko_kver "$FDRV_KO")" = "$KVER" ] \
+    [ "$(ko_kver "$BUILD_FDRV_KO")" = "$KVER" ] \
         || { log "built WiFi module does not match $KVER"; exit 1; }
 fi
+
+# Build as the unprivileged user, then copy and validate the exact root-owned
+# files that will be passed to insmod.
+install -d -o root -g root -m 0755 "$STAGE"
+install -o root -g root -m 0644 "$BUILD_LOADFW_KO" "$LOADFW_KO"
+install -o root -g root -m 0644 "$BUILD_FDRV_KO" "$FDRV_KO"
+[ "$(ko_kver "$LOADFW_KO")" = "$KVER" ] \
+    || { log "staged firmware-loader module does not match $KVER"; exit 1; }
+[ "$(ko_kver "$FDRV_KO")" = "$KVER" ] \
+    || { log "staged WiFi module does not match $KVER"; exit 1; }
 
 # insmod does not read /etc/modprobe.d, so pass the firmware path explicitly.
 loaded_fw=0
