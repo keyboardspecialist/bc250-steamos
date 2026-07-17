@@ -43,3 +43,6 @@ class Plugin:
 
     async def set_cec_toggle(self, key: str, enabled: bool):
         return await self.backend.set_cec_toggle(key, enabled)
+
+    async def set_cec_name(self, name: str):
+        return await self.backend.set_cec_name(name)

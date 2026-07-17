@@ -410,6 +410,24 @@ class BackendMutationTests(unittest.IsolatedAsyncioTestCase):
         with self.assertRaises(CommandError):
             await backend.set_cec_toggle("wake-tv", "true")
 
+    async def test_cec_name_uses_existing_tool_command(self):
+        backend = object.__new__(ToolkitBackend)
+        backend._mutation_lock = asyncio.Lock()
+        backend._user_tool = AsyncMock(return_value="")
+
+        await backend.set_cec_name("Living Room")
+
+        backend._user_tool.assert_awaited_once_with(
+            "bc250-cec.sh", "osd-name", "Living Room", timeout=20
+        )
+
+    async def test_cec_name_rejects_invalid_config_text(self):
+        backend = object.__new__(ToolkitBackend)
+
+        for name in ("", "123456789012345", 'bad"name', "bad\\name", "bad\nname"):
+            with self.subTest(name=name), self.assertRaises(CommandError):
+                await backend.set_cec_name(name)
+
     async def test_custom_load_target_rejects_inverted_range(self):
         backend = object.__new__(ToolkitBackend)
         with self.assertRaisesRegex(CommandError, "below maximum"):

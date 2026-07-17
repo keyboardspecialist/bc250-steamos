@@ -1555,3 +1555,22 @@ class ToolkitBackend:
                 )
 
         return await self._mutate(action)
+
+    async def set_cec_name(self, name: str) -> None:
+        if type(name) is not str:
+            raise CommandError("CEC broadcast name must be text.")
+        try:
+            byte_length = len(name.encode("utf-8"))
+        except UnicodeEncodeError as error:
+            raise CommandError("CEC broadcast name contains invalid text.") from error
+        if not name.strip() or byte_length > 14:
+            raise CommandError("CEC broadcast name must be 1-14 bytes.")
+        if not name.isprintable() or '"' in name or "\\" in name:
+            raise CommandError(
+                "CEC broadcast name cannot contain control characters, quotes, or backslashes."
+            )
+
+        async def action() -> None:
+            await self._user_tool("bc250-cec.sh", "osd-name", name, timeout=20)
+
+        return await self._mutate(action)

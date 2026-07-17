@@ -28,3 +28,4 @@ export const setCecToggle = callable<
   [key: string, enabled: boolean],
   void
 >("set_cec_toggle");
+export const setCecName = callable<[name: string], void>("set_cec_name");

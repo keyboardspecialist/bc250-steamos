@@ -1,5 +1,6 @@
-import { PanelSection, ToggleField } from "@decky/ui";
-import { cecAction, setCecToggle } from "../api";
+import { Button, PanelSection, TextField, ToggleField } from "@decky/ui";
+import { useEffect, useState } from "react";
+import { cecAction, setCecName, setCecToggle } from "../api";
 import { ActionButton, EmptyState, StatusRow } from "../components/Common";
 import type { TabProps } from "./shared";
 
@@ -11,6 +12,18 @@ export function CecTab({
 }: TabProps & { compact?: boolean }) {
   const { cec } = snapshot;
   const controlsDisabled = busy || !snapshot.toolkit.cecAvailable;
+  const [cecName, setName] = useState(cec.osdName ?? "");
+  const [nameDirty, setNameDirty] = useState(false);
+  const submittedName = cecName.trim();
+  const nameBytes = new TextEncoder().encode(submittedName).length;
+  const nameValid = nameBytes > 0 && nameBytes <= 14 &&
+    !/["\\]/.test(submittedName) &&
+    !Array.from(submittedName).some((character) => !character.trim() && character !== " ");
+  const nameChanged = submittedName !== (cec.osdName ?? "");
+
+  useEffect(() => {
+    if (!nameDirty) setName(cec.osdName ?? "");
+  }, [cec.osdName, nameDirty]);
 
   if (!cec.devicePresent) {
     return <EmptyState>Connect a CEC-tunneling DP-to-HDMI adapter to expose `/dev/cec0`.</EmptyState>;
@@ -37,6 +50,16 @@ export function CecTab({
       { successToast: false },
     );
 
+  const saveName = () => {
+    if (controlsDisabled || !nameValid || !nameChanged) return;
+    setName(submittedName);
+    setNameDirty(false);
+    runMutation(
+      `CEC name changed to ${submittedName}`,
+      () => setCecName(submittedName),
+    );
+  };
+
   return (
     <>
       <PanelSection title={compact ? "CEC quick controls" : "CEC Status"}>
@@ -45,7 +68,29 @@ export function CecTab({
           value={cec.service.active}
           good={cec.service.active === "active"}
         />
-        {!compact && <StatusRow label="OSD name" value={cec.osdName || "Unavailable"} />}
+        {!compact && (
+          <TextField
+            label="CEC broadcast name"
+            description={nameBytes > 14 ? `${nameBytes}/14 bytes` : "Shown in the TV's device list (14 bytes max)"}
+            value={cecName}
+            disabled={controlsDisabled || cec.osdName === null}
+            onChange={(event) => {
+              setName(event.target.value);
+              setNameDirty(true);
+            }}
+            onKeyDown={(event) => {
+              if (event.key === "Enter") saveName();
+            }}
+            inlineControls={
+              <Button
+                disabled={controlsDisabled || !nameValid || !nameChanged}
+                onClick={saveName}
+              >
+                Save
+              </Button>
+            }
+          />
+        )}
         <StatusRow
           label="Active source"
           value={cec.active === null ? "Unknown" : cec.active ? "This console" : "Another source"}
