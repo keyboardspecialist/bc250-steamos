@@ -12,7 +12,10 @@ export function CpuTab({ snapshot, busy, runMutation }: TabProps) {
   const [frequency, setFrequency] = useState(Number(detectedValues?.[1]) || 4000);
   const [voltage, setVoltage] = useState(Number(detectedValues?.[2]) || 1275);
   const [temperature, setTemperature] = useState(90);
-  const controlsDisabled = busy || !snapshot.toolkit.cpuControlAvailable;
+  const controlsDisabled =
+    busy ||
+    !snapshot.toolkit.privileged ||
+    !snapshot.toolkit.cpuControlAvailable;
   const profileAvailable = Boolean(cpu.installed || cpu.staged);
 
   useEffect(() => {
@@ -40,7 +43,9 @@ export function CpuTab({ snapshot, busy, runMutation }: TabProps) {
         />
       </PanelSection>
 
-      {!snapshot.toolkit.cpuControlAvailable && (
+      {!snapshot.toolkit.privileged ? (
+        <EmptyState>CPU controls require the Decky backend to run as root.</EmptyState>
+      ) : !snapshot.toolkit.cpuControlAvailable && (
         <EmptyState>Reinstall the plugin to add the root-owned CPU tuning helper.</EmptyState>
       )}
 

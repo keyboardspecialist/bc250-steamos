@@ -117,6 +117,7 @@ export interface CecStatus {
 export interface Snapshot {
   toolkit: {
     available: boolean;
+    privileged: boolean;
     powerAvailable: boolean;
     cpuControlAvailable: boolean;
     cecAvailable: boolean;

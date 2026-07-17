@@ -110,11 +110,7 @@ class ToolkitBackend:
 
     def _user_argv(self, argv: list[str]) -> list[str]:
         runtime = f"/run/user/{self.user_uid}"
-        return [
-            RUNUSER,
-            "-u",
-            self.user,
-            "--",
+        environment = [
             ENV,
             "-i",
             "PATH=/usr/local/bin:/usr/bin",
@@ -125,6 +121,9 @@ class ToolkitBackend:
             f"DBUS_SESSION_BUS_ADDRESS=unix:path={runtime}/bus",
             *argv,
         ]
+        if os.geteuid() == self.user_uid:
+            return environment
+        return [RUNUSER, "-u", self.user, "--", *environment]
 
     async def _user_exec(
         self, argv: list[str], *, timeout: float = 20, check: bool = True
@@ -348,6 +347,8 @@ class ToolkitBackend:
         return instances[0] if len(instances) == 1 else None
 
     async def _umr_register(self, register: str, se: int, sh: int) -> int | None:
+        if os.geteuid() != 0:
+            return None
         umr = self._trusted_umr()
         if umr is None:
             return None
@@ -420,18 +421,22 @@ class ToolkitBackend:
         if len(parsed_masks) == 4 and all(0 <= mask <= 0x1F for mask in parsed_masks):
             saved_masks = parsed_masks
         available = all(row["spi"] is not None for row in rows)
+        privileged = os.geteuid() == 0
         trusted_umr = self._trusted_umr()
         return {
             "available": available,
             "controllable": (
                 available
+                and privileged
                 and self._trusted_cu_manager() is not None
                 and self._bc250_present()
             ),
             "liveReason": None
             if available
             else (
-                "Live status requires the plugin's root-owned UMR copy; reinstall the plugin after installing UMR."
+                "Decky launched the plugin without root access; reinstall it with the root flag."
+                if not privileged
+                else "Live status requires the plugin's root-owned UMR copy; reinstall the plugin after installing UMR."
                 if trusted_umr is None
                 else "The trusted UMR installation could not read GPU registers."
             ),
@@ -871,6 +876,7 @@ class ToolkitBackend:
             ),
         )
         dbus_ready = enabled is not None
+        privileged = os.geteuid() == 0
         mode = requested_mode
         if dbus_ready and current_min is not None and current_max is not None:
             if requested_mode == "pin" and (
@@ -916,7 +922,7 @@ class ToolkitBackend:
         )
         return {
             "available": GPU_CONFIG_PATH.is_file(),
-            "controllable": dbus_ready,
+            "controllable": dbus_ready and privileged,
             "dbusReady": dbus_ready,
             "mode": mode,
             "requestedMode": requested_mode,
@@ -990,7 +996,7 @@ class ToolkitBackend:
             return None
         if parts[0] == "b":
             return parts[1] == "true"
-        if parts[0] in {"u", "i", "q", "n", "x", "t"}:
+        if parts[0] in {"y", "u", "i", "q", "n", "x", "t"}:
             try:
                 return int(parts[1])
             except ValueError:
@@ -1076,6 +1082,7 @@ class ToolkitBackend:
         return {
             "toolkit": {
                 "available": toolkit_available,
+                "privileged": os.geteuid() == 0,
                 "powerAvailable": power_available,
                 "cpuControlAvailable": cpu_control_available,
                 "cecAvailable": cec_available,

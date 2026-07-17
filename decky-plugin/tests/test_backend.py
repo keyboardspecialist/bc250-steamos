@@ -35,6 +35,7 @@ class BackendParsingTests(unittest.TestCase):
     def test_bus_values(self):
         self.assertTrue(ToolkitBackend._bus_value("b true"))
         self.assertEqual(ToolkitBackend._bus_value('s "BC-250"'), "BC-250")
+        self.assertEqual(ToolkitBackend._bus_value("y 5"), 5)
         self.assertEqual(ToolkitBackend._bus_value("u 1200"), 1200)
 
     def test_toml_updates_preserve_other_sections(self):
@@ -92,10 +93,21 @@ class BackendParsingTests(unittest.TestCase):
         backend.user = "deck"
         backend.user_home = Path("/home/deck")
         backend.user_uid = 1000
-        command = backend._user_argv(["/usr/bin/true"])
+        with patch("bc250_control.backend.os.geteuid", return_value=0):
+            command = backend._user_argv(["/usr/bin/true"])
         self.assertIn("-i", command)
         self.assertIn("PATH=/usr/local/bin:/usr/bin", command)
         self.assertIn("DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/1000/bus", command)
+
+    def test_user_command_runs_directly_when_backend_is_target_user(self):
+        backend = object.__new__(ToolkitBackend)
+        backend.user = "deck"
+        backend.user_home = Path("/home/deck")
+        backend.user_uid = 1000
+        with patch("bc250_control.backend.os.geteuid", return_value=1000):
+            command = backend._user_argv(["/usr/bin/true"])
+        self.assertEqual(command[0:2], [backend_module.ENV, "-i"])
+        self.assertNotIn(backend_module.RUNUSER, command)
 
     def test_root_helper_rejects_writable_files(self):
         path = MagicMock()
@@ -189,6 +201,7 @@ class BackendMutationTests(unittest.IsolatedAsyncioTestCase):
             with (
                 patch.object(backend_module, "CU_CONFIG_PATH", config),
                 patch.object(backend, "_trusted_umr", return_value=Path("/umr")),
+                patch("bc250_control.backend.os.geteuid", return_value=0),
             ):
                 value = await backend._umr_register("register", 0, 1)
 
@@ -208,6 +221,7 @@ class BackendMutationTests(unittest.IsolatedAsyncioTestCase):
             patch.object(backend, "_trusted_umr", return_value=Path("/umr")),
             patch.object(backend, "_umr_instance", return_value=None),
             patch.object(backend, "_umr_database_args", return_value=[]),
+            patch("bc250_control.backend.os.geteuid", return_value=0),
         ):
             value = await backend._umr_register("register", 1, 0)
 

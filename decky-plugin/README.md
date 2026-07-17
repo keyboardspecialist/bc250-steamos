@@ -22,11 +22,11 @@ GPU voltage editing and saving WGP routing for boot remain in the toolkit CLI.
 - Toolkit checkout at `~/.local/share/bc250-fixes/bc250-steamos`
 - Installed toolkit components for the controls being used
 
-The plugin backend runs with Decky's `_root` flag. CEC commands are delegated to the logged-in Deck user session.
+The plugin backend runs with Decky's `root` flag. CEC commands are delegated to the logged-in Deck user session.
 
 ### Privileged operations
 
-Decky starts `main.py` as root because `plugin.json` declares the `_root` flag.
+Decky starts `main.py` as root because `plugin.json` declares the `root` flag.
 Privileged operations use typed RPC methods, validated arguments, fixed command
 paths, and argument allowlists. CEC operations use `runuser` with a clean user
 session environment. Live WGP changes are delegated to a root-owned CU manager;

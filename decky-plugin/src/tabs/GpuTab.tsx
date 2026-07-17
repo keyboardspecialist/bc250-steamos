@@ -125,7 +125,11 @@ export function GpuTab({ snapshot, busy, runMutation }: TabProps) {
           />
         )}
         {!gpu.controllable && (
-          <EmptyState>Start the GPU governor before changing live frequency mode.</EmptyState>
+          <EmptyState>
+            {!snapshot.toolkit.privileged
+              ? "GPU controls require the Decky backend to run as root."
+              : "Start the GPU governor before changing live frequency mode."}
+          </EmptyState>
         )}
         <ActionButton
           label="Apply frequency mode"
@@ -146,7 +150,7 @@ export function GpuTab({ snapshot, busy, runMutation }: TabProps) {
         <ActionButton
           label="Eager preset"
           description="60/45%; helps light or frame-capped games leave idle clocks."
-          disabled={busy}
+          disabled={busy || !gpu.controllable}
           onClick={() =>
             runMutation("Eager load target applied", () => setLoadTarget("eager"))
           }
@@ -154,7 +158,7 @@ export function GpuTab({ snapshot, busy, runMutation }: TabProps) {
         <ActionButton
           label="Balanced preset"
           description="80/65%; restores the toolkit defaults."
-          disabled={busy}
+          disabled={busy || !gpu.controllable}
           onClick={() =>
             runMutation("Balanced load target applied", () => setLoadTarget("reset"))
           }
@@ -170,7 +174,7 @@ export function GpuTab({ snapshot, busy, runMutation }: TabProps) {
           step={100}
           valueSuffix=" ms"
           editableValue
-          disabled={busy}
+          disabled={busy || !gpu.controllable}
           onChange={setRampMs}
         />
         <ActionButton

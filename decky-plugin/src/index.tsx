@@ -206,28 +206,34 @@ function FullControl() {
         snapshot.power.cpufreqService,
         snapshot.power.frequencyRestore,
         snapshot.cpu.service,
-      ].every((service) => serviceActive(service.active)),
+      ].every((service) => serviceActive(service.active)) &&
+        snapshot.toolkit.privileged &&
+        snapshot.cu.available &&
+        snapshot.gpu.dbusReady,
       content: <OverviewTab snapshot={snapshot} history={history} />,
     },
     {
       id: "cu",
       label: "CU",
       icon: <FaMicrochip />,
-      healthy: serviceActive(snapshot.cu.service.active),
+      healthy: snapshot.toolkit.privileged && snapshot.cu.controllable,
       content: <CuTab {...tabProps} />,
     },
     {
       id: "gpu",
       label: "GPU",
       icon: <FaMemory />,
-      healthy: serviceActive(snapshot.power.governor.active),
+      healthy: snapshot.toolkit.privileged && snapshot.gpu.controllable,
       content: <GpuTab {...tabProps} />,
     },
     {
       id: "cpu",
       label: "CPU OC",
       icon: <FaCog />,
-      healthy: serviceActive(snapshot.cpu.service.active),
+      healthy:
+        snapshot.toolkit.privileged &&
+        snapshot.toolkit.cpuControlAvailable &&
+        serviceActive(snapshot.cpu.service.active),
       content: <CpuTab {...tabProps} />,
     },
     {
@@ -279,6 +285,11 @@ function FullControl() {
               }}
             >
               Toolkit incomplete: {snapshot.toolkit.path}
+            </div>
+          )}
+          {!snapshot.toolkit.privileged && (
+            <div style={{ color: "#e77878", fontSize: 11 }}>
+              Backend is not running as root; reinstall the plugin.
             </div>
           )}
           {error && <div style={{ color: "#e77878", fontSize: 11 }}>{error}</div>}
