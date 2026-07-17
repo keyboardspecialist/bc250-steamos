@@ -13,11 +13,14 @@ fi
 REAL_HOME="${REAL_HOME:-$(getent passwd "$REAL_USER" | cut -d: -f6)}"
 [[ "$REAL_HOME" == /* ]] || { echo "cannot resolve the real user's home" >&2; exit 1; }
 FIXES_REPO_DIR="${FIXES_REPO_DIR:-$REAL_HOME/.local/share/bc250-fixes/bc250-steamos}"
-DEFAULT_UMR="$FIXES_REPO_DIR/bin/umr"
-if [[ ! -x "$DEFAULT_UMR" && -x /var/lib/bc250-40cu/bin/umr ]]; then
+DEFAULT_UMR=/etc/bc250-control/umr/bin/umr
+if [[ ! -x "$DEFAULT_UMR" && -x "$FIXES_REPO_DIR/bin/umr" ]]; then
+    DEFAULT_UMR="$FIXES_REPO_DIR/bin/umr"
+elif [[ ! -x "$DEFAULT_UMR" && -x /var/lib/bc250-40cu/bin/umr ]]; then
     DEFAULT_UMR=/var/lib/bc250-40cu/bin/umr
 fi
 UMR="${UMR:-$DEFAULT_UMR}"
+UMR_DATABASE_PATH="${UMR_DATABASE_PATH:-/etc/bc250-control/umr/share/umr/database}"
 ASIC="${UMR_ASIC:-cyan_skillfish.gfx1013}"
 REG_SPI="mmSPI_PG_ENABLE_STATIC_WGP_MASK"
 REG_CC="mmCC_GC_SHADER_ARRAY_CONFIG"
@@ -28,7 +31,8 @@ QUIET=0
 [[ -x "$UMR" ]] || { echo "umr not found at $UMR (set UMR=...)" >&2; exit 1; }
 
 read_bank() {  # read_bank REG SE SH -> hex value
-    "$UMR" -r "$ASIC.$1" -b "$2" "$3" 0xffffffff 2>/dev/null \
+    "$UMR" --database-path "$UMR_DATABASE_PATH" \
+        -r "$ASIC.$1" -b "$2" "$3" 0xffffffff 2>/dev/null \
         | grep -o '0x[0-9a-fA-F]*' | tail -1
 }
 

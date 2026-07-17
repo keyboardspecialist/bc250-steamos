@@ -24,7 +24,12 @@ PLUGINS_DIR="$HOME/homebrew/plugins"
 DEST_DIR="$PLUGINS_DIR/$PLUGIN_NAME"
 ROOT_HELPER_DIR="/var/lib/bc250-control/helper"
 ROOT_STATE_DIR="/var/lib/bc250-control/smu-oc"
+ROOT_UMR_DIR="/etc/bc250-control/umr"
+CU_CONFIG="/etc/bc250-cu-live-manager.conf"
+TOOLKIT_DIR="$HOME/.local/share/bc250-fixes/bc250-steamos"
 CU_MANAGER_SOURCE=""
+UMR_SOURCE=""
+UMR_DATABASE_SOURCE=""
 export PNPM_HOME="${PNPM_HOME:-$HOME/.local/share/pnpm}"
 export PATH="$PNPM_HOME/bin:$PATH"
 
@@ -90,7 +95,43 @@ sudo install -m 0755 "$SRC_DIR/../bc250-power.sh" "$ROOT_HELPER_DIR/bc250-power.
 sudo install -m 0755 "$SRC_DIR/../bc250-update-persistence.sh" "$ROOT_HELPER_DIR/bc250-update-persistence.sh"
 sudo install -m 0644 "$SRC_DIR"/../smu-oc-patches/* "$ROOT_HELPER_DIR/smu-oc-patches/"
 
+for prefix in "$ROOT_UMR_DIR" /var/lib/bc250-control/umr "$TOOLKIT_DIR" /var/lib/bc250-40cu /usr /usr/local; do
+    if [[ -x "$prefix/bin/umr" && -d "$prefix/share/umr/database" ]]; then
+        UMR_SOURCE="$prefix/bin/umr"
+        UMR_DATABASE_SOURCE="$prefix/share/umr/database"
+        break
+    fi
+done
+if [[ -n "$UMR_SOURCE" ]]; then
+    log "Installing root-owned UMR and ASIC database (sudo)"
+    if [[ "$UMR_SOURCE" != "$ROOT_UMR_DIR/bin/umr" ]]; then
+        sudo rm -rf "$ROOT_UMR_DIR"
+        sudo install -d -m 0755 "$ROOT_UMR_DIR/bin" "$ROOT_UMR_DIR/share/umr/database"
+        sudo install -m 0755 "$UMR_SOURCE" "$ROOT_UMR_DIR/bin/umr"
+        sudo cp -RL "$UMR_DATABASE_SOURCE"/. "$ROOT_UMR_DIR/share/umr/database/"
+    fi
+    sudo chown -R root:root "$ROOT_UMR_DIR"
+    sudo chmod -R go-w "$ROOT_UMR_DIR"
+    if sudo test -f "$CU_CONFIG" && ! sudo test -L "$CU_CONFIG"; then
+        if sudo grep -q '^UMR=' "$CU_CONFIG"; then
+            sudo sed -i "s|^UMR=.*|UMR=$ROOT_UMR_DIR/bin/umr|" "$CU_CONFIG"
+        else
+            printf 'UMR=%s\n' "$ROOT_UMR_DIR/bin/umr" | sudo tee -a "$CU_CONFIG" >/dev/null
+        fi
+        if sudo grep -q '^UMR_DATABASE_PATH=' "$CU_CONFIG"; then
+            sudo sed -i "s|^UMR_DATABASE_PATH=.*|UMR_DATABASE_PATH=$ROOT_UMR_DIR/share/umr/database|" "$CU_CONFIG"
+        else
+            printf 'UMR_DATABASE_PATH=%s\n' "$ROOT_UMR_DIR/share/umr/database" | sudo tee -a "$CU_CONFIG" >/dev/null
+        fi
+    fi
+    sudo bash "$ROOT_HELPER_DIR/bc250-update-persistence.sh" install compute
+else
+    log "UMR binary/database not found; live CU status and editing will remain disabled"
+fi
+
 for candidate in \
+    "$TOOLKIT_DIR/bc250-cu-live-manager" \
+    "$TOOLKIT_DIR/bc250-cu-live-manager.sh" \
     /var/lib/bc250-40cu/bc250-cu-live-manager \
     /var/lib/bc250-40cu/bc250-cu-live-manager.sh \
     /usr/local/bin/bc250-cu-live-manager \

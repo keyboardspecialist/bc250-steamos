@@ -1,4 +1,5 @@
 import asyncio
+import stat
 import tempfile
 import unittest
 from pathlib import Path
@@ -99,15 +100,34 @@ class BackendParsingTests(unittest.TestCase):
     def test_root_helper_rejects_writable_files(self):
         path = MagicMock()
         parent = MagicMock()
+        root = MagicMock()
         path.parent = parent
-        path.is_file.return_value = True
-        path.is_symlink.return_value = False
-        parent.is_symlink.return_value = False
-        parent.stat.return_value = SimpleNamespace(st_uid=0, st_mode=0o40755)
-        path.stat.return_value = SimpleNamespace(st_uid=0, st_mode=0o100755)
+        parent.parent = root
+        root.parent = root
+        path.is_absolute.return_value = True
+        path.lstat.return_value = SimpleNamespace(st_uid=0, st_mode=stat.S_IFREG | 0o755)
+        parent.lstat.return_value = SimpleNamespace(st_uid=0, st_mode=stat.S_IFDIR | 0o755)
+        root.lstat.return_value = SimpleNamespace(st_uid=0, st_mode=stat.S_IFDIR | 0o755)
         self.assertTrue(ToolkitBackend._trusted_root_file(path))
 
-        path.stat.return_value = SimpleNamespace(st_uid=0, st_mode=0o100777)
+        path.lstat.return_value = SimpleNamespace(st_uid=0, st_mode=stat.S_IFREG | 0o777)
+        self.assertFalse(ToolkitBackend._trusted_root_file(path))
+
+    def test_root_helper_rejects_user_owned_ancestor(self):
+        path = MagicMock()
+        parent = MagicMock()
+        ancestor = MagicMock()
+        root = MagicMock()
+        path.parent = parent
+        parent.parent = ancestor
+        ancestor.parent = root
+        root.parent = root
+        path.is_absolute.return_value = True
+        path.lstat.return_value = SimpleNamespace(st_uid=0, st_mode=stat.S_IFREG | 0o755)
+        parent.lstat.return_value = SimpleNamespace(st_uid=0, st_mode=stat.S_IFDIR | 0o755)
+        ancestor.lstat.return_value = SimpleNamespace(st_uid=1000, st_mode=stat.S_IFDIR | 0o755)
+        root.lstat.return_value = SimpleNamespace(st_uid=0, st_mode=stat.S_IFDIR | 0o755)
+
         self.assertFalse(ToolkitBackend._trusted_root_file(path))
 
     def test_umr_uses_configured_root_owned_path(self):
@@ -174,6 +194,26 @@ class BackendMutationTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(value, 0x1F)
         self.assertEqual(backend._exec.await_args.args[0][1:3], ["-i", "3"])
+
+    async def test_umr_register_retries_legacy_bank_syntax_and_parses_stderr(self):
+        backend = object.__new__(ToolkitBackend)
+        backend.toolkit = Path("/toolkit")
+        backend._exec = AsyncMock(
+            side_effect=[
+                (1, "", "unsupported bank mask"),
+                (0, "", "value 0x1f"),
+            ]
+        )
+        with (
+            patch.object(backend, "_trusted_umr", return_value=Path("/umr")),
+            patch.object(backend, "_umr_instance", return_value=None),
+            patch.object(backend, "_umr_database_args", return_value=[]),
+        ):
+            value = await backend._umr_register("register", 1, 0)
+
+        self.assertEqual(value, 0x1F)
+        self.assertEqual(backend._exec.await_count, 2)
+        self.assertEqual(backend._exec.await_args.args[0][-3:], ["-b", "1", "0"])
 
     async def test_cu_status_rejects_partially_malformed_saved_table(self):
         backend = object.__new__(ToolkitBackend)

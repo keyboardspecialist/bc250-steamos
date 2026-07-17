@@ -28,6 +28,8 @@ GPU_CONFIG_PATH = Path("/etc/cyan-skillfish-governor-smu/config.toml")
 GPU_STATE_PATH = Path("/etc/cyan-skillfish-governor-smu/freq-state")
 CPU_HELPER_PATH = Path("/var/lib/bc250-control/helper/bc250-power.sh")
 CPU_STATE_DIR = Path("/var/lib/bc250-control/smu-oc")
+ROOT_UMR_PATH = Path("/etc/bc250-control/umr/bin/umr")
+ROOT_UMR_DATABASE_PATH = Path("/etc/bc250-control/umr/share/umr/database")
 CU_CONFIG_PATH = Path("/etc/bc250-cu-live-manager.conf")
 CU_MANAGER_PATHS = (
     Path("/var/lib/bc250-control/helper/bc250-cu-live-manager"),
@@ -147,21 +149,37 @@ class ToolkitBackend:
         return out
 
     @staticmethod
-    def _trusted_root_file(path: Path) -> bool:
+    def _trusted_root_path(path: Path, expected_type: int) -> bool:
         try:
-            metadata = path.stat()
-            parent = path.parent.stat()
+            if not path.is_absolute():
+                return False
+            current = path
+            first = True
+            while True:
+                metadata = current.lstat()
+                if stat.S_ISLNK(metadata.st_mode):
+                    return False
+                if first:
+                    if stat.S_IFMT(metadata.st_mode) != expected_type:
+                        return False
+                elif not stat.S_ISDIR(metadata.st_mode):
+                    return False
+                if metadata.st_uid != 0 or metadata.st_mode & 0o022:
+                    return False
+                if current.parent == current:
+                    return True
+                current = current.parent
+                first = False
         except OSError:
             return False
-        return (
-            path.is_file()
-            and not path.is_symlink()
-            and not path.parent.is_symlink()
-            and metadata.st_uid == 0
-            and parent.st_uid == 0
-            and metadata.st_mode & 0o022 == 0
-            and parent.st_mode & 0o022 == 0
-        )
+
+    @classmethod
+    def _trusted_root_file(cls, path: Path) -> bool:
+        return cls._trusted_root_path(path, stat.S_IFREG)
+
+    @classmethod
+    def _trusted_root_directory(cls, path: Path) -> bool:
+        return cls._trusted_root_path(path, stat.S_IFDIR)
 
     async def _cpu_tool(self, *args: str, timeout: float = 30) -> str:
         if not self._trusted_root_file(CPU_HELPER_PATH):
@@ -258,8 +276,8 @@ class ToolkitBackend:
     def _trusted_umr(self) -> Path | None:
         configured = self._read_key_values(CU_CONFIG_PATH).get("UMR", "")
         candidates = [
+            ROOT_UMR_PATH,
             Path(configured) if configured.startswith("/") else None,
-            self.toolkit / "bin/umr",
             Path("/var/lib/bc250-40cu/bin/umr"),
             Path("/usr/bin/umr"),
             Path("/usr/local/bin/umr"),
@@ -273,6 +291,15 @@ class ToolkitBackend:
             except OSError:
                 continue
         return None
+
+    @staticmethod
+    def _umr_database_args(umr: Path) -> list[str]:
+        if (
+            umr == ROOT_UMR_PATH
+            and ToolkitBackend._trusted_root_directory(ROOT_UMR_DATABASE_PATH)
+        ):
+            return ["--database-path", str(ROOT_UMR_DATABASE_PATH)]
+        return []
 
     def _trusted_cu_manager(self) -> Path | None:
         for candidate in CU_MANAGER_PATHS:
@@ -326,26 +353,32 @@ class ToolkitBackend:
             return None
         instance = self._umr_instance()
         instance_args = ["-i", str(instance)] if instance is not None else []
+        database_args = self._umr_database_args(umr)
         asic = self._read_key_values(CU_CONFIG_PATH).get(
             "UMR_ASIC", "cyan_skillfish.gfx1013"
         )
         if not re.fullmatch(r"[A-Za-z0-9_.-]+", asic):
             return None
-        rc, out, _ = await self._exec(
-            [
-                str(umr),
-                *instance_args,
-                "-r",
-                f"{asic}.{register}",
-                "-b",
-                str(se),
-                str(sh),
-                "0xffffffff",
-            ],
-            timeout=5,
-            check=False,
-        )
-        return self._last_hex(out) if rc == 0 else None
+        for bank_args in (
+            ["-b", str(se), str(sh), "0xffffffff"],
+            ["-b", str(se), str(sh)],
+        ):
+            rc, out, err = await self._exec(
+                [
+                    str(umr),
+                    *database_args,
+                    *instance_args,
+                    "-r",
+                    f"{asic}.{register}",
+                    *bank_args,
+                ],
+                timeout=5,
+                check=False,
+            )
+            value = self._last_hex(f"{out}\n{err}")
+            if rc == 0 and value is not None:
+                return value
+        return None
 
     async def get_cu_status(self) -> dict[str, Any]:
         service_task = asyncio.create_task(
@@ -398,7 +431,7 @@ class ToolkitBackend:
             "liveReason": None
             if available
             else (
-                "Live status requires a root-owned UMR installation."
+                "Live status requires the plugin's root-owned UMR copy; reinstall the plugin after installing UMR."
                 if trusted_umr is None
                 else "The trusted UMR installation could not read GPU registers."
             ),
@@ -1092,6 +1125,11 @@ class ToolkitBackend:
                 "UMR": str(umr),
                 "UMR_ASIC": asic,
             }
+            if (
+                umr == ROOT_UMR_PATH
+                and self._trusted_root_directory(ROOT_UMR_DATABASE_PATH)
+            ):
+                env["UMR_DATABASE_PATH"] = str(ROOT_UMR_DATABASE_PATH)
             instance = self._umr_instance()
             if instance is not None:
                 env["UMR_INSTANCE"] = str(instance)

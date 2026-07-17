@@ -3,9 +3,10 @@
 #
 # All-in-one BC-250 40 CU unlock for SteamOS 3.8.x via the runtime UMR route.
 #
-# Runtime assets live in the home-backed toolkit directory:
-#   ~/.local/share/bc250-fixes/bc250-steamos  umr + database + manager
-#   /etc                                     systemd unit + boot table config
+# Runtime assets are split between the home-backed toolkit and root-owned /etc:
+#   ~/.local/share/bc250-fixes/bc250-steamos  source/build tree + manager
+#   /etc/bc250-control/umr                    trusted umr + ASIC database
+#   /etc                                      systemd unit + boot table config
 # SteamOS updates replace /usr and selectively retain /etc. The installer adds
 # toolkit-owned system files to SteamOS's atomic-update keep list.
 #
@@ -55,7 +56,10 @@ FIXES_REPO_DIR="${FIXES_REPO_DIR:-$REAL_HOME/.local/share/bc250-fixes/bc250-stea
 [[ "$FIXES_REPO_DIR" == /* && "$FIXES_REPO_DIR" != *[$'\n\r\t ']* ]] \
     || { echo "FIXES_REPO_DIR must be an absolute path without whitespace." >&2; exit 1; }
 PREFIX="$FIXES_REPO_DIR"
-UMR_BIN="$PREFIX/bin/umr"
+UMR_PREFIX="/etc/bc250-control/umr"
+UMR_BIN="$UMR_PREFIX/bin/umr"
+UMR_DATABASE="$UMR_PREFIX/share/umr/database"
+OLD_UMR_PREFIX="$PREFIX"
 MANAGER_SH="$PREFIX/bc250-cu-live-manager.sh"
 MANAGER_URL="https://raw.githubusercontent.com/WinnieLV/bc250-cu-live-manager/refs/heads/main/bc250-cu-live-manager.sh"
 UMR_GIT="https://gitlab.freedesktop.org/tomstdenis/umr.git"
@@ -112,6 +116,19 @@ cleanup_legacy_data() {
     mkdir -p "${LEGACY_PREFIX%/*}"
     ln -s "$PREFIX" "$LEGACY_PREFIX"
     log "Replaced $LEGACY_PREFIX with a compatibility symlink to the home-backed data."
+}
+
+migrate_home_umr() {
+    [[ -x "$UMR_BIN" ]] && return 0
+    [[ -x "$OLD_UMR_PREFIX/bin/umr" \
+        && -d "$OLD_UMR_PREFIX/share/umr/database" ]] || return 0
+    log "Migrating umr and its ASIC database to trusted storage at $UMR_PREFIX..."
+    rm -rf "$UMR_PREFIX"
+    install -d -m 0755 "$UMR_PREFIX/bin" "$UMR_PREFIX/share/umr/database"
+    install -m 0755 "$OLD_UMR_PREFIX/bin/umr" "$UMR_BIN"
+    cp -RL "$OLD_UMR_PREFIX/share/umr/database"/. "$UMR_PREFIX/share/umr/database/"
+    chown -R root:root "$UMR_PREFIX"
+    chmod -R go-w "$UMR_PREFIX"
 }
 
 RO_WAS_DISABLED=0
@@ -341,7 +358,8 @@ cmd_check() {
 cmd_prep() {
     require_root
     migrate_legacy_data
-    mkdir -p "$PREFIX/bin" "$PREFIX/.build"
+    migrate_home_umr
+    mkdir -p "$UMR_PREFIX/bin" "$PREFIX/.build"
     unlock_rootfs
 
     if ! pacman-key --list-keys >/dev/null 2>&1; then
@@ -395,7 +413,7 @@ cmd_prep() {
         CFLAGS="-I/usr/include/libdrm ${CFLAGS:-}" \
         cmake -S "$SRC" -B "$BLD" \
           -DCMAKE_BUILD_TYPE=Release \
-          -DCMAKE_INSTALL_PREFIX="$PREFIX" \
+          -DCMAKE_INSTALL_PREFIX="$UMR_PREFIX" \
           -DCMAKE_PREFIX_PATH=/usr \
           -DCMAKE_EXE_LINKER_FLAGS="-Wl,--no-as-needed $PCI_LIB $DRM_LIB $DRM_AMDGPU_LIB" \
           -DCURSES_NEED_NCURSES=TRUE \
@@ -405,15 +423,18 @@ cmd_prep() {
 
     log "Building..."
     cmake --build "$BLD" -j"$(nproc)"
-    log "Installing (binary + ASIC database) to $PREFIX..."
+    log "Installing (binary + ASIC database) to $UMR_PREFIX..."
     cmake --install "$BLD"
+    chown -R root:root "$UMR_PREFIX"
+    chmod -R go-w "$UMR_PREFIX"
+    install_update_persistence
 
     quarantine_stale_umr
     relock_rootfs
 
     [[ -x "$UMR_BIN" ]] || die "Install finished but $UMR_BIN missing."
     log "Enumeration check ('-e'; --list-asics does not exist on this umr):"
-    if "$UMR_BIN" -e 2>/dev/null | grep -qi 'cyan_skillfish'; then
+    if "$UMR_BIN" --database-path "$UMR_DATABASE" -e 2>/dev/null | grep -qi 'cyan_skillfish'; then
         log "SUCCESS -- board enumerates as cyan_skillfish. Next: $0 manager"
     else
         warn "Live enumeration didn't match; run: sudo $UMR_BIN -e   and inspect."
@@ -424,6 +445,7 @@ cmd_prep() {
 cmd_manager() {
     require_root
     migrate_legacy_data
+    migrate_home_umr
     recover_update_settings
     [[ -x "$UMR_BIN" ]] || die "No umr at $UMR_BIN -- run: $0 prep"
 
@@ -461,7 +483,7 @@ EOT
     quarantine_stale_umr
     # find_umr() ignores PATH; the UMR env var is the supported override
     # and write-service-table persists it into the EnvironmentFile conf.
-    UMR="$UMR_BIN" "$MANAGER_SH" "$@"
+    UMR="$UMR_BIN" UMR_DATABASE_PATH="$UMR_DATABASE" "$MANAGER_SH" "$@"
     relock_rootfs
     log "If you installed the service ('i'), now run: $0 persist"
 }
@@ -470,6 +492,7 @@ EOT
 cmd_persist() {
     require_root
     migrate_legacy_data
+    migrate_home_umr
     [[ -f "$SERVICE" ]] || die "No service at $SERVICE -- install from the manager first ('i')."
 
     if [[ -f "$ROOTFS_MANAGER_BIN" ]]; then
@@ -501,6 +524,13 @@ cmd_persist() {
             echo "UMR=$UMR_BIN" >> "$SERVICE_CONF"
         fi
     fi
+    if [[ -f "$SERVICE_CONF" ]] && ! grep -q "^UMR_DATABASE_PATH=$UMR_DATABASE$" "$SERVICE_CONF"; then
+        if grep -q '^UMR_DATABASE_PATH=' "$SERVICE_CONF"; then
+            sed -i "s|^UMR_DATABASE_PATH=.*|UMR_DATABASE_PATH=$UMR_DATABASE|" "$SERVICE_CONF"
+        else
+            echo "UMR_DATABASE_PATH=$UMR_DATABASE" >> "$SERVICE_CONF"
+        fi
+    fi
 
     systemctl daemon-reload
     systemctl enable bc250-cu-live-manager.service
@@ -518,7 +548,8 @@ cmd_verify() {
     local se sh
     for se in 0 1; do for sh in 0 1; do
         printf '  SE%s.SH%s: ' "$se" "$sh"
-        "$UMR_BIN" -r cyan_skillfish.gfx1013.mmSPI_PG_ENABLE_STATIC_WGP_MASK \
+        "$UMR_BIN" --database-path "$UMR_DATABASE" \
+            -r cyan_skillfish.gfx1013.mmSPI_PG_ENABLE_STATIC_WGP_MASK \
             -b "$se" "$sh" 0xffffffff 2>/dev/null | grep -o '0x[0-9a-f]*' | tail -1
     done; done
 
@@ -548,7 +579,8 @@ Re-enables the factory-harvested compute units at RUNTIME (no kernel
 rebuild) by writing the CC/SPI/RLC dispatch registers via umr, using
 WinnieLV's bc250-cu-live-manager. A boot service replays the saved WGP
 table every boot. SteamOS's atomic-update keep list retains the unit and
-configuration; binaries live in the home-backed toolkit directory.
+configuration, trusted UMR binary, and ASIC database. Build sources and
+the CU manager live in the home-backed toolkit directory.
 
 GUIDED MENU
   Run with no arguments (or 'menu') in a terminal for an interactive,
@@ -574,7 +606,7 @@ COMMANDS (setup order)
               - injects libs into the link line (--no-as-needed)
               - installs the ASIC DATABASE next to the binary; a
                 binary-only umr knows zero ASICs and fails every read
-            Verify with: sudo ~/.local/share/bc250-fixes/bc250-steamos/bin/umr -e
+            Verify with: sudo /etc/bc250-control/umr/bin/umr -e
             (this umr has no --list-asics; -e enumerates live hardware)
 
   manager   Launch the live-manager TUI the RIGHT way: UMR env var set
@@ -609,10 +641,8 @@ COMMANDS (setup order)
   all       check + prep + manager.
 
 FILE MAP
-  ~/.local/share/bc250-fixes/bc250-steamos/bin/umr
-                                         our umr build      (persists)
-  ~/.local/share/bc250-fixes/bc250-steamos/share/umr/
-                                         ASIC database      (persists)
+  /etc/bc250-control/umr/bin/umr         trusted umr build  (atomic-update keep list)
+  /etc/bc250-control/umr/share/umr/      ASIC database      (atomic-update keep list)
   ~/.local/share/bc250-fixes/bc250-steamos/bc250-cu-live-manager*
                                          manager            (persists)
   /etc/systemd/system/bc250-cu-live-manager.service   (atomic-update keep list)

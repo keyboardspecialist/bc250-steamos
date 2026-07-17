@@ -12,6 +12,9 @@ COMPONENTS=(compute power cec aic)
 COMPUTE_SETTINGS=(
     /etc/bc250-cu-live-manager.conf
 )
+COMPUTE_TREES=(
+    /etc/bc250-control/umr
+)
 POWER_SETTINGS=(
     /etc/cyan-skillfish-governor-smu/config.toml
     /etc/cyan-skillfish-governor-smu/freq-state
@@ -24,6 +27,10 @@ require_root() { [[ $EUID -eq 0 ]] || die "Run with sudo."; }
 
 write_keep_file() {
     local component="$1" target="$KEEP_DIR/bc250-$1.conf" tmp
+    case "$component" in
+        compute|power|cec|aic) ;;
+        *) die "Unknown component: $component" ;;
+    esac
     tmp=$(mktemp "$KEEP_DIR/.bc250-$component.XXXXXX")
     {
         printf '%s\n' '# Toolkit state preserved by SteamOS atomic updates.' \
@@ -32,6 +39,7 @@ write_keep_file() {
             compute)
                 cat << 'EOF'
 /etc/bc250-cu-live-manager.conf
+/etc/bc250-control/umr/**
 /etc/systemd/system/bc250-cu-live-manager.service
 /etc/systemd/system/multi-user.target.wants/bc250-cu-live-manager.service
 EOF
@@ -73,7 +81,6 @@ EOF
 /etc/systemd/system/multi-user.target.wants/aic8800-modules.service
 EOF
                 ;;
-            *) rm -f "$tmp"; die "Unknown component: $component" ;;
         esac
     } > "$tmp"
     chmod 644 "$tmp"
@@ -83,7 +90,8 @@ EOF
 
 component_has_state() {
     case "$1" in
-        compute) [[ -e /etc/bc250-cu-live-manager.conf || -e /etc/systemd/system/bc250-cu-live-manager.service ]] ;;
+        compute) [[ -e /etc/bc250-cu-live-manager.conf || -e /etc/bc250-control/umr \
+                    || -e /etc/systemd/system/bc250-cu-live-manager.service ]] ;;
         power)   [[ -e /etc/cyan-skillfish-governor-smu || -e /etc/bc250-smu-oc.conf \
                     || -e /etc/systemd/system/bc250-acpi-heal.service ]] ;;
         cec)     [[ -e /etc/bc250-cec-poweroff-standby.sh || -e /etc/systemd/system-sleep/bc250-cec-amp.sh ]] ;;
@@ -126,7 +134,7 @@ latest_archive() {
 recover_settings() {
     require_root
     local requested="${1:-all}" force=0 target rel source archive="" tmp restored=0 previous=0 component
-    local -a settings=() recovery_components=()
+    local -a settings=() trees=() recovery_components=()
     shift || true
     case "${1:-}" in
         "") ;;
@@ -136,6 +144,7 @@ recover_settings() {
     case "$requested" in
         compute)
             settings=("${COMPUTE_SETTINGS[@]}")
+            trees=("${COMPUTE_TREES[@]}")
             recovery_components=(compute)
             ;;
         power)
@@ -144,6 +153,7 @@ recover_settings() {
             ;;
         all)
             settings=("${COMPUTE_SETTINGS[@]}" "${POWER_SETTINGS[@]}")
+            trees=("${COMPUTE_TREES[@]}")
             recovery_components=(compute power)
             ;;
         *) die "Unknown recovery component: $requested" ;;
@@ -163,12 +173,36 @@ recover_settings() {
         if [[ $previous -eq 0 ]]; then
             [[ -n "$archive" ]] || continue
             tar -tJf "$archive" "etc/$rel" >/dev/null 2>&1 || continue
-            rm -rf "$tmp/etc"
+            rm -rf "${tmp:?}/etc"
             tar -xJf "$archive" -C "$tmp" "etc/$rel"
             source="$tmp/etc/$rel"
         fi
         [[ -f "$source" && ! -L "$source" ]] || continue
         install -D -m 644 "$source" "$target"
+        log "Recovered $target"
+        restored=$((restored + 1))
+    done
+
+    for target in "${trees[@]}"; do
+        if [[ -e "$target" && $force -eq 0 ]]; then
+            continue
+        fi
+        rel=${target#/etc/}
+        source="$PREVIOUS_ETC/$rel"
+        if [[ $previous -eq 0 ]]; then
+            [[ -n "$archive" ]] || continue
+            tar -tJf "$archive" > "$tmp/archive.list" 2>/dev/null || continue
+            grep -q "^etc/$rel/" "$tmp/archive.list" || continue
+            rm -rf "${tmp:?}/etc"
+            tar -xJf "$archive" -C "$tmp" "etc/$rel"
+            source="$tmp/etc/$rel"
+        fi
+        [[ -d "$source" && ! -L "$source" ]] || continue
+        rm -rf "$target"
+        install -d -m 755 "$(dirname "$target")"
+        cp -a "$source" "$target"
+        chown -R root:root "$target"
+        chmod -R go-w "$target"
         log "Recovered $target"
         restored=$((restored + 1))
     done
@@ -179,7 +213,7 @@ recover_settings() {
     if [[ $restored -eq 0 ]]; then
         log "Tuning files are already present or absent from the update backup."
     else
-        log "Recovered $restored tuning file(s). Reinstall the selected components to regenerate services."
+        log "Recovered $restored tuning item(s). Reinstall the selected components to regenerate services."
     fi
     rm -rf "$tmp"
 }
@@ -289,7 +323,7 @@ cmd_menu() {
     [[ -t 0 && -t 1 ]] || die "The menu needs an interactive terminal. Use '$0 help' for CLI commands."
     while true; do
         local items=(
-            "Protect compute|$(keep_badge compute)|Preserve compute-unit routing and its boot service."
+            "Protect compute|$(keep_badge compute)|Preserve UMR, compute-unit routing, and its boot service."
             "Protect power|$(keep_badge power)|Preserve power services, GPU tuning, and CPU tuning."
             "Protect CEC|$(keep_badge cec)|Preserve CEC poweroff and sleep integration."
             "Protect AIC8800|$(keep_badge aic)|Preserve AIC8800 service and device configuration."
