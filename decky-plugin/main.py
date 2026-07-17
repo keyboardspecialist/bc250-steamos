@@ -16,6 +16,9 @@ class Plugin:
     async def get_telemetry(self):
         return await self.backend.get_telemetry()
 
+    async def set_cu_wgp(self, se: int, sh: int, wgp: int, enabled: bool):
+        return await self.backend.set_cu_wgp(se, sh, wgp, enabled)
+
     async def set_gpu_frequency(self, mode: str, minimum: int, maximum: int):
         return await self.backend.set_gpu_frequency(mode, minimum, maximum)
 

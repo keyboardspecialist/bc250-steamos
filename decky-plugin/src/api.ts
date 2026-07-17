@@ -3,6 +3,10 @@ import type { Snapshot, TelemetrySample } from "./types";
 
 export const getSnapshot = callable<[], Snapshot>("get_snapshot");
 export const getTelemetry = callable<[], TelemetrySample>("get_telemetry");
+export const setCuWgp = callable<
+  [se: number, sh: number, wgp: number, enabled: boolean],
+  void
+>("set_cu_wgp");
 export const setGpuFrequency = callable<
   [mode: string, minimum: number, maximum: number],
   void

@@ -29,6 +29,19 @@ GPU_STATE_PATH = Path("/etc/cyan-skillfish-governor-smu/freq-state")
 CPU_HELPER_PATH = Path("/var/lib/bc250-control/helper/bc250-power.sh")
 CPU_STATE_DIR = Path("/var/lib/bc250-control/smu-oc")
 CU_CONFIG_PATH = Path("/etc/bc250-cu-live-manager.conf")
+CU_MANAGER_PATHS = (
+    Path("/var/lib/bc250-control/helper/bc250-cu-live-manager"),
+    Path("/var/lib/bc250-40cu/bc250-cu-live-manager"),
+    Path("/var/lib/bc250-40cu/bc250-cu-live-manager.sh"),
+    Path("/usr/local/bin/bc250-cu-live-manager"),
+    Path("/var/usrlocal/bin/bc250-cu-live-manager"),
+)
+
+# Decky Loader's PyInstaller environment can shadow system libraries used by
+# busctl and systemctl. Subprocesses must resolve the SteamOS libraries instead.
+CLEAN_ENV = {
+    key: value for key, value in os.environ.items() if key != "LD_LIBRARY_PATH"
+}
 
 
 class CommandError(RuntimeError):
@@ -58,7 +71,7 @@ class ToolkitBackend:
             *argv,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
-            env=env,
+            env=env if env is not None else CLEAN_ENV,
             start_new_session=True,
         )
         try:
@@ -261,15 +274,69 @@ class ToolkitBackend:
                 continue
         return None
 
+    def _trusted_cu_manager(self) -> Path | None:
+        for candidate in CU_MANAGER_PATHS:
+            if not self._trusted_root_file(candidate):
+                continue
+            try:
+                if candidate.stat().st_mode & 0o111:
+                    return candidate
+            except OSError:
+                continue
+        return None
+
+    def _bc250_present(self) -> bool:
+        for device in glob.glob("/sys/bus/pci/devices/*"):
+            path = Path(device)
+            if (
+                self._read(path / "vendor").lower() == "0x1002"
+                and self._read(path / "device").lower() == "0x13fe"
+            ):
+                return True
+        return False
+
+    def _umr_instance(self) -> int | None:
+        configured = self._read_key_values(CU_CONFIG_PATH).get("UMR_INSTANCE", "")
+        if configured.isdigit():
+            return int(configured)
+
+        slots = []
+        for device in glob.glob("/sys/bus/pci/devices/*"):
+            path = Path(device)
+            if (
+                self._read(path / "vendor").lower() == "0x1002"
+                and self._read(path / "device").lower() == "0x13fe"
+            ):
+                slots.append(path.name)
+
+        instances = []
+        for name_path in glob.glob("/sys/kernel/debug/dri/[0-9]*/name"):
+            instance = Path(name_path).parent.name
+            if not instance.isdigit() or int(instance) >= 128:
+                continue
+            instances.append(int(instance))
+            name = self._read(name_path).lower()
+            if any(slot.lower() in name for slot in slots):
+                return int(instance)
+        return instances[0] if len(instances) == 1 else None
+
     async def _umr_register(self, register: str, se: int, sh: int) -> int | None:
         umr = self._trusted_umr()
         if umr is None:
             return None
+        instance = self._umr_instance()
+        instance_args = ["-i", str(instance)] if instance is not None else []
+        asic = self._read_key_values(CU_CONFIG_PATH).get(
+            "UMR_ASIC", "cyan_skillfish.gfx1013"
+        )
+        if not re.fullmatch(r"[A-Za-z0-9_.-]+", asic):
+            return None
         rc, out, _ = await self._exec(
             [
                 str(umr),
+                *instance_args,
                 "-r",
-                f"cyan_skillfish.gfx1013.{register}",
+                f"{asic}.{register}",
                 "-b",
                 str(se),
                 str(sh),
@@ -312,15 +379,22 @@ class ToolkitBackend:
             )
         saved = self._read_key_values(CU_CONFIG_PATH)
         saved_masks = []
-        for value in saved.get("BC250_WGP_MASKS", "").split(","):
-            try:
-                saved_masks.append(int(value, 0))
-            except ValueError:
-                pass
+        saved_values = saved.get("BC250_WGP_MASKS", "").split(",")
+        try:
+            parsed_masks = [int(value, 0) for value in saved_values]
+        except ValueError:
+            parsed_masks = []
+        if len(parsed_masks) == 4 and all(0 <= mask <= 0x1F for mask in parsed_masks):
+            saved_masks = parsed_masks
         available = all(row["spi"] is not None for row in rows)
         trusted_umr = self._trusted_umr()
         return {
             "available": available,
+            "controllable": (
+                available
+                and self._trusted_cu_manager() is not None
+                and self._bc250_present()
+            ),
             "liveReason": None
             if available
             else (
@@ -901,7 +975,6 @@ class ToolkitBackend:
         return self._bus_value(out) if rc == 0 else None
 
     async def get_cec_status(self) -> dict[str, Any]:
-        service = await self._service("cecd.service", user=True)
         daemon_path = "/com/steampowered/CecDaemon1/Daemon"
         device_path = "/com/steampowered/CecDaemon1/Devices/Cec0"
         config_if = "com.steampowered.CecDaemon1.Config1"
@@ -916,6 +989,10 @@ class ToolkitBackend:
             self._cec_property(device_path, device_if, "PhysicalAddress"),
             self._cec_property(device_path, device_if, "AudioLogicalAddress"),
         )
+        # Property access can D-Bus-activate cecd, so capture service state after it.
+        service = await self._service("cecd.service", user=True)
+        if any(value is not None for value in properties):
+            service["active"] = "active"
         return {
             "devicePresent": Path("/dev/cec0").exists(),
             "service": service,
@@ -976,6 +1053,56 @@ class ToolkitBackend:
     async def _mutate(self, callback: Any) -> None:
         async with self._mutation_lock:
             await callback()
+
+    async def set_cu_wgp(
+        self, se: int, sh: int, wgp: int, enabled: bool
+    ) -> None:
+        if any(type(value) is not int for value in (se, sh, wgp)):
+            raise CommandError("CU routing coordinates must be whole numbers.")
+        if se not in {0, 1} or sh not in {0, 1} or wgp not in range(5):
+            raise CommandError("CU routing coordinates are out of range.")
+        if type(enabled) is not bool:
+            raise CommandError("CU routing state must be a boolean.")
+
+        async def action() -> None:
+            if not self._bc250_present():
+                raise CommandError("BC-250 GPU was not detected; refusing register writes.")
+            umr = self._trusted_umr()
+            manager = self._trusted_cu_manager()
+            if umr is None or manager is None:
+                raise CommandError(
+                    "A root-owned UMR and CU manager installation is required."
+                )
+            if await self._umr_register(
+                "mmSPI_PG_ENABLE_STATIC_WGP_MASK", se, sh
+            ) is None:
+                raise CommandError(
+                    "UMR could not verify the live routing register; no change was made."
+                )
+
+            config = self._read_key_values(CU_CONFIG_PATH)
+            asic = config.get("UMR_ASIC", "cyan_skillfish.gfx1013")
+            if not re.fullmatch(r"[A-Za-z0-9_.-]+", asic):
+                raise CommandError("The configured UMR ASIC selector is invalid.")
+            env = {
+                "PATH": "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+                "HOME": "/root",
+                "USER": "root",
+                "LOGNAME": "root",
+                "UMR": str(umr),
+                "UMR_ASIC": asic,
+            }
+            instance = self._umr_instance()
+            if instance is not None:
+                env["UMR_INSTANCE"] = str(instance)
+            command = "enable-wgp" if enabled else "disable-wgp"
+            await self._exec(
+                [str(manager), "--yes", command, f"{se}.{sh}.{wgp}"],
+                timeout=30,
+                env=env,
+            )
+
+        return await self._mutate(action)
 
     async def set_gpu_frequency(
         self, mode: str, minimum: int, maximum: int

@@ -24,6 +24,7 @@ PLUGINS_DIR="$HOME/homebrew/plugins"
 DEST_DIR="$PLUGINS_DIR/$PLUGIN_NAME"
 ROOT_HELPER_DIR="/var/lib/bc250-control/helper"
 ROOT_STATE_DIR="/var/lib/bc250-control/smu-oc"
+CU_MANAGER_SOURCE=""
 export PNPM_HOME="${PNPM_HOME:-$HOME/.local/share/pnpm}"
 export PATH="$PNPM_HOME/bin:$PATH"
 
@@ -88,6 +89,23 @@ sudo install -d -m 0755 "$ROOT_HELPER_DIR/smu-oc-patches" "$ROOT_STATE_DIR"
 sudo install -m 0755 "$SRC_DIR/../bc250-power.sh" "$ROOT_HELPER_DIR/bc250-power.sh"
 sudo install -m 0755 "$SRC_DIR/../bc250-update-persistence.sh" "$ROOT_HELPER_DIR/bc250-update-persistence.sh"
 sudo install -m 0644 "$SRC_DIR"/../smu-oc-patches/* "$ROOT_HELPER_DIR/smu-oc-patches/"
+
+for candidate in \
+    /var/lib/bc250-40cu/bc250-cu-live-manager \
+    /var/lib/bc250-40cu/bc250-cu-live-manager.sh \
+    /usr/local/bin/bc250-cu-live-manager \
+    "$SRC_DIR/../bc250-cu-live-manager"; do
+    if [[ -f "$candidate" && ! -L "$candidate" ]]; then
+        CU_MANAGER_SOURCE="$candidate"
+        break
+    fi
+done
+if [[ -n "$CU_MANAGER_SOURCE" ]]; then
+    log "Installing root-owned CU manager helper (sudo)"
+    sudo install -m 0755 "$CU_MANAGER_SOURCE" "$ROOT_HELPER_DIR/bc250-cu-live-manager"
+else
+    log "CU manager not found; live WGP editing will remain disabled"
+fi
 
 log "Installing to $DEST_DIR (sudo)"
 sudo rm -rf "$DEST_DIR"

@@ -8,13 +8,13 @@ The Quick Access panel provides a live hardware summary, telemetry graphs, and
 CEC quick controls. Select
 **Open full controls** for the fullscreen, gamepad-navigable sections:
 
-- CU routing and boot replay status
+- CU routing status, saved-table fallback, and guarded live WGP controls
 - Full system, ACPI, governor, and temperature health
 - GPU frequency, load target, and ramp behavior
 - CPU overclock detection, apply, boot replay, and stock restore controls
 - HDMI-CEC controls
 
-GPU voltage editing and manual WGP routing remain in the toolkit CLI.
+GPU voltage editing and saving WGP routing for boot remain in the toolkit CLI.
 
 ## Requirements
 
@@ -29,9 +29,9 @@ The plugin backend runs with Decky's `_root` flag. CEC commands are delegated to
 Decky starts `main.py` as root because `plugin.json` declares the `_root` flag.
 Privileged operations use typed RPC methods, validated arguments, fixed command
 paths, and argument allowlists. CEC operations use `runuser` with a clean user
-session environment. Toolkit scripts must be regular, non-symlink files owned
-by root or the Deck user. CPU tuning uses a separate root-owned helper and
-state directory installed under `/var/lib/bc250-control/`.
+session environment. Live WGP changes are delegated to a root-owned CU manager;
+user-writable copies are rejected. CPU tuning uses a separate root-owned helper
+and state directory installed under `/var/lib/bc250-control/`.
 
 ## Install
 
@@ -59,6 +59,6 @@ The production bundle is written to `dist/index.js`.
 
 ## Backend
 
-`main.py` exposes a typed RPC surface backed by `py_modules/bc250_control/`. Hardware mutations are serialized and validated. Privileged GPU changes use fixed D-Bus and configuration interfaces; only CEC commands invoke a toolkit script, after dropping to the logged-in Deck user.
+`main.py` exposes a typed RPC surface backed by `py_modules/bc250_control/`. Hardware mutations are serialized and validated. Privileged GPU changes use fixed D-Bus, configuration interfaces, or the trusted CU manager. CEC commands invoke a toolkit script after dropping to the logged-in Deck user.
 
 `tomli` is vendored under `py_modules/` for the Python 3.8 runtime shipped by older SteamOS releases.

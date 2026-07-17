@@ -85,15 +85,16 @@ export function VerticalTabs({
           minWidth: 0,
           minHeight: 0,
           flex: 1,
-          overflowY: "auto",
+          overflowX: "hidden",
+          overflowY: "scroll",
           overscrollBehavior: "contain",
+          scrollbarGutter: "stable",
         }}
       >
         <div
           style={{
             boxSizing: "border-box",
             width: "100%",
-            maxWidth: 860,
             padding: "14px 24px 96px",
           }}
         >

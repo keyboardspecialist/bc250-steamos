@@ -132,6 +132,23 @@ class BackendParsingTests(unittest.TestCase):
 
 
 class BackendMutationTests(unittest.IsolatedAsyncioTestCase):
+    async def test_exec_strips_decky_library_path(self):
+        backend = object.__new__(ToolkitBackend)
+        process = MagicMock()
+        process.communicate = AsyncMock(return_value=(b"", b""))
+        process.returncode = 0
+        with (
+            patch.object(backend_module, "CLEAN_ENV", {"PATH": "/usr/bin"}),
+            patch(
+                "bc250_control.backend.asyncio.create_subprocess_exec",
+                AsyncMock(return_value=process),
+            ) as create_process,
+        ):
+            await backend._exec(["/usr/bin/true"])
+
+        self.assertEqual(create_process.await_args.kwargs["env"], {"PATH": "/usr/bin"})
+        self.assertNotIn("LD_LIBRARY_PATH", create_process.await_args.kwargs["env"])
+
     async def test_performance_mode_uses_enabled_property(self):
         backend = object.__new__(ToolkitBackend)
         backend._exec = AsyncMock(return_value=(0, "", ""))
@@ -142,6 +159,55 @@ class BackendMutationTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("set-property", argv)
         self.assertEqual(argv[-3:], ["Enabled", "b", "true"])
 
+    async def test_umr_register_uses_configured_instance(self):
+        backend = object.__new__(ToolkitBackend)
+        backend.toolkit = Path("/toolkit")
+        backend._exec = AsyncMock(return_value=(0, "value 0x1f", ""))
+        with tempfile.TemporaryDirectory() as directory:
+            config = Path(directory) / "manager.conf"
+            config.write_text("UMR_INSTANCE=3\n", encoding="utf-8")
+            with (
+                patch.object(backend_module, "CU_CONFIG_PATH", config),
+                patch.object(backend, "_trusted_umr", return_value=Path("/umr")),
+            ):
+                value = await backend._umr_register("register", 0, 1)
+
+        self.assertEqual(value, 0x1F)
+        self.assertEqual(backend._exec.await_args.args[0][1:3], ["-i", "3"])
+
+    async def test_cu_status_rejects_partially_malformed_saved_table(self):
+        backend = object.__new__(ToolkitBackend)
+        backend.toolkit = Path("/toolkit")
+        backend._service = AsyncMock(
+            return_value={"enabled": "enabled", "active": "active"}
+        )
+        backend._umr_register = AsyncMock(return_value=None)
+        backend._trusted_umr = MagicMock(return_value=None)
+        with tempfile.TemporaryDirectory() as directory:
+            config = Path(directory) / "manager.conf"
+            config.write_text(
+                "BC250_WGP_MASKS=0x1f,bad,0x1f,0x1f,0x1f\n",
+                encoding="utf-8",
+            )
+            with patch.object(backend_module, "CU_CONFIG_PATH", config):
+                status = await backend.get_cu_status()
+
+        self.assertEqual(status["savedMasks"], [])
+
+    async def test_cec_dbus_response_marks_daemon_active(self):
+        backend = object.__new__(ToolkitBackend)
+        backend._cec_property = AsyncMock(
+            side_effect=["BC-250", True, False, False, True, False, 1000, 5]
+        )
+        backend._service = AsyncMock(
+            return_value={"enabled": "static", "active": "inactive"}
+        )
+
+        status = await backend.get_cec_status()
+
+        self.assertEqual(status["service"]["active"], "active")
+        backend._service.assert_awaited_once_with("cecd.service", user=True)
+
     async def test_rpc_rejects_boolean_frequency(self):
         backend = object.__new__(ToolkitBackend)
         with self.assertRaises(CommandError):
@@ -151,6 +217,54 @@ class BackendMutationTests(unittest.IsolatedAsyncioTestCase):
         backend = object.__new__(ToolkitBackend)
         with self.assertRaises(CommandError):
             await backend.set_cec_toggle("wake-tv", "true")
+
+    async def test_cu_rpc_rejects_boolean_coordinate(self):
+        backend = object.__new__(ToolkitBackend)
+        with self.assertRaisesRegex(CommandError, "whole numbers"):
+            await backend.set_cu_wgp(True, 0, 0, True)
+
+    async def test_cu_rpc_uses_trusted_manager(self):
+        backend = object.__new__(ToolkitBackend)
+        backend._mutation_lock = asyncio.Lock()
+        backend._bc250_present = MagicMock(return_value=True)
+        backend._trusted_umr = MagicMock(return_value=Path("/trusted/umr"))
+        backend._trusted_cu_manager = MagicMock(
+            return_value=Path("/trusted/cu-manager")
+        )
+        backend._umr_register = AsyncMock(return_value=0x07)
+        backend._umr_instance = MagicMock(return_value=2)
+        backend._exec = AsyncMock(return_value=(0, "", ""))
+
+        with patch.object(
+            backend_module,
+            "CLEAN_ENV",
+            {"PATH": "/wrong", "UMR_INSTANCE": "99"},
+        ):
+            await backend.set_cu_wgp(1, 0, 4, True)
+
+        self.assertEqual(
+            backend._exec.await_args.args[0],
+            ["/trusted/cu-manager", "--yes", "enable-wgp", "1.0.4"],
+        )
+        self.assertEqual(backend._exec.await_args.kwargs["env"]["UMR_INSTANCE"], "2")
+        self.assertNotEqual(backend._exec.await_args.kwargs["env"]["PATH"], "/wrong")
+
+    async def test_cu_rpc_drops_inherited_instance_when_detection_fails(self):
+        backend = object.__new__(ToolkitBackend)
+        backend._mutation_lock = asyncio.Lock()
+        backend._bc250_present = MagicMock(return_value=True)
+        backend._trusted_umr = MagicMock(return_value=Path("/trusted/umr"))
+        backend._trusted_cu_manager = MagicMock(
+            return_value=Path("/trusted/cu-manager")
+        )
+        backend._umr_register = AsyncMock(return_value=0x07)
+        backend._umr_instance = MagicMock(return_value=None)
+        backend._exec = AsyncMock(return_value=(0, "", ""))
+
+        with patch.object(backend_module, "CLEAN_ENV", {"UMR_INSTANCE": "99"}):
+            await backend.set_cu_wgp(0, 0, 0, False)
+
+        self.assertNotIn("UMR_INSTANCE", backend._exec.await_args.kwargs["env"])
 
     async def test_cpu_oc_rejects_unsafe_values(self):
         backend = object.__new__(ToolkitBackend)

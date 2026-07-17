@@ -14,6 +14,7 @@ export interface CuRow {
 
 export interface CuStatus {
   available: boolean;
+  controllable: boolean;
   liveReason: string | null;
   total: number;
   maximum: number;

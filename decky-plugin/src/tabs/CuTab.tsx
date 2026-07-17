@@ -1,10 +1,121 @@
-import { PanelSection } from "@decky/ui";
+import { Focusable, PanelSection, ToggleField } from "@decky/ui";
+import { useState } from "react";
+import { setCuWgp } from "../api";
 import { EmptyState, StatusRow } from "../components/Common";
+import type { CuRow } from "../types";
 import type { TabProps } from "./shared";
 
-export function CuTab({ snapshot }: TabProps) {
+function savedRows(masks: number[]): CuRow[] {
+  return masks.slice(0, 4).map((value, index) => {
+    const mask = value & 0x1f;
+    return {
+      se: Math.floor(index / 2),
+      sh: index % 2,
+      spi: mask,
+      cc: null,
+      wgps: Array.from({ length: 5 }, (_, wgp) => Boolean(mask & (1 << wgp))),
+      cus: mask.toString(2).replace(/0/g, "").length * 2,
+    };
+  });
+}
+
+function CuGrid({
+  rows,
+  editable,
+  busy,
+  onToggle,
+}: {
+  rows: CuRow[];
+  editable: boolean;
+  busy: boolean;
+  onToggle: (row: CuRow, wgp: number, enabled: boolean) => void;
+}) {
+  return (
+    <div style={{ padding: "4px 12px 10px" }}>
+      <div
+        style={{
+          display: "grid",
+          gridTemplateColumns: "68px repeat(5, minmax(54px, 1fr)) 42px",
+          gap: 5,
+          marginBottom: 6,
+          color: "#87919a",
+          fontSize: 10,
+          textAlign: "center",
+        }}
+      >
+        <span />
+        {Array.from({ length: 5 }, (_, wgp) => (
+          <span key={wgp}>CU{wgp * 2}-{wgp * 2 + 1}</span>
+        ))}
+        <span>Total</span>
+      </div>
+      {rows.map((row) => (
+        <div
+          key={`${row.se}-${row.sh}`}
+          style={{
+            display: "grid",
+            gridTemplateColumns: "68px repeat(5, minmax(54px, 1fr)) 42px",
+            gap: 5,
+            alignItems: "center",
+            marginBottom: 6,
+            fontSize: 11,
+          }}
+        >
+          <span style={{ color: "#aeb3b8" }}>SE{row.se}.SH{row.sh}</span>
+          {row.wgps.map((enabled, wgp) => {
+            const style = {
+              minHeight: 30,
+              boxSizing: "border-box" as const,
+              padding: "7px 2px",
+              border: editable ? "1px solid rgba(255,255,255,.14)" : "1px solid transparent",
+              borderRadius: 5,
+              textAlign: "center" as const,
+              background: enabled ? "rgba(89,209,133,.28)" : "rgba(255,255,255,.06)",
+              color: enabled ? "#82e8a7" : "#777f86",
+              fontWeight: 700,
+            };
+            const label = enabled ? "ON" : "OFF";
+            return editable ? (
+              <Focusable
+                key={wgp}
+                role="button"
+                tabIndex={0}
+                aria-label={`SE${row.se} SH${row.sh} CU${wgp * 2}-${wgp * 2 + 1} ${label}`}
+                onActivate={() => onToggle(row, wgp, !enabled)}
+                onClick={() => onToggle(row, wgp, !enabled)}
+                style={{ ...style, opacity: busy ? 0.55 : 1 }}
+              >
+                {label}
+              </Focusable>
+            ) : <span key={wgp} style={style}>{label}</span>;
+          })}
+          <span style={{ textAlign: "right", color: "#f2f2f2" }}>{row.cus}/10</span>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+export function CuTab({ snapshot, busy, runMutation }: TabProps) {
   const { cu } = snapshot;
   const bootEnabled = cu.service.enabled === "enabled";
+  const [advanced, setAdvanced] = useState(false);
+  const hasSavedTable = cu.savedMasks.length === 4;
+  const rows = cu.available ? cu.rows : hasSavedTable ? savedRows(cu.savedMasks) : [];
+
+  const toggleWgp = (row: CuRow, wgp: number, enabled: boolean) => {
+    if (busy || !cu.controllable) return;
+    const pair = `CU${wgp * 2}-${wgp * 2 + 1}`;
+    runMutation(
+      `${enabled ? "Enabled" : "Disabled"} SE${row.se}.SH${row.sh} ${pair}`,
+      () => setCuWgp(row.se, row.sh, wgp, enabled),
+      {
+        title: `${enabled ? "Enable" : "Disable"} ${pair}?`,
+        description: "This writes live GPU routing registers. Factory-disabled WGPs may be defective and can cause corruption, a GPU hang, or a forced reboot. Save your work and monitor temperatures before continuing.",
+        destructive: true,
+      },
+    );
+  };
 
   return (
     <>
@@ -26,53 +137,50 @@ export function CuTab({ snapshot }: TabProps) {
         />
       </PanelSection>
 
-      {cu.available ? (
-        <PanelSection title="WGP Routing">
-          <div style={{ padding: "4px 12px 10px" }}>
-            {cu.rows.map((row) => (
-              <div
-                key={`${row.se}-${row.sh}`}
-                style={{
-                  display: "grid",
-                  gridTemplateColumns: "64px repeat(5, 1fr) 42px",
-                  gap: 4,
-                  alignItems: "center",
-                  marginBottom: 6,
-                  fontSize: 11,
-                }}
-              >
-                <span style={{ color: "#aeb3b8" }}>SE{row.se}.SH{row.sh}</span>
-                {row.wgps.map((enabled, index) => (
-                  <span
-                    key={index}
-                    style={{
-                      padding: "4px 0",
-                      borderRadius: 4,
-                      textAlign: "center",
-                      background: enabled ? "rgba(89,209,133,.24)" : "rgba(255,255,255,.06)",
-                      color: enabled ? "#7be5a1" : "#777f86",
-                    }}
-                  >
-                    {index}
-                  </span>
-                ))}
-                <span style={{ textAlign: "right" }}>{row.cus}/10</span>
-              </div>
-            ))}
-          </div>
+      {rows.length === 4 ? (
+        <PanelSection title={cu.available ? "Active CU Routing" : "Saved CU Routing"}>
+          <CuGrid
+            rows={rows}
+            editable={advanced && cu.controllable}
+            busy={busy}
+            onToggle={toggleWgp}
+          />
+          {!cu.available && (
+            <EmptyState>
+              Live registers are unavailable. This colored grid shows the saved boot table instead.
+            </EmptyState>
+          )}
         </PanelSection>
       ) : (
         <EmptyState>{cu.liveReason || "Live CU routing is unavailable."}</EmptyState>
       )}
 
+      <PanelSection title="Advanced">
+        <ToggleField
+          label="Enable live WGP editing"
+          description="Each switch controls one two-CU WGP pair and writes the routing registers immediately."
+          checked={advanced && cu.controllable}
+          disabled={busy || !cu.controllable}
+          onChange={setAdvanced}
+        />
+        {!cu.controllable && (
+          <EmptyState>
+            Live editing requires readable GPU registers and a root-owned CU manager installation.
+          </EmptyState>
+        )}
+        <EmptyState>
+          Warning: factory-disabled WGPs may have failed validation. Test changes for correctness and stability before saving them for boot.
+        </EmptyState>
+      </PanelSection>
+
       <PanelSection title="Boot Behavior">
         <StatusRow
           label="Saved table"
-          value={cu.savedMasks.length === 4 ? "Available" : "Unavailable"}
-          good={cu.savedMasks.length === 4}
+          value={hasSavedTable ? "Available" : "Unavailable"}
+          good={hasSavedTable}
         />
         <EmptyState>
-          Change CU routing and boot replay from the toolkit CLI, where the harvest-map safety checks are available.
+          Save live routing and change boot replay from the toolkit CLI, where the full harvest-map checks are available.
         </EmptyState>
       </PanelSection>
     </>
