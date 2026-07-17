@@ -193,45 +193,48 @@ function FullControl() {
 
   const busy = Boolean(busyLabel);
   const tabProps = { snapshot, busy, runMutation };
+  const serviceActive = (active: string) => active === "active";
   const tabs: VerticalTab[] = [
     {
       id: "overview",
       label: "Overview",
       icon: <FaChartLine />,
-      healthy:
-        snapshot.power.acpiActive &&
-        snapshot.gpu.dbusReady,
+      healthy: [
+        snapshot.cu.service,
+        snapshot.power.governor,
+        snapshot.power.acpiService,
+        snapshot.power.cpufreqService,
+        snapshot.power.frequencyRestore,
+        snapshot.cpu.service,
+      ].every((service) => serviceActive(service.active)),
       content: <OverviewTab snapshot={snapshot} history={history} />,
     },
     {
       id: "cu",
       label: "CU",
       icon: <FaMicrochip />,
-      healthy: snapshot.cu.available,
+      healthy: serviceActive(snapshot.cu.service.active),
       content: <CuTab {...tabProps} />,
     },
     {
       id: "gpu",
       label: "GPU",
       icon: <FaMemory />,
-      healthy:
-        snapshot.gpu.available &&
-        snapshot.gpu.dbusReady,
+      healthy: serviceActive(snapshot.power.governor.active),
       content: <GpuTab {...tabProps} />,
     },
     {
       id: "cpu",
       label: "CPU OC",
       icon: <FaCog />,
-      healthy: Boolean(snapshot.cpu.installed || snapshot.cpu.staged),
+      healthy: serviceActive(snapshot.cpu.service.active),
       content: <CpuTab {...tabProps} />,
     },
     {
       id: "cec",
       label: "CEC",
       icon: <FaTv />,
-      healthy:
-        snapshot.cec.devicePresent && snapshot.cec.service.active === "active",
+      healthy: serviceActive(snapshot.cec.service.active),
       content: <CecTab {...tabProps} />,
     },
   ];

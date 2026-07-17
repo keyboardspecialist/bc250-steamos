@@ -5,9 +5,6 @@ import type { Snapshot } from "../types";
 export function PowerTab({ snapshot }: { snapshot: Snapshot }) {
   const { power } = snapshot;
   const governorEnabled = power.governor.enabled === "enabled";
-  const relevantTemps = power.temperatures
-    .filter((temp) => /edge|junction|tctl|cpu|gpu/i.test(`${temp.device} ${temp.label}`))
-    .slice(0, 4);
 
   return (
     <>
@@ -39,19 +36,6 @@ export function PowerTab({ snapshot }: { snapshot: Snapshot }) {
           good={snapshot.gpu.dbusReady}
         />
       </PanelSection>
-
-      {relevantTemps.length > 0 && (
-        <PanelSection title="Temperatures">
-          {relevantTemps.map((temperature) => (
-            <StatusRow
-              key={`${temperature.device}-${temperature.label}`}
-              label={temperature.label}
-              value={`${temperature.celsius.toFixed(1)} °C`}
-              good={temperature.celsius < 85}
-            />
-          ))}
-        </PanelSection>
-      )}
 
       <PanelSection title="Boot Behavior">
         <StatusRow
