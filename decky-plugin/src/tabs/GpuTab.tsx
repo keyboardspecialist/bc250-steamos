@@ -119,9 +119,9 @@ export function GpuTab({ snapshot, busy, runMutation }: TabProps) {
           disabled={frequencyDisabled}
           onChange={(option) => setMode(option.data as GpuMode)}
         />
-        {mode === "range" && (
+        {(mode === "adaptive" || mode === "range") && (
           <SliderField
-            label="Minimum"
+            label="Minimum clock"
             value={minimum}
             min={0}
             max={frequencyMaximum}
@@ -129,12 +129,15 @@ export function GpuTab({ snapshot, busy, runMutation }: TabProps) {
             valueSuffix=" MHz"
             editableValue
             disabled={frequencyDisabled}
-            onChange={setMinimum}
+            onChange={(value) => {
+              setMinimum(value);
+              setMode("range");
+            }}
           />
         )}
-        {(mode === "range" || mode === "pin") && (
+        {mode !== "max" && (
           <SliderField
-            label={mode === "pin" ? "Pinned clock" : "Maximum"}
+            label={mode === "pin" ? "Pinned clock" : "Maximum clock"}
             value={maximum}
             min={frequencyMinimum}
             max={frequencyMaximum}
@@ -142,7 +145,10 @@ export function GpuTab({ snapshot, busy, runMutation }: TabProps) {
             valueSuffix=" MHz"
             editableValue
             disabled={frequencyDisabled}
-            onChange={setMaximum}
+            onChange={(value) => {
+              setMaximum(value);
+              if (mode === "adaptive") setMode("range");
+            }}
           />
         )}
         {!gpu.controllable && (
@@ -170,7 +176,7 @@ export function GpuTab({ snapshot, busy, runMutation }: TabProps) {
         />
         <ActionButton
           label="Eager preset"
-          description="60/45%; helps light or frame-capped games leave idle clocks."
+          description="40/10%; ramps aggressively for light or frame-capped games."
           disabled={busy || !gpu.controllable}
           onClick={() =>
             runMutation("Eager load target applied", () => setLoadTarget("eager"))

@@ -418,24 +418,25 @@ class ToolkitBackend:
         if not re.fullmatch(r"[A-Za-z0-9_.-]+", asic):
             return None
         async with self._umr_lock:
-            rc, out, err = await self._exec(
-                [
-                    str(umr),
-                    *database_args,
-                    *instance_args,
-                    "-r",
-                    f"{asic}.{register}",
-                    "-b",
-                    str(se),
-                    str(sh),
-                    "0xffffffff",
-                ],
-                timeout=5,
-                check=False,
-            )
-            value = self._last_hex(f"{out}\n{err}")
-            if rc == 0 and value is not None:
-                return value
+            for bank_args in (
+                ["-b", str(se), str(sh), "0xffffffff"],
+                ["-b", str(se), str(sh)],
+            ):
+                rc, out, err = await self._exec(
+                    [
+                        str(umr),
+                        *database_args,
+                        *instance_args,
+                        "-r",
+                        f"{asic}.{register}",
+                        *bank_args,
+                    ],
+                    timeout=5,
+                    check=False,
+                )
+                value = self._last_hex(f"{out}\n{err}")
+                if rc == 0 and value is not None:
+                    return value
         return None
 
     async def _factory_cu_masks(self) -> list[int] | None:
@@ -1322,7 +1323,7 @@ class ToolkitBackend:
             raise CommandError("Unknown load-target preset.")
 
         async def action() -> None:
-            upper, lower = (0.60, 0.45) if preset == "eager" else (0.80, 0.65)
+            upper, lower = (0.40, 0.10) if preset == "eager" else (0.80, 0.65)
 
             async def apply_live() -> None:
                 await self._gpu_call(

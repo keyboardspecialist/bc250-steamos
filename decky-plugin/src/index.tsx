@@ -5,7 +5,6 @@ import {
   Navigation,
   PanelSection,
   PanelSectionRow,
-  ScrollPanel,
   showModal,
   Spinner,
   staticClasses,
@@ -420,7 +419,21 @@ function QuickPanel() {
 
   return (
     <div style={{ height: "100%", minHeight: 0, overflow: "hidden" }}>
-      <ScrollPanel>
+      <div
+        onFocusCapture={(event) =>
+          (event.target as HTMLElement).scrollIntoView({
+            block: "nearest",
+            inline: "nearest",
+          })
+        }
+        style={{
+          height: "100%",
+          overflowX: "hidden",
+          overflowY: "auto",
+          overscrollBehavior: "contain",
+          scrollbarGutter: "stable",
+        }}
+      >
         <Focusable flow-children="down" style={{ paddingBottom: 64 }}>
           <Focusable
             flow-children="right"
@@ -490,7 +503,7 @@ function QuickPanel() {
             </PanelSectionRow>
           </PanelSection>
         </Focusable>
-      </ScrollPanel>
+      </div>
     </div>
   );
 }

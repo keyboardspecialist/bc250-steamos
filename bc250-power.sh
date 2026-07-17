@@ -972,8 +972,8 @@ cmd_gpu_volt() {
 # (SetLoadTarget -- no restart, saved freq state untouched).
 LT_DEF_UPPER=0.80    # tuned defaults written by 'governor'
 LT_DEF_LOWER=0.65
-LT_EAGER_UPPER=0.60  # light-load preset: ramps on loads the default ignores
-LT_EAGER_LOWER=0.45
+LT_EAGER_UPPER=0.40  # light-load preset: ramps on loads the default ignores
+LT_EAGER_LOWER=0.10
 
 lt_norm() {   # "60" or "0.60" -> "0.60"; rejects junk and out-of-range
     awk -v v="${1:-}" 'BEGIN{
@@ -1649,7 +1649,7 @@ menu_load_target() {
     while true; do
         local items=(
             "Show load targets|$(badge_load_target)|Config + live values, and what upper/lower mean."
-            "Eager preset (0.60 / 0.45)||Light-load games clock up off idle. Fixes 'stuck at low clocks'."
+            "Eager preset (0.40 / 0.10)||Light-load games clock up off idle. Fixes 'stuck at low clocks'."
             "Tuned default (0.80 / 0.65)||Install default: full ramps under real load, best idle savings."
             "Custom values||Set your own thresholds (percent or fraction)."
         )
@@ -1855,7 +1855,7 @@ EVERYDAY COMMANDS
               games can sit below it at idle clocks forever. Values go to
               config.toml (persist) AND apply live via D-Bus (no restart):
     load-target             show config + live values
-    load-target eager       0.60/0.45 -- light loads ramp off idle clocks
+    load-target eager       0.40/0.10 -- light loads ramp off idle clocks
     load-target reset       0.80/0.65 tuned defaults (best idle savings)
     load-target set 70 55   custom upper/lower (percent or fraction)
               Alternative for single problem games -- per-game floor via
