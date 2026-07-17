@@ -13,6 +13,9 @@ class Plugin:
     async def get_snapshot(self):
         return await self.backend.get_snapshot()
 
+    async def get_telemetry(self):
+        return await self.backend.get_telemetry()
+
     async def set_gpu_frequency(self, mode: str, minimum: int, maximum: int):
         return await self.backend.set_gpu_frequency(mode, minimum, maximum)
 

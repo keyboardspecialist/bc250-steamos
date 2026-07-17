@@ -110,6 +110,26 @@ class BackendParsingTests(unittest.TestCase):
         path.stat.return_value = SimpleNamespace(st_uid=0, st_mode=0o100777)
         self.assertFalse(ToolkitBackend._trusted_root_file(path))
 
+    def test_umr_uses_configured_root_owned_path(self):
+        backend = object.__new__(ToolkitBackend)
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            umr = root / "umr"
+            umr.write_text("", encoding="utf-8")
+            umr.chmod(0o755)
+            config = root / "manager.conf"
+            config.write_text(f"UMR={umr}\n", encoding="utf-8")
+            backend.toolkit = root / "toolkit"
+            with (
+                patch.object(backend_module, "CU_CONFIG_PATH", config),
+                patch.object(
+                    ToolkitBackend,
+                    "_trusted_root_file",
+                    side_effect=lambda path: path == umr,
+                ),
+            ):
+                self.assertEqual(backend._trusted_umr(), umr)
+
 
 class BackendMutationTests(unittest.IsolatedAsyncioTestCase):
     async def test_performance_mode_uses_enabled_property(self):

@@ -28,6 +28,7 @@ GPU_CONFIG_PATH = Path("/etc/cyan-skillfish-governor-smu/config.toml")
 GPU_STATE_PATH = Path("/etc/cyan-skillfish-governor-smu/freq-state")
 CPU_HELPER_PATH = Path("/var/lib/bc250-control/helper/bc250-power.sh")
 CPU_STATE_DIR = Path("/var/lib/bc250-control/smu-oc")
+CU_CONFIG_PATH = Path("/etc/bc250-cu-live-manager.conf")
 
 
 class CommandError(RuntimeError):
@@ -241,16 +242,23 @@ class ToolkitBackend:
         matches = re.findall(r"0x[0-9a-fA-F]+", text)
         return int(matches[-1], 16) if matches else None
 
-    @staticmethod
-    def _trusted_umr() -> Path | None:
-        for candidate in (Path("/usr/bin/umr"), Path("/usr/local/bin/umr")):
+    def _trusted_umr(self) -> Path | None:
+        configured = self._read_key_values(CU_CONFIG_PATH).get("UMR", "")
+        candidates = [
+            Path(configured) if configured.startswith("/") else None,
+            self.toolkit / "bin/umr",
+            Path("/var/lib/bc250-40cu/bin/umr"),
+            Path("/usr/bin/umr"),
+            Path("/usr/local/bin/umr"),
+        ]
+        for candidate in candidates:
+            if candidate is None or not self._trusted_root_file(candidate):
+                continue
             try:
-                stat = candidate.stat()
+                if candidate.stat().st_mode & 0o111:
+                    return candidate
             except OSError:
                 continue
-            if candidate.is_symlink() or stat.st_uid != 0 or stat.st_mode & 0o022:
-                continue
-            return candidate
         return None
 
     async def _umr_register(self, register: str, se: int, sh: int) -> int | None:
@@ -302,7 +310,7 @@ class ToolkitBackend:
                     "cus": count,
                 }
             )
-        saved = self._read_key_values("/etc/bc250-cu-live-manager.conf")
+        saved = self._read_key_values(CU_CONFIG_PATH)
         saved_masks = []
         for value in saved.get("BC250_WGP_MASKS", "").split(","):
             try:
@@ -352,6 +360,65 @@ class ToolkitBackend:
                 )
         return temperatures
 
+    def _cpu_current_mhz(self) -> int | None:
+        candidates = [Path("/sys/devices/system/cpu/cpu0/cpufreq/scaling_cur_freq")]
+        candidates.extend(
+            Path(path)
+            for path in sorted(
+                glob.glob("/sys/devices/system/cpu/cpufreq/policy*/scaling_cur_freq")
+            )
+        )
+        for path in candidates:
+            current = self._read(path)
+            if current.isdigit():
+                return round(int(current) / 1000)
+        return None
+
+    def _cpu_governor(self) -> str:
+        candidates = [Path("/sys/devices/system/cpu/cpu0/cpufreq/scaling_governor")]
+        candidates.extend(
+            Path(path)
+            for path in sorted(
+                glob.glob("/sys/devices/system/cpu/cpufreq/policy*/scaling_governor")
+            )
+        )
+        for path in candidates:
+            governor = self._read(path)
+            if governor:
+                return governor
+        return ""
+
+    def _active_gpu_mhz(self) -> int | None:
+        for path in glob.glob("/sys/class/drm/card*/device/pp_dpm_sclk"):
+            levels = self._read(path)
+            match = re.search(r"(\d+)Mhz\s+\*", levels, re.IGNORECASE)
+            if match:
+                return int(match.group(1))
+        return None
+
+    @staticmethod
+    def _matching_temperature(
+        temperatures: list[dict[str, Any]], pattern: str
+    ) -> int | float | None:
+        matcher = re.compile(pattern, re.IGNORECASE)
+        for temperature in temperatures:
+            if matcher.search(f"{temperature['device']} {temperature['label']}"):
+                return temperature["celsius"]
+        return None
+
+    async def get_telemetry(self) -> dict[str, int | float | None]:
+        temperatures = self._temperatures()
+        return {
+            "cpuClock": self._cpu_current_mhz(),
+            "gpuClock": self._active_gpu_mhz(),
+            "cpuTemp": self._matching_temperature(
+                temperatures, r"k10temp|cpu|tctl|package"
+            ),
+            "gpuTemp": self._matching_temperature(
+                temperatures, r"amdgpu|gpu|edge|junction"
+            ),
+        }
+
     async def get_power_status(self) -> dict[str, Any]:
         governor, acpi, cpufreq, restore = await asyncio.gather(
             self._service("cyan-skillfish-governor-smu.service"),
@@ -360,12 +427,11 @@ class ToolkitBackend:
             self._service("bc250-gpu-freq-restore.service"),
         )
         cpu_root = Path("/sys/devices/system/cpu/cpu0")
-        current = self._read(cpu_root / "cpufreq/scaling_cur_freq")
         return {
             "acpiActive": (cpu_root / "cpufreq").is_dir(),
             "cStates": len(list((cpu_root / "cpuidle").glob("state*"))),
-            "cpuGovernor": self._read(cpu_root / "cpufreq/scaling_governor"),
-            "cpuCurrentMhz": round(int(current) / 1000) if current.isdigit() else None,
+            "cpuGovernor": self._cpu_governor(),
+            "cpuCurrentMhz": self._cpu_current_mhz(),
             "governor": governor,
             "acpiService": acpi,
             "cpufreqService": cpufreq,
@@ -634,13 +700,11 @@ class ToolkitBackend:
         restore_service = await self._service("bc250-gpu-freq-restore.service")
         state = self._read_key_values(GPU_STATE_PATH)
         config = self._gpu_config()
-        active_mhz = None
+        active_mhz = self._active_gpu_mhz()
         levels = ""
         for path in glob.glob("/sys/class/drm/card*/device/pp_dpm_sclk"):
             levels = self._read(path)
-            match = re.search(r"(\d+)Mhz\s+\*", levels, re.IGNORECASE)
-            if match:
-                active_mhz = int(match.group(1))
+            if levels:
                 break
         requested_mode = state.get("MODE", "adaptive")
         requested_min = self._safe_int(state.get("A"))
@@ -693,7 +757,16 @@ class ToolkitBackend:
         dbus_ready = enabled is not None
         mode = requested_mode
         if dbus_ready and current_min is not None and current_max is not None:
-            if enabled is True:
+            if requested_mode == "pin" and (
+                current_min == requested_max and current_max == requested_max
+            ):
+                mode = "pin"
+            elif requested_mode == "range" and (
+                current_max == requested_max
+                and (requested_min == 0 or current_min == requested_min)
+            ):
+                mode = "range"
+            elif requested_mode == "max" and enabled is True:
                 mode = "max"
             elif current_min == current_max:
                 mode = "pin"
@@ -701,15 +774,21 @@ class ToolkitBackend:
                 mode = "adaptive"
             else:
                 mode = "range"
-        replay_applied = dbus_ready and mode == requested_mode
-        if replay_applied and requested_mode == "pin":
+        replay_applied = False
+        if dbus_ready and requested_mode == "pin":
             replay_applied = (
                 current_min == requested_max and current_max == requested_max
             )
-        elif replay_applied and requested_mode == "range":
+        elif dbus_ready and requested_mode == "range":
             replay_applied = (
                 current_max == requested_max
                 and (requested_min == 0 or current_min == requested_min)
+            )
+        elif dbus_ready and requested_mode == "max":
+            replay_applied = enabled is True
+        elif dbus_ready and requested_mode == "adaptive":
+            replay_applied = enabled is False and (
+                current_min == initial_min and current_max == initial_max
             )
         span_min = allowed_min or 500
         span_max = config.get("configuredMax") or allowed_max or 2200

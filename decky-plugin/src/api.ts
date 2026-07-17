@@ -1,7 +1,8 @@
 import { callable } from "@decky/api";
-import type { Snapshot } from "./types";
+import type { Snapshot, TelemetrySample } from "./types";
 
 export const getSnapshot = callable<[], Snapshot>("get_snapshot");
+export const getTelemetry = callable<[], TelemetrySample>("get_telemetry");
 export const setGpuFrequency = callable<
   [mode: string, minimum: number, maximum: number],
   void

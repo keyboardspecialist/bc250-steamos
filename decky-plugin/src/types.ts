@@ -29,6 +29,13 @@ export interface Temperature {
   celsius: number;
 }
 
+export interface TelemetrySample {
+  cpuClock: number | null;
+  gpuClock: number | null;
+  cpuTemp: number | null;
+  gpuTemp: number | null;
+}
+
 export interface PowerStatus {
   acpiActive: boolean;
   cStates: number;

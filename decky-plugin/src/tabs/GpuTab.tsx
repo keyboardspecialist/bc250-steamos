@@ -7,7 +7,7 @@ import type { TabProps } from "./shared";
 
 const modeOptions = [
   { data: "adaptive", label: "Adaptive" },
-  { data: "range", label: "Adaptive range" },
+  { data: "range", label: "Custom range / overclock" },
   { data: "pin", label: "Pinned frequency" },
   { data: "max", label: "Maximum curve point" },
 ];
@@ -85,7 +85,7 @@ export function GpuTab({ snapshot, busy, runMutation }: TabProps) {
           good={gpu.persistent && gpu.replayApplied}
         />
         <StatusRow
-          label="Configured ceiling"
+          label="Adaptive ceiling"
           value={gpu.configuredMax ? `${gpu.configuredMax} MHz` : "Curve maximum"}
         />
       </PanelSection>

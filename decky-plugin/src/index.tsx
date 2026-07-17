@@ -19,7 +19,7 @@ import {
   FaSyncAlt,
   FaTv,
 } from "react-icons/fa";
-import { getSnapshot } from "./api";
+import { getSnapshot, getTelemetry } from "./api";
 import { EmptyState, StatusRow } from "./components/Common";
 import { VerticalTabs, type VerticalTab } from "./components/VerticalTabs";
 import { CecTab } from "./tabs/CecTab";
@@ -29,7 +29,6 @@ import { GpuTab } from "./tabs/GpuTab";
 import {
   OverviewTab,
   OverviewSummary,
-  snapshotSample,
   type HistorySample,
 } from "./tabs/OverviewTab";
 import type {
@@ -47,10 +46,39 @@ function errorMessage(error: unknown): string {
 
 const ROUTE_PATH = "/bc250-control";
 
+function useTelemetryHistory(): HistorySample[] {
+  const [history, setHistory] = useState<HistorySample[]>([]);
+  const telemetryRunning = useRef(false);
+
+  useEffect(() => {
+    let active = true;
+    const poll = async () => {
+      if (telemetryRunning.current) return;
+      telemetryRunning.current = true;
+      try {
+        const sample = await getTelemetry();
+        if (active) setHistory((current) => [...current, sample].slice(-36));
+      } catch {
+        // Full status refreshes report backend errors; chart gaps stay quiet.
+      } finally {
+        telemetryRunning.current = false;
+      }
+    };
+    void poll();
+    const timer = window.setInterval(() => void poll(), 1_000);
+    return () => {
+      active = false;
+      window.clearInterval(timer);
+    };
+  }, []);
+
+  return history;
+}
+
 function FullControl() {
   const [snapshot, setSnapshot] = useState<Snapshot | null>(null);
   const [activeTab, setActiveTab] = useState("overview");
-  const [history, setHistory] = useState<HistorySample[]>([]);
+  const history = useTelemetryHistory();
   const [loading, setLoading] = useState(true);
   const [busyLabel, setBusyLabel] = useState("");
   const [error, setError] = useState("");
@@ -82,12 +110,6 @@ function FullControl() {
     const timer = window.setInterval(() => void refresh(true), 10_000);
     return () => window.clearInterval(timer);
   }, []);
-
-  useEffect(() => {
-    if (!snapshot) return;
-    const sample = snapshotSample(snapshot);
-    setHistory((current) => [...current, sample].slice(-36));
-  }, [snapshot]);
 
   const execute = async (
     label: string,
@@ -178,7 +200,6 @@ function FullControl() {
       icon: <FaChartLine />,
       healthy:
         snapshot.power.acpiActive &&
-        snapshot.power.governor.active === "active" &&
         snapshot.gpu.dbusReady,
       content: <OverviewTab snapshot={snapshot} history={history} />,
     },
@@ -195,8 +216,7 @@ function FullControl() {
       icon: <FaMemory />,
       healthy:
         snapshot.gpu.available &&
-        snapshot.gpu.dbusReady &&
-        snapshot.power.governor.active === "active",
+        snapshot.gpu.dbusReady,
       content: <GpuTab {...tabProps} />,
     },
     {
@@ -243,7 +263,7 @@ function FullControl() {
             BC-250 Control
           </div>
           <div style={{ fontSize: 12, color: "#aeb3b8", marginTop: 2 }}>
-            {busyLabel || `${snapshot.cu.total}/40 CU · ${snapshot.gpu.activeMhz ?? "–"} MHz GPU`}
+            {busyLabel || `${snapshot.cu.available ? `${snapshot.cu.total}/${snapshot.cu.maximum} CU` : "CU unavailable"} · ${snapshot.gpu.activeMhz ?? "–"} MHz GPU`}
           </div>
           {!snapshot.toolkit.available && (
             <div
@@ -278,7 +298,7 @@ function FullControl() {
 function QuickPanel() {
   const [snapshot, setSnapshot] = useState<Snapshot | null>(null);
   const [activeTab, setActiveTab] = useState("summary");
-  const [history, setHistory] = useState<HistorySample[]>([]);
+  const history = useTelemetryHistory();
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(true);
   const [busyLabel, setBusyLabel] = useState("");
@@ -310,11 +330,6 @@ function QuickPanel() {
     const timer = window.setInterval(() => void refresh(true), 10_000);
     return () => window.clearInterval(timer);
   }, []);
-
-  useEffect(() => {
-    if (!snapshot) return;
-    setHistory((current) => [...current, snapshotSample(snapshot)].slice(-36));
-  }, [snapshot]);
 
   const execute = async (
     label: string,
@@ -423,6 +438,13 @@ function QuickPanel() {
           </Focusable>
         ))}
       </Focusable>
+      <PanelSection>
+        <PanelSectionRow>
+          <ButtonItem layout="below" onClick={openControls}>
+            Open full controls
+          </ButtonItem>
+        </PanelSectionRow>
+      </PanelSection>
       {snapshot ? (
         activeTab === "cec" ? (
           <CecTab
@@ -440,11 +462,6 @@ function QuickPanel() {
       {busyLabel && <StatusRow label="Working" value={busyLabel} />}
       {error && snapshot && <EmptyState>{error}</EmptyState>}
       <PanelSection>
-        <PanelSectionRow>
-          <ButtonItem layout="below" onClick={openControls}>
-            Open full controls
-          </ButtonItem>
-        </PanelSectionRow>
         <PanelSectionRow>
           <ButtonItem
             layout="below"

@@ -1,14 +1,9 @@
 import { PanelSection } from "@decky/ui";
 import { StatusRow } from "../components/Common";
-import type { Snapshot, Temperature } from "../types";
+import type { Snapshot, TelemetrySample, Temperature } from "../types";
 import { PowerTab } from "./PowerTab";
 
-export interface HistorySample {
-  cpuClock: number | null;
-  gpuClock: number | null;
-  cpuTemp: number | null;
-  gpuTemp: number | null;
-}
+export type HistorySample = TelemetrySample;
 
 function matchingTemperature(
   temperatures: Temperature[],
@@ -56,7 +51,7 @@ function HistoryChart({
   const minimum = present.length > 0 ? Math.min(...present) : floor;
   const ceiling = Math.max(maximum, floor + 1);
   const width = 300;
-  const height = compact ? 52 : 76;
+  const height = compact ? 38 : 56;
   const sampleCount = 36;
   const firstIndex = sampleCount - Math.min(values.length, sampleCount);
   const pointY = (value: number) =>
@@ -155,7 +150,7 @@ function HistoryChart({
         }}
       >
         <span>{present.length > 1 ? `${Math.round(minimum)} min` : "Collecting"}</span>
-        <span>{present.length > 1 ? `${Math.round(maximum)} max` : "10 s samples"}</span>
+        <span>{present.length > 1 ? `${Math.round(maximum)} max` : "1 s samples"}</span>
       </div>
     </div>
   );
@@ -171,32 +166,42 @@ export function OverviewSummary({
   compact?: boolean;
 }) {
   const latest = snapshotSample(snapshot);
+  const gpuGovernorReady = snapshot.gpu.dbusReady;
+  const cpuProfileEnabled = snapshot.cpu.service.enabled === "enabled";
 
   return (
     <>
       <PanelSection title={compact ? "System summary" : "System Overview"}>
         <StatusRow
           label="Compute units"
-          value={`${snapshot.cu.total}/${snapshot.cu.maximum}`}
+          value={
+            snapshot.cu.available
+              ? `${snapshot.cu.total}/${snapshot.cu.maximum}`
+              : "Unavailable"
+          }
           good={snapshot.cu.available}
         />
         <StatusRow
-          label="CPU overclock"
-          value={snapshot.cpu.service.active}
-          good={snapshot.cpu.service.active === "active"}
+          label="CPU OC profile"
+          value={
+            cpuProfileEnabled
+              ? "Enabled at boot"
+              : snapshot.cpu.installed || snapshot.cpu.staged
+                ? "Available, not enabled"
+                : "Not configured"
+          }
+          good={cpuProfileEnabled}
         />
         <StatusRow
           label="GPU governor"
           value={
-            snapshot.power.governor.active !== "active"
-              ? snapshot.power.governor.active
-              : snapshot.gpu.dbusReady
-                ? "active · D-Bus ready"
-                : "active · D-Bus unavailable"
+            gpuGovernorReady
+              ? "Active · D-Bus ready"
+              : snapshot.power.governor.active === "active"
+                ? "Active · D-Bus unavailable"
+                : snapshot.power.governor.active
           }
-          good={
-            snapshot.power.governor.active === "active" && snapshot.gpu.dbusReady
-          }
+          good={gpuGovernorReady}
         />
         <StatusRow
           label="CEC"

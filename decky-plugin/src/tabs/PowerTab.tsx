@@ -30,13 +30,13 @@ export function PowerTab({ snapshot }: { snapshot: Snapshot }) {
         <StatusRow
           label="GPU governor"
           value={
-            power.governor.active !== "active"
-              ? power.governor.active
-              : snapshot.gpu.dbusReady
-                ? "Active · D-Bus ready"
-                : "Active · D-Bus unavailable"
+            snapshot.gpu.dbusReady
+              ? "Active · D-Bus ready"
+              : power.governor.active === "active"
+                ? "Active · D-Bus unavailable"
+                : power.governor.active
           }
-          good={power.governor.active === "active" && snapshot.gpu.dbusReady}
+          good={snapshot.gpu.dbusReady}
         />
       </PanelSection>
 
