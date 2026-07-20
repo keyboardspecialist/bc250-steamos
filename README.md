@@ -11,6 +11,39 @@ git clone https://github.com/keyboardspecialist/bc250-steamos.git \
 cd ~/.local/share/bc250-fixes/bc250-steamos
 ```
 
+### New Users
+
+| Component | Setup command |
+|---|---|
+| Power management | `sudo ./bc250-power.sh all`, then `sudo ./bc250-power.sh enable` |
+| Compute-unit manager | `sudo ./bc250-40cu.sh` |
+| CEC | `./bc250-cec.sh setup` |
+| AIC8800 | `sudo bash ./aic8800/steamdeck-setup.sh` |
+| Decky plugin | `bash ./decky-plugin/install.sh` |
+| Persistent storage and recovery | Installed automatically by each setup workflow |
+| Verification | `sudo ./bc250-storage.sh status` |
+
+### Existing Users
+
+```bash
+cd ~/.local/share/bc250-fixes/bc250-steamos
+git pull
+sudo ./bc250-storage.sh install
+```
+
+| Installed feature | Refresh command |
+|---|---|
+| GPU governor | `sudo ./bc250-power.sh enable` |
+| ACPI and CPU frequency | `sudo ./bc250-power.sh acpi` |
+| Compute-unit manager | `sudo ./bc250-40cu.sh persist` |
+| CEC shutdown integration | `./bc250-cec.sh shutdown-standby install` |
+| AIC8800 | `sudo bash ./aic8800/steamdeck-setup.sh` |
+
+```bash
+sudo ./bc250-storage.sh status
+sudo ./bc250-power.sh status
+```
+
 ## Tools
 
 | Tool | Purpose |
@@ -204,8 +237,8 @@ the root-owned backing path and repairs the bind-mount unit, enablement links,
 and storage keep list before any root-backed component starts. The recovery
 helper is addressed through the direct `/home/.steamos/offload` path, so it is
 available even when the `/var/lib/bc250-control` mount is what needs repair.
-It deliberately does not restore tuning, enable disabled components, fetch
-packages, or read `/etc/previous` during boot.
+Its boot scope is storage and retention infrastructure. Tuning recovery and
+component enablement remain explicit setup actions.
 
 ```bash
 sudo bash ./bc250-storage.sh status
@@ -215,11 +248,10 @@ sudo bash ./bc250-storage.sh repair
 `repair` is idempotent and performs installation-time migration as well as
 repairing the recovery service, backing directory, mount unit, enablement
 links, and atomic-update drop-in. At boot, the narrower
-`repair-infrastructure` action fails closed on missing backing data, unexpected
-mounts, unsafe permissions, or files that would be hidden by the bind mount.
+`repair-infrastructure` action requires intact backing data, the expected
+mount, secure permissions, and an empty mountpoint.
 The backing data survives normal atomic updates because `/home` is the shared
-partition. Factory resets, reimages, loss of `/home`, and filesystem corruption
-are outside that guarantee.
+partition. Use a separate backup for factory-reset and reimage recovery.
 
 ### Persistence Commands
 
