@@ -20,7 +20,7 @@ cd ~/.local/share/bc250-fixes/bc250-steamos
 | CEC | `./bc250-cec.sh setup` |
 | AIC8800 | `sudo bash ./aic8800/steamdeck-setup.sh` |
 | Decky plugin | `bash ./decky-plugin/install.sh` |
-| Persistent storage and recovery | Installed automatically by each setup workflow |
+| Persistent storage and recovery | Automatic with each setup workflow; `./bc250-storage.sh` opens its menu |
 | Verification | `sudo ./bc250-storage.sh status` |
 
 ### Existing Users
@@ -241,6 +241,7 @@ Its boot scope is storage and retention infrastructure. Tuning recovery and
 component enablement remain explicit setup actions.
 
 ```bash
+./bc250-storage.sh
 sudo bash ./bc250-storage.sh status
 sudo bash ./bc250-storage.sh repair
 ```

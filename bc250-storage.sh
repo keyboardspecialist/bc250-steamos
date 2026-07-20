@@ -38,6 +38,9 @@ require_root() { [[ $EUID -eq 0 ]] || die "Run with sudo."; }
 
 restore_failed_migration() {
     local rc=$?
+    if declare -F tui_show_cursor >/dev/null; then
+        tui_show_cursor
+    fi
     if [[ $rc -ne 0 && $BACKING_COMMITTED -eq 0 ]]; then
         if mountpoint -q "$ROOT_DIR"; then
             echo "[bc250-storage] Migration failed after $ROOT_DIR became mounted; preserving all data for manual recovery." >&2
@@ -497,10 +500,155 @@ show_status() {
     log "atomic-update list: $KEEP_PATH"
 }
 
-case "${1:-install}" in
-    install|repair) install_storage ;;
-    repair-infrastructure) repair_infrastructure ;;
+C0=$'\033[0m'; CB=$'\033[1m'; CD=$'\033[2m'; CI=$'\033[7m'
+CG=$'\033[32m'; CY=$'\033[33m'; CR=$'\033[31m'; CC=$'\033[36m'
+TUI_CURSOR_HIDDEN=0
+
+tui_show_cursor() {
+    if [[ $TUI_CURSOR_HIDDEN -eq 1 ]]; then
+        printf '\033[?25h'
+        TUI_CURSOR_HIDDEN=0
+    fi
+}
+
+menu_select() {
+    local title="$1"; shift
+    local items=("$@") n=$# cur=0 drawn=0 key rest i label badge hint
+    local lines=$((n + 4))
+    printf '\033[?25l'; TUI_CURSOR_HIDDEN=1
+    while true; do
+        if [[ $drawn -eq 1 ]]; then printf '\033[%dA' "$lines"; fi
+        printf '\r\033[K%s\n' "${CB}${CC}${title}${C0}"
+        printf '\033[K%s\n' "${CD}  up/down move - Enter select - q back${C0}"
+        for i in "${!items[@]}"; do
+            IFS='|' read -r label badge hint <<< "${items[$i]}"
+            if [[ $i -eq $cur ]]; then
+                printf '\033[K%s\n' "  ${CI}${CB} > ${label} ${C0} ${badge}"
+            else
+                printf '\033[K%s\n' "     ${label}  ${badge}"
+            fi
+        done
+        IFS='|' read -r label badge hint <<< "${items[$cur]}"
+        printf '\033[K\n\033[K%s\n' "  ${CD}${hint}${C0}"
+        drawn=1
+        IFS= read -rsn1 key || { tui_show_cursor; return 1; }
+        if [[ $key == $'\033' ]]; then
+            rest=""
+            IFS= read -rsn2 -t 0.05 rest || true
+            key+="$rest"
+        fi
+        case "$key" in
+            $'\033[A'|k) if (( cur > 0 )); then cur=$((cur - 1)); else cur=$((n - 1)); fi ;;
+            $'\033[B'|j) if (( cur < n - 1 )); then cur=$((cur + 1)); else cur=0; fi ;;
+            "")          MENU_CHOICE=$cur; tui_show_cursor; return 0 ;;
+            q|Q|$'\033') tui_show_cursor; return 1 ;;
+        esac
+    done
+}
+
+pause_key() {
+    echo
+    printf '%s' "${CD}-- press any key to return to the menu --${C0}"
+    IFS= read -rsn1 || true
+    printf '\r\033[K'
+}
+
+storage_badge() {
+    if expected_mount_active \
+        && [[ -f "$RECOVERY_PATH" && -f "$UNIT_PATH" && -f "$KEEP_PATH" \
+            && -f "$RECOVERY_HELPER" \
+            && -L "$RECOVERY_WANTS" \
+            && "$(readlink "$RECOVERY_WANTS")" == "../$RECOVERY_NAME" \
+            && -L "$UNIT_WANTS" \
+            && "$(readlink "$UNIT_WANTS")" == "../$UNIT_NAME" ]]; then
+        printf '%s' "${CG}[healthy]${C0}"
+    elif [[ -e "$BACKING_DIR" || -e "$RECOVERY_PATH" || -e "$UNIT_PATH" ]]; then
+        printf '%s' "${CY}[repair]${C0}"
+    else
+        printf '%s' "${CY}[setup]${C0}"
+    fi
+}
+
+request_sudo() {
+    [[ -t 0 && -t 1 ]] \
+        || die "This action needs administrator access. Run with sudo."
+    local answer
+    printf '%s' "${CB}Administrator access is required. Continue with sudo? [y/N] ${C0}"
+    IFS= read -r answer
+    case "$answer" in
+        y|Y|yes|YES) sudo bash "$SELF" "$@" ;;
+        *) log "Cancelled."; return 1 ;;
+    esac
+}
+
+run_privileged() {
+    if [[ $EUID -eq 0 ]]; then
+        case "$1" in
+            install|repair) install_storage ;;
+            repair-infrastructure) repair_infrastructure ;;
+        esac
+    else
+        request_sudo "$@"
+    fi
+}
+
+run_menu_action() {
+    local rc=0
+    echo
+    bash "$SELF" "$@" || rc=$?
+    if [[ $rc -ne 0 ]]; then
+        echo -e "${CR}${CB}[bc250-storage]${C0} action failed (exit $rc)"
+    fi
+    pause_key
+}
+
+show_menu_status() {
+    echo
+    show_status
+    pause_key
+}
+
+cmd_menu() {
+    [[ -t 0 && -t 1 ]] \
+        || die "The menu needs an interactive terminal. Use '$0 help' for CLI commands."
+    while true; do
+        local items=(
+            "Install / repair storage|$(storage_badge)|Install persistent storage, recovery, units, and keep lists."
+            "Repair boot infrastructure||Validate and repair an established home-backed mount."
+            "Show status||Show mount source, recovery integration, and keep-list paths."
+        )
+        menu_select "BC-250 persistent storage" "${items[@]}" || { echo; break; }
+        case $MENU_CHOICE in
+            0) run_menu_action install ;;
+            1) run_menu_action repair-infrastructure ;;
+            2) show_menu_status ;;
+        esac
+    done
+}
+
+cmd_help() {
+    cat << EOF
+Usage: $0 {install|repair|repair-infrastructure|status|menu|help|render}
+
+Run with no arguments in a terminal to open the interactive menu.
+Privileged actions request confirmation before invoking sudo.
+EOF
+}
+
+if [[ $# -eq 0 ]]; then
+    if [[ -t 0 && -t 1 ]]; then
+        cmd_menu
+        exit 0
+    fi
+    cmd_help >&2
+    exit 1
+fi
+
+case "$1" in
+    install|repair|repair-infrastructure) run_privileged "$1" ;;
     status) show_status ;;
+    menu) cmd_menu ;;
+    help|-h|--help) cmd_help ;;
     render)
         case "${2:-}" in
             mount) render_mount_unit ;;
@@ -509,5 +657,5 @@ case "${1:-install}" in
             *) die "Usage: $0 render {mount|recovery|keep}" ;;
         esac
         ;;
-    *) die "Usage: $0 {install|repair|repair-infrastructure|status|render}" ;;
+    *) cmd_help >&2; exit 1 ;;
 esac

@@ -78,6 +78,28 @@ class PersistenceUnitTests(unittest.TestCase):
             source,
         )
 
+    def test_storage_help_documents_menu_and_sudo_prompt(self):
+        result = subprocess.run(
+            ["bash", str(STORAGE), "help"],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        self.assertIn("interactive menu", result.stdout)
+        self.assertIn("confirmation before invoking sudo", result.stdout)
+        source = STORAGE.read_text(encoding="utf-8")
+        self.assertIn("Continue with sudo? [y/N]", source)
+        self.assertIn('sudo bash "$SELF" "$@"', source)
+
+    def test_storage_without_terminal_prints_help(self):
+        result = subprocess.run(
+            ["bash", str(STORAGE)],
+            capture_output=True,
+            text=True,
+        )
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("Usage:", result.stderr)
+
     def test_all_shell_entrypoints_parse(self):
         scripts = [
             "bc250-storage.sh",
