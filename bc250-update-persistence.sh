@@ -12,6 +12,8 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 STORAGE_SH="$SCRIPT_DIR/bc250-storage.sh"
 STORAGE_UNIT='/etc/systemd/system/var-lib-bc250\x2dcontrol.mount'
 STORAGE_WANTS='/etc/systemd/system/local-fs.target.wants/var-lib-bc250\x2dcontrol.mount'
+RECOVERY_UNIT=/etc/systemd/system/bc250-persistence-recovery.service
+RECOVERY_WANTS=/etc/systemd/system/local-fs.target.wants/bc250-persistence-recovery.service
 ROOT_DATA_DIR=/var/lib/bc250-control
 LEGACY_GPU_STATE=/etc/cyan-skillfish-governor-smu/freq-state
 
@@ -35,6 +37,11 @@ install_storage() {
     bash "$STORAGE_SH" install
 }
 
+print_storage_paths() {
+    printf '%s\n' "$RECOVERY_UNIT" "$RECOVERY_WANTS" \
+        "$STORAGE_UNIT" "$STORAGE_WANTS"
+}
+
 write_keep_file() {
     local component="$1" target="$KEEP_DIR/bc250-$1.conf" tmp
     case "$component" in
@@ -50,10 +57,10 @@ write_keep_file() {
                 cat << EOF
 /etc/bc250-cu-live-manager.conf
 /etc/systemd/system/bc250-cu-live-manager.service
+/etc/systemd/system/bc250-cu-live-manager.service.d/10-bc250-storage.conf
 /etc/systemd/system/multi-user.target.wants/bc250-cu-live-manager.service
-$STORAGE_UNIT
-$STORAGE_WANTS
 EOF
+                print_storage_paths
                 ;;
             power)
                 cat << EOF
@@ -61,27 +68,30 @@ EOF
 /etc/cyan-skillfish-governor-smu/config.toml
 /etc/dbus-1/system.d/com.cyan.SkillFishGovernor.conf
 /etc/systemd/system/bc250-acpi-heal.service
+/etc/systemd/system/bc250-acpi-heal.service.d/10-bc250-storage.conf
 /etc/systemd/system/bc250-cpufreq.service
 /etc/systemd/system/bc250-gpu-freq-restore.service
+/etc/systemd/system/bc250-gpu-freq-restore.service.d/10-bc250-storage.conf
 /etc/systemd/system/bc250-smu-oc.service
+/etc/systemd/system/bc250-smu-oc.service.d/10-bc250-storage.conf
 /etc/systemd/system/cyan-skillfish-governor-smu.service
+/etc/systemd/system/cyan-skillfish-governor-smu.service.d/10-bc250-storage.conf
 /etc/systemd/system/multi-user.target.wants/bc250-acpi-heal.service
 /etc/systemd/system/multi-user.target.wants/bc250-cpufreq.service
 /etc/systemd/system/multi-user.target.wants/bc250-gpu-freq-restore.service
 /etc/systemd/system/multi-user.target.wants/bc250-smu-oc.service
 /etc/systemd/system/multi-user.target.wants/cyan-skillfish-governor-smu.service
-$STORAGE_UNIT
-$STORAGE_WANTS
 EOF
+                print_storage_paths
                 ;;
             cec)
                 cat << EOF
 /etc/systemd/system-sleep/bc250-cec-amp.sh
 /etc/systemd/system/bc250-cec-poweroff-standby.service
+/etc/systemd/system/bc250-cec-poweroff-standby.service.d/10-bc250-storage.conf
 /etc/systemd/system/multi-user.target.wants/bc250-cec-poweroff-standby.service
-$STORAGE_UNIT
-$STORAGE_WANTS
 EOF
+                print_storage_paths
                 ;;
             aic)
                 cat << EOF
@@ -89,10 +99,10 @@ EOF
 /etc/udev/rules.d/40-aic8800-modeswitch.rules
 /etc/usb_modeswitch.d/1111:1111
 /etc/systemd/system/aic8800-modules.service
+/etc/systemd/system/aic8800-modules.service.d/10-bc250-storage.conf
 /etc/systemd/system/multi-user.target.wants/aic8800-modules.service
-$STORAGE_UNIT
-$STORAGE_WANTS
 EOF
+                print_storage_paths
                 ;;
         esac
     } > "$tmp"
@@ -260,7 +270,9 @@ show_status() {
         state=pending
         if [[ -f "$KEEP_DIR/bc250-$component.conf" ]]; then
             if grep -Fxq "$STORAGE_UNIT" "$KEEP_DIR/bc250-$component.conf" \
-                && grep -Fxq "$STORAGE_WANTS" "$KEEP_DIR/bc250-$component.conf"; then
+                && grep -Fxq "$STORAGE_WANTS" "$KEEP_DIR/bc250-$component.conf" \
+                && grep -Fxq "$RECOVERY_UNIT" "$KEEP_DIR/bc250-$component.conf" \
+                && grep -Fxq "$RECOVERY_WANTS" "$KEEP_DIR/bc250-$component.conf"; then
                 state=installed
             else
                 state=stale
@@ -337,7 +349,9 @@ pause_key() {
 keep_badge() {
     if [[ -f "$KEEP_DIR/bc250-$1.conf" ]] \
         && grep -Fxq "$STORAGE_UNIT" "$KEEP_DIR/bc250-$1.conf" \
-        && grep -Fxq "$STORAGE_WANTS" "$KEEP_DIR/bc250-$1.conf"; then
+        && grep -Fxq "$STORAGE_WANTS" "$KEEP_DIR/bc250-$1.conf" \
+        && grep -Fxq "$RECOVERY_UNIT" "$KEEP_DIR/bc250-$1.conf" \
+        && grep -Fxq "$RECOVERY_WANTS" "$KEEP_DIR/bc250-$1.conf"; then
         printf '%s' "${CG}[protected]${C0}"
     elif [[ -f "$KEEP_DIR/bc250-$1.conf" ]]; then
         printf '%s' "${CY}[stale]${C0}"

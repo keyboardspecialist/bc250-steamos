@@ -78,6 +78,7 @@ WAKE_HELPER="$HOME/.local/bin/bc250-cec-boot-wake"
 STANDBY_UNIT="/etc/systemd/system/bc250-cec-poweroff-standby.service"
 STANDBY_SVC="bc250-cec-poweroff-standby.service"
 STANDBY_HELPER="/var/lib/bc250-control/helper/bc250-cec-poweroff-standby"
+RECOVERY_SVC="bc250-persistence-recovery.service"
 
 # Receiver-follow toggles live in our own flat key=value file, read by the
 # generated helpers AT RUNTIME -- flipping a toggle never needs a unit
@@ -752,7 +753,9 @@ EOF
 [Unit]
 Description=BC-250: CEC standby to TV + receiver on poweroff (polite)
 # Inert at boot; the work happens in ExecStop during shutdown.
-After=multi-user.target
+Requires=$RECOVERY_SVC
+After=$RECOVERY_SVC
+RequiresMountsFor=/var/lib/bc250-control
 
 [Service]
 Type=oneshot

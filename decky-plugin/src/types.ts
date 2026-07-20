@@ -73,11 +73,14 @@ export interface GpuStatus {
   maximum: number;
   liveMinimum: number | null;
   liveMaximum: number | null;
+  initialMinimum: number | null;
+  initialMaximum: number | null;
   activeMhz: number | null;
   levels: string[];
   allowedMinimum: number | null;
   allowedMaximum: number | null;
   climbMs: number | null;
+  governorService: ServiceState;
   frequencyRestore: ServiceState;
   persistent: boolean;
   replayApplied: boolean;

@@ -68,6 +68,7 @@ FREQ_STATE="$ROOT_DATA_DIR/governor/freq-state"
 RESTORE_BIN="$BIN_DIR/bc250-gpu-freq-restore"
 RESTORE_UNIT="/etc/systemd/system/bc250-gpu-freq-restore.service"
 RESTORE_SVC="bc250-gpu-freq-restore.service"
+RECOVERY_SVC="bc250-persistence-recovery.service"
 
 # CPU OC (bc250-collective/bc250_smu_oc) -- fetched from upstream at a pinned
 # commit, then our SteamOS patches (shipped in smu-oc-patches/ next to this
@@ -469,7 +470,8 @@ EOF
     cat > "$HEAL_UNIT" << EOF
 [Unit]
 Description=BC-250 ACPI override self-heal (restore after SteamOS updates)
-After=local-fs.target
+Requires=$RECOVERY_SVC
+After=$RECOVERY_SVC local-fs.target
 RequiresMountsFor=$ROOT_DATA_DIR
 
 [Service]
@@ -485,7 +487,6 @@ EOF
     cat > "$CPUFREQ_UNIT" << 'EOF'
 [Unit]
 Description=BC-250 set schedutil cpufreq governor (needs ACPI P-states)
-After=multi-user.target
 
 [Service]
 Type=oneshot
@@ -541,11 +542,32 @@ check_conflicts() {
     local s
     for s in cyan-skillfish-governor.service cyan-skillfish-governor-tt.service \
              oberon-governor.service; do
-        if systemctl is-active "$s" >/dev/null 2>&1; then
-            warn "Conflicting governor $s active -- disabling (two controllers fight)."
+        if systemctl is-active "$s" >/dev/null 2>&1 \
+            || systemctl is-enabled "$s" >/dev/null 2>&1; then
+            warn "Conflicting governor $s installed -- disabling (two controllers fight)."
             systemctl disable --now "$s"
         fi
     done
+}
+
+write_governor_unit() {
+    cat > "$GOV_UNIT" << EOF
+[Unit]
+Description=Cyan Skillfish GPU governor (SMU) -- BC-250
+Requires=$RECOVERY_SVC
+After=$RECOVERY_SVC bc250-cu-live-manager.service
+Conflicts=cyan-skillfish-governor.service cyan-skillfish-governor-tt.service oberon-governor.service
+RequiresMountsFor=$ROOT_DATA_DIR
+
+[Service]
+Type=simple
+ExecStart=$GOV_BIN $GOV_CONF
+Restart=on-failure
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target
+EOF
 }
 
 cmd_governor() {
@@ -684,21 +706,7 @@ EOF
     fi
 
     log "Writing systemd unit (persistent paths) -> $GOV_UNIT"
-    cat > "$GOV_UNIT" << EOF
-[Unit]
-Description=Cyan Skillfish GPU governor (SMU) -- BC-250
-After=multi-user.target bc250-cu-live-manager.service
-RequiresMountsFor=$ROOT_DATA_DIR
-
-[Service]
-Type=simple
-ExecStart=$GOV_BIN $GOV_CONF
-Restart=on-failure
-RestartSec=3
-
-[Install]
-WantedBy=multi-user.target
-EOF
+    write_governor_unit
     systemctl daemon-reload
 
     install_freq_persistence force
@@ -733,10 +741,15 @@ gov_dbus() { busctl --system call "$BUS_NAME" "$BUS_PATH" "$BUS_IFACE" "$@"; }
 # config.toml. We record the last 'freq' command in a state file and a
 # oneshot service replays it once the governor's bus name is up.
 install_freq_persistence() {
+    local governor_enabled=0 restore_enabled=0
+    [[ "$(systemctl is-enabled "$GOV_SVC" 2>/dev/null || true)" == enabled ]] \
+        && governor_enabled=1
+    [[ "$(systemctl is-enabled "$RESTORE_SVC" 2>/dev/null || true)" == enabled ]] \
+        && restore_enabled=1
     # fast path for everyday 'freq' calls; 'force' (used by installs)
     # rewrites the files so script updates propagate
     if [[ "${1:-}" != force && -x "$RESTORE_BIN" && -f "$RESTORE_UNIT" ]] \
-       && [[ "$(systemctl is-enabled "$RESTORE_SVC" 2>/dev/null)" == enabled ]]; then
+       && [[ $governor_enabled -eq $restore_enabled ]]; then
         return 0
     fi
 
@@ -795,7 +808,8 @@ EOF
     cat > "$RESTORE_UNIT" << EOF
 [Unit]
 Description=BC-250 restore saved GPU freq setting (survives reboots)
-After=$GOV_SVC
+Requires=$RECOVERY_SVC $GOV_SVC
+After=$RECOVERY_SVC $GOV_SVC
 PartOf=$GOV_SVC
 RequiresMountsFor=$ROOT_DATA_DIR
 
@@ -808,8 +822,13 @@ RemainAfterExit=yes
 WantedBy=multi-user.target
 EOF
     systemctl daemon-reload
-    systemctl enable "$RESTORE_SVC" >/dev/null 2>&1
-    log "Boot-time freq restore installed ($RESTORE_SVC)."
+    if [[ $governor_enabled -eq 1 ]]; then
+        systemctl enable "$RESTORE_SVC" >/dev/null 2>&1
+        log "Boot-time freq restore installed and enabled ($RESTORE_SVC)."
+    else
+        systemctl disable "$RESTORE_SVC" >/dev/null 2>&1 || true
+        log "Boot-time freq restore installed; run '$0 enable' after load testing."
+    fi
 }
 
 save_freq_state() {           # save_freq_state <max|pin|range> [a] [b]
@@ -818,7 +837,11 @@ save_freq_state() {           # save_freq_state <max|pin|range> [a] [b]
     printf 'MODE=%s\nA=%s\nB=%s\n' "$1" "${2:-}" "${3:-}" > "$FREQ_STATE"
     chown root:root "$FREQ_STATE"
     chmod 0644 "$FREQ_STATE"
-    log "Saved -- reapplied automatically at boot ('$0 freq auto' to clear)."
+    if [[ "$(systemctl is-enabled "$GOV_SVC" 2>/dev/null || true)" == enabled ]]; then
+        log "Saved -- reapplied automatically at boot ('$0 freq auto' to clear)."
+    else
+        log "Saved -- run '$0 enable' after load testing to apply it at boot."
+    fi
 }
 
 clear_freq_state() {
@@ -1315,8 +1338,13 @@ EOF
 cmd_enable() {
     require_root
     migrate_legacy_data
+    [[ -x "$GOV_BIN" && -f "$GOV_CONF" ]] \
+        || die "Governor is not installed -- run '$0 governor' first."
+    check_conflicts
+    write_governor_unit
     install_freq_persistence force
-    systemctl enable "$GOV_SVC"
+    systemctl daemon-reload
+    systemctl enable "$GOV_SVC" "$RESTORE_SVC"
     if systemctl is-active "$GOV_SVC" >/dev/null 2>&1; then
         systemctl restart "$RESTORE_SVC" \
             || warn "Governor enabled, but the saved frequency range was not restored."
@@ -1448,6 +1476,8 @@ oc_enable() {
 [Unit]
 Description=BC-250 CPU overclock/undervolt (bc250_smu_oc, SMU)
 # strictly before the GPU governor: both drive the same SMU indirect window
+Requires=$RECOVERY_SVC
+After=$RECOVERY_SVC
 Before=$GOV_SVC
 RequiresMountsFor=$ROOT_DATA_DIR
 
@@ -1577,7 +1607,7 @@ cmd_cpu_oc() {
 cmd_status() {
     echo -e "${CB}=== Services ===${C0}"
     local s en ac
-    for s in bc250-cu-live-manager "$GOV_SVC" bc250-acpi-heal bc250-cpufreq "$RESTORE_SVC" "$OC_SVC"; do
+    for s in "$RECOVERY_SVC" bc250-cu-live-manager "$GOV_SVC" bc250-acpi-heal bc250-cpufreq "$RESTORE_SVC" "$OC_SVC"; do
         en=$(systemctl is-enabled "$s" 2>/dev/null) || en=-
         ac=$(systemctl is-active "$s" 2>/dev/null) || ac=-
         printf '  %-38s %s / %s\n' "$s" "$(c_state "$en")" "$(c_state "$ac")"
@@ -1589,6 +1619,15 @@ cmd_status() {
     else
         echo "  no saved freq setting -- config defaults apply at boot"
     fi
+    local configured_max initial_max current_max
+    configured_max=$(toml_get frequency-range max)
+    initial_max=$(busctl --system get-property "$BUS_NAME" \
+        "$BUS_PATH/Range/Initial" com.cyanskillfish.Governor.Range Max \
+        2>/dev/null | awk '{print $2}' || true)
+    current_max=$(busctl --system get-property "$BUS_NAME" \
+        "$BUS_PATH/Range/Current" com.cyanskillfish.Governor.Range Max \
+        2>/dev/null | awk '{print $2}' || true)
+    echo "  max MHz: config=${configured_max:--} initial=${initial_max:--} current=${current_max:--}"
     cat /sys/class/drm/card*/device/pp_dpm_sclk 2>/dev/null || echo "  pp_dpm_sclk not exposed"
     echo
     echo "=== CPU (ACPI fix active if these exist) ==="

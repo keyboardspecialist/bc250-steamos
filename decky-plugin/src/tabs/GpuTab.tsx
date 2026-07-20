@@ -74,6 +74,14 @@ export function GpuTab({ snapshot, busy, runMutation }: TabProps) {
           label="Active clock"
           value={gpu.activeMhz ? `${gpu.activeMhz} MHz` : "Unavailable"}
         />
+        <StatusRow
+          label="Governor service"
+          value={`${gpu.governorService.enabled} / ${gpu.governorService.active}`}
+          good={
+            gpu.governorService.enabled === "enabled" &&
+            gpu.governorService.active === "active"
+          }
+        />
         <StatusRow label="Live mode" value={gpu.mode} good={gpu.dbusReady} />
         <StatusRow
           label="Saved replay"
@@ -108,6 +116,14 @@ export function GpuTab({ snapshot, busy, runMutation }: TabProps) {
         <StatusRow
           label="Adaptive ceiling"
           value={gpu.configuredMax ? `${gpu.configuredMax} MHz` : "Curve maximum"}
+        />
+        <StatusRow
+          label="Loaded ceiling"
+          value={gpu.initialMaximum ? `${gpu.initialMaximum} MHz` : "Unavailable"}
+          good={
+            gpu.configuredMax === null ||
+            gpu.initialMaximum === gpu.configuredMax
+          }
         />
       </PanelSection>
 

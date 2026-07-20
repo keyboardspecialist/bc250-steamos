@@ -95,6 +95,11 @@ sudo ./bc250-power.sh ramp reset
 
 Frequency, voltage, load-target, and ramp settings persist across boots. GPU voltage points use a 700-1050 mV range.
 
+`[frequency-range] max` in `config.toml` is the adaptive ceiling, not a fixed
+clock. The active clock rises toward that ceiling only when GPU load exceeds
+the configured upper load target. `freq 1800` pins 1800 MHz, while
+`freq 0 1800` keeps adaptive scaling with an 1800 MHz ceiling.
+
 ### CPU Tuning
 
 ```bash
@@ -183,7 +188,7 @@ and stages the exact module files it loads.
 | Display clock module | Run `bc250-audio-fix/patch-driver.sh` after each kernel update |
 | AIC8800 modules | The root-owned boot helper rebuilds for a new kernel; rerun setup only if it reports a missing source snapshot or build failure |
 
-Current installers preserve their configuration across atomic updates.
+Current installers preserve their configuration across normal atomic updates.
 
 Privileged executables, firmware, and state live at `/var/lib/bc250-control`.
 On SteamOS this is a bind mount backed by
@@ -193,15 +198,28 @@ user cannot replace code later executed by a root service. The mount unit and
 its enablement symlink are included in a dedicated atomic-update drop-in and
 in every component drop-in.
 
+`bc250-persistence-recovery.service` runs after `/home` is mounted and before
+the toolkit's bind mount and other local filesystems finish starting. It checks
+the root-owned backing path and repairs the bind-mount unit, enablement links,
+and storage keep list before any root-backed component starts. The recovery
+helper is addressed through the direct `/home/.steamos/offload` path, so it is
+available even when the `/var/lib/bc250-control` mount is what needs repair.
+It deliberately does not restore tuning, enable disabled components, fetch
+packages, or read `/etc/previous` during boot.
+
 ```bash
 sudo bash ./bc250-storage.sh status
 sudo bash ./bc250-storage.sh repair
 ```
 
-`repair` is idempotent and recreates the backing directory, mount unit,
-enablement symlink, and atomic-update drop-in if an update removed integration
-files. The backing data survives normal atomic updates because `/home` is the
-shared partition; reinstalling or reimaging the device is outside that guarantee.
+`repair` is idempotent and performs installation-time migration as well as
+repairing the recovery service, backing directory, mount unit, enablement
+links, and atomic-update drop-in. At boot, the narrower
+`repair-infrastructure` action fails closed on missing backing data, unexpected
+mounts, unsafe permissions, or files that would be hidden by the bind mount.
+The backing data survives normal atomic updates because `/home` is the shared
+partition. Factory resets, reimages, loss of `/home`, and filesystem corruption
+are outside that guarantee.
 
 ### Persistence Commands
 

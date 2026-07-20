@@ -105,8 +105,11 @@ sudo install -d -m 0755 "$ROOT_HELPER_DIR/smu-oc-patches" "$ROOT_STATE_DIR" \
     /var/lib/bc250-control/governor
 sudo install -m 0755 "$SRC_DIR/../bc250-power.sh" "$ROOT_HELPER_DIR/bc250-power.sh"
 sudo install -m 0755 "$SRC_DIR/../bc250-update-persistence.sh" "$ROOT_HELPER_DIR/bc250-update-persistence.sh"
-sudo install -m 0755 "$SRC_DIR/../bc250-storage.sh" "$ROOT_HELPER_DIR/bc250-storage.sh"
 sudo install -m 0644 "$SRC_DIR"/../smu-oc-patches/* "$ROOT_HELPER_DIR/smu-oc-patches/"
+if sudo systemctl is-enabled cyan-skillfish-governor-smu.service >/dev/null 2>&1; then
+    log "Refreshing GPU governor boot integration (sudo)"
+    sudo bash "$ROOT_HELPER_DIR/bc250-power.sh" enable
+fi
 
 for prefix in "$ROOT_UMR_DIR" /etc/bc250-control/umr "$TOOLKIT_DIR" /var/lib/bc250-40cu /usr /usr/local; do
     if [[ -x "$prefix/bin/umr" ]] \

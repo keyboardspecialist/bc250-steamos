@@ -952,7 +952,10 @@ class ToolkitBackend:
             raise error
 
     async def get_gpu_status(self) -> dict[str, Any]:
-        restore_service = await self._service("bc250-gpu-freq-restore.service")
+        governor_service, restore_service = await asyncio.gather(
+            self._service("cyan-skillfish-governor-smu.service"),
+            self._service("bc250-gpu-freq-restore.service"),
+        )
         state = self._read_key_values(GPU_STATE_PATH)
         config = self._gpu_config()
         active_mhz = self._active_gpu_mhz()
@@ -1070,11 +1073,14 @@ class ToolkitBackend:
             else self._safe_int(state.get("B") or state.get("A")),
             "liveMinimum": current_min,
             "liveMaximum": current_max,
+            "initialMinimum": initial_min,
+            "initialMaximum": initial_max,
             "activeMhz": active_mhz,
             "levels": levels.splitlines(),
             "allowedMinimum": allowed_min,
             "allowedMaximum": allowed_max,
             "climbMs": climb_ms,
+            "governorService": governor_service,
             "frequencyRestore": restore_service,
             "persistent": restore_service["enabled"] == "enabled",
             "replayApplied": replay_applied,
