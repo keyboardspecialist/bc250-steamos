@@ -28,6 +28,14 @@ cd ~/.local/share/bc250-fixes/bc250-steamos
 ```bash
 cd ~/.local/share/bc250-fixes/bc250-steamos
 git pull
+```
+
+Older existing installations that predate persistent storage must run the
+following command once after updating. It migrates existing toolkit data and
+installs the storage recovery infrastructure; it does not need to be repeated
+after later pulls.
+
+```bash
 sudo ./bc250-storage.sh install
 ```
 
