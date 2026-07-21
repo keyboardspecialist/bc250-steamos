@@ -11,6 +11,12 @@ git clone https://github.com/keyboardspecialist/bc250-steamos.git \
 cd ~/.local/share/bc250-fixes/bc250-steamos
 ```
 
+Open the unified toolkit menu as the logged-in Deck user:
+
+```bash
+./bc250-toolkit.sh
+```
+
 ### New Users
 
 | Component | Setup command |
@@ -56,6 +62,7 @@ sudo ./bc250-power.sh status
 
 | Tool | Purpose |
 |---|---|
+| [`bc250-toolkit.sh`](#toolkit-menu) | Unified menu and read-only status overview for all toolkit components |
 | [`bc250-40cu.sh`](#compute-units) | Runtime 40 CU configuration and boot persistence |
 | [`bc250-cu-status.sh`](#compute-units) | CU dispatch status |
 | [`bc250-power.sh`](#power-management) | CPU power states, GPU governor, clock and voltage tuning, CPU overclocking |
@@ -65,7 +72,22 @@ sudo ./bc250-power.sh status
 | [`bc250-audio-fix/`](#display-clock) | DisplayPort video and audio clock correction |
 | [`aic8800/`](#wifi-and-bluetooth) | AIC8800D80 USB WiFi and Bluetooth driver |
 
-`bc250-40cu.sh`, `bc250-power.sh`, and `bc250-cec.sh` open an interactive menu when launched in a terminal. Each also provides a command interface through `<script> help`.
+The unified launcher and individual component scripts remain independently usable. Use the child scripts directly for command-line automation.
+
+## Toolkit Menu
+
+Run `./bc250-toolkit.sh` without `sudo`. It opens Power, Compute Units, CEC,
+Storage, and Update Persistence as child menus, then returns to the toolkit
+when they exit. WiFi, display/audio, and Decky installation entries require
+confirmation before starting their longer setup workflows. Each child requests
+administrator access only when needed.
+
+| Command | Action |
+|---|---|
+| `./bc250-toolkit.sh` | Open the unified interactive menu |
+| `./bc250-toolkit.sh status` | Show the read-only component status overview |
+| `./bc250-toolkit.sh power` | Open a component menu directly |
+| `./bc250-toolkit.sh help` | List launcher commands and components |
 
 ## Compute Units
 

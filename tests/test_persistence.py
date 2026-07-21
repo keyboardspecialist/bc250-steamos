@@ -126,6 +126,7 @@ class PersistenceUnitTests(unittest.TestCase):
 
     def test_all_shell_entrypoints_parse(self):
         scripts = [
+            "bc250-toolkit.sh",
             "bc250-storage.sh",
             "bc250-update-persistence.sh",
             "bc250-power.sh",
