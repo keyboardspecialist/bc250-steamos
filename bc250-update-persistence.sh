@@ -7,7 +7,7 @@ KEEP_DIR=/etc/atomic-update.conf.d
 LEGACY_KEEP_FILE="$KEEP_DIR/bc250-steamos.conf"
 PREVIOUS_ETC=/etc/previous
 BACKUP_DIR=/var/lib/steamos-atomupd/etc_backup
-COMPONENTS=(compute power cec aic)
+COMPONENTS=(compute power cec aic desktop)
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 STORAGE_SH="$SCRIPT_DIR/bc250-storage.sh"
 STORAGE_UNIT='/etc/systemd/system/var-lib-bc250\x2dcontrol.mount'
@@ -45,7 +45,7 @@ print_storage_paths() {
 write_keep_file() {
     local component="$1" target="$KEEP_DIR/bc250-$1.conf" tmp
     case "$component" in
-        compute|power|cec|aic) ;;
+        compute|power|cec|aic|desktop) ;;
         *) die "Unknown component: $component" ;;
     esac
     tmp=$(mktemp "$KEEP_DIR/.bc250-$component.XXXXXX")
@@ -105,6 +105,18 @@ EOF
 EOF
                 print_storage_paths
                 ;;
+            desktop)
+                cat << EOF
+/etc/dbus-1/system.d/io.github.keyboardspecialist.BC250Control1.conf
+/etc/systemd/system/bc250-control.service
+/etc/systemd/system/bc250-control.service.d/10-bc250-storage.conf
+/etc/systemd/system/bc250-desktop-control-repair.service
+/etc/systemd/system/bc250-desktop-control-repair.service.d/10-bc250-storage.conf
+/etc/systemd/system/multi-user.target.wants/bc250-control.service
+/etc/systemd/system/multi-user.target.wants/bc250-desktop-control-repair.service
+EOF
+                print_storage_paths
+                ;;
         esac
     } > "$tmp"
     chmod 644 "$tmp"
@@ -120,6 +132,7 @@ component_has_state() {
                     || -e /etc/systemd/system/bc250-acpi-heal.service ]] ;;
         cec)     [[ -e "$ROOT_DATA_DIR/helper/bc250-cec-poweroff-standby" || -e /etc/systemd/system-sleep/bc250-cec-amp.sh ]] ;;
         aic)     [[ -e "$ROOT_DATA_DIR/aic8800/source" || -e /etc/systemd/system/aic8800-modules.service ]] ;;
+        desktop) [[ -e "$ROOT_DATA_DIR/desktop" || -e /etc/systemd/system/bc250-control.service ]] ;;
         *)       return 1 ;;
     esac
 }
@@ -142,7 +155,7 @@ install_keep_list() {
                 write_keep_file "$component"
             done
             ;;
-        compute|power|cec|aic) write_keep_file "$requested" ;;
+        compute|power|cec|aic|desktop) write_keep_file "$requested" ;;
         *) die "Unknown component: $requested" ;;
     esac
 }
@@ -389,6 +402,7 @@ cmd_menu() {
             "Protect power|$(keep_badge power)|Preserve power services, GPU tuning, and CPU tuning."
             "Protect CEC|$(keep_badge cec)|Preserve CEC poweroff and sleep integration."
             "Protect AIC8800|$(keep_badge aic)|Preserve AIC8800 service and device configuration."
+            "Protect desktop control|$(keep_badge desktop)|Preserve the desktop service and repair integration after updates."
             "Protect all components||Install every component keep list."
             "Recover compute settings||Restore CU routing from the newest atomupd snapshot."
             "Recover power settings||Restore GPU and CPU tuning from the newest atomupd snapshot."
@@ -401,18 +415,19 @@ cmd_menu() {
             1) run_menu_action install power ;;
             2) run_menu_action install cec ;;
             3) run_menu_action install aic ;;
-            4) run_menu_action install all ;;
-            5) run_menu_action recover compute ;;
-            6) run_menu_action recover power ;;
-            7) run_menu_action recover all ;;
-            8) show_menu_status ;;
+            4) run_menu_action install desktop ;;
+            5) run_menu_action install all ;;
+            6) run_menu_action recover compute ;;
+            7) run_menu_action recover power ;;
+            8) run_menu_action recover all ;;
+            9) show_menu_status ;;
         esac
     done
 }
 
 cmd_help() {
     cat << EOF
-Usage: $0 {install [compute|power|cec|aic|all] | recover [compute|power|all] [--force] | status | menu | help}
+Usage: $0 {install [compute|power|cec|aic|desktop|all] | recover [compute|power|all] [--force] | status | menu | help}
 
 Run with no arguments in a terminal to open the interactive menu.
 EOF

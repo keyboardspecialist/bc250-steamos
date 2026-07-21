@@ -1,0 +1,120 @@
+#!/usr/bin/env bash
+# Recreate desktop-control integration that can be replaced by a SteamOS update.
+set -euo pipefail
+
+PAYLOAD_DIR=/var/lib/bc250-control/desktop
+TEMPLATE_DIR="$PAYLOAD_DIR/templates"
+SERVICE_UNIT=/etc/systemd/system/bc250-control.service
+REPAIR_UNIT=/etc/systemd/system/bc250-desktop-control-repair.service
+SERVICE_WANTS=/etc/systemd/system/multi-user.target.wants/bc250-control.service
+REPAIR_WANTS=/etc/systemd/system/multi-user.target.wants/bc250-desktop-control-repair.service
+DBUS_POLICY=/etc/dbus-1/system.d/io.github.keyboardspecialist.BC250Control1.conf
+POLKIT_POLICY=/usr/share/polkit-1/actions/io.github.keyboardspecialist.bc250-control.policy
+READONLY_CHANGED=0
+
+log() { echo "[bc250-desktop-repair] $*"; }
+die() { echo "[bc250-desktop-repair] $*" >&2; exit 1; }
+require_root() { [[ $EUID -eq 0 ]] || die "Run as root."; }
+
+restore_readonly() {
+    local rc=$?
+    trap - EXIT
+    if [[ $READONLY_CHANGED -eq 1 ]]; then
+        if ! /usr/bin/steamos-readonly enable; then
+            echo "[bc250-desktop-repair] Failed to restore the readonly root filesystem." >&2
+            rc=1
+        fi
+        READONLY_CHANGED=0
+    fi
+    exit "$rc"
+}
+trap restore_readonly EXIT
+
+make_usr_writable() {
+    local state
+    [[ -x /usr/bin/steamos-readonly ]] \
+        || die "/usr/bin/steamos-readonly is unavailable."
+    state=$(/usr/bin/steamos-readonly status 2>&1) \
+        || die "Could not determine the SteamOS readonly state."
+    case "${state,,}" in
+        *enabled*)
+            READONLY_CHANGED=1
+            /usr/bin/steamos-readonly disable
+            ;;
+        *disabled*) ;;
+        *) die "Unrecognized SteamOS readonly state: $state" ;;
+    esac
+}
+
+atomic_copy() {
+    local source="$1" target="$2" mode="$3" dir tmp
+    [[ -f "$source" && ! -L "$source" ]] || die "Missing template: $source"
+    [[ ! -L "$target" ]] || die "Refusing to replace symlink: $target"
+    [[ ! -e "$target" || -f "$target" ]] \
+        || die "Refusing to replace non-file: $target"
+    dir=$(dirname "$target")
+    install -d -o root -g root -m 0755 "$dir"
+    tmp=$(mktemp "$dir/.bc250-desktop.XXXXXX")
+    if ! install -o root -g root -m "$mode" "$source" "$tmp"; then
+        rm -f "$tmp"
+        return 1
+    fi
+    if [[ -f "$target" ]] && cmp -s "$tmp" "$target"; then
+        rm -f "$tmp"
+        chown root:root "$target"
+        chmod "$mode" "$target"
+        return 0
+    fi
+    sync -d "$tmp"
+    mv -f "$tmp" "$target"
+    sync -f "$dir"
+    log "Repaired $target"
+}
+
+install_enablement() {
+    local link="$1" unit="$2" expected="../$2"
+    install -d -o root -g root -m 0755 "$(dirname "$link")"
+    if [[ -L "$link" ]]; then
+        [[ "$(readlink "$link")" == "$expected" ]] && return 0
+        rm -f "$link"
+    elif [[ -e "$link" ]]; then
+        die "Refusing to replace non-symlink enablement path: $link"
+    fi
+    ln -s "$expected" "$link"
+    log "Repaired $link"
+}
+
+install_polkit_policy() {
+    local source="$TEMPLATE_DIR/io.github.keyboardspecialist.bc250-control.policy"
+    if [[ -f "$POLKIT_POLICY" && ! -L "$POLKIT_POLICY" ]] \
+        && cmp -s "$source" "$POLKIT_POLICY" \
+        && [[ "$(stat -Lc '%u:%g:%a' "$POLKIT_POLICY")" == "0:0:644" ]]; then
+        return 0
+    fi
+    make_usr_writable
+    atomic_copy "$source" "$POLKIT_POLICY" 0644
+    if [[ $READONLY_CHANGED -eq 1 ]]; then
+        /usr/bin/steamos-readonly enable
+        READONLY_CHANGED=0
+    fi
+}
+
+repair() {
+    require_root
+    [[ -d "$PAYLOAD_DIR" && ! -L "$PAYLOAD_DIR" ]] \
+        || die "Desktop payload is missing or unsafe: $PAYLOAD_DIR"
+    atomic_copy "$TEMPLATE_DIR/bc250-control.service" "$SERVICE_UNIT" 0644
+    atomic_copy "$TEMPLATE_DIR/bc250-desktop-control-repair.service" "$REPAIR_UNIT" 0644
+    atomic_copy "$TEMPLATE_DIR/io.github.keyboardspecialist.BC250Control1.conf" "$DBUS_POLICY" 0644
+    install_polkit_policy
+    install_enablement "$SERVICE_WANTS" bc250-control.service
+    install_enablement "$REPAIR_WANTS" bc250-desktop-control-repair.service
+    systemctl daemon-reload
+    systemctl reload dbus.service >/dev/null 2>&1 || true
+    log "Desktop control integration is healthy."
+}
+
+case "${1:-}" in
+    repair) repair ;;
+    *) die "Usage: $0 repair" ;;
+esac

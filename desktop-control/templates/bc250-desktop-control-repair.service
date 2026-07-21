@@ -1,0 +1,15 @@
+[Unit]
+Description=Repair BC-250 desktop control integration
+After=local-fs.target bc250-persistence-recovery.service
+Wants=bc250-persistence-recovery.service
+Before=bc250-control.service
+RequiresMountsFor=/var/lib/bc250-control
+
+[Service]
+Type=oneshot
+ExecStart=/var/lib/bc250-control/desktop/bc250-desktop-control-repair repair
+RemainAfterExit=yes
+UMask=0022
+
+[Install]
+WantedBy=multi-user.target

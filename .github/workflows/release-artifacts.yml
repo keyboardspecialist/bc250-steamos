@@ -6,7 +6,7 @@ on:
       - "v*"
 
 permissions:
-  contents: write
+  contents: read
 
 concurrency:
   group: release-artifacts-${{ github.ref }}
@@ -14,15 +14,21 @@ concurrency:
 
 jobs:
   build:
-    name: Build and publish artifacts
+    name: Build artifacts
     runs-on: ubuntu-latest
     env:
       DECKY_ARTIFACT_BASENAME: bc250-control-${{ github.ref_name }}
+      DESKTOP_ARTIFACT_BASENAME: bc250-desktop-control-${{ github.ref_name }}
       TOOLKIT_ARTIFACT_BASENAME: bc250-steamos-toolkit-${{ github.ref_name }}
 
     steps:
       - name: Check out tag
         uses: actions/checkout@v4
+
+      - name: Set up Decky Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.8"
 
       - name: Set up pnpm
         uses: pnpm/action-setup@v4
@@ -49,27 +55,34 @@ jobs:
         run: pnpm run build
 
       - name: Run backend tests
-        working-directory: decky-plugin
-        run: PYTHONPATH=py_modules python3 -m unittest discover -s tests
+        run: PYTHONPATH=backend:backend/vendor python3 -m unittest discover -s backend/tests
+
+      - name: Run desktop service tests
+        run: PYTHONPATH=desktop-control/service:desktop-control/vendor:backend:backend/vendor python3 -m unittest discover -s desktop-control/service/tests
+
+      - name: Run desktop integration tests
+        run: |
+          python3 -m unittest discover -s tests -p 'test_persistence.py'
+          python3 -m unittest discover -s tests -p 'test_desktop_release.py'
+          node tests/test_qml_utils.cjs
 
       - name: Package Decky runtime
         shell: bash
         run: |
           set -euo pipefail
-          package_dir="release/BC-250 Control"
-          mkdir -p "$package_dir"
-          cp decky-plugin/plugin.json "$package_dir/"
-          cp decky-plugin/package.json "$package_dir/"
-          cp decky-plugin/main.py "$package_dir/"
-          cp decky-plugin/LICENSE "$package_dir/"
-          mkdir -p "$package_dir/dist" "$package_dir/py_modules"
-          cp decky-plugin/dist/index.js "$package_dir/dist/"
-          rsync -a \
-            --exclude="__pycache__" \
-            --exclude="*.py[co]" \
-            decky-plugin/py_modules/ "$package_dir/py_modules/"
-          (cd release && zip -r "../${DECKY_ARTIFACT_BASENAME}.zip" "BC-250 Control")
+          python3 scripts/stage-decky-runtime.py \
+            --output "release/BC-250 Control" \
+            --archive "${DECKY_ARTIFACT_BASENAME}.zip"
           sha256sum "${DECKY_ARTIFACT_BASENAME}.zip" > "${DECKY_ARTIFACT_BASENAME}.zip.sha256"
+
+      - name: Package Plasma desktop control
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 scripts/stage-desktop-runtime.py \
+            --output "release/bc250-desktop-control" \
+            --archive "${DESKTOP_ARTIFACT_BASENAME}.zip"
+          sha256sum "${DESKTOP_ARTIFACT_BASENAME}.zip" > "${DESKTOP_ARTIFACT_BASENAME}.zip.sha256"
 
       - name: Package toolkit and driver resources
         shell: bash
@@ -79,7 +92,7 @@ jobs:
           mkdir -p "$package_dir/aic8800/debian" \
             "$package_dir/aic8800/src/USB/driver_fw/fw"
           cp README.md bc250-*.sh fetch-steamos-package.sh "$package_dir/"
-          git archive --format=tar HEAD decky-plugin | tar -xf - -C "$package_dir"
+          git archive --format=tar HEAD decky-plugin desktop-control backend scripts | tar -xf - -C "$package_dir"
           rsync -a --exclude=".gitignore" smu-oc-patches/ "$package_dir/smu-oc-patches/"
           rsync -a --exclude=".gitignore" bc250-audio-fix/ "$package_dir/bc250-audio-fix/"
           cp aic8800/README.md aic8800/LICENSE "$package_dir/aic8800/"
@@ -118,16 +131,44 @@ jobs:
           if-no-files-found: error
           retention-days: 90
 
+      - name: Upload Plasma desktop artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.DESKTOP_ARTIFACT_BASENAME }}
+          path: |
+            ${{ env.DESKTOP_ARTIFACT_BASENAME }}.zip
+            ${{ env.DESKTOP_ARTIFACT_BASENAME }}.zip.sha256
+          if-no-files-found: error
+          retention-days: 90
+
+  publish:
+    name: Publish artifacts
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read
+      contents: write
+    env:
+      DECKY_ARTIFACT_BASENAME: bc250-control-${{ github.ref_name }}
+      DESKTOP_ARTIFACT_BASENAME: bc250-desktop-control-${{ github.ref_name }}
+      TOOLKIT_ARTIFACT_BASENAME: bc250-steamos-toolkit-${{ github.ref_name }}
+    steps:
       - name: Attach artifacts to GitHub release
         env:
           GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
         shell: bash
         run: |
           set -euo pipefail
+          gh run download "$GITHUB_RUN_ID" --name "$DECKY_ARTIFACT_BASENAME" --dir .
+          gh run download "$GITHUB_RUN_ID" --name "$DESKTOP_ARTIFACT_BASENAME" --dir .
+          gh run download "$GITHUB_RUN_ID" --name "$TOOLKIT_ARTIFACT_BASENAME" --dir .
           if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
             gh release upload "$GITHUB_REF_NAME" \
               "${DECKY_ARTIFACT_BASENAME}.zip" \
               "${DECKY_ARTIFACT_BASENAME}.zip.sha256" \
+              "${DESKTOP_ARTIFACT_BASENAME}.zip" \
+              "${DESKTOP_ARTIFACT_BASENAME}.zip.sha256" \
               "${TOOLKIT_ARTIFACT_BASENAME}.zip" \
               "${TOOLKIT_ARTIFACT_BASENAME}.zip.sha256" \
               --clobber
@@ -135,6 +176,8 @@ jobs:
             gh release create "$GITHUB_REF_NAME" \
               "${DECKY_ARTIFACT_BASENAME}.zip" \
               "${DECKY_ARTIFACT_BASENAME}.zip.sha256" \
+              "${DESKTOP_ARTIFACT_BASENAME}.zip" \
+              "${DESKTOP_ARTIFACT_BASENAME}.zip.sha256" \
               "${TOOLKIT_ARTIFACT_BASENAME}.zip" \
               "${TOOLKIT_ARTIFACT_BASENAME}.zip.sha256" \
               --verify-tag \

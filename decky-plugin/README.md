@@ -52,13 +52,23 @@ cd decky-plugin
 pnpm install
 pnpm run typecheck
 pnpm run build
-PYTHONPATH=py_modules python3 -m unittest discover -s tests
+cd ..
+PYTHONPATH=backend:backend/vendor python3 -m unittest discover -s backend/tests
+python3 scripts/stage-decky-runtime.py
 ```
 
-The production bundle is written to `dist/index.js`.
+The frontend bundle is written to `dist/index.js`. The complete, independently
+installable plugin runtime is staged at `decky-plugin/out/`; it includes private
+copies of `bc250_control` and the Python 3.8 `tomli` fallback.
 
 ## Backend
 
-`main.py` exposes a typed RPC surface backed by `py_modules/bc250_control/`. Hardware mutations are serialized and validated. Privileged GPU changes use fixed D-Bus, configuration interfaces, or the trusted CU manager. CEC commands invoke a toolkit script after dropping to the logged-in Deck user.
+`main.py` exposes a typed RPC surface backed by the runtime's private
+`py_modules/bc250_control/`. The canonical source lives in `backend/` and is
+copied into the Decky artifact at build time; the installed plugin never imports
+or calls the Plasma desktop utility. Hardware mutations are serialized and
+validated. Privileged GPU changes use fixed D-Bus, configuration interfaces, or
+the trusted CU manager. CEC commands invoke a toolkit script after dropping to
+the logged-in Deck user.
 
 `tomli` is vendored under `py_modules/` for the Python 3.8 runtime shipped by older SteamOS releases.

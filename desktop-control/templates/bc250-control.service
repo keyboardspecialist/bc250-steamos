@@ -1,0 +1,23 @@
+[Unit]
+Description=BC-250 desktop control service
+Requires=bc250-desktop-control-repair.service
+After=dbus.service bc250-desktop-control-repair.service
+RequiresMountsFor=/var/lib/bc250-control
+
+[Service]
+Type=dbus
+BusName=io.github.keyboardspecialist.BC250Control1
+ExecStart=/usr/bin/python3 -I /var/lib/bc250-control/desktop/bc250-control-service
+User=root
+Group=root
+UMask=0022
+Restart=on-failure
+RestartSec=2
+Environment=PYTHONDONTWRITEBYTECODE=1
+NoNewPrivileges=true
+PrivateTmp=true
+LockPersonality=true
+RestrictSUIDSGID=true
+
+[Install]
+WantedBy=multi-user.target

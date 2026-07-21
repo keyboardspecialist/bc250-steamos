@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import fcntl
 import glob
 import math
 import os
@@ -10,8 +11,9 @@ import shlex
 import signal
 import stat
 import tempfile
+from contextlib import asynccontextmanager
 from pathlib import Path
-from typing import Any
+from typing import Any, AsyncIterator, Optional, Union
 
 try:
     import tomllib
@@ -36,6 +38,9 @@ MIGRATED_UMR_DATABASE_PATH = Path(
 )
 LEGACY_UMR_DATABASE_PATH = Path("/var/lib/bc250-40cu/share/umr/database")
 CU_CONFIG_PATH = Path("/etc/bc250-cu-live-manager.conf")
+BACKEND_LOCK_PATH = Path("/run/lock/bc250-control/backend.lock")
+BACKEND_LOCK_TIMEOUT = 10.0
+BACKEND_LOCK_POLL_INTERVAL = 0.05
 CU_MANAGER_PATHS = (
     Path("/var/lib/bc250-control/helper/bc250-cu-live-manager"),
     Path("/var/lib/bc250-40cu/bc250-cu-live-manager"),
@@ -110,8 +115,18 @@ class CommandError(RuntimeError):
     pass
 
 
+class BusyError(CommandError):
+    pass
+
+
 class ToolkitBackend:
-    def __init__(self, user: str, user_home: str) -> None:
+    def __init__(
+        self,
+        user: str,
+        user_home: str,
+        *,
+        lock_path: Optional[Path] = None,
+    ) -> None:
         self.user = user
         self.user_home = Path(user_home)
         self.user_uid = pwd.getpwnam(user).pw_uid
@@ -121,6 +136,90 @@ class ToolkitBackend:
         )
         self._mutation_lock = asyncio.Lock()
         self._umr_lock = asyncio.Lock()
+        self._backend_lock_path = lock_path or BACKEND_LOCK_PATH
+        self._test_lock_path = lock_path is not None
+
+    def _open_backend_lock(self) -> int:
+        path = self._backend_lock_path
+        if not path.is_absolute() or path.name in {"", ".", ".."}:
+            raise CommandError(f"Backend lock path is invalid: {path}")
+
+        parent = path.parent
+        try:
+            parent.mkdir(mode=0o755, parents=True, exist_ok=True)
+            parent_metadata = parent.lstat()
+            if not stat.S_ISDIR(parent_metadata.st_mode):
+                raise CommandError(f"Backend lock directory is unsafe: {parent}")
+            if parent_metadata.st_mode & 0o022:
+                raise CommandError(f"Backend lock directory is writable: {parent}")
+            if not self._test_lock_path and parent_metadata.st_uid != 0:
+                raise CommandError(f"Backend lock directory is not root-owned: {parent}")
+
+            directory = os.open(
+                str(parent), os.O_RDONLY | os.O_DIRECTORY | os.O_CLOEXEC | os.O_NOFOLLOW
+            )
+        except CommandError:
+            raise
+        except OSError as error:
+            raise CommandError(f"Cannot prepare backend lock: {error}") from error
+
+        descriptor = -1
+        try:
+            flags = os.O_RDWR | os.O_CREAT | os.O_CLOEXEC | os.O_NOFOLLOW
+            if os.open in os.supports_dir_fd:
+                descriptor = os.open(path.name, flags, 0o600, dir_fd=directory)
+            else:  # pragma: no cover - Python on macOS lacks openat support
+                descriptor = os.open(str(path), flags, 0o600)
+            metadata = os.fstat(descriptor)
+            path_metadata = path.lstat()
+            open_parent_metadata = os.fstat(directory)
+            if not stat.S_ISREG(metadata.st_mode) or metadata.st_nlink != 1:
+                raise CommandError(f"Backend lock file is unsafe: {path}")
+            if (metadata.st_dev, metadata.st_ino) != (
+                path_metadata.st_dev,
+                path_metadata.st_ino,
+            ) or (parent_metadata.st_dev, parent_metadata.st_ino) != (
+                open_parent_metadata.st_dev,
+                open_parent_metadata.st_ino,
+            ):
+                raise CommandError(f"Backend lock path changed while opening: {path}")
+            if metadata.st_mode & 0o022:
+                raise CommandError(f"Backend lock file is writable: {path}")
+            if not self._test_lock_path and metadata.st_uid != 0:
+                raise CommandError(f"Backend lock file is not root-owned: {path}")
+            return descriptor
+        except CommandError:
+            if descriptor >= 0:
+                os.close(descriptor)
+            raise
+        except OSError as error:
+            if descriptor >= 0:
+                os.close(descriptor)
+            raise CommandError(f"Cannot open backend lock: {error}") from error
+        finally:
+            os.close(directory)
+
+    @asynccontextmanager
+    async def _process_lock(self) -> AsyncIterator[None]:
+        descriptor = self._open_backend_lock()
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + BACKEND_LOCK_TIMEOUT
+        acquired = False
+        try:
+            while True:
+                try:
+                    fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                    acquired = True
+                    break
+                except BlockingIOError:
+                    if loop.time() >= deadline:
+                        raise BusyError("Another BC-250 control operation is still running.")
+                    await asyncio.sleep(BACKEND_LOCK_POLL_INTERVAL)
+            yield
+        finally:
+            if acquired:
+                fcntl.flock(descriptor, fcntl.LOCK_UN)
+            os.close(descriptor)
 
     async def _exec(
         self,
@@ -128,7 +227,7 @@ class ToolkitBackend:
         *,
         timeout: float = 20,
         check: bool = True,
-        env: dict[str, str] | None = None,
+        env: Optional[dict[str, str]] = None,
     ) -> tuple[int, str, str]:
         process = await asyncio.create_subprocess_exec(
             *argv,
@@ -288,14 +387,14 @@ class ToolkitBackend:
         }
 
     @staticmethod
-    def _read(path: str | Path, default: str = "") -> str:
+    def _read(path: Union[str, Path], default: str = "") -> str:
         try:
             return Path(path).read_text(encoding="utf-8").strip()
         except (OSError, UnicodeError):
             return default
 
     @staticmethod
-    def _read_key_values(path: str | Path) -> dict[str, str]:
+    def _read_key_values(path: Union[str, Path]) -> dict[str, str]:
         values: dict[str, str] = {}
         text = ToolkitBackend._read(path)
         for line in text.splitlines():
@@ -308,20 +407,20 @@ class ToolkitBackend:
         return values
 
     @staticmethod
-    def _safe_int(value: str | None, default: int = 0) -> int:
+    def _safe_int(value: Optional[str], default: int = 0) -> int:
         try:
             return int(value or default)
         except (TypeError, ValueError):
             return default
 
     @staticmethod
-    def _number(value: Any) -> int | float | None:
+    def _number(value: Any) -> Optional[Union[int, float]]:
         if isinstance(value, bool) or not isinstance(value, (int, float)):
             return None
         return value if math.isfinite(value) else None
 
     @staticmethod
-    def _read_toml(path: str | Path) -> dict[str, Any]:
+    def _read_toml(path: Union[str, Path]) -> dict[str, Any]:
         try:
             with Path(path).open("rb") as stream:
                 return tomllib.load(stream)
@@ -329,11 +428,11 @@ class ToolkitBackend:
             return {}
 
     @staticmethod
-    def _last_hex(text: str) -> int | None:
+    def _last_hex(text: str) -> Optional[int]:
         matches = re.findall(r"0x[0-9a-fA-F]+", text)
         return int(matches[-1], 16) if matches else None
 
-    def _trusted_umr(self) -> Path | None:
+    def _trusted_umr(self) -> Optional[Path]:
         configured = self._read_key_values(CU_CONFIG_PATH).get("UMR", "")
         candidates = [
             ROOT_UMR_PATH,
@@ -352,7 +451,7 @@ class ToolkitBackend:
                 continue
         return None
 
-    def _trusted_umr_database(self, umr: Path) -> Path | None:
+    def _trusted_umr_database(self, umr: Path) -> Optional[Path]:
         configured = self._read_key_values(CU_CONFIG_PATH).get(
             "UMR_DATABASE_PATH", ""
         )
@@ -389,7 +488,7 @@ class ToolkitBackend:
         database = self._trusted_umr_database(umr)
         return ["--database-path", str(database)] if database is not None else []
 
-    def _trusted_cu_manager(self) -> Path | None:
+    def _trusted_cu_manager(self) -> Optional[Path]:
         for candidate in CU_MANAGER_PATHS:
             if not self._trusted_root_file(candidate):
                 continue
@@ -410,7 +509,7 @@ class ToolkitBackend:
                 return True
         return False
 
-    def _umr_instance(self) -> int | None:
+    def _umr_instance(self) -> Optional[int]:
         configured = self._read_key_values(CU_CONFIG_PATH).get("UMR_INSTANCE", "")
         if configured.isdigit():
             return int(configured)
@@ -435,7 +534,7 @@ class ToolkitBackend:
                 return int(instance)
         return instances[0] if len(instances) == 1 else None
 
-    async def _umr_register(self, register: str, se: int, sh: int) -> int | None:
+    async def _umr_register(self, register: str, se: int, sh: int) -> Optional[int]:
         if os.geteuid() != 0:
             return None
         umr = self._trusted_umr()
@@ -474,7 +573,7 @@ class ToolkitBackend:
                     return value
         return None
 
-    async def _factory_cu_masks(self) -> list[int] | None:
+    async def _factory_cu_masks(self) -> Optional[list[int]]:
         try:
             rc, out, _ = await self._exec(
                 [PYTHON3, "-c", CU_MAP_SCRIPT], timeout=5, check=False
@@ -495,7 +594,7 @@ class ToolkitBackend:
         if set(rows) != {(0, 0), (0, 1), (1, 0), (1, 1)}:
             return None
         masks = [rows[(se, sh)] for se in range(2) for sh in range(2)]
-        if sum(mask.bit_count() for mask in masks) != 24:
+        if sum(bin(mask).count("1") for mask in masks) != 24:
             return None
         return masks
 
@@ -606,7 +705,7 @@ class ToolkitBackend:
                 )
         return temperatures
 
-    def _cpu_current_mhz(self) -> int | None:
+    def _cpu_current_mhz(self) -> Optional[int]:
         candidates = [Path("/sys/devices/system/cpu/cpu0/cpufreq/scaling_cur_freq")]
         candidates.extend(
             Path(path)
@@ -634,7 +733,7 @@ class ToolkitBackend:
                 return governor
         return ""
 
-    def _active_gpu_mhz(self) -> int | None:
+    def _active_gpu_mhz(self) -> Optional[int]:
         for path in glob.glob("/sys/class/drm/card*/device/pp_dpm_sclk"):
             levels = self._read(path)
             match = re.search(r"(\d+)Mhz\s+\*", levels, re.IGNORECASE)
@@ -645,14 +744,14 @@ class ToolkitBackend:
     @staticmethod
     def _matching_temperature(
         temperatures: list[dict[str, Any]], pattern: str
-    ) -> int | float | None:
+    ) -> Optional[Union[int, float]]:
         matcher = re.compile(pattern, re.IGNORECASE)
         for temperature in temperatures:
             if matcher.search(f"{temperature['device']} {temperature['label']}"):
                 return temperature["celsius"]
         return None
 
-    async def get_telemetry(self) -> dict[str, int | float | None]:
+    async def get_telemetry(self) -> dict[str, Optional[Union[int, float]]]:
         temperatures = self._temperatures()
         return {
             "cpuClock": self._cpu_current_mhz(),
@@ -825,7 +924,7 @@ class ToolkitBackend:
 
     async def _system_bus_property(
         self, path: str, interface: str, prop: str
-    ) -> int | None:
+    ) -> Optional[int]:
         rc, out, _ = await self._exec(
             [
                 BUSCTL,
@@ -1087,7 +1186,7 @@ class ToolkitBackend:
             **config,
         }
 
-    def _cpu_config(self, path: str | Path) -> dict[str, Any]:
+    def _cpu_config(self, path: Union[str, Path]) -> dict[str, Any]:
         values = self._read_key_values(path)
         detected = ""
         for line in self._read(path).splitlines():
@@ -1237,11 +1336,13 @@ class ToolkitBackend:
 
     async def get_snapshot(self) -> dict[str, Any]:
         async with self._mutation_lock:
-            return await self._get_snapshot()
+            async with self._process_lock():
+                return await self._get_snapshot()
 
     async def _mutate(self, callback: Any) -> None:
         async with self._mutation_lock:
-            await callback()
+            async with self._process_lock():
+                await callback()
 
     async def set_cu_wgp(
         self, se: int, sh: int, wgp: int, enabled: bool

@@ -1,4 +1,7 @@
+import os
+import shutil
 import subprocess
+import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -6,6 +9,9 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 STORAGE = ROOT / "bc250-storage.sh"
+DESKTOP_INSTALL = ROOT / "desktop-control" / "install.sh"
+DESKTOP_REPAIR = ROOT / "desktop-control" / "bc250-desktop-control-repair"
+DESKTOP_TEMPLATES = ROOT / "desktop-control" / "templates"
 
 
 def render(name: str) -> str:
@@ -113,6 +119,118 @@ class PersistenceUnitTests(unittest.TestCase):
         )
         self.assertIn('log "Boot infrastructure is healthy."', source)
 
+    def test_desktop_service_is_isolated_root_dbus_service(self):
+        unit = (DESKTOP_TEMPLATES / "bc250-control.service").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn("Type=dbus", unit)
+        self.assertIn("BusName=io.github.keyboardspecialist.BC250Control1", unit)
+        self.assertIn(
+            "ExecStart=/usr/bin/python3 -I /var/lib/bc250-control/desktop/"
+            "bc250-control-service",
+            unit,
+        )
+        self.assertIn("User=root", unit)
+        self.assertIn("Requires=bc250-desktop-control-repair.service", unit)
+
+    def test_desktop_dbus_policy_defers_client_authorization_to_service(self):
+        policy = (
+            DESKTOP_TEMPLATES
+            / "io.github.keyboardspecialist.BC250Control1.conf"
+        ).read_text(encoding="utf-8")
+        self.assertIn('<policy user="root">', policy)
+        self.assertIn(
+            '<allow own="io.github.keyboardspecialist.BC250Control1"/>',
+            policy,
+        )
+        self.assertIn(
+            '<allow send_destination="io.github.keyboardspecialist.BC250Control1"/>',
+            policy,
+        )
+        self.assertNotIn("send_interface", policy)
+
+    def test_governor_dbus_policy_is_root_only(self):
+        power = (ROOT / "bc250-power.sh").read_text(encoding="utf-8")
+        self.assertIn('<policy user="root">', power)
+        self.assertEqual(power.count('<policy context="default">'), 1)
+        self.assertNotIn('<allow send_interface=', power)
+        self.assertIn(
+            "grep -q '<policy context=\"default\">' \"$DBUS_POLICY\"",
+            power,
+        )
+
+    def test_desktop_payload_and_readonly_handling_are_persistent(self):
+        installer = DESKTOP_INSTALL.read_text(encoding="utf-8")
+        repair = DESKTOP_REPAIR.read_text(encoding="utf-8")
+        self.assertIn("/var/lib/bc250-control/.desktop-stage.", installer)
+        self.assertIn("$STAGE/py_modules/bc250_control_service", installer)
+        self.assertIn("$STAGE/py_modules/bc250_control", installer)
+        self.assertIn("$STAGE/py_modules/tomli", installer)
+        self.assertIn("$STAGE/py_modules/dbus_next", installer)
+        self.assertIn("kpackagetool6 --type Plasma/Applet --upgrade", installer)
+        self.assertIn("PAYLOAD_SWAPPED=1", installer)
+        self.assertIn("trap restore_uninstall_readonly EXIT", installer)
+        self.assertIn("READONLY_CHANGED=1", repair)
+        self.assertIn("trap restore_readonly EXIT", repair)
+        self.assertIn(
+            "if [[ $READONLY_CHANGED -eq 1 ]]; then\n"
+            "        /usr/bin/steamos-readonly enable",
+            repair,
+        )
+
+    def test_isolated_entrypoint_imports_staged_service_and_dependencies(self):
+        with tempfile.TemporaryDirectory() as directory:
+            payload = Path(directory) / "desktop"
+            modules = payload / "py_modules"
+            modules.mkdir(parents=True)
+            shutil.copy2(
+                ROOT / "desktop-control" / "service" / "bc250-control-service",
+                payload / "bc250-control-service",
+            )
+            for source, name in (
+                (
+                    ROOT / "desktop-control" / "service" / "bc250_control_service",
+                    "bc250_control_service",
+                ),
+                (ROOT / "backend" / "bc250_control", "bc250_control"),
+                (ROOT / "backend" / "vendor" / "tomli", "tomli"),
+                (ROOT / "desktop-control" / "vendor" / "dbus_next", "dbus_next"),
+            ):
+                shutil.copytree(source, modules / name)
+            subprocess.run(
+                [
+                    sys.executable,
+                    "-I",
+                    "-c",
+                    "import runpy; runpy.run_path("
+                    + repr(str(payload / "bc250-control-service"))
+                    + ", run_name='bc250_install_check')",
+                ],
+                check=True,
+            )
+
+    def test_desktop_component_is_kept_and_root_backed(self):
+        persistence = (ROOT / "bc250-update-persistence.sh").read_text(
+            encoding="utf-8"
+        )
+        storage = STORAGE.read_text(encoding="utf-8")
+        for expected in (
+            "COMPONENTS=(compute power cec aic desktop)",
+            "/etc/systemd/system/bc250-control.service",
+            "/etc/systemd/system/bc250-desktop-control-repair.service",
+            "/etc/dbus-1/system.d/io.github.keyboardspecialist.BC250Control1.conf",
+        ):
+            self.assertIn(expected, persistence)
+        self.assertNotIn("/usr/share/polkit-1/actions/", persistence)
+        repair = DESKTOP_REPAIR.read_text(encoding="utf-8")
+        self.assertIn(
+            "/usr/share/polkit-1/actions/"
+            "io.github.keyboardspecialist.bc250-control.policy",
+            repair,
+        )
+        self.assertIn("bc250-control.service", storage)
+        self.assertIn("bc250-desktop-control-repair.service", storage)
+
     def test_storage_without_terminal_prints_help(self):
         result = subprocess.run(
             ["bash", str(STORAGE)],
@@ -139,7 +257,7 @@ class PersistenceUnitTests(unittest.TestCase):
                 capture_output=True,
                 text=True,
             )
-            self.assertEqual(link.readlink(), Path("../test.service"))
+            self.assertEqual(Path(os.readlink(str(link))), Path("../test.service"))
 
     def test_all_shell_entrypoints_parse(self):
         scripts = [
@@ -157,6 +275,8 @@ class PersistenceUnitTests(unittest.TestCase):
             "bc250-audio-fix/prepare-kernel.sh",
             "bc250-audio-fix/patch-driver.sh",
             "decky-plugin/install.sh",
+            "desktop-control/install.sh",
+            "desktop-control/bc250-desktop-control-repair",
         ]
         subprocess.run(
             ["bash", "-n", *(str(ROOT / script) for script in scripts)],

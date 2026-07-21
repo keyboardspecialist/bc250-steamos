@@ -1,13 +1,28 @@
 import asyncio
+import os
+import pwd
 import stat
+import subprocess
+import sys
 import tempfile
 import unittest
+from contextlib import ExitStack, asynccontextmanager
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import bc250_control.backend as backend_module
-from bc250_control.backend import CommandError, ToolkitBackend
+from bc250_control.backend import BusyError, CommandError, ToolkitBackend
+
+
+@asynccontextmanager
+async def unlocked_process_lock():
+    yield
+
+
+def prepare_mutation_backend(backend):
+    backend._mutation_lock = asyncio.Lock()
+    backend._process_lock = unlocked_process_lock
 
 
 class BackendParsingTests(unittest.TestCase):
@@ -152,14 +167,13 @@ class BackendParsingTests(unittest.TestCase):
             config = root / "manager.conf"
             config.write_text(f"UMR={umr}\n", encoding="utf-8")
             backend.toolkit = root / "toolkit"
-            with (
-                patch.object(backend_module, "CU_CONFIG_PATH", config),
-                patch.object(
+            with ExitStack() as stack:
+                stack.enter_context(patch.object(backend_module, "CU_CONFIG_PATH", config))
+                stack.enter_context(patch.object(
                     ToolkitBackend,
                     "_trusted_root_file",
                     side_effect=lambda path: path == umr,
-                ),
-            ):
+                ))
                 self.assertEqual(backend._trusted_umr(), umr)
 
     def test_umr_database_skips_incomplete_canonical_copy(self):
@@ -182,14 +196,13 @@ class BackendParsingTests(unittest.TestCase):
                     (database / relative).write_text(
                         "data" if complete else "", encoding="utf-8"
                     )
-            with (
-                patch.object(backend_module, "CU_CONFIG_PATH", config),
-                patch.object(backend_module, "ROOT_UMR_DATABASE_PATH", canonical),
-                patch.object(backend_module, "MIGRATED_UMR_DATABASE_PATH", legacy),
-                patch.object(backend_module, "LEGACY_UMR_DATABASE_PATH", legacy),
-                patch.object(ToolkitBackend, "_trusted_root_directory", return_value=True),
-                patch.object(ToolkitBackend, "_trusted_root_file", return_value=True),
-            ):
+            with ExitStack() as stack:
+                stack.enter_context(patch.object(backend_module, "CU_CONFIG_PATH", config))
+                stack.enter_context(patch.object(backend_module, "ROOT_UMR_DATABASE_PATH", canonical))
+                stack.enter_context(patch.object(backend_module, "MIGRATED_UMR_DATABASE_PATH", legacy))
+                stack.enter_context(patch.object(backend_module, "LEGACY_UMR_DATABASE_PATH", legacy))
+                stack.enter_context(patch.object(ToolkitBackend, "_trusted_root_directory", return_value=True))
+                stack.enter_context(patch.object(ToolkitBackend, "_trusted_root_file", return_value=True))
                 self.assertEqual(
                     backend._umr_database_args(root / "bin/umr"),
                     ["--database-path", str(legacy)],
@@ -202,13 +215,12 @@ class BackendMutationTests(unittest.IsolatedAsyncioTestCase):
         process = MagicMock()
         process.communicate = AsyncMock(return_value=(b"", b""))
         process.returncode = 0
-        with (
-            patch.object(backend_module, "CLEAN_ENV", {"PATH": "/usr/bin"}),
-            patch(
+        with ExitStack() as stack:
+            stack.enter_context(patch.object(backend_module, "CLEAN_ENV", {"PATH": "/usr/bin"}))
+            create_process = stack.enter_context(patch(
                 "bc250_control.backend.asyncio.create_subprocess_exec",
                 AsyncMock(return_value=process),
-            ) as create_process,
-        ):
+            ))
             await backend._exec(["/usr/bin/true"])
 
         self.assertEqual(create_process.await_args.kwargs["env"], {"PATH": "/usr/bin"})
@@ -232,11 +244,10 @@ class BackendMutationTests(unittest.IsolatedAsyncioTestCase):
         with tempfile.TemporaryDirectory() as directory:
             config = Path(directory) / "manager.conf"
             config.write_text("UMR_INSTANCE=3\n", encoding="utf-8")
-            with (
-                patch.object(backend_module, "CU_CONFIG_PATH", config),
-                patch.object(backend, "_trusted_umr", return_value=Path("/umr")),
-                patch("bc250_control.backend.os.geteuid", return_value=0),
-            ):
+            with ExitStack() as stack:
+                stack.enter_context(patch.object(backend_module, "CU_CONFIG_PATH", config))
+                stack.enter_context(patch.object(backend, "_trusted_umr", return_value=Path("/umr")))
+                stack.enter_context(patch("bc250_control.backend.os.geteuid", return_value=0))
                 value = await backend._umr_register("register", 0, 1)
 
         self.assertEqual(value, 0x1F)
@@ -249,12 +260,11 @@ class BackendMutationTests(unittest.IsolatedAsyncioTestCase):
         backend.toolkit = Path("/toolkit")
         backend._umr_lock = asyncio.Lock()
         backend._exec = AsyncMock(return_value=(0, "", "value 0x1f"))
-        with (
-            patch.object(backend, "_trusted_umr", return_value=Path("/umr")),
-            patch.object(backend, "_umr_instance", return_value=None),
-            patch.object(backend, "_umr_database_args", return_value=[]),
-            patch("bc250_control.backend.os.geteuid", return_value=0),
-        ):
+        with ExitStack() as stack:
+            stack.enter_context(patch.object(backend, "_trusted_umr", return_value=Path("/umr")))
+            stack.enter_context(patch.object(backend, "_umr_instance", return_value=None))
+            stack.enter_context(patch.object(backend, "_umr_database_args", return_value=[]))
+            stack.enter_context(patch("bc250_control.backend.os.geteuid", return_value=0))
             value = await backend._umr_register("register", 1, 0)
 
         self.assertEqual(value, 0x1F)
@@ -268,12 +278,11 @@ class BackendMutationTests(unittest.IsolatedAsyncioTestCase):
         backend.toolkit = Path("/toolkit")
         backend._umr_lock = asyncio.Lock()
         backend._exec = AsyncMock(return_value=(1, "value 0x1f", ""))
-        with (
-            patch.object(backend, "_trusted_umr", return_value=Path("/umr")),
-            patch.object(backend, "_umr_instance", return_value=None),
-            patch.object(backend, "_umr_database_args", return_value=[]),
-            patch("bc250_control.backend.os.geteuid", return_value=0),
-        ):
+        with ExitStack() as stack:
+            stack.enter_context(patch.object(backend, "_trusted_umr", return_value=Path("/umr")))
+            stack.enter_context(patch.object(backend, "_umr_instance", return_value=None))
+            stack.enter_context(patch.object(backend, "_umr_database_args", return_value=[]))
+            stack.enter_context(patch("bc250_control.backend.os.geteuid", return_value=0))
             value = await backend._umr_register("register", 0, 0)
 
         self.assertEqual(value, 0x1F)
@@ -289,12 +298,11 @@ class BackendMutationTests(unittest.IsolatedAsyncioTestCase):
                 (0, "", "value 0x1f"),
             ]
         )
-        with (
-            patch.object(backend, "_trusted_umr", return_value=Path("/umr")),
-            patch.object(backend, "_umr_instance", return_value=None),
-            patch.object(backend, "_umr_database_args", return_value=[]),
-            patch("bc250_control.backend.os.geteuid", return_value=0),
-        ):
+        with ExitStack() as stack:
+            stack.enter_context(patch.object(backend, "_trusted_umr", return_value=Path("/umr")))
+            stack.enter_context(patch.object(backend, "_umr_instance", return_value=None))
+            stack.enter_context(patch.object(backend, "_umr_database_args", return_value=[]))
+            stack.enter_context(patch("bc250_control.backend.os.geteuid", return_value=0))
             value = await backend._umr_register("register", 1, 0)
 
         self.assertEqual(value, 0x1F)
@@ -303,7 +311,7 @@ class BackendMutationTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_eager_load_target_uses_more_aggressive_thresholds(self):
         backend = object.__new__(ToolkitBackend)
-        backend._mutation_lock = asyncio.Lock()
+        prepare_mutation_backend(backend)
         backend._update_gpu_config = AsyncMock()
         backend._gpu_call = AsyncMock()
 
@@ -330,12 +338,11 @@ class BackendMutationTests(unittest.IsolatedAsyncioTestCase):
             return 0, "value 0x1f", ""
 
         backend._exec = AsyncMock(side_effect=execute)
-        with (
-            patch.object(backend, "_trusted_umr", return_value=Path("/umr")),
-            patch.object(backend, "_umr_instance", return_value=0),
-            patch.object(backend, "_umr_database_args", return_value=[]),
-            patch("bc250_control.backend.os.geteuid", return_value=0),
-        ):
+        with ExitStack() as stack:
+            stack.enter_context(patch.object(backend, "_trusted_umr", return_value=Path("/umr")))
+            stack.enter_context(patch.object(backend, "_umr_instance", return_value=0))
+            stack.enter_context(patch.object(backend, "_umr_database_args", return_value=[]))
+            stack.enter_context(patch("bc250_control.backend.os.geteuid", return_value=0))
             await asyncio.gather(
                 *(backend._umr_register("register", se, sh) for se in range(2) for sh in range(2))
             )
@@ -412,7 +419,7 @@ class BackendMutationTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_cec_name_uses_existing_tool_command(self):
         backend = object.__new__(ToolkitBackend)
-        backend._mutation_lock = asyncio.Lock()
+        prepare_mutation_backend(backend)
         backend._user_tool = AsyncMock(return_value="")
 
         await backend.set_cec_name("Living Room")
@@ -435,7 +442,7 @@ class BackendMutationTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_custom_load_target_updates_percentages(self):
         backend = object.__new__(ToolkitBackend)
-        backend._mutation_lock = asyncio.Lock()
+        prepare_mutation_backend(backend)
         backend._update_gpu_config = AsyncMock()
         backend._gpu_call = AsyncMock()
 
@@ -459,7 +466,7 @@ class BackendMutationTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_cu_rpc_uses_trusted_manager(self):
         backend = object.__new__(ToolkitBackend)
-        backend._mutation_lock = asyncio.Lock()
+        prepare_mutation_backend(backend)
         backend._bc250_present = MagicMock(return_value=True)
         backend._trusted_umr = MagicMock(return_value=Path("/trusted/umr"))
         backend._trusted_cu_manager = MagicMock(
@@ -486,7 +493,7 @@ class BackendMutationTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_cu_rpc_drops_inherited_instance_when_detection_fails(self):
         backend = object.__new__(ToolkitBackend)
-        backend._mutation_lock = asyncio.Lock()
+        prepare_mutation_backend(backend)
         backend._bc250_present = MagicMock(return_value=True)
         backend._trusted_umr = MagicMock(return_value=Path("/trusted/umr"))
         backend._trusted_cu_manager = MagicMock(
@@ -504,7 +511,7 @@ class BackendMutationTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_cu_rpc_rejects_factory_wgp(self):
         backend = object.__new__(ToolkitBackend)
-        backend._mutation_lock = asyncio.Lock()
+        prepare_mutation_backend(backend)
         backend._bc250_present = MagicMock(return_value=True)
         backend._trusted_umr = MagicMock(return_value=Path("/trusted/umr"))
         backend._trusted_cu_manager = MagicMock(return_value=Path("/trusted/cu-manager"))
@@ -528,7 +535,7 @@ class BackendMutationTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_cpu_oc_uses_allowlisted_tool_arguments(self):
         backend = object.__new__(ToolkitBackend)
-        backend._mutation_lock = asyncio.Lock()
+        prepare_mutation_backend(backend)
         backend._cpu_tool = AsyncMock(return_value="")
 
         await backend.cpu_oc_action("detect", 4000, 1275, 90)
@@ -544,7 +551,7 @@ class BackendMutationTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_cpu_stock_restore_ignores_detection_values(self):
         backend = object.__new__(ToolkitBackend)
-        backend._mutation_lock = asyncio.Lock()
+        prepare_mutation_backend(backend)
         backend._cpu_tool = AsyncMock(return_value="")
 
         await backend.cpu_oc_action("off", None, None, None)
@@ -616,7 +623,7 @@ class BackendMutationTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_frequency_state_rolls_back_after_live_failure(self):
         backend = object.__new__(ToolkitBackend)
-        backend._mutation_lock = asyncio.Lock()
+        prepare_mutation_backend(backend)
         backend._apply_frequency = AsyncMock(
             side_effect=[CommandError("D-Bus failed"), None]
         )
@@ -633,6 +640,168 @@ class BackendMutationTests(unittest.IsolatedAsyncioTestCase):
                 backend._apply_frequency.await_args_list[1].args,
                 ("range", 500, 1500),
             )
+
+
+class BackendLockTests(unittest.IsolatedAsyncioTestCase):
+    def make_backend(self, lock_path):
+        account = pwd.getpwuid(os.getuid())
+        return ToolkitBackend(account.pw_name, account.pw_dir, lock_path=lock_path)
+
+    async def test_mutations_serialize_between_backend_instances(self):
+        with tempfile.TemporaryDirectory() as directory:
+            lock_path = Path(directory) / "backend.lock"
+            first = self.make_backend(lock_path)
+            second = self.make_backend(lock_path)
+            entered = asyncio.Event()
+            release = asyncio.Event()
+            second_entered = asyncio.Event()
+
+            async def first_action():
+                entered.set()
+                await release.wait()
+
+            async def second_action():
+                second_entered.set()
+
+            first_task = asyncio.create_task(first._mutate(first_action))
+            await entered.wait()
+            second_task = asyncio.create_task(second._mutate(second_action))
+            await asyncio.sleep(backend_module.BACKEND_LOCK_POLL_INTERVAL * 2)
+            self.assertFalse(second_entered.is_set())
+            release.set()
+            await asyncio.gather(first_task, second_task)
+            self.assertTrue(second_entered.is_set())
+
+    async def test_snapshot_waits_for_cross_process_mutation_lock(self):
+        with tempfile.TemporaryDirectory() as directory:
+            lock_path = Path(directory) / "backend.lock"
+            process = subprocess.Popen(
+                [
+                    sys.executable,
+                    "-c",
+                    "import fcntl, os, sys; "
+                    "fd=os.open(sys.argv[1], os.O_RDWR|os.O_CREAT, 0o600); "
+                    "fcntl.flock(fd, fcntl.LOCK_EX); print('locked', flush=True); "
+                    "sys.stdin.readline()",
+                    str(lock_path),
+                ],
+                stdin=subprocess.PIPE,
+                stdout=subprocess.PIPE,
+                text=True,
+            )
+            try:
+                self.assertEqual(process.stdout.readline().strip(), "locked")
+                backend = self.make_backend(lock_path)
+                backend._get_snapshot = AsyncMock(return_value={"complete": True})
+                snapshot = asyncio.create_task(backend.get_snapshot())
+                await asyncio.sleep(backend_module.BACKEND_LOCK_POLL_INTERVAL * 2)
+                self.assertFalse(snapshot.done())
+                process.stdin.write("\n")
+                process.stdin.flush()
+                self.assertEqual(await snapshot, {"complete": True})
+            finally:
+                if process.poll() is None:
+                    process.terminate()
+                process.wait(timeout=2)
+                process.stdin.close()
+                process.stdout.close()
+
+    async def test_busy_lock_raises_exported_busy_error(self):
+        with tempfile.TemporaryDirectory() as directory:
+            lock_path = Path(directory) / "backend.lock"
+            descriptor = os.open(str(lock_path), os.O_RDWR | os.O_CREAT, 0o600)
+            fcntl = backend_module.fcntl
+            fcntl.flock(descriptor, fcntl.LOCK_EX)
+            backend = self.make_backend(lock_path)
+            try:
+                with ExitStack() as stack:
+                    stack.enter_context(patch.object(backend_module, "BACKEND_LOCK_TIMEOUT", 0.01))
+                    stack.enter_context(patch.object(backend_module, "BACKEND_LOCK_POLL_INTERVAL", 0.001))
+                    stack.enter_context(self.assertRaises(BusyError))
+                    await backend._mutate(AsyncMock())
+            finally:
+                fcntl.flock(descriptor, fcntl.LOCK_UN)
+                os.close(descriptor)
+
+    async def test_lock_rejects_symlink(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            target = root / "target"
+            target.write_text("", encoding="utf-8")
+            lock_path = root / "backend.lock"
+            lock_path.symlink_to(target)
+            backend = self.make_backend(lock_path)
+
+            with self.assertRaisesRegex(CommandError, "backend lock"):
+                await backend._mutate(AsyncMock())
+
+    async def test_telemetry_does_not_wait_for_backend_lock(self):
+        with tempfile.TemporaryDirectory() as directory:
+            lock_path = Path(directory) / "backend.lock"
+            descriptor = os.open(str(lock_path), os.O_RDWR | os.O_CREAT, 0o600)
+            backend_module.fcntl.flock(descriptor, backend_module.fcntl.LOCK_EX)
+            backend = self.make_backend(lock_path)
+            backend._temperatures = MagicMock(return_value=[])
+            backend._cpu_current_mhz = MagicMock(return_value=1000)
+            backend._active_gpu_mhz = MagicMock(return_value=500)
+            try:
+                telemetry = await asyncio.wait_for(backend.get_telemetry(), 0.1)
+            finally:
+                backend_module.fcntl.flock(descriptor, backend_module.fcntl.LOCK_UN)
+                os.close(descriptor)
+            self.assertEqual(telemetry["cpuClock"], 1000)
+
+
+class DeckyRuntimeTests(unittest.TestCase):
+    def test_staged_runtime_imports_in_isolation_and_is_reproducible(self):
+        repository = Path(__file__).resolve().parents[2]
+        stage_script = repository / "scripts/stage-decky-runtime.py"
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            first = root / "first"
+            second = root / "second"
+            first_archive = root / "first.zip"
+            second_archive = root / "second.zip"
+            environment = {**os.environ, "SOURCE_DATE_EPOCH": "315532800"}
+            subprocess.run(
+                [
+                    sys.executable,
+                    str(stage_script),
+                    "--output",
+                    str(first),
+                    "--archive",
+                    str(first_archive),
+                ],
+                check=True,
+                env=environment,
+            )
+            subprocess.run(
+                [
+                    sys.executable,
+                    str(stage_script),
+                    "--output",
+                    str(second),
+                    "--archive",
+                    str(second_archive),
+                ],
+                check=True,
+                env=environment,
+            )
+
+            code = (
+                "import pathlib, sys; sys.path.insert(0, sys.argv[1]); "
+                "import bc250_control, bc250_control.backend, tomli; "
+                "root=pathlib.Path(sys.argv[1]).resolve(); "
+                "files=(bc250_control.__file__, bc250_control.backend.__file__, tomli.__file__); "
+                "assert all(root in pathlib.Path(item).resolve().parents for item in files); "
+                "assert all(not pathlib.Path(item).is_symlink() for item in files)"
+            )
+            subprocess.run(
+                [sys.executable, "-I", "-c", code, str(first / "py_modules")],
+                check=True,
+                cwd=str(root),
+            )
+            self.assertEqual(first_archive.read_bytes(), second_archive.read_bytes())
 
 
 if __name__ == "__main__":

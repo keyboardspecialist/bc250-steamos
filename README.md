@@ -26,6 +26,7 @@ Open the unified toolkit menu as the logged-in Deck user:
 | CEC | `./bc250-cec.sh setup` |
 | AIC8800 | `sudo bash ./aic8800/steamdeck-setup.sh` |
 | Decky plugin | `bash ./decky-plugin/install.sh` |
+| Plasma desktop control | `bash ./desktop-control/install.sh install` |
 | Persistent storage and recovery | Automatic with each setup workflow; `./bc250-storage.sh` opens its menu |
 | Verification | `sudo ./bc250-storage.sh status` |
 
@@ -52,6 +53,7 @@ sudo ./bc250-storage.sh install
 | Compute-unit manager | `sudo ./bc250-40cu.sh persist` |
 | CEC shutdown integration | `./bc250-cec.sh shutdown-standby install` |
 | AIC8800 | `sudo bash ./aic8800/steamdeck-setup.sh` |
+| Plasma desktop control | `bash ./desktop-control/install.sh install` |
 
 ```bash
 sudo ./bc250-storage.sh status
@@ -69,6 +71,7 @@ sudo ./bc250-power.sh status
 | [`bc250-cec.sh`](#cec) | TV, receiver, input, and power control over HDMI-CEC |
 | [`bc250-update-persistence.sh`](#steamos-updates) | Atomic-update allowlist and tuning recovery |
 | [`decky-plugin/`](#big-picture-plugin) | Quick Access interface for daily controls |
+| [`desktop-control/`](#plasma-desktop-control) | Plasma system-tray and windowed controls |
 | [`bc250-audio-fix/`](#display-clock) | DisplayPort video and audio clock correction |
 | [`aic8800/`](#wifi-and-bluetooth) | AIC8800D80 USB WiFi and Bluetooth driver |
 
@@ -78,9 +81,9 @@ The unified launcher and individual component scripts remain independently usabl
 
 Run `./bc250-toolkit.sh` without `sudo`. It opens Power, Compute Units, CEC,
 Storage, and Update Persistence as child menus, then returns to the toolkit
-when they exit. WiFi, display/audio, and Decky installation entries require
-confirmation before starting their longer setup workflows. Each child requests
-administrator access only when needed.
+when they exit. WiFi, display/audio, Decky, and Plasma desktop installation
+entries require confirmation before starting their longer setup workflows.
+Each child requests administrator access only when needed.
 
 | Command | Action |
 |---|---|
@@ -209,6 +212,14 @@ Use `./bc250-cec.sh help` for boot, suspend, poweroff, receiver-follow, and beha
 [`decky-plugin/`](decky-plugin/) provides a Decky Loader Quick Access interface with vertical sections for CU status, power health, GPU tuning, saved CPU tuning, and CEC controls.
 
 The plugin uses the toolkit checkout at `~/.local/share/bc250-fixes/bc250-steamos`. Build instructions are in [`decky-plugin/README.md`](decky-plugin/README.md).
+
+## Plasma Desktop Control
+
+[`desktop-control/`](desktop-control/) provides a Plasma 6 system-tray applet
+and optional `plasmawindowed` view with Overview, GPU, CU, CPU, and CEC tabs.
+It runs independently from Decky and requests polkit authorization only for
+privileged hardware changes. Installation and troubleshooting instructions are
+in [`desktop-control/README.md`](desktop-control/README.md).
 
 ## AMDGPU Driver
 

@@ -666,7 +666,8 @@ $(find "$work" -type f | head -20)"
     # D-Bus policy: upstream's shipped policy file is STALE vs its own binary
     # (file grants com.cyan.SkillFishGovernor; the v0.4.x binary requests
     # com.cyanskillfish.Governor -- verified via strings on the binary).
-    # Write our own policy granting both names.
+    # Write our own root-only policy granting both names. User-facing controls
+    # go through sudo or the polkit-authorized desktop service.
     mkdir -p /etc/dbus-1/system.d
     cat > "$DBUS_POLICY" << 'EOF'
 <!DOCTYPE busconfig PUBLIC
@@ -678,13 +679,6 @@ $(find "$work" -type f | head -20)"
     <allow own="com.cyanskillfish.Governor"/>
     <allow send_destination="com.cyan.SkillFishGovernor"/>
     <allow send_destination="com.cyanskillfish.Governor"/>
-  </policy>
-  <policy context="default">
-    <allow send_destination="com.cyan.SkillFishGovernor"/>
-    <allow send_destination="com.cyanskillfish.Governor"/>
-    <allow send_interface="com.cyan.SkillFishGovernor.PerformanceMode"/>
-    <allow send_interface="com.cyanskillfish.Governor.PerformanceMode"/>
-    <allow send_interface="org.freedesktop.DBus.Properties"/>
   </policy>
 </busconfig>
 EOF
@@ -1345,8 +1339,10 @@ cmd_helpers() {
     else
         warn "Helper fetch failed; check the scripts/ dir name on the smu branch."
     fi
-    if [[ ! -s "$DBUS_POLICY" ]] || ! grep -q 'com.cyanskillfish.Governor' "$DBUS_POLICY"; then
-        log "Writing dual-name D-Bus policy (upstream's is stale vs its binary)..."
+    if [[ ! -s "$DBUS_POLICY" ]] \
+        || ! grep -q 'com.cyanskillfish.Governor' "$DBUS_POLICY" \
+        || grep -q '<policy context="default">' "$DBUS_POLICY"; then
+        log "Writing root-only dual-name D-Bus policy (upstream's is stale vs its binary)..."
         cat > "$DBUS_POLICY" << 'EOF'
 <!DOCTYPE busconfig PUBLIC
  "-//freedesktop//DTD D-Bus Bus Configuration 1.0//EN"
@@ -1358,20 +1354,13 @@ cmd_helpers() {
     <allow send_destination="com.cyan.SkillFishGovernor"/>
     <allow send_destination="com.cyanskillfish.Governor"/>
   </policy>
-  <policy context="default">
-    <allow send_destination="com.cyan.SkillFishGovernor"/>
-    <allow send_destination="com.cyanskillfish.Governor"/>
-    <allow send_interface="com.cyan.SkillFishGovernor.PerformanceMode"/>
-    <allow send_interface="com.cyanskillfish.Governor.PerformanceMode"/>
-    <allow send_interface="org.freedesktop.DBus.Properties"/>
-  </policy>
 </busconfig>
 EOF
         busctl call org.freedesktop.DBus /org/freedesktop/DBus org.freedesktop.DBus ReloadConfig \
             2>/dev/null || warn "D-Bus reload failed; reboot to activate the policy."
         systemctl restart "$GOV_SVC" 2>/dev/null || true
     else
-        log "Dual-name D-Bus policy already present."
+        log "Root-only dual-name D-Bus policy already present."
     fi
     log "Test: sudo $PERF_BIN --status"
 }

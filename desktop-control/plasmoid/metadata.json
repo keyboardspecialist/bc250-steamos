@@ -1,0 +1,22 @@
+{
+    "KPlugin": {
+        "Authors": [
+            {
+                "Name": "BC-250 SteamOS contributors"
+            }
+        ],
+        "Category": "Hardware",
+        "Description": "Monitor and control BC-250 hardware from the Plasma system tray",
+        "EnabledByDefault": true,
+        "Icon": "computer",
+        "Id": "io.github.keyboardspecialist.bc250control",
+        "License": "BSD-3-Clause",
+        "Name": "BC-250 Control",
+        "Version": "1.0.0",
+        "Website": "https://github.com/keyboardspecialist/bc250-steamos"
+    },
+    "KPackageStructure": "Plasma/Applet",
+    "X-Plasma-API-Minimum-Version": "6.0",
+    "X-Plasma-NotificationArea": "true",
+    "X-Plasma-NotificationAreaCategory": "Hardware"
+}

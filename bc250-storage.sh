@@ -25,6 +25,8 @@ ROOT_BACKED_SERVICES=(
     cyan-skillfish-governor-smu.service
     bc250-cec-poweroff-standby.service
     aic8800-modules.service
+    bc250-control.service
+    bc250-desktop-control-repair.service
 )
 MIGRATION_OLD=""
 BACKING_CREATED=0

@@ -13,6 +13,7 @@ CU_STATUS_SH="$SCRIPT_DIR/bc250-cu-status.sh"
 AIC_SETUP_SH="$SCRIPT_DIR/aic8800/steamdeck-setup.sh"
 AUDIO_FIX_SH="$SCRIPT_DIR/bc250-audio-fix/patch-driver.sh"
 DECKY_INSTALL_SH="$SCRIPT_DIR/decky-plugin/install.sh"
+DESKTOP_INSTALL_SH="$SCRIPT_DIR/desktop-control/install.sh"
 
 C0=$'\033[0m'; CB=$'\033[1m'; CD=$'\033[2m'; CI=$'\033[7m'
 CG=$'\033[32m'; CY=$'\033[33m'; CR=$'\033[31m'; CC=$'\033[36m'
@@ -83,6 +84,14 @@ install_decky() {
     confirm_action \
         "Build and install the BC-250 Decky plugin?" \
         bash "$DECKY_INSTALL_SH"
+}
+
+install_desktop() {
+    require_normal_user
+    require_script "$DESKTOP_INSTALL_SH"
+    confirm_action \
+        "Install or upgrade the BC-250 Plasma desktop control?" \
+        bash "$DESKTOP_INSTALL_SH" install
 }
 
 status_section() {
@@ -196,6 +205,7 @@ cmd_menu() {
             "WiFi and Bluetooth|${CY}[installer]${C0}|Build and install the AIC8800 kernel modules and firmware."
             "Patch AMDGPU Driver|${CY}[build]${C0}|Build and install the matching patched AMDGPU module."
             "Decky plugin|${CY}[installer]${C0}|Build and install the BC-250 Quick Access plugin."
+            "Plasma desktop control|${CY}[installer]${C0}|Install the system service and Plasma system-tray control."
         )
         menu_select "BC-250 SteamOS toolkit" "${items[@]}" || { echo; break; }
         case $MENU_CHOICE in
@@ -208,13 +218,14 @@ cmd_menu() {
             6) run_menu_action wifi ;;
             7) run_menu_action audio ;;
             8) run_menu_action decky ;;
+            9) run_menu_action desktop ;;
         esac
     done
 }
 
 cmd_help() {
     cat << EOF
-Usage: $0 [menu|status|power|compute|cec|storage|persistence|wifi|audio|decky|help]
+Usage: $0 [menu|status|power|compute|cec|storage|persistence|wifi|audio|decky|desktop|help]
 
 Run without arguments in a terminal to open the unified toolkit menu.
 Run the toolkit as the logged-in Deck user, not with sudo; child tools request
@@ -230,6 +241,7 @@ Commands:
   wifi                   Confirm and run the AIC8800 installer
   audio                  Confirm and run the AMDGPU clock-fix builder
   decky                  Confirm and run the Decky plugin installer
+  desktop                Confirm and run the Plasma desktop-control installer
 EOF
 }
 
@@ -255,6 +267,7 @@ case "$command_name" in
     wifi) (($# == 0)) || die "Usage: $0 wifi"; install_wifi ;;
     audio) (($# == 0)) || die "Usage: $0 audio"; install_audio_fix ;;
     decky) (($# == 0)) || die "Usage: $0 decky"; install_decky ;;
+    desktop) (($# == 0)) || die "Usage: $0 desktop"; install_desktop ;;
     help|-h|--help) (($# == 0)) || die "Usage: $0 help"; cmd_help ;;
     *) cmd_help >&2; exit 1 ;;
 esac

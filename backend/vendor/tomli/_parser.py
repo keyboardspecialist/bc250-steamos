@@ -7,7 +7,7 @@ from __future__ import annotations
 from collections.abc import Iterable
 import string
 from types import MappingProxyType
-from typing import Any, BinaryIO, NamedTuple
+from typing import Any, BinaryIO, NamedTuple, Optional
 
 from ._re import (
     RE_DATETIME,
@@ -103,7 +103,7 @@ def loads(__s: str, *, parse_float: ParseFloat = float) -> dict[str, Any]:  # no
             pos = skip_chars(src, pos, TOML_WS)
         elif char == "[":
             try:
-                second_char: str | None = src[pos + 1]
+                second_char: Optional[str] = src[pos + 1]
             except IndexError:
                 second_char = None
             out.flags.finalize_pending()
@@ -262,7 +262,7 @@ def skip_until(
 
 def skip_comment(src: str, pos: Pos) -> Pos:
     try:
-        char: str | None = src[pos]
+        char: Optional[str] = src[pos]
     except IndexError:
         char = None
     if char == "#":
@@ -359,7 +359,7 @@ def parse_key_value_pair(
 ) -> tuple[Pos, Key, Any]:
     pos, key = parse_key(src, pos)
     try:
-        char: str | None = src[pos]
+        char: Optional[str] = src[pos]
     except IndexError:
         char = None
     if char != "=":
@@ -376,7 +376,7 @@ def parse_key(src: str, pos: Pos) -> tuple[Pos, Key]:
     pos = skip_chars(src, pos, TOML_WS)
     while True:
         try:
-            char: str | None = src[pos]
+            char: Optional[str] = src[pos]
         except IndexError:
             char = None
         if char != ".":
@@ -390,7 +390,7 @@ def parse_key(src: str, pos: Pos) -> tuple[Pos, Key]:
 
 def parse_key_part(src: str, pos: Pos) -> tuple[Pos, str]:
     try:
-        char: str | None = src[pos]
+        char: Optional[str] = src[pos]
     except IndexError:
         char = None
     if char in BARE_KEY_CHARS:
@@ -585,7 +585,7 @@ def parse_value(  # noqa: C901
     src: str, pos: Pos, parse_float: ParseFloat
 ) -> tuple[Pos, Any]:
     try:
-        char: str | None = src[pos]
+        char: Optional[str] = src[pos]
     except IndexError:
         char = None
 

@@ -12,7 +12,7 @@
 # Steps:
 #   1. Install standalone pnpm if missing (and node LTS via pnpm)
 #   2. Ensure PNPM_HOME is on PATH in ~/.bashrc and ~/.zshrc
-#   3. pnpm install + typecheck + build + backend unit tests
+#   3. pnpm install + typecheck + build + backend unit tests + runtime staging
 #   4. Copy the runtime files into ~/homebrew/plugins/"BC-250 Control"
 #      and restart plugin_loader
 
@@ -92,9 +92,12 @@ pnpm run typecheck
 log "Building bundle"
 pnpm run build
 log "Running backend tests"
-PYTHONPATH=py_modules python3 -m unittest discover -s tests
+PYTHONPATH="$SRC_DIR/../backend:$SRC_DIR/../backend/vendor" \
+    python3 -m unittest discover -s "$SRC_DIR/../backend/tests"
+log "Staging self-contained Decky runtime"
+python3 "$SRC_DIR/../scripts/stage-decky-runtime.py"
 
-[[ -f dist/index.js ]] || die "build produced no dist/index.js"
+[[ -f out/dist/index.js ]] || die "staging produced no out/dist/index.js"
 
 # --- 4. install root helper and Decky plugin -------------------------------
 # Only the runtime files ship; node_modules/src/tests stay in the checkout.
@@ -179,7 +182,7 @@ fi
 log "Installing to $DEST_DIR (sudo)"
 sudo rm -rf "$DEST_DIR"
 sudo install -d "$DEST_DIR"
-sudo cp -r plugin.json package.json main.py dist py_modules "$DEST_DIR/"
+sudo cp -r "$SRC_DIR/out/." "$DEST_DIR/"
 # Flush to disk immediately — a BC-250 hard crash before writeback would
 # otherwise leave the installed files as zero-byte husks.
 sync
