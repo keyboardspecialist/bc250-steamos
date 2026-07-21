@@ -43,6 +43,8 @@ fi
     || { echo "The AIC8800 source path cannot contain whitespace."; exit 1; }
 DRV=$REPO/src/USB/driver_fw/drivers/aic8800
 FW_SOURCE=$REPO/src/USB/driver_fw/fw/aic8800D80
+TOOLKIT_ROOT=$(cd "$REPO/.." && pwd)
+KERNEL_TREE=$TOOLKIT_ROOT/bc250-audio-fix/valve-kernel
 ROOT_DATA_DIR=/var/lib/bc250-control
 FW=$ROOT_DATA_DIR/aic8800/firmware/aic8800D80
 ROOT_SOURCE=$ROOT_DATA_DIR/aic8800/source
@@ -81,6 +83,30 @@ relock_rootfs() {
     fi
 }
 trap relock_rootfs EXIT
+
+repair_kernel_cache_ownership() {
+    local path probe owner needs_repair
+    local build_uid build_group
+    build_uid=$(id -u "$BUILD_USER")
+    build_group=$(id -gn "$BUILD_USER")
+
+    for path in "$KERNEL_TREE" "$KERNEL_TREE-dot-git"; do
+        [ -e "$path" ] || continue
+        [ ! -L "$path" ] || { echo "Refusing symlinked kernel cache: $path"; exit 1; }
+
+        needs_repair=0
+        for probe in "$path" "$path/.git"; do
+            [ -e "$probe" ] || continue
+            owner=$(stat -c '%u' "$probe") \
+                || { echo "Could not determine ownership of $probe"; exit 1; }
+            [ "$owner" = "$build_uid" ] || needs_repair=1
+        done
+        if [ "$needs_repair" = 1 ]; then
+            echo "Repairing kernel cache ownership for $BUILD_USER: $path"
+            chown -R "$BUILD_USER:$build_group" "$path"
+        fi
+    done
+}
 
 find_storage_device() {
     local device vendor product
@@ -132,6 +158,7 @@ pacman -Sy --noconfirm --needed base-devel git
 relock_rootfs
 
 echo "== [3/7] Kernel headers for $KREL =="
+repair_kernel_cache_ownership
 if [ ! -d "$DRV/steamos-headers/usr/lib/modules/$KREL/build" ]; then
     runuser -u "$BUILD_USER" -- make -C "$DRV" steamos-headers
 else

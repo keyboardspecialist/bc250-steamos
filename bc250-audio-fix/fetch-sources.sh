@@ -72,6 +72,17 @@ PARKED=$TREE-dot-git
 at_target() { [[ "$(git --git-dir="$1" rev-parse HEAD 2>/dev/null)" == "$SHA"* ]]; }
 managed_tree() { [ "$TREE" = "$HERE/valve-kernel" ] || [ -f "$TREE/.bc250-managed-tree" ]; }
 tree_clean() { git --git-dir="$1" --work-tree="$TREE" diff --quiet HEAD -- .; }
+check_owner() {
+    local path=$1 owner
+    [ -e "$path" ] || return 0
+    owner=$(stat -c '%u' "$path") || die "could not determine ownership of $path"
+    [ "$owner" = "$(id -u)" ] \
+        || die "$path is not owned by $(id -un); rerun the root AIC8800 setup to repair the managed cache, or restore its ownership manually"
+}
+
+check_owner "$TREE"
+check_owner "$TREE/.git"
+check_owner "$PARKED"
 
 if [ -d "$PARKED" ] && at_target "$PARKED"; then
     echo "tree already at $SHA (.git parked) — nothing to do"

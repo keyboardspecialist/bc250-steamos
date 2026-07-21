@@ -11,6 +11,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 FETCHER = ROOT / "fetch-steamos-package.sh"
+SOURCE_FETCHER = ROOT / "bc250-audio-fix/fetch-sources.sh"
 WIFI_MAKEFILE = ROOT / "aic8800/src/USB/driver_fw/drivers/aic8800/Makefile"
 RELEASE = "6.16.12-valve24.5-1-neptune-616-gb2f7cfe85e45"
 PACKAGE = "linux-neptune-616-headers-6.16.12.valve24.5-1-x86_64.pkg.tar.zst"
@@ -119,6 +120,30 @@ class HeaderFetchTests(unittest.TestCase):
 
         self.assertEqual(result.returncode, 1)
         self.assertIn("invalid-repository", result.stderr)
+
+    def test_source_fetcher_reports_mismatched_cache_ownership_before_git(self):
+        tree = self.root / "foreign-kernel-tree"
+        tree.mkdir()
+        fake_bin = self.root / "fake-bin"
+        fake_bin.mkdir()
+        fake_stat = fake_bin / "stat"
+        fake_stat.write_text("#!/bin/sh\nprintf '99999\\n'\n", encoding="ascii")
+        fake_stat.chmod(0o755)
+
+        result = subprocess.run(
+            ["bash", str(SOURCE_FETCHER), str(tree)],
+            env={
+                **os.environ,
+                "KERNEL_RELEASE": RELEASE,
+                "PATH": f"{fake_bin}:{os.environ['PATH']}",
+            },
+            capture_output=True,
+            text=True,
+        )
+
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("is not owned by", result.stderr)
+        self.assertNotIn("falling back to a full fetch", result.stdout)
 
     def test_wifi_target_uses_discovered_channel_and_checks_release(self):
         driver = self.root / "driver"
