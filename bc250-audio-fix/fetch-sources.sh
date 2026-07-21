@@ -10,7 +10,8 @@
 #      (all jupiter-* channels are probed — point releases can ship from a
 #      version branch like jupiter-3.8.1x instead of jupiter-main). If Valve
 #      never published those headers, build.sh generates Module.symvers by
-#      building the exact source completely.
+#      building the exact source completely for AMDGPU. The WiFi preparation
+#      mode can omit it when CONFIG_MODVERSIONS is disabled.
 #   2. The build deps (pahole, bc, libelf, openssl, zlib) from the SteamOS
 #      Arch mirror, extracted into deps/ where build-env.sh expects them.
 #
@@ -135,7 +136,7 @@ if [ "$HEADER_STATUS" = 0 ]; then
 elif [ "$HEADER_STATUS" = 3 ]; then
     printf '%s\n' "$REL" > "$FULL_BUILD_REQUIRED"
     echo "WARNING: Valve has not published $HDRPKG."
-    echo "         A complete exact-source kernel build will generate Module.symvers."
+    echo "         AMDGPU will build the exact kernel for Module.symvers; WiFi may use source-only preparation."
 else
     die "could not reliably retrieve the matching kernel headers"
 fi

@@ -10,6 +10,6 @@
 
 ## SteamOS
 
-Use `sudo bash steamdeck-setup.sh` from the BC-250 toolkit. It first downloads the headers matching the running kernel. If Valve never published that exact package, interactive setup prepares the exact Evlav source and performs a complete kernel build before compiling AIC8800.
+Use `sudo bash steamdeck-setup.sh` from the BC-250 toolkit. It first downloads the headers matching the running kernel. If Valve never published that exact package, interactive setup checks out the exact Evlav source, reconstructs the running configuration, and runs `modules_prepare` before compiling AIC8800.
 
-The source fallback can take hours and requires about 40 GiB free. It never installs the locally built kernel. The boot service only reuses staged modules or published headers; rerun `steamdeck-setup.sh` when the service reports that an interactive source build is required.
+SteamOS has `CONFIG_MODVERSIONS` disabled, so this WiFi-only fallback can defer exported-symbol validation to module load time instead of compiling the complete kernel for `Module.symvers`. Exact release checks still run, and the kernel refuses a module if any required symbol is unavailable. The boot service only reuses staged modules or published headers; rerun `steamdeck-setup.sh` when it reports that interactive source preparation is required.

@@ -162,6 +162,8 @@ class HeaderFetchTests(unittest.TestCase):
         preparer.write_text(
             "#!/bin/bash\n"
             "set -eu\n"
+            "[ \"$1\" = --wifi ]\n"
+            "shift\n"
             "mkdir -p \"$1/include/config\"\n"
             f"printf '%s\\n' '{RELEASE}' > \"$1/include/config/kernel.release\"\n",
             encoding="ascii",
@@ -189,6 +191,66 @@ class HeaderFetchTests(unittest.TestCase):
         build = driver / "steamos-headers/usr/lib/modules" / RELEASE / "build"
         self.assertTrue(build.is_symlink())
         self.assertEqual(build.resolve(), tree.resolve())
+
+    def run_wifi_module_build(self, config, with_symvers=False):
+        driver = self.root / f"driver-modules-{len(list(self.root.iterdir()))}"
+        driver.mkdir()
+        shutil.copy2(WIFI_MAKEFILE, driver / "Makefile")
+        kernel = self.root / f"kernel-modules-{len(list(self.root.iterdir()))}"
+        (kernel / "include/config").mkdir(parents=True)
+        (kernel / ".config").write_text(config + "\n", encoding="ascii")
+        (kernel / "include/config/kernel.release").write_text(
+            RELEASE + "\n", encoding="ascii"
+        )
+        record = self.root / f"modpost-warn-{len(list(self.root.iterdir()))}"
+        (kernel / "Makefile").write_text(
+            "modules:\n"
+            f"\t@printf '%s' \"$(KBUILD_MODPOST_WARN)\" > '{record}'\n",
+            encoding="ascii",
+        )
+        if with_symvers:
+            (kernel / "Module.symvers").write_text(
+                "0x00000000\\ttest_symbol\\tvmlinux\\tEXPORT_SYMBOL\\t\n",
+                encoding="ascii",
+            )
+
+        result = subprocess.run(
+            [
+                "make",
+                "-C",
+                str(driver),
+                "modules",
+                f"KDIR={kernel}",
+                f"UNAME_R={RELEASE}",
+            ],
+            capture_output=True,
+            text=True,
+        )
+        return result, record
+
+    def test_wifi_build_warns_modpost_without_symvers_when_modversions_is_off(self):
+        result, record = self.run_wifi_module_build(
+            "# CONFIG_MODVERSIONS is not set"
+        )
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(record.read_text(encoding="ascii"), "1")
+        self.assertIn("validate AIC8800 symbols at load time", result.stdout)
+
+    def test_wifi_build_requires_symvers_when_modversions_is_enabled(self):
+        result, record = self.run_wifi_module_build("CONFIG_MODVERSIONS=y")
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertFalse(record.exists())
+        self.assertIn("Module.symvers is required", result.stdout)
+
+    def test_wifi_build_stays_strict_when_symvers_exists(self):
+        result, record = self.run_wifi_module_build(
+            "CONFIG_MODVERSIONS=y", with_symvers=True
+        )
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(record.read_text(encoding="ascii"), "")
 
 
 if __name__ == "__main__":

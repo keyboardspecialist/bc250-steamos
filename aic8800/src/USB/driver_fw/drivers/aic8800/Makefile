@@ -91,7 +91,18 @@ modules:
 		echo "WARNING: headers are for $(KVER) but the running kernel is $(UNAME_R)."; \
 		echo "         The built modules will only load on kernel $(KVER)."; \
 	fi
-	$(MAKE) -C $(KDIR) M=$(PWD) ARCH=$(ARCH) CROSS_COMPILE=$(CROSS_COMPILE) $(BTF_OVERRIDE) modules
+	@set -eu; \
+	modpost_warn=; \
+	if [ ! -s "$(KDIR)/Module.symvers" ]; then \
+		if grep -qx '# CONFIG_MODVERSIONS is not set' "$(KDIR)/.config"; then \
+			modpost_warn=KBUILD_MODPOST_WARN=1; \
+			echo "WARNING: Module.symvers is unavailable; the running kernel will validate AIC8800 symbols at load time."; \
+		else \
+			echo "ERROR: Module.symvers is required when CONFIG_MODVERSIONS is enabled or unknown."; \
+			exit 1; \
+		fi; \
+	fi; \
+	$(MAKE) -C "$(KDIR)" M="$(PWD)" ARCH="$(ARCH)" CROSS_COMPILE="$(CROSS_COMPILE)" $(BTF_OVERRIDE) $$modpost_warn modules
 
 # SteamOS: fetch the headers package that exactly matches the running kernel
 # from Valve's package archive and unpack it next to the sources. This avoids
@@ -131,7 +142,7 @@ steamos-headers:
 			exit 3; \
 		}; \
 		MIRROR="$(STEAMOS_MIRROR)" HDR_REPOS="$(STEAMOS_HEADER_REPOS)" \
-			bash "$$preparer" "$$tree"; \
+			bash "$$preparer" --wifi "$$tree"; \
 		[ "$$(cat "$$tree/include/config/kernel.release" 2>/dev/null)" = "$(UNAME_R)" ] || { \
 			echo "ERROR: prepared kernel tree does not match $(UNAME_R)."; exit 1; \
 		}; \

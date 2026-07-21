@@ -60,7 +60,7 @@ else
            && [ ! -d "/lib/modules/$KVER/build" ]; then
             log "fetching kernel headers for $KVER"
             make -C "$DRV" steamos-headers \
-                || { log "exact headers unavailable; rerun interactive steamdeck-setup.sh for the source-build fallback"; exit 1; }
+                || { log "exact headers unavailable; rerun interactive steamdeck-setup.sh for source preparation"; exit 1; }
         fi
 
         log "building modules for $KVER"
@@ -80,6 +80,10 @@ else
     [ "$(ko_kver "$FDRV_KO")" = "$KVER" ] \
         || { log "staged WiFi module does not match $KVER"; exit 1; }
 fi
+
+# A source-prepared WiFi build may not carry kernel dependency metadata when
+# Valve omitted Module.symvers. Load cfg80211 before validating via insmod.
+modprobe cfg80211
 
 # insmod does not read /etc/modprobe.d, so pass the firmware path explicitly.
 loaded_fw=0

@@ -237,7 +237,7 @@ Install the AIC8800D80 USB modules and firmware configuration:
 sudo bash aic8800/steamdeck-setup.sh
 ```
 
-The installer snapshots driver source, firmware, and verified per-kernel modules into root-owned storage. Interactive setup can use the exact-source full-build fallback when Valve omitted headers. The boot helper reuses staged modules or rebuilds from published headers, but never launches the multi-hour source build as root.
+The installer snapshots driver source, firmware, and verified per-kernel modules into root-owned storage. When Valve omitted headers, interactive setup prepares the exact source and builds AIC8800 without compiling the complete kernel if module versioning is disabled. The boot helper reuses staged modules or rebuilds from published headers, but never prepares kernel source as root.
 
 ## SteamOS Updates
 
@@ -247,7 +247,7 @@ The installer snapshots driver source, firmware, and verified per-kernel modules
 | Power management | The keep list retains tuning and GRUB defaults; the ACPI service validates and restores the `/boot` override and EFI GRUB config |
 | CEC | Home configuration and allowlisted system integration carry forward |
 | Display clock module | Run `bc250-audio-fix/patch-driver.sh` after each kernel update |
-| AIC8800 modules | The boot helper reuses staged modules or published headers; rerun setup if it requests the interactive source-build fallback |
+| AIC8800 modules | The boot helper reuses staged modules or published headers; rerun setup if it requests interactive source preparation |
 
 Current installers preserve their configuration across normal atomic updates.
 

@@ -178,7 +178,7 @@ install -d -o root -g root -m 0755 "$FW" "$ROOT_SOURCE" \
 cp -RL "$FW_SOURCE"/. "$FW"/
 cp -a "$DRV"/. "$ROOT_SOURCE"/
 # Headers and source trees are downloaded build input, not trusted source. The
-# boot helper fetches exact packaged headers but never runs a full source build.
+# boot helper fetches exact packaged headers but never prepares kernel source.
 rm -rf "$ROOT_SOURCE/steamos-headers"
 install -o root -g root -m 0755 "$HEADER_FETCHER" "$ROOT_SOURCE/fetch-steamos-package.sh"
 rm -rf "$ROOT_MODULE_STAGE"
@@ -202,6 +202,10 @@ bash "$UPDATE_PERSIST_SH" install aic
 
 echo "== [7/7] Relocking rootfs =="
 relock_rootfs
+
+# Source-only preparation can omit Module.symvers, so make the runtime WiFi
+# dependency explicit instead of relying solely on generated module metadata.
+modprobe cfg80211
 
 if storage_device=$(find_storage_device); then
     echo "Switching dongle to WiFi mode..."

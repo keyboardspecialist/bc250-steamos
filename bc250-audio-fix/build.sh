@@ -5,10 +5,13 @@
 # running kernel, extract the dep packages into deps/); this script verifies
 # their results and refuses to continue on any mismatch.
 #
-#   ./build.sh [--cg|--cg-unvalidated] [--prepare-only] [kernel-tree]
+#   ./build.sh [--cg|--cg-unvalidated] [--prepare-only]
+#              [--allow-missing-symvers] [kernel-tree]
 #
 # --prepare-only stops after producing an exact external-module Kbuild tree;
 # AIC8800 uses this when Valve omitted the matching headers package.
+# --allow-missing-symvers is the AIC8800-only fast path. It requires
+# --prepare-only and is safe only when CONFIG_MODVERSIONS is disabled.
 #
 # --cg applies the GFX-only clock-gating patch (bc250-cg-flags.patch, idle
 # power) — navi1x-validated, EXPERIMENTAL, off by default. --cg-unvalidated
@@ -30,16 +33,20 @@ step() { echo; echo "==> $*"; }
 WITH_CG=0
 WITH_CG_UNVAL=0
 PREPARE_ONLY=0
+ALLOW_MISSING_SYMVERS=0
 ARGS=()
 for a in "$@"; do
     case "$a" in
         --cg)             WITH_CG=1 ;;
         --cg-unvalidated) WITH_CG=1; WITH_CG_UNVAL=1 ;;  # implies --cg
         --prepare-only)   PREPARE_ONLY=1 ;;
+        --allow-missing-symvers) ALLOW_MISSING_SYMVERS=1 ;;
         *)                ARGS+=("$a") ;;
     esac
 done
-[ "${#ARGS[@]}" -le 1 ] || die "usage: $0 [--cg|--cg-unvalidated] [--prepare-only] [kernel-tree]"
+[ "${#ARGS[@]}" -le 1 ] || die "usage: $0 [--cg|--cg-unvalidated] [--prepare-only] [--allow-missing-symvers] [kernel-tree]"
+[ "$ALLOW_MISSING_SYMVERS" = 0 ] || [ "$PREPARE_ONLY" = 1 ] \
+    || die "--allow-missing-symvers requires --prepare-only"
 TREE_ARG=${ARGS[0]:-$HERE/valve-kernel}
 TREE=$(cd "$TREE_ARG" 2>/dev/null && pwd) || die "kernel tree not found: $TREE_ARG"
 
@@ -153,7 +160,15 @@ if [ -f "$FULL_BUILD_REQUIRED" ]; then
         echo "reusing full-build Module.symvers for $REL"
     fi
 
-    if [ -z "$CACHED" ]; then
+    if [ -z "$CACHED" ] \
+        && [ "$PREPARE_ONLY" = 1 ] \
+        && [ "$ALLOW_MISSING_SYMVERS" = 1 ] \
+        && grep -qx '# CONFIG_MODVERSIONS is not set' .config; then
+        rm -f Module.symvers "$FULL_BUILD_STAMP"
+        SYMVERS_OPTIONAL=1
+        echo "exact headers are unavailable; preparing the Wi-Fi Kbuild tree without Module.symvers"
+        echo "AIC8800 will defer exported-symbol checks to the running kernel"
+    elif [ -z "$CACHED" ]; then
         for tool in make gcc ld ar nm objcopy objdump strip perl python3 cpio flex bison msgfmt; do
             command -v "$tool" >/dev/null || die "$tool is required for the full kernel-build fallback"
         done
@@ -195,8 +210,13 @@ if [ -f "$FULL_BUILD_REQUIRED" ]; then
     fi
 fi
 
-[ -s Module.symvers ] || die "Module.symvers missing from tree root — the headers package is unavailable and no full-build fallback was requested"
-echo "Module.symvers present ($(wc -l < Module.symvers | tr -d ' ') symbols)"
+if [ -s Module.symvers ]; then
+    echo "Module.symvers present ($(wc -l < Module.symvers | tr -d ' ') symbols)"
+elif [ "${SYMVERS_OPTIONAL:-0}" = 1 ]; then
+    echo "Module.symvers intentionally omitted for Wi-Fi"
+else
+    die "Module.symvers missing from tree root — the headers package is unavailable and no full-build fallback was requested"
+fi
 
 if [ "$PREPARE_ONLY" = 1 ]; then
     step "modules_prepare + config re-verify"
@@ -205,6 +225,12 @@ if [ "$PREPARE_ONLY" = 1 ]; then
         || die "CONFIG_SCHED_CLASS_EXT missing from autoconf.h after modules_prepare"
     grep -qF "\"$REL\"" include/generated/utsrelease.h \
         || die "utsrelease.h does not carry $REL"
+    if [ "${SYMVERS_OPTIONAL:-0}" = 1 ]; then
+        grep -qx '# CONFIG_MODVERSIONS is not set' .config \
+            || die "CONFIG_MODVERSIONS changed during modules_prepare"
+        ! grep -q '^CONFIG_MODVERSIONS=' include/config/auto.conf \
+            || die "CONFIG_MODVERSIONS unexpectedly enabled during modules_prepare"
+    fi
     echo "prepared exact Kbuild tree: $TREE"
     exit 0
 fi
