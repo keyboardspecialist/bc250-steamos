@@ -19,7 +19,8 @@
 #   /etc                                      configs and units, retained by an
 #                                             atomic-update keep list
 #   /boot                cpio must live here for GRUB           -- WIPED by updates
-#                        -> a boot-time self-heal service restores it
+#   /efi                 active SteamOS GRUB config
+#                        -> a boot-time self-heal service restores both
 #
 # Usage (root):
 #   ./bc250-power.sh acpi          install ACPI override + self-heal
@@ -48,6 +49,9 @@ BIN_DIR="$ROOT_DATA_DIR/bin"
 ACPI_DIR="$ROOT_DATA_DIR/acpi"
 CPIO_MASTER="$ACPI_DIR/acpi_override.cpio"
 CPIO_BOOT="/boot/acpi_override.cpio"
+ACPI_READY="$ACPI_DIR/boot-ready"
+GRUB_CFG="/efi/EFI/steamos/grub.cfg"
+GRUB_ACPI_DEFAULT="/etc/default/grub.d/bc250-acpi.cfg"
 ACPI_RAW_BASE="https://raw.githubusercontent.com/bc250-collective/bc250-acpi-fix/main"
 
 GOV_BIN="$BIN_DIR/cyan-skillfish-governor-smu"
@@ -287,8 +291,27 @@ c_state() {   # colorize systemctl is-enabled / is-active words
 
 badge_acpi() {
     if compgen -G /sys/devices/system/cpu/cpu0/cpufreq >/dev/null; then b_ok "active"
-    elif [[ -f "$HEAL_UNIT" ]]; then b_mid "installed - reboot pending"
+    elif acpi_boot_ready; then b_mid "installed - reboot pending"
+    elif [[ -f "$HEAL_UNIT" ]]; then b_mid "installed - boot repair needed"
     else b_off "not installed"; fi
+}
+
+current_os_build() {
+    if [[ -r /etc/os-release ]]; then
+        ( . /etc/os-release; printf '%s\n' "${BUILD_ID:-${VERSION_ID:-unknown}}" )
+    else
+        printf '%s\n' unknown
+    fi
+}
+
+acpi_boot_ready() {
+    local ready=""
+    [[ -f "$CPIO_MASTER" && -f "$CPIO_BOOT" && -f "$ACPI_READY" ]] || return 1
+    cmp -s "$CPIO_MASTER" "$CPIO_BOOT" || return 1
+    IFS= read -r ready < "$ACPI_READY" || return 1
+    [[ "$ready" == "$(current_os_build)" ]] || return 1
+    grep -q '^GRUB_EARLY_INITRD_LINUX_CUSTOM="acpi_override.cpio"' \
+        "$GRUB_ACPI_DEFAULT" 2>/dev/null
 }
 badge_governor() {
     if systemctl is-active "$GOV_SVC" >/dev/null 2>&1; then b_ok "running"
@@ -398,31 +421,29 @@ cmd_acpi() {
     cp -f "$CPIO_MASTER" "$CPIO_BOOT"
     log "Installed -> $CPIO_BOOT"
 
-    # Upstream grub-mkconfig honors GRUB_EARLY_INITRD_LINUX_CUSTOM (the file
-    # must sit in /boot). The heal helper recreates this setting after updates.
-    if grep -q '^GRUB_EARLY_INITRD_LINUX_CUSTOM=' /etc/default/grub 2>/dev/null; then
-        sed -i 's|^GRUB_EARLY_INITRD_LINUX_CUSTOM=.*|GRUB_EARLY_INITRD_LINUX_CUSTOM="acpi_override.cpio"|' \
-            /etc/default/grub
-    else
-        echo 'GRUB_EARLY_INITRD_LINUX_CUSTOM="acpi_override.cpio"' >> /etc/default/grub
-    fi
-    log "GRUB_EARLY_INITRD_LINUX_CUSTOM set in /etc/default/grub"
+    # The dedicated drop-in survives updates without retaining Valve's full
+    # release-specific /etc/default/grub file.
+    mkdir -p "${GRUB_ACPI_DEFAULT%/*}"
+    printf '%s\n' 'GRUB_EARLY_INITRD_LINUX_CUSTOM="acpi_override.cpio"' \
+        > "$GRUB_ACPI_DEFAULT"
+    log "GRUB_EARLY_INITRD_LINUX_CUSTOM set in $GRUB_ACPI_DEFAULT"
 
     log "Regenerating GRUB config..."
     if command -v update-grub >/dev/null 2>&1; then
         update-grub
     else
-        grub-mkconfig -o /boot/grub/grub.cfg
+        mkdir -p "${GRUB_CFG%/*}"
+        grub-mkconfig -o "$GRUB_CFG"
     fi
 
-    if grep -q 'acpi_override.cpio' /boot/grub/grub.cfg 2>/dev/null; then
-        log "grub.cfg references the override -- good."
+    if grep -q 'acpi_override.cpio' "$GRUB_CFG" 2>/dev/null; then
+        log "$GRUB_CFG references the override -- good."
     else
-        warn "grub.cfg does NOT reference acpi_override.cpio."
+        warn "$GRUB_CFG does NOT reference acpi_override.cpio."
         warn "Your SteamOS grub build may ignore GRUB_EARLY_INITRD_LINUX_CUSTOM."
-        warn "Fallback: manually prepend it on the initrd line(s) in /boot/grub/grub.cfg:"
+        warn "Fallback: manually prepend it on the initrd line(s) in $GRUB_CFG:"
         warn "    initrd /acpi_override.cpio /initramfs-...img"
-        warn "(the self-heal service checks the cpio file, not the cfg edit)"
+        warn "(the self-heal service will retry and report a failure if it cannot repair this)"
     fi
 
     # --- self-heal service: SteamOS updates wipe /boot --------------------
@@ -431,37 +452,55 @@ cmd_acpi() {
 #!/usr/bin/env bash
 set -euo pipefail
 ROOTFS_WAS_READONLY=0
+READY_MARKER="$ACPI_READY"
+GRUB_CFG="$GRUB_CFG"
+GRUB_ACPI_DEFAULT="$GRUB_ACPI_DEFAULT"
+current_os_build() {
+    if [[ -r /etc/os-release ]]; then
+        ( . /etc/os-release; printf '%s\n' "\${BUILD_ID:-\${VERSION_ID:-unknown}}" )
+    else
+        printf '%s\n' unknown
+    fi
+}
 relock() {
     if [[ \$ROOTFS_WAS_READONLY -eq 1 ]]; then
         steamos-readonly enable || true
     fi
 }
 trap relock EXIT
+rm -f "\$READY_MARKER"
 
 if [[ ! -f $CPIO_BOOT ]] || ! cmp -s "$CPIO_MASTER" "$CPIO_BOOT" \
-   || ! grep -q '^GRUB_EARLY_INITRD_LINUX_CUSTOM="acpi_override.cpio"' /etc/default/grub 2>/dev/null \
-   || ! grep -q acpi_override.cpio /boot/grub/grub.cfg 2>/dev/null; then
+   || ! grep -q '^GRUB_EARLY_INITRD_LINUX_CUSTOM="acpi_override.cpio"' "\$GRUB_ACPI_DEFAULT" 2>/dev/null \
+   || ! grep -q acpi_override.cpio "\$GRUB_CFG" 2>/dev/null; then
     if steamos-readonly status 2>/dev/null | grep -qi enabled; then
         steamos-readonly disable
         ROOTFS_WAS_READONLY=1
     fi
     cp -f "$CPIO_MASTER" "$CPIO_BOOT"
-    if grep -q '^GRUB_EARLY_INITRD_LINUX_CUSTOM=' /etc/default/grub 2>/dev/null; then
-        sed -i 's|^GRUB_EARLY_INITRD_LINUX_CUSTOM=.*|GRUB_EARLY_INITRD_LINUX_CUSTOM="acpi_override.cpio"|' /etc/default/grub
-    else
-        printf '%s\n' 'GRUB_EARLY_INITRD_LINUX_CUSTOM="acpi_override.cpio"' >> /etc/default/grub
-    fi
+    mkdir -p "\${GRUB_ACPI_DEFAULT%/*}"
+    printf '%s\n' 'GRUB_EARLY_INITRD_LINUX_CUSTOM="acpi_override.cpio"' \
+        > "\$GRUB_ACPI_DEFAULT"
     if command -v update-grub >/dev/null; then
         update-grub
     else
-        grub-mkconfig -o /boot/grub/grub.cfg
+        mkdir -p "\${GRUB_CFG%/*}"
+        grub-mkconfig -o "\$GRUB_CFG"
     fi
-    if grep -q acpi_override.cpio /boot/grub/grub.cfg 2>/dev/null; then
+    if grep -q acpi_override.cpio "\$GRUB_CFG" 2>/dev/null; then
         echo "bc250: ACPI override restored after OS update; REBOOT to re-activate C/P-states" | systemd-cat -p warning
     else
-        echo "bc250: grub.cfg still lacks acpi_override.cpio after regen -- add the initrd line manually (see bc250-power.sh acpi output)" | systemd-cat -p err
+        echo "bc250: \$GRUB_CFG still lacks acpi_override.cpio after regen -- add the initrd line manually (see bc250-power.sh acpi output)" | systemd-cat -p err
         exit 1
     fi
+fi
+if [[ -f $CPIO_BOOT ]] && cmp -s "$CPIO_MASTER" "$CPIO_BOOT" \
+   && grep -q '^GRUB_EARLY_INITRD_LINUX_CUSTOM="acpi_override.cpio"' "\$GRUB_ACPI_DEFAULT" 2>/dev/null \
+   && grep -q acpi_override.cpio "\$GRUB_CFG" 2>/dev/null; then
+    current_os_build > "\$READY_MARKER"
+else
+    echo "bc250: ACPI boot configuration could not be validated" | systemd-cat -p err
+    exit 1
 fi
 EOF
     chmod 755 "$HEAL_HELPER"
@@ -471,7 +510,8 @@ EOF
 [Unit]
 Description=BC-250 ACPI override self-heal (restore after SteamOS updates)
 Requires=$RECOVERY_SVC
-After=$RECOVERY_SVC local-fs.target
+Wants=steamos-post-update.service
+After=$RECOVERY_SVC local-fs.target steamos-post-update.service
 RequiresMountsFor=$ROOT_DATA_DIR
 
 [Service]
@@ -504,6 +544,7 @@ EOF
 
     systemctl daemon-reload
     systemctl enable bc250-acpi-heal.service bc250-cpufreq.service
+    "$HEAL_HELPER"
     cleanup_legacy_data
     relock_rootfs
 

@@ -246,7 +246,7 @@ and stages the exact module files it loads.
 | Component | Update action |
 |---|---|
 | Compute-unit manager | Run `sudo ./bc250-40cu.sh verify` after an update |
-| Power management | The keep list retains tuning and the ACPI service restores its boot files |
+| Power management | The keep list retains tuning and GRUB defaults; the ACPI service validates and restores the `/boot` override and EFI GRUB config |
 | CEC | Home configuration and allowlisted system integration carry forward |
 | Display clock module | Run `bc250-audio-fix/patch-driver.sh` after each kernel update |
 | AIC8800 modules | The root-owned boot helper rebuilds for a new kernel; rerun setup only if it reports a missing source snapshot or build failure |

@@ -79,6 +79,23 @@ class PersistenceUnitTests(unittest.TestCase):
             source,
         )
 
+    def test_acpi_persistence_targets_active_steamos_grub_config(self):
+        source = (ROOT / "bc250-power.sh").read_text(encoding="utf-8")
+        persistence = (ROOT / "bc250-update-persistence.sh").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn('GRUB_CFG="/efi/EFI/steamos/grub.cfg"', source)
+        self.assertIn(
+            'GRUB_ACPI_DEFAULT="/etc/default/grub.d/bc250-acpi.cfg"', source
+        )
+        self.assertNotIn("/boot/grub/grub.cfg", source)
+        self.assertIn("/etc/default/grub.d/bc250-acpi.cfg", persistence)
+        self.assertIn("current_os_build > \"\\$READY_MARKER\"", source)
+        self.assertIn("installed - boot repair needed", source)
+        self.assertIn(
+            "After=$RECOVERY_SVC local-fs.target steamos-post-update.service", source
+        )
+
     def test_storage_help_documents_menu_and_sudo_prompt(self):
         result = subprocess.run(
             ["bash", str(STORAGE), "help"],

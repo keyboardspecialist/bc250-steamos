@@ -64,6 +64,7 @@ EOF
                 ;;
             power)
                 cat << EOF
+/etc/default/grub.d/bc250-acpi.cfg
 /etc/bc250-smu-oc.conf
 /etc/cyan-skillfish-governor-smu/config.toml
 /etc/dbus-1/system.d/com.cyan.SkillFishGovernor.conf
