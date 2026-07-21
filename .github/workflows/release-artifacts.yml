@@ -77,7 +77,7 @@ jobs:
           set -euo pipefail
           package_dir="release-toolkit/bc250-steamos"
           mkdir -p "$package_dir/aic8800/debian" \
-            "$package_dir/aic8800/src/USB/driver_fw"
+            "$package_dir/aic8800/src/USB/driver_fw/fw"
           cp README.md bc250-*.sh fetch-steamos-package.sh "$package_dir/"
           rsync -a --exclude=".gitignore" smu-oc-patches/ "$package_dir/smu-oc-patches/"
           rsync -a --exclude=".gitignore" bc250-audio-fix/ "$package_dir/bc250-audio-fix/"
