@@ -16,6 +16,52 @@ CEC quick controls. Select
 
 GPU voltage editing and saving WGP routing for boot remain in the toolkit CLI.
 
+## UI Overview
+
+These mockups follow the implemented Decky React interface and use
+representative healthy values from the backend schema. They are UI previews,
+not captures from BC-250 hardware; final typography and focus decoration follow
+the installed Steam client and Decky theme.
+
+### Quick Access Panel
+
+![BC-250 Decky Quick Access summary](mockups/01-quick-access.png)
+
+The plugin opens as a narrow Quick Access overlay without leaving the current
+game. **Summary** provides service health and one-second CPU, GPU, and
+temperature history. **CEC** switches the same panel to compact TV, input, and
+volume actions. **Open full controls** closes the side menus and navigates to
+the controller-focused fullscreen route.
+
+### Fullscreen Overview
+
+![BC-250 Decky fullscreen Overview](mockups/02-full-overview.png)
+
+Fullscreen controls use a vertical gamepad-navigation rail. Each tab carries a
+green or amber health dot, and focus moves directly between the rail and the
+scrolling content. Overview expands the Quick Access telemetry with power,
+ACPI, governor, persistence, CPU profile, CU, and CEC status.
+
+### CU Routing and GPU Tuning
+
+![BC-250 Decky CU routing and GPU tuning](mockups/03-cu-gpu.png)
+
+The CU grid distinguishes locked factory WGPs from routed and disabled pairs.
+Live editing requires the explicit advanced toggle and a destructive
+confirmation for every register change. GPU controls expose live and saved
+state, frequency modes, load-response presets and thresholds, ramp timing, and
+the read-only voltage curve. Sustained clock modes also require confirmation.
+
+### CPU Tuning and CEC
+
+![BC-250 Decky CPU overclock and CEC controls](mockups/04-cpu-cec.png)
+
+CPU tuning keeps bounded clock, voltage, and temperature inputs together with
+long-running detection and clearly separated apply, boot-enable, and stock
+restore actions. The full CEC tab adds broadcast-name editing, receiver
+controls, power integration, and behavior toggles beyond the compact Quick
+Access actions.
+
 ## Requirements
 
 - Decky Loader

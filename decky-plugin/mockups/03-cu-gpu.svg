@@ -1,0 +1,75 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1500" height="860" viewBox="0 0 1500 860">
+  <defs>
+    <linearGradient id="d3" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#18222d"/><stop offset=".55" stop-color="#10161d"/><stop offset="1" stop-color="#151b20"/></linearGradient>
+    <filter id="sh3" x="-10%" y="-10%" width="120%" height="130%"><feDropShadow dy="12" stdDeviation="14" flood-opacity=".4"/></filter>
+    <style>
+      .u{font-family:Inter,"Noto Sans",sans-serif;fill:#f4f6f8}.title{font-size:20px;font-weight:700}.small{font-size:11px;fill:#aeb3b8}.nav{font-size:12px;font-weight:600}.sect{font-size:13px;font-weight:650;fill:#dce2e8}.lab{font-size:11px;fill:#adb5bd}.val{font-size:11px;fill:#fff;font-weight:600}.tiny{font-size:9px;fill:#87919a}.btn{font-size:11px;fill:#fff;font-weight:700}.desc{font-size:10px;fill:#9ba4ac}
+    </style>
+  </defs>
+  <rect width="1500" height="860" fill="#0a1118"/>
+  <text x="42" y="31" class="u" font-size="12" fill="#718197">FULLSCREEN GAMEPAD TABS</text>
+
+  <g transform="translate(28 50)" filter="url(#sh3)">
+    <rect width="708" height="780" rx="12" fill="url(#d3)" stroke="#34404d"/>
+    <rect width="708" height="74" rx="12" fill="#1b2530"/><rect y="58" width="708" height="16" fill="#1b2530"/>
+    <g class="u"><text x="22" y="34" class="title">BC-250 Control</text><text x="22" y="56" class="small">38/40 CU  -  1500 MHz GPU</text>
+      <rect y="74" width="120" height="706" fill="#080c10" opacity=".26"/><line x1="120" y1="74" x2="120" y2="780" stroke="#fff" stroke-opacity=".1"/>
+      <text x="27" y="120" class="nav" fill="#aeb3b8">Overview</text>
+      <rect x="8" y="140" width="104" height="48" rx="6" fill="#4094ff" opacity=".3"/><circle cx="103" cy="148" r="4" fill="#59d185"/><text x="27" y="170" class="nav">CU</text>
+      <text x="27" y="225" class="nav" fill="#aeb3b8">GPU</text><text x="27" y="280" class="nav" fill="#aeb3b8">CPU OC</text><text x="27" y="335" class="nav" fill="#aeb3b8">CEC</text>
+
+      <g transform="translate(142 98)">
+        <text class="sect">Compute Units</text><rect y="14" width="542" height="132" rx="7" fill="#fff" opacity=".035" stroke="#fff" stroke-opacity=".09"/>
+        <text x="14" y="43" class="lab">Live routing</text><text x="510" y="43" text-anchor="end" class="val">38 / 40 CU</text><circle cx="526" cy="39" r="4" fill="#59d185"/>
+        <line x1="14" y1="55" x2="526" y2="55" stroke="#fff" stroke-opacity=".08"/><text x="14" y="78" class="lab">Boot replay</text><text x="510" y="78" text-anchor="end" class="val">Enabled</text><circle cx="526" cy="74" r="4" fill="#59d185"/>
+        <line x1="14" y1="90" x2="526" y2="90" stroke="#fff" stroke-opacity=".08"/><text x="14" y="113" class="lab">Factory lock</text><text x="510" y="113" text-anchor="end" class="val">38/40 CU locked</text><circle cx="526" cy="109" r="4" fill="#59d185"/>
+        <line x1="14" y1="125" x2="526" y2="125" stroke="#fff" stroke-opacity=".08"/><text x="14" y="140" class="lab">Update protection</text><text x="510" y="140" text-anchor="end" class="val">Protected</text><circle cx="526" cy="136" r="4" fill="#59d185"/>
+
+        <text y="181" class="sect">Active CU Routing</text><rect y="195" width="542" height="271" rx="7" fill="#fff" opacity=".035" stroke="#fff" stroke-opacity=".09"/>
+        <g class="tiny" text-anchor="middle"><text x="134" y="218">CU0-1</text><text x="210" y="218">CU2-3</text><text x="286" y="218">CU4-5</text><text x="362" y="218">CU6-7</text><text x="438" y="218">CU8-9</text><text x="510" y="218">Total</text></g>
+        <g class="lab"><text x="14" y="258">SE0.SH0</text><text x="14" y="308">SE0.SH1</text><text x="14" y="358">SE1.SH0</text><text x="14" y="408">SE1.SH1</text></g>
+        <g text-anchor="middle" class="btn">
+          <g transform="translate(96 234)"><rect width="68" height="32" rx="5" fill="#4094ff" opacity=".3" stroke="#60a5fa"/><text x="34" y="21" fill="#91c5ff">OEM</text></g><g transform="translate(172 234)"><rect width="68" height="32" rx="5" fill="#59d185" opacity=".28"/><text x="34" y="21" fill="#82e8a7">ON</text></g><g transform="translate(248 234)"><rect width="68" height="32" rx="5" fill="#59d185" opacity=".28"/><text x="34" y="21" fill="#82e8a7">ON</text></g><g transform="translate(324 234)"><rect width="68" height="32" rx="5" fill="#59d185" opacity=".28"/><text x="34" y="21" fill="#82e8a7">ON</text></g><g transform="translate(400 234)"><rect width="68" height="32" rx="5" fill="#59d185" opacity=".28"/><text x="34" y="21" fill="#82e8a7">ON</text></g><text x="510" y="255" class="val">10/10</text>
+          <g transform="translate(96 284)"><rect width="68" height="32" rx="5" fill="#4094ff" opacity=".3" stroke="#60a5fa"/><text x="34" y="21" fill="#91c5ff">OEM</text></g><g transform="translate(172 284)"><rect width="68" height="32" rx="5" fill="#59d185" opacity=".28"/><text x="34" y="21" fill="#82e8a7">ON</text></g><g transform="translate(248 284)"><rect width="68" height="32" rx="5" fill="#59d185" opacity=".28"/><text x="34" y="21" fill="#82e8a7">ON</text></g><g transform="translate(324 284)"><rect width="68" height="32" rx="5" fill="#59d185" opacity=".28"/><text x="34" y="21" fill="#82e8a7">ON</text></g><g transform="translate(400 284)"><rect width="68" height="32" rx="5" fill="#fff" opacity=".06"/><text x="34" y="21" fill="#777f86">OFF</text></g><text x="510" y="305" class="val">8/10</text>
+          <g transform="translate(96 334)"><rect width="68" height="32" rx="5" fill="#4094ff" opacity=".3" stroke="#60a5fa"/><text x="34" y="21" fill="#91c5ff">OEM</text></g><g transform="translate(172 334)"><rect width="68" height="32" rx="5" fill="#59d185" opacity=".28"/><text x="34" y="21" fill="#82e8a7">ON</text></g><g transform="translate(248 334)"><rect width="68" height="32" rx="5" fill="#59d185" opacity=".28"/><text x="34" y="21" fill="#82e8a7">ON</text></g><g transform="translate(324 334)"><rect width="68" height="32" rx="5" fill="#59d185" opacity=".28"/><text x="34" y="21" fill="#82e8a7">ON</text></g><g transform="translate(400 334)"><rect width="68" height="32" rx="5" fill="#59d185" opacity=".28"/><text x="34" y="21" fill="#82e8a7">ON</text></g><text x="510" y="355" class="val">10/10</text>
+          <g transform="translate(96 384)"><rect width="68" height="32" rx="5" fill="#4094ff" opacity=".3" stroke="#60a5fa"/><text x="34" y="21" fill="#91c5ff">OEM</text></g><g transform="translate(172 384)"><rect width="68" height="32" rx="5" fill="#59d185" opacity=".28"/><text x="34" y="21" fill="#82e8a7">ON</text></g><g transform="translate(248 384)"><rect width="68" height="32" rx="5" fill="#59d185" opacity=".28"/><text x="34" y="21" fill="#82e8a7">ON</text></g><g transform="translate(324 384)"><rect width="68" height="32" rx="5" fill="#59d185" opacity=".28"/><text x="34" y="21" fill="#82e8a7">ON</text></g><g transform="translate(400 384)"><rect width="68" height="32" rx="5" fill="#59d185" opacity=".28"/><text x="34" y="21" fill="#82e8a7">ON</text></g><text x="510" y="405" class="val">10/10</text>
+        </g>
+        <text x="96" y="445" class="tiny" fill="#91c5ff">OEM factory, locked</text><text x="252" y="445" class="tiny" fill="#82e8a7">Unlocked and routed</text>
+
+        <text y="500" class="sect">Advanced</text><rect y="514" width="542" height="112" rx="7" fill="#fff" opacity=".035" stroke="#fff" stroke-opacity=".09"/>
+        <rect x="14" y="535" width="38" height="20" rx="10" fill="#4094ff"/><circle cx="42" cy="545" r="8" fill="#fff"/><text x="64" y="549" class="val">Enable live WGP editing</text><text x="14" y="575" class="desc">Each switch writes live GPU routing registers immediately.</text><text x="14" y="604" font-size="10" fill="#e6ad55">Factory-disabled WGPs may have failed validation.</text>
+      </g>
+    </g>
+  </g>
+
+  <g transform="translate(764 50)" filter="url(#sh3)">
+    <rect width="708" height="780" rx="12" fill="url(#d3)" stroke="#34404d"/><rect width="708" height="74" rx="12" fill="#1b2530"/><rect y="58" width="708" height="16" fill="#1b2530"/>
+    <g class="u"><text x="22" y="34" class="title">BC-250 Control</text><text x="22" y="56" class="small">38/40 CU  -  1500 MHz GPU</text>
+      <rect y="74" width="120" height="706" fill="#080c10" opacity=".26"/><line x1="120" y1="74" x2="120" y2="780" stroke="#fff" stroke-opacity=".1"/>
+      <text x="27" y="120" class="nav" fill="#aeb3b8">Overview</text><text x="27" y="175" class="nav" fill="#aeb3b8">CU</text>
+      <rect x="8" y="195" width="104" height="48" rx="6" fill="#4094ff" opacity=".3"/><circle cx="103" cy="203" r="4" fill="#59d185"/><text x="27" y="225" class="nav">GPU</text>
+      <text x="27" y="280" class="nav" fill="#aeb3b8">CPU OC</text><text x="27" y="335" class="nav" fill="#aeb3b8">CEC</text>
+
+      <g transform="translate(142 98)">
+        <text class="sect">Live GPU</text><rect y="14" width="542" height="192" rx="7" fill="#fff" opacity=".035" stroke="#fff" stroke-opacity=".09"/>
+        <text x="14" y="43" class="lab">Active clock</text><text x="526" y="43" text-anchor="end" class="val">1500 MHz</text><line x1="14" y1="55" x2="526" y2="55" stroke="#fff" stroke-opacity=".08"/>
+        <text x="14" y="78" class="lab">Governor service</text><text x="510" y="78" text-anchor="end" class="val">enabled / active</text><circle cx="526" cy="74" r="4" fill="#59d185"/><line x1="14" y1="90" x2="526" y2="90" stroke="#fff" stroke-opacity=".08"/>
+        <text x="14" y="113" class="lab">Live mode</text><text x="510" y="113" text-anchor="end" class="val">range</text><circle cx="526" cy="109" r="4" fill="#59d185"/><line x1="14" y1="125" x2="526" y2="125" stroke="#fff" stroke-opacity=".08"/>
+        <text x="14" y="148" class="lab">Saved replay</text><text x="526" y="148" text-anchor="end" class="val">800-1800 MHz</text><line x1="14" y1="160" x2="526" y2="160" stroke="#fff" stroke-opacity=".08"/>
+        <text x="14" y="183" class="lab">Boot replay</text><text x="510" y="183" text-anchor="end" class="val">Applied</text><circle cx="526" cy="179" r="4" fill="#59d185"/>
+
+        <text y="241" class="sect">Frequency</text><rect y="255" width="542" height="263" rx="7" fill="#fff" opacity=".035" stroke="#fff" stroke-opacity=".09"/>
+        <text x="14" y="285" class="lab">Mode</text><rect x="228" y="265" width="298" height="38" rx="6" fill="#293744" stroke="#445566"/><text x="244" y="289" class="val">Custom range / overclock</text><path d="M504 279l6 7 6-7" fill="none" stroke="#aeb3b8" stroke-width="2"/>
+        <text x="14" y="335" class="lab">Minimum clock</text><text x="526" y="335" text-anchor="end" class="val">800 MHz</text><line x1="228" y1="357" x2="526" y2="357" stroke="#4c5c70" stroke-width="5" stroke-linecap="round"/><line x1="228" y1="357" x2="340" y2="357" stroke="#4094ff" stroke-width="5" stroke-linecap="round"/><circle cx="340" cy="357" r="9" fill="#4094ff" stroke="#d4e7ff" stroke-width="2"/>
+        <text x="14" y="401" class="lab">Maximum clock</text><text x="526" y="401" text-anchor="end" class="val">1800 MHz</text><line x1="228" y1="423" x2="526" y2="423" stroke="#4c5c70" stroke-width="5" stroke-linecap="round"/><line x1="228" y1="423" x2="474" y2="423" stroke="#4094ff" stroke-width="5" stroke-linecap="round"/><circle cx="474" cy="423" r="9" fill="#4094ff" stroke="#d4e7ff" stroke-width="2"/>
+        <rect x="14" y="456" width="512" height="44" rx="6" fill="#2d3946" stroke="#435465"/><text x="270" y="483" class="btn" text-anchor="middle">Apply frequency mode</text>
+
+        <text y="553" class="sect">Load Response</text><rect y="567" width="542" height="164" rx="7" fill="#fff" opacity=".035" stroke="#fff" stroke-opacity=".09"/>
+        <text x="14" y="596" class="lab">Current target</text><text x="526" y="596" text-anchor="end" class="val">80 / 65%</text>
+        <rect x="14" y="613" width="250" height="46" rx="6" fill="#2d3946" stroke="#435465"/><text x="139" y="635" class="btn" text-anchor="middle">Eager preset</text><text x="139" y="650" class="tiny" text-anchor="middle">40 / 10%</text>
+        <rect x="276" y="613" width="250" height="46" rx="6" fill="#2d3946" stroke="#435465"/><text x="401" y="635" class="btn" text-anchor="middle">Balanced preset</text><text x="401" y="650" class="tiny" text-anchor="middle">80 / 65%</text>
+        <text x="14" y="692" class="lab">Minimum load 65%</text><line x1="154" y1="688" x2="526" y2="688" stroke="#4c5c70" stroke-width="5"/><line x1="154" y1="688" x2="396" y2="688" stroke="#4094ff" stroke-width="5"/><circle cx="396" cy="688" r="8" fill="#4094ff"/>
+      </g>
+    </g>
+  </g>
+</svg>

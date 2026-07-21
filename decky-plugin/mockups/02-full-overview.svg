@@ -1,0 +1,70 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="800" viewBox="0 0 1280 800">
+  <defs>
+    <linearGradient id="d2" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#18222d"/><stop offset=".55" stop-color="#10161d"/><stop offset="1" stop-color="#151b20"/></linearGradient>
+    <style>
+      .u{font-family:Inter,"Noto Sans",sans-serif;fill:#f4f6f8}.title{font-size:22px;font-weight:700}.small{font-size:12px;fill:#aeb3b8}.nav{font-size:13px;font-weight:600}.sect{font-size:14px;font-weight:650;fill:#dce2e8}.lab{font-size:12px;fill:#adb5bd}.val{font-size:12px;fill:#fff;font-weight:600}.chart{font-size:12px;fill:#b8bfc6}.metric{font-size:18px;fill:#fff;font-weight:700}.tiny{font-size:10px;fill:#7f8992}
+    </style>
+  </defs>
+  <rect width="1280" height="800" fill="url(#d2)"/>
+  <rect width="1280" height="82" fill="#1b2530" opacity=".92"/><line x1="0" y1="82" x2="1280" y2="82" stroke="#fff" stroke-opacity=".08"/>
+  <g class="u"><text x="26" y="39" class="title">BC-250 Control</text><text x="26" y="61" class="small">38/40 CU  -  1500 MHz GPU</text>
+    <rect x="1192" y="21" width="54" height="40" rx="7" fill="#2d3946" stroke="#435465"/><path d="M1212 41a9 9 0 1 1 3 7M1212 37v5h5" fill="none" stroke="#e8edf3" stroke-width="2"/>
+  </g>
+  <rect y="82" width="150" height="718" fill="#080c10" opacity=".24"/><line x1="150" y1="82" x2="150" y2="800" stroke="#fff" stroke-opacity=".1"/>
+  <g class="u">
+    <g transform="translate(10 102)"><rect width="130" height="54" rx="7" fill="#4094ff" opacity=".3"/><circle cx="119" cy="10" r="4" fill="#59d185"/><path d="M17 35L24 27L31 31L38 20L45 24" fill="none" stroke="#fff" stroke-width="2"/><text x="56" y="33" class="nav">Overview</text></g>
+    <g transform="translate(10 164)"><circle cx="119" cy="10" r="4" fill="#59d185"/><rect x="17" y="19" width="20" height="17" rx="3" fill="none" stroke="#aeb3b8"/><text x="56" y="33" class="nav" fill="#aeb3b8">CU</text></g>
+    <g transform="translate(10 226)"><circle cx="119" cy="10" r="4" fill="#59d185"/><rect x="17" y="20" width="21" height="15" rx="2" fill="none" stroke="#aeb3b8"/><path d="M20 17v3M25 17v3M30 17v3M35 17v3" stroke="#aeb3b8"/><text x="56" y="33" class="nav" fill="#aeb3b8">GPU</text></g>
+    <g transform="translate(10 288)"><circle cx="119" cy="10" r="4" fill="#59d185"/><path d="M17 28h21M23 22h9M27 17v21" stroke="#aeb3b8" stroke-width="2"/><text x="56" y="33" class="nav" fill="#aeb3b8">CPU OC</text></g>
+    <g transform="translate(10 350)"><circle cx="119" cy="10" r="4" fill="#59d185"/><rect x="17" y="20" width="22" height="15" rx="2" fill="none" stroke="#aeb3b8"/><text x="56" y="33" class="nav" fill="#aeb3b8">CEC</text></g>
+
+    <g transform="translate(182 112)">
+      <text class="sect">System Overview</text>
+      <rect y="16" width="454" height="166" rx="8" fill="#fff" opacity=".035" stroke="#fff" stroke-opacity=".09"/>
+      <text x="16" y="48" class="lab">Compute units</text><text x="420" y="48" text-anchor="end" class="val">38 / 40</text><circle cx="438" cy="44" r="4" fill="#59d185"/>
+      <line x1="16" y1="62" x2="438" y2="62" stroke="#fff" stroke-opacity=".08"/>
+      <text x="16" y="87" class="lab">CPU OC profile</text><text x="438" y="87" text-anchor="end" class="val">Enabled at boot</text>
+      <line x1="16" y1="101" x2="438" y2="101" stroke="#fff" stroke-opacity=".08"/>
+      <text x="16" y="126" class="lab">GPU governor</text><text x="420" y="126" text-anchor="end" class="val">Active - D-Bus ready</text><circle cx="438" cy="122" r="4" fill="#59d185"/>
+      <line x1="16" y1="140" x2="438" y2="140" stroke="#fff" stroke-opacity=".08"/>
+      <text x="16" y="165" class="lab">CEC</text><text x="420" y="165" text-anchor="end" class="val">active</text><circle cx="438" cy="161" r="4" fill="#59d185"/>
+
+      <text x="482" y="0" class="sect">Power Health</text>
+      <rect x="482" y="16" width="582" height="166" rx="8" fill="#fff" opacity=".035" stroke="#fff" stroke-opacity=".09"/>
+      <text x="498" y="48" class="lab">ACPI C/P-states</text><text x="1028" y="48" text-anchor="end" class="val">Active</text><circle cx="1046" cy="44" r="4" fill="#59d185"/>
+      <line x1="498" y1="62" x2="1046" y2="62" stroke="#fff" stroke-opacity=".08"/>
+      <text x="498" y="87" class="lab">CPU governor</text><text x="1028" y="87" text-anchor="end" class="val">schedutil</text><circle cx="1046" cy="83" r="4" fill="#59d185"/>
+      <line x1="498" y1="101" x2="1046" y2="101" stroke="#fff" stroke-opacity=".08"/>
+      <text x="498" y="126" class="lab">Idle states</text><text x="1028" y="126" text-anchor="end" class="val">3 states</text><circle cx="1046" cy="122" r="4" fill="#59d185"/>
+      <line x1="498" y1="140" x2="1046" y2="140" stroke="#fff" stroke-opacity=".08"/>
+      <text x="498" y="165" class="lab">Adaptive GPU governor</text><text x="1028" y="165" text-anchor="end" class="val">enabled</text><circle cx="1046" cy="161" r="4" fill="#59d185"/>
+
+      <g transform="translate(0 214)">
+        <rect width="520" height="146" rx="8" fill="#fff" opacity=".04" stroke="#fff" stroke-opacity=".09"/>
+        <text x="16" y="28" class="chart">CPU clock</text><text x="500" y="29" class="metric" text-anchor="end">3487 MHz</text>
+        <path d="M16 106L65 102L114 110L163 83L212 91L261 65L310 74L359 48L408 57L500 38" fill="none" stroke="#60a5fa" stroke-width="3" stroke-linecap="round"/>
+        <line x1="16" y1="116" x2="500" y2="116" stroke="#fff" stroke-opacity=".11"/>
+        <text x="16" y="135" class="tiny">3200 min</text><text x="500" y="135" class="tiny" text-anchor="end">3500 max</text>
+      </g>
+      <g transform="translate(544 214)">
+        <rect width="520" height="146" rx="8" fill="#fff" opacity=".04" stroke="#fff" stroke-opacity=".09"/>
+        <text x="16" y="28" class="chart">GPU clock</text><text x="500" y="29" class="metric" text-anchor="end">1500 MHz</text>
+        <path d="M16 108L65 108L114 92L163 95L212 70L261 78L310 48L359 59L408 32L500 20" fill="none" stroke="#a78bfa" stroke-width="3" stroke-linecap="round"/>
+        <line x1="16" y1="116" x2="500" y2="116" stroke="#fff" stroke-opacity=".11"/>
+        <text x="16" y="135" class="tiny">600 min</text><text x="500" y="135" class="tiny" text-anchor="end">1500 max</text>
+      </g>
+      <g transform="translate(0 380)">
+        <rect width="520" height="146" rx="8" fill="#fff" opacity=".04" stroke="#fff" stroke-opacity=".09"/>
+        <text x="16" y="28" class="chart">CPU temperature</text><text x="500" y="29" class="metric" text-anchor="end">54 C</text>
+        <path d="M16 103L65 96L114 99L163 90L212 93L261 82L310 86L359 72L408 76L500 66" fill="none" stroke="#34d399" stroke-width="3" stroke-linecap="round"/>
+        <text x="16" y="135" class="tiny">48 min</text><text x="500" y="135" class="tiny" text-anchor="end">55 max</text>
+      </g>
+      <g transform="translate(544 380)">
+        <rect width="520" height="146" rx="8" fill="#fff" opacity=".04" stroke="#fff" stroke-opacity=".09"/>
+        <text x="16" y="28" class="chart">GPU temperature</text><text x="500" y="29" class="metric" text-anchor="end">58 C</text>
+        <path d="M16 107L65 102L114 92L163 97L212 84L261 89L310 72L359 76L408 64L500 53" fill="none" stroke="#fb923c" stroke-width="3" stroke-linecap="round"/>
+        <text x="16" y="135" class="tiny">51 min</text><text x="500" y="135" class="tiny" text-anchor="end">59 max</text>
+      </g>
+    </g>
+  </g>
+</svg>

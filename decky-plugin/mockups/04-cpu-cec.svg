@@ -1,0 +1,67 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1500" height="860" viewBox="0 0 1500 860">
+  <defs>
+    <linearGradient id="d4" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#18222d"/><stop offset=".55" stop-color="#10161d"/><stop offset="1" stop-color="#151b20"/></linearGradient>
+    <filter id="sh4" x="-10%" y="-10%" width="120%" height="130%"><feDropShadow dy="12" stdDeviation="14" flood-opacity=".4"/></filter>
+    <style>
+      .u{font-family:Inter,"Noto Sans",sans-serif;fill:#f4f6f8}.title{font-size:20px;font-weight:700}.small{font-size:11px;fill:#aeb3b8}.nav{font-size:12px;font-weight:600}.sect{font-size:13px;font-weight:650;fill:#dce2e8}.lab{font-size:11px;fill:#adb5bd}.val{font-size:11px;fill:#fff;font-weight:600}.tiny{font-size:9px;fill:#87919a}.btn{font-size:11px;fill:#fff;font-weight:700}.desc{font-size:10px;fill:#9ba4ac}
+    </style>
+  </defs>
+  <rect width="1500" height="860" fill="#0a1118"/>
+  <text x="42" y="31" class="u" font-size="12" fill="#718197">FULLSCREEN GAMEPAD TABS</text>
+
+  <g transform="translate(28 50)" filter="url(#sh4)">
+    <rect width="708" height="780" rx="12" fill="url(#d4)" stroke="#34404d"/><rect width="708" height="74" rx="12" fill="#1b2530"/><rect y="58" width="708" height="16" fill="#1b2530"/>
+    <g class="u"><text x="22" y="34" class="title">BC-250 Control</text><text x="22" y="56" class="small">38/40 CU  -  1500 MHz GPU</text>
+      <rect y="74" width="120" height="706" fill="#080c10" opacity=".26"/><line x1="120" y1="74" x2="120" y2="780" stroke="#fff" stroke-opacity=".1"/>
+      <text x="27" y="120" class="nav" fill="#aeb3b8">Overview</text><text x="27" y="175" class="nav" fill="#aeb3b8">CU</text><text x="27" y="230" class="nav" fill="#aeb3b8">GPU</text>
+      <rect x="8" y="250" width="104" height="48" rx="6" fill="#4094ff" opacity=".3"/><circle cx="103" cy="258" r="4" fill="#59d185"/><text x="27" y="280" class="nav">CPU OC</text><text x="27" y="335" class="nav" fill="#aeb3b8">CEC</text>
+
+      <g transform="translate(142 98)">
+        <text class="sect">CPU Overclock</text><rect y="14" width="542" height="112" rx="7" fill="#fff" opacity=".035" stroke="#fff" stroke-opacity=".09"/>
+        <text x="14" y="43" class="lab">Boot service</text><text x="510" y="43" text-anchor="end" class="val">Enabled</text><circle cx="526" cy="39" r="4" fill="#59d185"/><line x1="14" y1="55" x2="526" y2="55" stroke="#fff" stroke-opacity=".08"/>
+        <text x="14" y="78" class="lab">Live service</text><text x="526" y="78" text-anchor="end" class="val">active</text><line x1="14" y1="90" x2="526" y2="90" stroke="#fff" stroke-opacity=".08"/>
+        <text x="14" y="113" class="lab">Detected result</text><text x="510" y="113" text-anchor="end" class="val">4000 MHz @ 1275 mV</text><circle cx="526" cy="109" r="4" fill="#59d185"/>
+
+        <text y="161" class="sect">Detection</text><rect y="175" width="542" height="325" rx="7" fill="#fff" opacity=".035" stroke="#fff" stroke-opacity=".09"/>
+        <text x="14" y="207" class="lab">Target boost clock</text><text x="526" y="207" text-anchor="end" class="val">4000 MHz</text><text x="14" y="225" class="desc">The detector stress-steps toward this clock.</text><line x1="218" y1="238" x2="526" y2="238" stroke="#4c5c70" stroke-width="5"/><line x1="218" y1="238" x2="372" y2="238" stroke="#4094ff" stroke-width="5"/><circle cx="372" cy="238" r="8" fill="#4094ff" stroke="#d4e7ff"/>
+        <text x="14" y="278" class="lab">VID safety limit</text><text x="526" y="278" text-anchor="end" class="val">1275 mV</text><text x="14" y="296" class="desc">Never exceeds the toolkit hard limit of 1325 mV.</text><line x1="218" y1="309" x2="526" y2="309" stroke="#4c5c70" stroke-width="5"/><line x1="218" y1="309" x2="482" y2="309" stroke="#4094ff" stroke-width="5"/><circle cx="482" cy="309" r="8" fill="#4094ff" stroke="#d4e7ff"/>
+        <text x="14" y="349" class="lab">Temperature limit</text><text x="526" y="349" text-anchor="end" class="val">90 C</text><line x1="218" y1="375" x2="526" y2="375" stroke="#4c5c70" stroke-width="5"/><line x1="218" y1="375" x2="464" y2="375" stroke="#4094ff" stroke-width="5"/><circle cx="464" cy="375" r="8" fill="#4094ff" stroke="#d4e7ff"/>
+        <rect x="14" y="411" width="512" height="66" rx="6" fill="#2d3946" stroke="#435465"/><text x="270" y="437" class="btn" text-anchor="middle">Detect stable profile</text><text x="270" y="457" class="desc" text-anchor="middle">Runs a long CPU stress test</text>
+
+        <text y="535" class="sect">Profile Actions</text><rect y="549" width="542" height="164" rx="7" fill="#fff" opacity=".035" stroke="#fff" stroke-opacity=".09"/>
+        <rect x="14" y="568" width="512" height="38" rx="6" fill="#2d3946" stroke="#435465"/><text x="270" y="592" class="btn" text-anchor="middle">Apply profile now</text>
+        <rect x="14" y="615" width="512" height="38" rx="6" fill="#4094ff" opacity=".75"/><text x="270" y="639" class="btn" text-anchor="middle">Enable profile at boot</text>
+        <rect x="14" y="662" width="512" height="38" rx="6" fill="#6a3439" opacity=".8" stroke="#9b5258"/><text x="270" y="686" class="btn" text-anchor="middle">Revert to stock</text>
+      </g>
+    </g>
+  </g>
+
+  <g transform="translate(764 50)" filter="url(#sh4)">
+    <rect width="708" height="780" rx="12" fill="url(#d4)" stroke="#34404d"/><rect width="708" height="74" rx="12" fill="#1b2530"/><rect y="58" width="708" height="16" fill="#1b2530"/>
+    <g class="u"><text x="22" y="34" class="title">BC-250 Control</text><text x="22" y="56" class="small">38/40 CU  -  1500 MHz GPU</text>
+      <rect y="74" width="120" height="706" fill="#080c10" opacity=".26"/><line x1="120" y1="74" x2="120" y2="780" stroke="#fff" stroke-opacity=".1"/>
+      <text x="27" y="120" class="nav" fill="#aeb3b8">Overview</text><text x="27" y="175" class="nav" fill="#aeb3b8">CU</text><text x="27" y="230" class="nav" fill="#aeb3b8">GPU</text><text x="27" y="285" class="nav" fill="#aeb3b8">CPU OC</text>
+      <rect x="8" y="305" width="104" height="48" rx="6" fill="#4094ff" opacity=".3"/><circle cx="103" cy="313" r="4" fill="#59d185"/><text x="27" y="335" class="nav">CEC</text>
+
+      <g transform="translate(142 98)">
+        <text class="sect">CEC Status</text><rect y="14" width="542" height="170" rx="7" fill="#fff" opacity=".035" stroke="#fff" stroke-opacity=".09"/>
+        <text x="14" y="43" class="lab">Daemon</text><text x="510" y="43" text-anchor="end" class="val">active</text><circle cx="526" cy="39" r="4" fill="#59d185"/><line x1="14" y1="55" x2="526" y2="55" stroke="#fff" stroke-opacity=".08"/>
+        <text x="14" y="83" class="lab">CEC broadcast name</text><rect x="182" y="64" width="274" height="36" rx="5" fill="#293744" stroke="#445566"/><text x="196" y="87" class="val">BC250</text><rect x="466" y="64" width="60" height="36" rx="5" fill="#2d3946" stroke="#435465"/><text x="496" y="87" class="btn" text-anchor="middle">Save</text>
+        <line x1="14" y1="112" x2="526" y2="112" stroke="#fff" stroke-opacity=".08"/><text x="14" y="137" class="lab">Active source</text><text x="510" y="137" text-anchor="end" class="val">This console</text><circle cx="526" cy="133" r="4" fill="#59d185"/>
+        <line x1="14" y1="149" x2="526" y2="149" stroke="#fff" stroke-opacity=".08"/><text x="14" y="174" class="lab">Poweroff integration</text><text x="510" y="174" text-anchor="end" class="val">Installed</text><circle cx="526" cy="170" r="4" fill="#59d185"/>
+
+        <text y="219" class="sect">TV and Receiver</text><rect y="233" width="542" height="244" rx="7" fill="#fff" opacity=".035" stroke="#fff" stroke-opacity=".09"/>
+        <g class="btn" text-anchor="middle"><g transform="translate(14 252)"><rect width="250" height="48" rx="6" fill="#4094ff" opacity=".75"/><text x="125" y="29">Wake TV and select input</text></g><g transform="translate(278 252)"><rect width="250" height="48" rx="6" fill="#2d3946" stroke="#435465"/><text x="125" y="29">TV standby</text></g><g transform="translate(14 312)"><rect width="250" height="48" rx="6" fill="#2d3946" stroke="#435465"/><text x="125" y="29">Receiver on</text></g><g transform="translate(278 312)"><rect width="250" height="48" rx="6" fill="#2d3946" stroke="#435465"/><text x="125" y="29">Receiver standby</text></g><g transform="translate(14 372)"><rect width="250" height="48" rx="6" fill="#2d3946" stroke="#435465"/><text x="125" y="29">Claim active source</text></g><g transform="translate(278 372)"><rect width="250" height="48" rx="6" fill="#2d3946" stroke="#435465"/><text x="125" y="29">Release active source</text></g></g>
+
+        <text y="512" class="sect">Volume</text><rect y="526" width="542" height="78" rx="7" fill="#fff" opacity=".035" stroke="#fff" stroke-opacity=".09"/>
+        <g class="btn" text-anchor="middle"><g transform="translate(14 545)"><rect width="163" height="40" rx="6" fill="#2d3946" stroke="#435465"/><text x="81" y="25">Volume up</text></g><g transform="translate(189 545)"><rect width="163" height="40" rx="6" fill="#2d3946" stroke="#435465"/><text x="81" y="25">Volume down</text></g><g transform="translate(364 545)"><rect width="164" height="40" rx="6" fill="#2d3946" stroke="#435465"/><text x="82" y="25">Mute</text></g></g>
+
+        <text y="639" class="sect">Behavior</text><rect y="653" width="542" height="99" rx="7" fill="#fff" opacity=".035" stroke="#fff" stroke-opacity=".09"/>
+        <rect x="14" y="671" width="36" height="20" rx="10" fill="#4094ff"/><circle cx="40" cy="681" r="8" fill="#fff"/><text x="61" y="685" class="val">Wake TV on resume</text>
+        <rect x="282" y="671" width="36" height="20" rx="10" fill="#4094ff"/><circle cx="308" cy="681" r="8" fill="#fff"/><text x="329" y="685" class="val">TV standby on suspend</text>
+        <rect x="14" y="713" width="36" height="20" rx="10" fill="#4a535e"/><circle cx="24" cy="723" r="8" fill="#bbc5d0"/><text x="61" y="727" class="val">Suspend when TV turns off</text>
+        <rect x="282" y="713" width="36" height="20" rx="10" fill="#4094ff"/><circle cx="308" cy="723" r="8" fill="#fff"/><text x="329" y="727" class="val">TV remote input</text>
+      </g>
+    </g>
+  </g>
+</svg>
