@@ -35,6 +35,7 @@ validate_sources() {
         "$SOURCE_DIR/bc250-desktop-control-repair" \
         "$SOURCE_DIR/templates" \
         "$PLASMOID_DIR/metadata.json" \
+        "$PLASMOID_DIR/contents/icons/bc250-control.svg" \
         "$PLASMOID_DIR/contents/ui/main.qml"; do
         [[ -e "$path" && ! -L "$path" ]] || die "Required source is missing or unsafe: $path"
     done

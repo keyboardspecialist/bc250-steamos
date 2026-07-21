@@ -12,7 +12,7 @@
         "Id": "io.github.keyboardspecialist.bc250control",
         "License": "BSD-3-Clause",
         "Name": "BC-250 Control",
-        "Version": "1.0.0",
+        "Version": "1.0.1",
         "Website": "https://github.com/keyboardspecialist/bc250-steamos"
     },
     "KPackageStructure": "Plasma/Applet",

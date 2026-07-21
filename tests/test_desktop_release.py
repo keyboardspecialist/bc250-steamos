@@ -35,7 +35,11 @@ class DesktopReleaseTests(unittest.TestCase):
             encoding="utf-8"
         )
         self.assertIn("Kirigami.Icon", icon)
+        self.assertIn('Qt.resolvedUrl("../../icons/bc250-control.svg")', icon)
         self.assertNotIn("PlasmaCore.IconItem", icon)
+
+        tray_icon = plasmoid / "contents/icons/bc250-control.svg"
+        self.assertTrue(tray_icon.is_file())
 
     def test_archive_is_deterministic_and_independent_from_decky(self):
         with tempfile.TemporaryDirectory() as temporary:
@@ -69,6 +73,7 @@ class DesktopReleaseTests(unittest.TestCase):
                 for expected in (
                     "backend/bc250_control/backend.py",
                     "desktop-control/install.sh",
+                    "desktop-control/plasmoid/contents/icons/bc250-control.svg",
                     "desktop-control/plasmoid/metadata.json",
                     "desktop-control/service/bc250-control-service",
                     "desktop-control/vendor/dbus_next/__init__.py",

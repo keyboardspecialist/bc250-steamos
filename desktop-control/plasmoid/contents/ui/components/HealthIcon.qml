@@ -16,9 +16,9 @@ Item {
 
     Kirigami.Icon {
         anchors.fill: parent
-        source: root.backend.healthState === "error" ? "dialog-error"
-            : root.backend.healthState === "warning" ? "dialog-warning"
-            : root.backend.healthState === "healthy" ? "temperature-normal" : "computer"
+        source: Qt.resolvedUrl("../../icons/bc250-control.svg")
+        isMask: true
+        color: Kirigami.Theme.textColor
     }
 
     Rectangle {

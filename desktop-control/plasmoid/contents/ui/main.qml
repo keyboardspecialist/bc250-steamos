@@ -8,8 +8,7 @@ PlasmoidItem {
 
     switchWidth: 720
     switchHeight: 520
-    Plasmoid.icon: backend.healthState === "error" ? "dialog-error"
-        : backend.healthState === "warning" ? "dialog-warning" : "temperature-normal"
+    Plasmoid.icon: Qt.resolvedUrl("../icons/bc250-control.svg")
     Plasmoid.status: backend.healthState === "error" || backend.healthState === "warning"
         ? PlasmaCore.Types.ActiveStatus : PlasmaCore.Types.PassiveStatus
     toolTipMainText: "BC-250 Control"
