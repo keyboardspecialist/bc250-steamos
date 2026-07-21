@@ -13,8 +13,8 @@
 #   7. relock the rootfs and switch the dongle to WiFi mode
 #
 # The setup registers its /etc files in SteamOS's atomic-update keep list.
-# Run setup after a kernel update; the boot service can also rebuild when its
-# matching headers and toolchain are available locally.
+# Run setup after a kernel update; the boot service can rebuild from published
+# headers but deliberately leaves the expensive source fallback interactive.
 set -euo pipefail
 
 [ "$(id -u)" = 0 ] || { echo "Please run with sudo."; exit 1; }
@@ -49,6 +49,7 @@ ROOT_SOURCE=$ROOT_DATA_DIR/aic8800/source
 ROOT_HELPER=$ROOT_DATA_DIR/helper/aic8800-ensure-modules
 BUILD_USER=$REAL_USER
 KREL=$(uname -r)
+ROOT_MODULE_STAGE=$ROOT_DATA_DIR/aic8800/modules/$KREL
 
 [ -d "$DRV" ] || { echo "Driver source not found at $DRV"; exit 1; }
 [ -d "$FW_SOURCE" ] || { echo "Firmware source not found at $FW_SOURCE"; exit 1; }
@@ -127,7 +128,8 @@ unlock_rootfs
 echo "== [2/7] Installing build tools =="
 pacman-key --init >/dev/null 2>&1 || true
 pacman-key --populate archlinux holo >/dev/null 2>&1 || true
-pacman -Sy --noconfirm --needed base-devel
+pacman -Sy --noconfirm --needed base-devel git
+relock_rootfs
 
 echo "== [3/7] Kernel headers for $KREL =="
 if [ ! -d "$DRV/steamos-headers/usr/lib/modules/$KREL/build" ]; then
@@ -139,8 +141,14 @@ fi
 echo "== [4/7] Building driver =="
 runuser -u "$BUILD_USER" -- make -C "$DRV" clean
 runuser -u "$BUILD_USER" -- make -C "$DRV"
+for module in "$DRV/aic_load_fw/aic_load_fw.ko" "$DRV/aic8800_fdrv/aic8800_fdrv.ko"; do
+    BUILT_REL=$(modinfo -F vermagic "$module" 2>/dev/null | cut -d' ' -f1)
+    [ "$BUILT_REL" = "$KREL" ] \
+        || { echo "Built module $module targets '$BUILT_REL', expected '$KREL'."; exit 1; }
+done
 
 echo "== [5/7] Installing modules =="
+unlock_rootfs
 make -C "$DRV" install
 
 echo "== [6/7] Writing /etc configuration =="
@@ -169,10 +177,16 @@ install -d -o root -g root -m 0755 "$FW" "$ROOT_SOURCE" \
     "$(dirname "$ROOT_HELPER")"
 cp -RL "$FW_SOURCE"/. "$FW"/
 cp -a "$DRV"/. "$ROOT_SOURCE"/
-# Headers are downloaded build input, not trusted source. The boot helper
-# fetches the exact package again if a future kernel needs a rebuild.
+# Headers and source trees are downloaded build input, not trusted source. The
+# boot helper fetches exact packaged headers but never runs a full source build.
 rm -rf "$ROOT_SOURCE/steamos-headers"
 install -o root -g root -m 0755 "$HEADER_FETCHER" "$ROOT_SOURCE/fetch-steamos-package.sh"
+rm -rf "$ROOT_MODULE_STAGE"
+install -d -o root -g root -m 0755 "$ROOT_MODULE_STAGE"
+install -o root -g root -m 0644 "$DRV/aic_load_fw/aic_load_fw.ko" \
+    "$ROOT_MODULE_STAGE/aic_load_fw.ko"
+install -o root -g root -m 0644 "$DRV/aic8800_fdrv/aic8800_fdrv.ko" \
+    "$ROOT_MODULE_STAGE/aic8800_fdrv.ko"
 chown -R root:root "$ROOT_DATA_DIR/aic8800"
 chmod -R go-w "$ROOT_DATA_DIR/aic8800"
 install -o root -g root -m 0755 "$REPO/aic8800-ensure-modules.sh" "$ROOT_HELPER"

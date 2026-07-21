@@ -219,7 +219,7 @@ cd bc250-audio-fix
 ./patch-driver.sh
 ```
 
-The patch restores the DisplayPort pixel and audio reference clock. Builds are matched to the running kernel and checked for vermagic and ABI compatibility before installation.
+The patch restores the DisplayPort pixel and audio reference clock. Builds are matched to the running kernel and checked for vermagic and ABI compatibility before installation. If Valve omitted the matching headers, the toolkit can generate the required symbols with a complete exact-source kernel build.
 
 Rollback:
 
@@ -237,9 +237,7 @@ Install the AIC8800D80 USB modules and firmware configuration:
 sudo bash aic8800/steamdeck-setup.sh
 ```
 
-The installer snapshots driver source and firmware into root-owned storage. The
-boot helper rebuilds from that trusted snapshot for a new kernel, then validates
-and stages the exact module files it loads.
+The installer snapshots driver source, firmware, and verified per-kernel modules into root-owned storage. Interactive setup can use the exact-source full-build fallback when Valve omitted headers. The boot helper reuses staged modules or rebuilds from published headers, but never launches the multi-hour source build as root.
 
 ## SteamOS Updates
 
@@ -249,7 +247,7 @@ and stages the exact module files it loads.
 | Power management | The keep list retains tuning and GRUB defaults; the ACPI service validates and restores the `/boot` override and EFI GRUB config |
 | CEC | Home configuration and allowlisted system integration carry forward |
 | Display clock module | Run `bc250-audio-fix/patch-driver.sh` after each kernel update |
-| AIC8800 modules | The root-owned boot helper rebuilds for a new kernel; rerun setup only if it reports a missing source snapshot or build failure |
+| AIC8800 modules | The boot helper reuses staged modules or published headers; rerun setup if it requests the interactive source-build fallback |
 
 Current installers preserve their configuration across normal atomic updates.
 

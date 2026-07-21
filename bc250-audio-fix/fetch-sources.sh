@@ -8,7 +8,9 @@
 #      mirror shuttered 2025-08 and is frozen), plus Module.symvers from the
 #      matching linux-neptune-*-headers package on Valve's package mirror
 #      (all jupiter-* channels are probed — point releases can ship from a
-#      version branch like jupiter-3.8.1x instead of jupiter-main).
+#      version branch like jupiter-3.8.1x instead of jupiter-main). If Valve
+#      never published those headers, build.sh generates Module.symvers by
+#      building the exact source completely.
 #   2. The build deps (pahole, bc, libelf, openssl, zlib) from the SteamOS
 #      Arch mirror, extracted into deps/ where build-env.sh expects them.
 #
@@ -27,7 +29,7 @@ HEADER_FETCHER=$HERE/../fetch-steamos-package.sh
 MIRROR=${MIRROR:-https://steamdeck-packages.steamos.cloud/archlinux-mirror}
 KERNEL_REMOTE=${KERNEL_REMOTE:-https://github.com/Evlav/linux-integration.git}
 KERNEL_API=${KERNEL_API:-https://api.github.com/repos/Evlav/linux-integration}
-DEP_PKGS=(pahole bc libelf openssl zlib glibc linux-api-headers)
+DEP_PKGS=(pahole bc libelf openssl zlib glibc linux-api-headers bison flex cpio gettext perl python)
 # SteamOS 3.9 strips /usr/include from the image, so HOSTCC can't find even
 # sys/types.h. The libraries themselves (libc.so, crt*.o) are still installed,
 # so for these two packages only usr/include is extracted — pulling glibc's
@@ -67,6 +69,8 @@ TREE=${1:-$HERE/valve-kernel}
 PARKED=$TREE-dot-git
 
 at_target() { [[ "$(git --git-dir="$1" rev-parse HEAD 2>/dev/null)" == "$SHA"* ]]; }
+managed_tree() { [ "$TREE" = "$HERE/valve-kernel" ] || [ -f "$TREE/.bc250-managed-tree" ]; }
+tree_clean() { git --git-dir="$1" --work-tree="$TREE" diff --quiet HEAD -- .; }
 
 if [ -d "$PARKED" ] && at_target "$PARKED"; then
     echo "tree already at $SHA (.git parked) — nothing to do"
@@ -76,9 +80,15 @@ else
     if [ -d "$PARKED" ]; then
         # parked but at the wrong commit (SteamOS updated) — unpark to fetch;
         # build.sh re-parks
+        tree_clean "$PARKED" || managed_tree \
+            || die "$TREE has tracked changes and is not toolkit-managed; refusing to discard them during the kernel update"
         [ -d "$TREE/.git" ] && die "both $TREE/.git and $PARKED exist — resolve by hand first"
         mv "$PARKED" "$TREE/.git"
         echo "unparked $PARKED -> $TREE/.git"
+    fi
+    if [ -d "$TREE/.git" ]; then
+        tree_clean "$TREE/.git" || managed_tree \
+            || die "$TREE has tracked changes and is not toolkit-managed; refusing to discard them during checkout"
     fi
     if [ ! -d "$TREE/.git" ]; then
         [ -e "$TREE" ] && [ -n "$(ls -A "$TREE" 2>/dev/null)" ] \
@@ -86,6 +96,7 @@ else
         mkdir -p "$TREE"
         git -C "$TREE" init -q
         git -C "$TREE" remote add origin "$KERNEL_REMOTE"
+        touch "$TREE/.bc250-managed-tree"
         echo "initialized $TREE (remote: $KERNEL_REMOTE)"
     fi
 
@@ -109,17 +120,25 @@ else
 fi
 
 step "Module.symvers from the headers package (runbook step 1)"
+FULL_BUILD_REQUIRED=$TREE/.bc250-full-build-required
 MIRROR="$MIRROR" HDR_REPOS="${HDR_REPOS:-}" \
-    bash "$HEADER_FETCHER" "$HDRPKG" "$HERE/$HDRPKG" \
-    || die "could not retrieve the matching kernel headers"
-# no -m1: grep quitting at the first match SIGPIPEs tar mid-listing, and
-# pipefail turns that into a bogus "no Module.symvers" failure
-MEMBER=$(tar --zstd -tf "$HERE/$HDRPKG" | grep '/Module.symvers$') \
-    || die "no Module.symvers inside $HDRPKG"
-MEMBER=${MEMBER%%$'\n'*}
-tar --zstd -xOf "$HERE/$HDRPKG" "$MEMBER" > "$TREE/Module.symvers"
-[ -s "$TREE/Module.symvers" ] || die "extracted Module.symvers is empty"
-echo "Module.symvers -> $TREE/Module.symvers ($(wc -l < "$TREE/Module.symvers" | tr -d ' ') symbols)"
+    bash "$HEADER_FETCHER" "$HDRPKG" "$HERE/$HDRPKG" && HEADER_STATUS=0 \
+    || HEADER_STATUS=$?
+if [ "$HEADER_STATUS" = 0 ]; then
+    MEMBER=usr/lib/modules/$REL/build/Module.symvers
+    tar --zstd -xOf "$HERE/$HDRPKG" "$MEMBER" > "$TMPD/Module.symvers" \
+        || die "no $MEMBER inside $HDRPKG"
+    [ -s "$TMPD/Module.symvers" ] || die "extracted Module.symvers is empty"
+    mv "$TMPD/Module.symvers" "$TREE/Module.symvers"
+    rm -f "$FULL_BUILD_REQUIRED" "$TREE/.bc250-full-build-stamp" "$TREE/.bc250-full-build-in-progress"
+    echo "Module.symvers -> $TREE/Module.symvers ($(wc -l < "$TREE/Module.symvers" | tr -d ' ') symbols)"
+elif [ "$HEADER_STATUS" = 3 ]; then
+    printf '%s\n' "$REL" > "$FULL_BUILD_REQUIRED"
+    echo "WARNING: Valve has not published $HDRPKG."
+    echo "         A complete exact-source kernel build will generate Module.symvers."
+else
+    die "could not reliably retrieve the matching kernel headers"
+fi
 
 step "build deps into deps/ (runbook step 2)"
 DEPS=$HERE/deps

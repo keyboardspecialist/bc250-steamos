@@ -103,6 +103,9 @@ PKGBASE_FILE ?= /usr/lib/modules/$(UNAME_R)/pkgbase
 STEAMOS_HEADER_FETCHER ?= $(firstword $(wildcard \
 	$(PWD)/fetch-steamos-package.sh \
 	$(PWD)/../../../../../../fetch-steamos-package.sh))
+STEAMOS_KERNEL_PREPARER ?= $(firstword $(wildcard \
+	$(PWD)/../../../../../../bc250-audio-fix/prepare-kernel.sh))
+STEAMOS_KERNEL_TREE ?= $(abspath $(PWD)/../../../../../../bc250-audio-fix/valve-kernel)
 steamos-headers:
 	@set -eu; \
 	fetcher="$(STEAMOS_HEADER_FETCHER)"; \
@@ -112,9 +115,32 @@ steamos-headers:
 	pkgver=$$(echo "$(UNAME_R)" | sed -e "s/-$$flavor-g[0-9a-f]*$$//" -e 's/-/./'); \
 	pkg=$$pkgbase-headers-$$pkgver-x86_64.pkg.tar.zst; \
 	mkdir -p steamos-headers; \
+	set +e; \
 	MIRROR="$(STEAMOS_MIRROR)" HDR_REPOS="$(STEAMOS_HEADER_REPOS)" \
 		bash "$$fetcher" "$$pkg" "steamos-headers/$$pkg"; \
-	tar --zstd -xf "steamos-headers/$$pkg" -C steamos-headers; \
+	status=$$?; \
+	set -e; \
+	if [ "$$status" = 0 ]; then \
+		tar --zstd -xf "steamos-headers/$$pkg" -C steamos-headers; \
+	elif [ "$$status" = 3 ]; then \
+		preparer="$(STEAMOS_KERNEL_PREPARER)"; \
+		tree="$(STEAMOS_KERNEL_TREE)"; \
+		case "$$tree" in /*) ;; *) echo "ERROR: STEAMOS_KERNEL_TREE must be absolute."; exit 1;; esac; \
+		[ -f "$$preparer" ] || { \
+			echo "ERROR: exact headers were not published; rerun interactive steamdeck-setup.sh for the source-build fallback."; \
+			exit 3; \
+		}; \
+		MIRROR="$(STEAMOS_MIRROR)" HDR_REPOS="$(STEAMOS_HEADER_REPOS)" \
+			bash "$$preparer" "$$tree"; \
+		[ "$$(cat "$$tree/include/config/kernel.release" 2>/dev/null)" = "$(UNAME_R)" ] || { \
+			echo "ERROR: prepared kernel tree does not match $(UNAME_R)."; exit 1; \
+		}; \
+		mkdir -p "steamos-headers/usr/lib/modules/$(UNAME_R)"; \
+		rm -rf "steamos-headers/usr/lib/modules/$(UNAME_R)/build"; \
+		ln -s "$$tree" "steamos-headers/usr/lib/modules/$(UNAME_R)/build"; \
+	else \
+		exit "$$status"; \
+	fi; \
 	[ -d "steamos-headers/usr/lib/modules/$(UNAME_R)/build" ] \
 		|| { echo "ERROR: downloaded headers do not contain $(UNAME_R)."; exit 1; }; \
 	echo "Headers unpacked; now run: make"

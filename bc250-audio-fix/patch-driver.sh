@@ -11,6 +11,9 @@ set -euo pipefail
 
 HERE=$(cd "$(dirname "$0")" && pwd)
 [ "$(id -u)" != 0 ] || { echo "run as the normal user — sudo is used for the install step only"; exit 1; }
+command -v flock >/dev/null || { echo "flock is required" >&2; exit 1; }
+exec 9>"$HERE/.prepare-kernel.lock"
+flock 9
 
 WITH_CG=()
 ARGS=()

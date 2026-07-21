@@ -150,6 +150,12 @@ class PersistenceUnitTests(unittest.TestCase):
             "bc250-40cu.sh",
             "bc250-cec.sh",
             "aic8800/steamdeck-setup.sh",
+            "aic8800/aic8800-ensure-modules.sh",
+            "fetch-steamos-package.sh",
+            "bc250-audio-fix/fetch-sources.sh",
+            "bc250-audio-fix/build.sh",
+            "bc250-audio-fix/prepare-kernel.sh",
+            "bc250-audio-fix/patch-driver.sh",
             "decky-plugin/install.sh",
         ]
         subprocess.run(
