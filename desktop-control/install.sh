@@ -34,7 +34,8 @@ validate_sources() {
         "$REPO_DIR/backend/vendor/tomli" \
         "$SOURCE_DIR/bc250-desktop-control-repair" \
         "$SOURCE_DIR/templates" \
-        "$PLASMOID_DIR/metadata.json"; do
+        "$PLASMOID_DIR/metadata.json" \
+        "$PLASMOID_DIR/contents/ui/main.qml"; do
         [[ -e "$path" && ! -L "$path" ]] || die "Required source is missing or unsafe: $path"
     done
     if find "$SOURCE_DIR/service/bc250_control_service" \
@@ -42,6 +43,25 @@ validate_sources() {
         "$REPO_DIR/backend/vendor" "$SOURCE_DIR/templates" \
         -type l -print -quit | grep -q .; then
         die "Refusing to stage Python or template trees containing symlinks."
+    fi
+    if ! /usr/bin/python3 - "$PLASMOID_DIR/metadata.json" "$PLASMOID_ID" << 'PY'
+import json
+import sys
+
+try:
+    with open(sys.argv[1], encoding="utf-8") as stream:
+        metadata = json.load(stream)
+    plugin = metadata.get("KPlugin", {})
+    if plugin.get("Id") != sys.argv[2]:
+        raise ValueError("the plugin ID does not match the installer")
+    if metadata.get("X-Plasma-API-Minimum-Version") != "6.0":
+        raise ValueError("the package does not declare the Plasma 6 API")
+except (OSError, ValueError, TypeError) as error:
+    print("Invalid plasmoid metadata: {}".format(error), file=sys.stderr)
+    raise SystemExit(1)
+PY
+    then
+        die "The Plasma applet package is invalid."
     fi
 }
 
@@ -207,7 +227,6 @@ install_all() {
     require_normal_user
     validate_sources
     command -v kpackagetool6 >/dev/null 2>&1 || die "kpackagetool6 is required."
-    kpackagetool6 --type Plasma/Applet --show-info "$PLASMOID_DIR" >/dev/null
     local new_root_install=0
     [[ -d "$PAYLOAD_DIR" && ! -L "$PAYLOAD_DIR" ]] || new_root_install=1
     log "Installing persistent storage and privileged desktop service (sudo)"

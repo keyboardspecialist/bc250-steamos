@@ -168,6 +168,12 @@ class PersistenceUnitTests(unittest.TestCase):
         self.assertIn("$STAGE/py_modules/tomli", installer)
         self.assertIn("$STAGE/py_modules/dbus_next", installer)
         self.assertIn("kpackagetool6 --type Plasma/Applet --upgrade", installer)
+        self.assertNotIn("--show-info", installer)
+        self.assertIn('plugin.get("Id") != sys.argv[2]', installer)
+        self.assertIn(
+            'metadata.get("X-Plasma-API-Minimum-Version") != "6.0"',
+            installer,
+        )
         self.assertIn("PAYLOAD_SWAPPED=1", installer)
         self.assertIn("trap restore_uninstall_readonly EXIT", installer)
         self.assertIn("READONLY_CHANGED=1", repair)

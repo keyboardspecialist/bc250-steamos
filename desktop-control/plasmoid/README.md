@@ -34,7 +34,7 @@ Validate package metadata and QML where the Plasma 6 development tools are
 installed:
 
 ```bash
-kpackagetool6 --type Plasma/Applet --show-info desktop-control/plasmoid
+python3 -m json.tool desktop-control/plasmoid/metadata.json >/dev/null
 qmllint desktop-control/plasmoid/contents/ui/*.qml \
   desktop-control/plasmoid/contents/ui/components/*.qml \
   desktop-control/plasmoid/contents/ui/tabs/*.qml
