@@ -1,0 +1,142 @@
+name: Build release artifacts
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-artifacts-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: Build and publish artifacts
+    runs-on: ubuntu-latest
+    env:
+      DECKY_ARTIFACT_BASENAME: bc250-control-${{ github.ref_name }}
+      TOOLKIT_ARTIFACT_BASENAME: bc250-steamos-toolkit-${{ github.ref_name }}
+
+    steps:
+      - name: Check out tag
+        uses: actions/checkout@v4
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 9
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+          cache-dependency-path: decky-plugin/pnpm-lock.yaml
+
+      - name: Install dependencies
+        working-directory: decky-plugin
+        run: pnpm install --frozen-lockfile
+
+      - name: Typecheck
+        working-directory: decky-plugin
+        run: pnpm run typecheck
+
+      - name: Build frontend
+        working-directory: decky-plugin
+        run: pnpm run build
+
+      - name: Run backend tests
+        working-directory: decky-plugin
+        run: PYTHONPATH=py_modules python3 -m unittest discover -s tests
+
+      - name: Package Decky runtime
+        shell: bash
+        run: |
+          set -euo pipefail
+          package_dir="release/BC-250 Control"
+          mkdir -p "$package_dir"
+          cp decky-plugin/plugin.json "$package_dir/"
+          cp decky-plugin/package.json "$package_dir/"
+          cp decky-plugin/main.py "$package_dir/"
+          cp decky-plugin/LICENSE "$package_dir/"
+          mkdir -p "$package_dir/dist" "$package_dir/py_modules"
+          cp decky-plugin/dist/index.js "$package_dir/dist/"
+          rsync -a \
+            --exclude="__pycache__" \
+            --exclude="*.py[co]" \
+            decky-plugin/py_modules/ "$package_dir/py_modules/"
+          (cd release && zip -r "../${DECKY_ARTIFACT_BASENAME}.zip" "BC-250 Control")
+          sha256sum "${DECKY_ARTIFACT_BASENAME}.zip" > "${DECKY_ARTIFACT_BASENAME}.zip.sha256"
+
+      - name: Package toolkit and driver resources
+        shell: bash
+        run: |
+          set -euo pipefail
+          package_dir="release-toolkit/bc250-steamos"
+          mkdir -p "$package_dir/aic8800/debian" \
+            "$package_dir/aic8800/src/USB/driver_fw"
+          cp README.md bc250-*.sh fetch-steamos-package.sh "$package_dir/"
+          rsync -a --exclude=".gitignore" smu-oc-patches/ "$package_dir/smu-oc-patches/"
+          rsync -a --exclude=".gitignore" bc250-audio-fix/ "$package_dir/bc250-audio-fix/"
+          cp aic8800/README.md aic8800/LICENSE "$package_dir/aic8800/"
+          cp aic8800/steamdeck-setup.sh \
+            aic8800/aic8800-ensure-modules.sh \
+            aic8800/aic8800-modules.service \
+            "$package_dir/aic8800/"
+          rsync -a --exclude=".gitignore" \
+            aic8800/debian/patches/ "$package_dir/aic8800/debian/patches/"
+          rsync -a --exclude=".gitignore" \
+            aic8800/src/USB/driver_fw/drivers/ \
+            "$package_dir/aic8800/src/USB/driver_fw/drivers/"
+          rsync -a \
+            aic8800/src/USB/driver_fw/fw/aic8800D80/ \
+            "$package_dir/aic8800/src/USB/driver_fw/fw/aic8800D80/"
+          (cd release-toolkit && zip -r "../${TOOLKIT_ARTIFACT_BASENAME}.zip" bc250-steamos)
+          sha256sum "${TOOLKIT_ARTIFACT_BASENAME}.zip" > "${TOOLKIT_ARTIFACT_BASENAME}.zip.sha256"
+
+      - name: Upload Decky plugin artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.DECKY_ARTIFACT_BASENAME }}
+          path: |
+            ${{ env.DECKY_ARTIFACT_BASENAME }}.zip
+            ${{ env.DECKY_ARTIFACT_BASENAME }}.zip.sha256
+          if-no-files-found: error
+          retention-days: 90
+
+      - name: Upload toolkit artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.TOOLKIT_ARTIFACT_BASENAME }}
+          path: |
+            ${{ env.TOOLKIT_ARTIFACT_BASENAME }}.zip
+            ${{ env.TOOLKIT_ARTIFACT_BASENAME }}.zip.sha256
+          if-no-files-found: error
+          retention-days: 90
+
+      - name: Attach artifacts to GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
+            gh release upload "$GITHUB_REF_NAME" \
+              "${DECKY_ARTIFACT_BASENAME}.zip" \
+              "${DECKY_ARTIFACT_BASENAME}.zip.sha256" \
+              "${TOOLKIT_ARTIFACT_BASENAME}.zip" \
+              "${TOOLKIT_ARTIFACT_BASENAME}.zip.sha256" \
+              --clobber
+          else
+            gh release create "$GITHUB_REF_NAME" \
+              "${DECKY_ARTIFACT_BASENAME}.zip" \
+              "${DECKY_ARTIFACT_BASENAME}.zip.sha256" \
+              "${TOOLKIT_ARTIFACT_BASENAME}.zip" \
+              "${TOOLKIT_ARTIFACT_BASENAME}.zip.sha256" \
+              --verify-tag \
+              --generate-notes \
+              --title "$GITHUB_REF_NAME"
+          fi
