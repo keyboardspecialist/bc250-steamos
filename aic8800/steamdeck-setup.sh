@@ -29,8 +29,11 @@ FIXES_REPO_DIR="${FIXES_REPO_DIR:-$REAL_HOME/.local/share/bc250-fixes/bc250-stea
 SCRIPT_REPO_DIR=$(cd "$(dirname "$0")/.." && pwd)
 UPDATE_PERSIST_SH="$SCRIPT_REPO_DIR/bc250-update-persistence.sh"
 STORAGE_SH="$SCRIPT_REPO_DIR/bc250-storage.sh"
+HEADER_FETCHER="$SCRIPT_REPO_DIR/fetch-steamos-package.sh"
 [ -f "$UPDATE_PERSIST_SH" ] \
     || { echo "Update persistence helper missing: $UPDATE_PERSIST_SH"; exit 1; }
+[ -f "$HEADER_FETCHER" ] \
+    || { echo "SteamOS package fetcher missing: $HEADER_FETCHER"; exit 1; }
 if [ -d "$FIXES_REPO_DIR/aic8800" ]; then
     REPO="$FIXES_REPO_DIR/aic8800"
 else
@@ -159,6 +162,7 @@ install -d -o root -g root -m 0755 "$FW" "$ROOT_SOURCE" \
     "$(dirname "$ROOT_HELPER")"
 cp -RL "$FW_SOURCE"/. "$FW"/
 cp -a "$DRV"/. "$ROOT_SOURCE"/
+install -o root -g root -m 0755 "$HEADER_FETCHER" "$ROOT_SOURCE/fetch-steamos-package.sh"
 chown -R root:root "$ROOT_DATA_DIR/aic8800"
 chmod -R go-w "$ROOT_DATA_DIR/aic8800"
 install -o root -g root -m 0755 "$REPO/aic8800-ensure-modules.sh" "$ROOT_HELPER"

@@ -22,6 +22,7 @@ set -euo pipefail
 
 HERE=$(cd "$(dirname "$0")" && pwd)
 REL=${KERNEL_RELEASE:-$(uname -r)}
+HEADER_FETCHER=$HERE/../fetch-steamos-package.sh
 
 MIRROR=${MIRROR:-https://steamdeck-packages.steamos.cloud/archlinux-mirror}
 KERNEL_REMOTE=${KERNEL_REMOTE:-https://github.com/Evlav/linux-integration.git}
@@ -36,6 +37,8 @@ DEP_REPOS=(extra-main core-main)
 
 die()  { echo "FATAL: $*" >&2; exit 1; }
 step() { echo; echo "==> $*"; }
+
+[ -f "$HEADER_FETCHER" ] || die "SteamOS package fetcher missing: $HEADER_FETCHER"
 
 TMPD=$(mktemp -d)
 trap 'rm -rf "$TMPD"' EXIT
@@ -106,33 +109,9 @@ else
 fi
 
 step "Module.symvers from the headers package (runbook step 1)"
-if [ ! -f "$HERE/$HDRPKG" ]; then
-    # Not every kernel ships from jupiter-main: point releases can exist only
-    # in a version-branch channel (6.16.12-valve24.4 is only in
-    # jupiter-3.8.1x). Probe jupiter-main first, then every other jupiter-*
-    # repo the mirror lists. Pin with HDR_REPOS="repo ..." to skip discovery.
-    if [ -z "${HDR_REPOS:-}" ]; then
-        DISCOVERED=$(curl -fsSL "$MIRROR/" \
-            | grep -oE 'href="jupiter-[^"/]*/"' | sed 's|^href="||; s|/"$||' \
-            | grep -vxE 'jupiter-(main|ci-test)' | sort -rV | tr '\n' ' ') \
-            || DISCOVERED=
-        HDR_REPOS="jupiter-main $DISCOVERED"
-    fi
-    HDR_REPO=
-    for repo in $HDR_REPOS; do
-        if curl -fsIL -o /dev/null "$MIRROR/$repo/os/x86_64/$HDRPKG"; then
-            HDR_REPO=$repo
-            break
-        fi
-    done
-    [ -n "$HDR_REPO" ] || die "no jupiter channel on $MIRROR carries $HDRPKG (probed: $HDR_REPOS) — check the mirror indexes by hand"
-    echo "found in channel: $HDR_REPO"
-    curl -fL -o "$TMPD/$HDRPKG" "$MIRROR/$HDR_REPO/os/x86_64/$HDRPKG" \
-        || die "download failed: $MIRROR/$HDR_REPO/os/x86_64/$HDRPKG"
-    mv "$TMPD/$HDRPKG" "$HERE/$HDRPKG"
-else
-    echo "already downloaded: $HDRPKG"
-fi
+MIRROR="$MIRROR" HDR_REPOS="${HDR_REPOS:-}" \
+    bash "$HEADER_FETCHER" "$HDRPKG" "$HERE/$HDRPKG" \
+    || die "could not retrieve the matching kernel headers"
 # no -m1: grep quitting at the first match SIGPIPEs tar mid-listing, and
 # pipefail turns that into a bogus "no Module.symvers" failure
 MEMBER=$(tar --zstd -tf "$HERE/$HDRPKG" | grep '/Module.symvers$') \
@@ -155,8 +134,10 @@ for pkg in "${DEP_PKGS[@]}"; do
     # (a naive prefix grep matches openssl-1.1 when you want openssl)
     ENTRY='' REPO=''
     for repo in "${DEP_REPOS[@]}"; do
+        # Consume the complete tar listing: exiting awk on the first match
+        # SIGPIPEs tar, which is fatal under pipefail.
         ENTRY=$(tar -tf "$TMPD/$repo.db" | sed -n 's|/$||p' \
-            | awk -F- -v p="$pkg" 'NF>2 { n=""; for(i=1;i<=NF-2;i++) n=n (i>1?"-":"") $i; if (n==p) { print; exit } }')
+            | awk -F- -v p="$pkg" 'NF>2 { n=""; for(i=1;i<=NF-2;i++) n=n (i>1?"-":"") $i; if (n==p && !found) { print; found=1 } }')
         [ -n "$ENTRY" ] && { REPO=$repo; break; }
     done
     [ -n "$ENTRY" ] || die "package '$pkg' not found in: ${DEP_REPOS[*]}"

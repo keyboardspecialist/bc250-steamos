@@ -97,16 +97,26 @@ modules:
 # from Valve's package archive and unpack it next to the sources. This avoids
 # both the read-only rootfs and the repo carrying a newer kernel than the one
 # currently running.
-STEAMOS_POOL = https://steamdeck-packages.steamos.cloud/archlinux-mirror/jupiter-main/os/x86_64
+STEAMOS_MIRROR ?= https://steamdeck-packages.steamos.cloud/archlinux-mirror
+STEAMOS_HEADER_REPOS ?=
+PKGBASE_FILE ?= /usr/lib/modules/$(UNAME_R)/pkgbase
+STEAMOS_HEADER_FETCHER ?= $(firstword $(wildcard \
+	$(PWD)/fetch-steamos-package.sh \
+	$(PWD)/../../../../../../fetch-steamos-package.sh))
 steamos-headers:
-	@pkgbase=$$(cat /usr/lib/modules/$(UNAME_R)/pkgbase) || exit 1; \
+	@set -eu; \
+	fetcher="$(STEAMOS_HEADER_FETCHER)"; \
+	[ -f "$$fetcher" ] || { echo "ERROR: SteamOS package fetcher not found."; exit 1; }; \
+	pkgbase=$$(cat "$(PKGBASE_FILE)") || exit 1; \
 	flavor=$${pkgbase#linux-}; \
 	pkgver=$$(echo "$(UNAME_R)" | sed -e "s/-$$flavor-g[0-9a-f]*$$//" -e 's/-/./'); \
 	pkg=$$pkgbase-headers-$$pkgver-x86_64.pkg.tar.zst; \
-	echo "Fetching $$pkg ..."; \
 	mkdir -p steamos-headers; \
-	curl -f -L -o steamos-headers/$$pkg $(STEAMOS_POOL)/$$pkg && \
-	tar --zstd -xf steamos-headers/$$pkg -C steamos-headers && \
+	MIRROR="$(STEAMOS_MIRROR)" HDR_REPOS="$(STEAMOS_HEADER_REPOS)" \
+		bash "$$fetcher" "$$pkg" "steamos-headers/$$pkg"; \
+	tar --zstd -xf "steamos-headers/$$pkg" -C steamos-headers; \
+	[ -d "steamos-headers/usr/lib/modules/$(UNAME_R)/build" ] \
+		|| { echo "ERROR: downloaded headers do not contain $(UNAME_R)."; exit 1; }; \
 	echo "Headers unpacked; now run: make"
 
 install:
