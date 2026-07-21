@@ -159,6 +159,21 @@ relock_rootfs() {
     fi
 }
 
+prepare_pacman_keyring() {
+    local keyring
+    command -v pacman-key >/dev/null 2>&1 \
+        || die "pacman-key is unavailable; cannot verify SteamOS packages."
+    for keyring in archlinux holo; do
+        [[ -s "/usr/share/pacman/keyrings/$keyring.gpg" ]] \
+            || die "SteamOS package keyring is missing: $keyring.gpg"
+    done
+    log "Initialising the packaged SteamOS pacman trust keys..."
+    pacman-key --init \
+        || die "Could not initialise the pacman keyring."
+    pacman-key --populate \
+        || die "Could not populate the SteamOS package signing keys."
+}
+
 # Both the GPU governor and the CPU OC tool drive the SMU through the same
 # PCI-config indirect window (0xB8/0xBC) -- never let them run concurrently.
 GOV_STOPPED=0
@@ -407,7 +422,9 @@ cmd_acpi() {
 
         command -v cpio >/dev/null 2>&1 || {
             unlock_rootfs
-            pacman -Sy --noconfirm cpio || die "cpio unavailable and pacman install failed."
+            prepare_pacman_keyring
+            pacman -Sy --noconfirm --needed cpio \
+                || die "cpio unavailable and pacman install failed."
         }
         log "Building early-initrd ACPI override cpio..."
         ( cd "$work" && find kernel | cpio -o -H newc > "$CPIO_MASTER" )

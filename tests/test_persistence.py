@@ -102,6 +102,21 @@ class PersistenceUnitTests(unittest.TestCase):
             "After=$RECOVERY_SVC local-fs.target steamos-post-update.service", source
         )
 
+    def test_acpi_bootstraps_packaged_steamos_trust_before_installing_cpio(self):
+        source = (ROOT / "bc250-power.sh").read_text(encoding="utf-8")
+        for expected in (
+            "/usr/share/pacman/keyrings/$keyring.gpg",
+            "pacman-key --init",
+            "pacman-key --populate",
+        ):
+            self.assertIn(expected, source)
+        acpi = source.index("cmd_acpi()")
+        populate = source.index("prepare_pacman_keyring", acpi)
+        install = source.index("pacman -Sy --noconfirm --needed cpio", acpi)
+        self.assertLess(populate, install)
+        self.assertNotIn("pacman-key --refresh-keys", source)
+        self.assertNotIn("SigLevel = Never", source)
+
     def test_storage_help_documents_menu_and_sudo_prompt(self):
         result = subprocess.run(
             ["bash", str(STORAGE), "help"],
