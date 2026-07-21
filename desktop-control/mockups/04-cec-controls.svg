@@ -1,0 +1,69 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1120" height="820" viewBox="0 0 1120 820">
+  <defs>
+    <linearGradient id="b4" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#08111c"/><stop offset="1" stop-color="#172433"/></linearGradient>
+    <linearGradient id="h4" x1="0" y1="0" x2="1" y2="0"><stop stop-color="#202d3d"/><stop offset="1" stop-color="#172332"/></linearGradient>
+    <filter id="s4" x="-15%" y="-15%" width="130%" height="140%"><feDropShadow dy="16" stdDeviation="18" flood-opacity=".42"/></filter>
+    <style>
+      .u{font-family:Inter,"Noto Sans",sans-serif;fill:#e9eef5}.ttl{font-size:24px;font-weight:700}.sub{font-size:12px;fill:#91a0b2}.nav{font-size:13px;font-weight:600}
+      .sect{font-size:13px;font-weight:650;fill:#d8e0ea}.lab{font-size:12px;fill:#a3b0bf}.val{font-size:12px;fill:#edf2f7;font-weight:550}.ctl{font-size:12px;fill:#e9eef5}.mini{font-size:10px;fill:#8f9daf}.btn{font-size:12px;font-weight:650;fill:#fff}
+    </style>
+  </defs>
+  <rect width="1120" height="820" fill="url(#b4)"/>
+  <g filter="url(#s4)">
+    <rect x="54" y="42" width="1012" height="736" rx="15" fill="#101925" stroke="#344256"/>
+    <rect x="54" y="42" width="1012" height="82" rx="15" fill="url(#h4)"/><rect x="54" y="105" width="1012" height="19" fill="url(#h4)"/>
+    <g class="u">
+      <text x="82" y="80" class="ttl">BC-250 Control</text><text x="82" y="104" class="sub">38/40 CU  |  1500 MHz GPU  |  58 C</text>
+      <rect x="54" y="124" width="162" height="654" fill="#151f2c"/>
+      <g class="nav"><text x="86" y="169" fill="#a3b0bf">Overview</text><text x="86" y="216" fill="#a3b0bf">GPU</text><text x="86" y="263" fill="#a3b0bf">CU</text><text x="86" y="310" fill="#a3b0bf">CPU</text>
+        <rect x="66" y="329" width="138" height="42" rx="8" fill="#316ee8"/>
+        <path d="M81 347h14v10H81zM85 357v5h6v-5" fill="none" stroke="#fff" stroke-width="1.5"/><text x="106" y="355" fill="#fff">CEC</text>
+      </g>
+
+      <g transform="translate(242 151)">
+        <text class="sect">CEC Status</text>
+        <rect y="13" width="798" height="198" rx="10" fill="#1a2533" stroke="#2d3b4e"/>
+        <text x="18" y="43" class="lab">Daemon</text><text x="762" y="43" text-anchor="end" class="val">active</text><circle cx="780" cy="39" r="5" fill="#42c98b"/>
+        <line x1="18" y1="56" x2="780" y2="56" stroke="#2b394b"/>
+        <text x="18" y="82" class="lab">Active source</text><text x="762" y="82" text-anchor="end" class="val">This console</text><circle cx="780" cy="78" r="5" fill="#42c98b"/>
+        <line x1="18" y1="95" x2="780" y2="95" stroke="#2b394b"/>
+        <text x="18" y="121" class="lab">Poweroff integration</text><text x="762" y="121" text-anchor="end" class="val">Installed</text><circle cx="780" cy="117" r="5" fill="#42c98b"/>
+        <line x1="18" y1="134" x2="780" y2="134" stroke="#2b394b"/>
+        <text x="18" y="160" class="lab">Sleep integration</text><text x="762" y="160" text-anchor="end" class="val">Installed</text><circle cx="780" cy="156" r="5" fill="#42c98b"/>
+        <rect x="18" y="172" width="664" height="30" rx="6" fill="#111b27" stroke="#3d4b60"/><text x="32" y="192" class="ctl">BC250</text>
+        <rect x="694" y="172" width="86" height="30" rx="6" fill="#26364b" stroke="#41516a"/><text x="737" y="192" class="btn" text-anchor="middle">Save</text>
+
+        <text y="246" class="sect">TV and Receiver</text>
+        <rect y="259" width="510" height="244" rx="10" fill="#1a2533" stroke="#2d3b4e"/>
+        <g class="btn" text-anchor="middle">
+          <g transform="translate(18 281)"><rect width="231" height="48" rx="7" fill="#316ee8"/><text x="115" y="29">Wake TV and select input</text></g>
+          <g transform="translate(261 281)"><rect width="231" height="48" rx="7" fill="#26364b" stroke="#41516a"/><text x="115" y="29">TV standby</text></g>
+          <g transform="translate(18 341)"><rect width="231" height="48" rx="7" fill="#26364b" stroke="#41516a"/><text x="115" y="29">Receiver on</text></g>
+          <g transform="translate(261 341)"><rect width="231" height="48" rx="7" fill="#26364b" stroke="#41516a"/><text x="115" y="29">Receiver standby</text></g>
+          <g transform="translate(18 401)"><rect width="231" height="48" rx="7" fill="#26364b" stroke="#41516a"/><text x="115" y="29">Claim active source</text></g>
+          <g transform="translate(261 401)"><rect width="231" height="48" rx="7" fill="#26364b" stroke="#41516a"/><text x="115" y="29">Release active source</text></g>
+        </g>
+
+        <text x="536" y="246" class="sect">Behavior</text>
+        <rect x="536" y="259" width="262" height="244" rx="10" fill="#1a2533" stroke="#2d3b4e"/>
+        <g class="ctl">
+          <rect x="556" y="284" width="38" height="20" rx="10" fill="#316ee8"/><circle cx="583" cy="294" r="8" fill="#fff"/><text x="606" y="298">Wake TV on resume</text>
+          <line x1="556" y1="319" x2="778" y2="319" stroke="#2b394b"/>
+          <rect x="556" y="339" width="38" height="20" rx="10" fill="#316ee8"/><circle cx="583" cy="349" r="8" fill="#fff"/><text x="606" y="353">TV standby on suspend</text>
+          <line x1="556" y1="374" x2="778" y2="374" stroke="#2b394b"/>
+          <rect x="556" y="394" width="38" height="20" rx="10" fill="#3a4657"/><circle cx="567" cy="404" r="8" fill="#c5cfdb"/><text x="606" y="408">Suspend when TV turns off</text>
+          <line x1="556" y1="429" x2="778" y2="429" stroke="#2b394b"/>
+          <rect x="556" y="449" width="38" height="20" rx="10" fill="#316ee8"/><circle cx="583" cy="459" r="8" fill="#fff"/><text x="606" y="463">TV remote input</text>
+        </g>
+
+        <text y="538" class="sect">Volume</text>
+        <rect y="551" width="798" height="100" rx="10" fill="#1a2533" stroke="#2d3b4e"/>
+        <g class="btn" text-anchor="middle">
+          <g transform="translate(18 577)"><rect width="244" height="48" rx="7" fill="#26364b" stroke="#41516a"/><text x="122" y="29">Volume up</text></g>
+          <g transform="translate(277 577)"><rect width="244" height="48" rx="7" fill="#26364b" stroke="#41516a"/><text x="122" y="29">Volume down</text></g>
+          <g transform="translate(536 577)"><rect width="244" height="48" rx="7" fill="#26364b" stroke="#41516a"/><text x="122" y="29">Mute</text></g>
+        </g>
+      </g>
+    </g>
+  </g>
+</svg>

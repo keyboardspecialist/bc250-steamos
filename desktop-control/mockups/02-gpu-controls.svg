@@ -1,0 +1,94 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1120" height="820" viewBox="0 0 1120 820">
+  <defs>
+    <linearGradient id="bg2" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#08111c"/><stop offset="1" stop-color="#172433"/></linearGradient>
+    <linearGradient id="head2" x1="0" y1="0" x2="1" y2="0"><stop stop-color="#202d3d"/><stop offset="1" stop-color="#172332"/></linearGradient>
+    <filter id="sh2" x="-15%" y="-15%" width="130%" height="140%"><feDropShadow dx="0" dy="16" stdDeviation="18" flood-opacity=".42"/></filter>
+    <style>
+      .u { font-family: Inter, "Noto Sans", sans-serif; fill:#e9eef5 }
+      .ttl { font-size:24px;font-weight:700 }.sub{font-size:12px;fill:#91a0b2}.nav{font-size:13px;font-weight:600}
+      .sect{font-size:13px;font-weight:650;fill:#d8e0ea}.lab{font-size:12px;fill:#a3b0bf}.val{font-size:12px;fill:#edf2f7;font-weight:550}
+      .ctl{font-size:12px;fill:#e9eef5}.mini{font-size:10px;fill:#8f9daf}.btn{font-size:12px;font-weight:650;fill:#fff}
+    </style>
+  </defs>
+  <rect width="1120" height="820" fill="url(#bg2)"/>
+  <g filter="url(#sh2)">
+    <rect x="54" y="42" width="1012" height="736" rx="15" fill="#101925" stroke="#344256"/>
+    <rect x="54" y="42" width="1012" height="82" rx="15" fill="url(#head2)"/>
+    <rect x="54" y="105" width="1012" height="19" fill="url(#head2)"/>
+    <g class="u">
+      <text x="82" y="80" class="ttl">BC-250 Control</text>
+      <text x="82" y="104" class="sub">38/40 CU  |  1500 MHz GPU  |  58 C</text>
+      <rect x="866" y="67" width="168" height="34" rx="7" fill="#273548" stroke="#41516a"/>
+      <text x="887" y="89" class="ctl">Open Full Controls</text>
+
+      <rect x="54" y="124" width="162" height="654" fill="#151f2c"/>
+      <g class="nav">
+        <text x="86" y="169" fill="#a3b0bf">Overview</text>
+        <rect x="66" y="188" width="138" height="42" rx="8" fill="#316ee8"/>
+        <circle cx="87" cy="209" r="7" fill="none" stroke="#fff" stroke-width="2"/><path d="M82 210h10M87 204v10" stroke="#fff"/>
+        <text x="105" y="214" fill="#fff">GPU</text>
+        <text x="86" y="263" fill="#a3b0bf">CU</text>
+        <text x="86" y="310" fill="#a3b0bf">CPU</text>
+        <text x="86" y="357" fill="#a3b0bf">CEC</text>
+      </g>
+
+      <g transform="translate(242 151)">
+        <text x="0" y="0" class="sect">Live GPU</text>
+        <rect x="0" y="13" width="386" height="234" rx="10" fill="#1a2533" stroke="#2d3b4e"/>
+        <g class="lab">
+          <text x="18" y="44">Active clock</text><text x="366" y="44" text-anchor="end" class="val">1500 MHz</text>
+          <line x1="18" y1="58" x2="368" y2="58" stroke="#2b394b"/>
+          <text x="18" y="83">Governor service</text><text x="348" y="83" text-anchor="end" class="val">enabled / active</text><circle cx="365" cy="79" r="5" fill="#42c98b"/>
+          <line x1="18" y1="97" x2="368" y2="97" stroke="#2b394b"/>
+          <text x="18" y="122">Live mode</text><text x="348" y="122" text-anchor="end" class="val">range</text><circle cx="365" cy="118" r="5" fill="#42c98b"/>
+          <line x1="18" y1="136" x2="368" y2="136" stroke="#2b394b"/>
+          <text x="18" y="161">Saved replay</text><text x="366" y="161" text-anchor="end" class="val">800-1800 MHz</text>
+          <line x1="18" y1="175" x2="368" y2="175" stroke="#2b394b"/>
+          <text x="18" y="200">Live range</text><text x="348" y="200" text-anchor="end" class="val">800-1800 MHz</text><circle cx="365" cy="196" r="5" fill="#42c98b"/>
+          <line x1="18" y1="214" x2="368" y2="214" stroke="#2b394b"/>
+          <text x="18" y="239">Boot replay</text><text x="348" y="239" text-anchor="end" class="val">Applied</text><circle cx="365" cy="235" r="5" fill="#42c98b"/>
+        </g>
+
+        <text x="0" y="280" class="sect">Frequency</text>
+        <rect x="0" y="293" width="386" height="300" rx="10" fill="#1a2533" stroke="#2d3b4e"/>
+        <text x="18" y="321" class="mini">MODE</text>
+        <rect x="18" y="331" width="350" height="40" rx="7" fill="#111b27" stroke="#3d4b60"/>
+        <text x="32" y="356" class="ctl">Custom range / overclock</text><path d="M344 347l6 7 6-7" fill="none" stroke="#9eacbc" stroke-width="2"/>
+        <text x="18" y="400" class="mini">MINIMUM CLOCK</text>
+        <rect x="18" y="410" width="350" height="38" rx="7" fill="#111b27" stroke="#3d4b60"/>
+        <text x="193" y="435" class="ctl" text-anchor="middle">800 MHz</text><text x="35" y="435" fill="#7f8d9f">-</text><text x="350" y="435" fill="#7f8d9f">+</text>
+        <text x="18" y="477" class="mini">MAXIMUM CLOCK</text>
+        <rect x="18" y="487" width="350" height="38" rx="7" fill="#111b27" stroke="#3d4b60"/>
+        <text x="193" y="512" class="ctl" text-anchor="middle">1800 MHz</text><text x="35" y="512" fill="#7f8d9f">-</text><text x="350" y="512" fill="#7f8d9f">+</text>
+        <rect x="18" y="542" width="350" height="35" rx="7" fill="#316ee8"/>
+        <text x="193" y="564" class="btn" text-anchor="middle">Apply frequency mode</text>
+      </g>
+
+      <g transform="translate(654 151)">
+        <text x="0" y="0" class="sect">Load Response</text>
+        <rect x="0" y="13" width="386" height="362" rx="10" fill="#1a2533" stroke="#2d3b4e"/>
+        <text x="18" y="44" class="lab">Current target</text><text x="368" y="44" text-anchor="end" class="val">80 / 65%</text>
+        <rect x="18" y="68" width="169" height="56" rx="7" fill="#253347" stroke="#3b4b62"/>
+        <text x="102" y="92" class="ctl" text-anchor="middle">Eager preset</text><text x="102" y="111" class="mini" text-anchor="middle">40 / 10%</text>
+        <rect x="199" y="68" width="169" height="56" rx="7" fill="#253347" stroke="#3b4b62"/>
+        <text x="283" y="92" class="ctl" text-anchor="middle">Balanced preset</text><text x="283" y="111" class="mini" text-anchor="middle">80 / 65%</text>
+        <text x="18" y="157" class="ctl">Clock down below 65% load</text>
+        <line x1="24" y1="184" x2="362" y2="184" stroke="#40516a" stroke-width="5" stroke-linecap="round"/>
+        <line x1="24" y1="184" x2="243" y2="184" stroke="#4f8df7" stroke-width="5" stroke-linecap="round"/><circle cx="243" cy="184" r="9" fill="#4f8df7" stroke="#dce7f7" stroke-width="2"/>
+        <text x="18" y="222" class="ctl">Clock up above 80% load</text>
+        <line x1="24" y1="249" x2="362" y2="249" stroke="#40516a" stroke-width="5" stroke-linecap="round"/>
+        <line x1="24" y1="249" x2="294" y2="249" stroke="#4f8df7" stroke-width="5" stroke-linecap="round"/><circle cx="294" cy="249" r="9" fill="#4f8df7" stroke="#dce7f7" stroke-width="2"/>
+        <rect x="18" y="292" width="350" height="44" rx="7" fill="#316ee8"/>
+        <text x="193" y="320" class="btn" text-anchor="middle">Apply custom load target</text>
+
+        <text x="0" y="410" class="sect">Ramp</text>
+        <rect x="0" y="423" width="386" height="170" rx="10" fill="#1a2533" stroke="#2d3b4e"/>
+        <text x="18" y="455" class="ctl">Idle-to-max climb: 500 ms</text>
+        <line x1="24" y1="488" x2="362" y2="488" stroke="#40516a" stroke-width="5" stroke-linecap="round"/>
+        <line x1="24" y1="488" x2="52" y2="488" stroke="#4f8df7" stroke-width="5" stroke-linecap="round"/><circle cx="52" cy="488" r="9" fill="#4f8df7" stroke="#dce7f7" stroke-width="2"/>
+        <rect x="18" y="520" width="350" height="44" rx="7" fill="#26364b" stroke="#41516a"/>
+        <text x="193" y="548" class="btn" text-anchor="middle">Apply ramp time</text>
+      </g>
+    </g>
+  </g>
+</svg>

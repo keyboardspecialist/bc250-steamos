@@ -1,0 +1,109 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="820" height="940" viewBox="0 0 820 940">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#09111c"/>
+      <stop offset="1" stop-color="#152231"/>
+    </linearGradient>
+    <linearGradient id="header" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#202c3b"/>
+      <stop offset="1" stop-color="#172332"/>
+    </linearGradient>
+    <filter id="shadow" x="-20%" y="-20%" width="140%" height="140%">
+      <feDropShadow dx="0" dy="18" stdDeviation="20" flood-color="#000" flood-opacity=".45"/>
+    </filter>
+    <style>
+      .ui { font-family: Inter, "Noto Sans", sans-serif; fill: #e8edf4; }
+      .title { font-size: 23px; font-weight: 700; }
+      .sub { font-size: 12px; fill: #91a0b2; }
+      .tab { font-size: 12px; font-weight: 600; }
+      .section { font-size: 13px; font-weight: 650; fill: #d8e0ea; }
+      .metric { font-size: 11px; fill: #91a0b2; }
+      .value { font-size: 20px; font-weight: 700; fill: #f5f8fc; }
+      .row { font-size: 12px; fill: #a9b5c4; }
+      .rowv { font-size: 12px; fill: #e4eaf1; font-weight: 550; }
+    </style>
+  </defs>
+  <rect width="820" height="940" fill="url(#bg)"/>
+  <circle cx="118" cy="124" r="110" fill="#2563eb" opacity=".08"/>
+  <circle cx="730" cy="820" r="180" fill="#14b8a6" opacity=".05"/>
+
+  <g filter="url(#shadow)">
+    <rect x="100" y="54" width="620" height="810" rx="16" fill="#111a26" stroke="#344256"/>
+    <rect x="100" y="54" width="620" height="84" rx="16" fill="url(#header)"/>
+    <rect x="100" y="118" width="620" height="20" fill="url(#header)"/>
+
+    <g class="ui">
+      <text x="126" y="91" class="title">BC-250 Control</text>
+      <text x="126" y="116" class="sub">38/40 CU  |  1500 MHz GPU  |  58 C</text>
+      <g transform="translate(650 83)" stroke="#b8c4d3" stroke-width="2" fill="none">
+        <path d="M0 8a10 10 0 1 1 3 7"/>
+        <path d="M0 3v6h6"/>
+      </g>
+
+      <rect x="100" y="138" width="620" height="54" fill="#0d1621"/>
+      <rect x="112" y="147" width="104" height="36" rx="8" fill="#316ee8"/>
+      <text x="138" y="170" class="tab" fill="#fff">Overview</text>
+      <text x="251" y="170" class="tab" fill="#9eacbc">GPU</text>
+      <text x="335" y="170" class="tab" fill="#9eacbc">CU</text>
+      <text x="416" y="170" class="tab" fill="#9eacbc">CPU</text>
+      <text x="505" y="170" class="tab" fill="#9eacbc">CEC</text>
+
+      <g transform="translate(124 216)">
+        <rect width="272" height="112" rx="10" fill="#1a2533" stroke="#2d3b4e"/>
+        <text x="16" y="25" class="metric">CPU CLOCK</text>
+        <text x="16" y="58" class="value">3,487 MHz</text>
+        <path d="M16 91 L45 88 L74 93 L103 76 L132 82 L161 65 L190 70 L219 54 L256 61" fill="none" stroke="#4f9de8" stroke-width="3"/>
+        <path d="M16 91 L45 88 L74 93 L103 76 L132 82 L161 65 L190 70 L219 54 L256 61 L256 101 L16 101Z" fill="#4f9de8" opacity=".08"/>
+      </g>
+      <g transform="translate(408 216)">
+        <rect width="288" height="112" rx="10" fill="#1a2533" stroke="#2d3b4e"/>
+        <text x="16" y="25" class="metric">GPU CLOCK</text>
+        <text x="16" y="58" class="value">1,500 MHz</text>
+        <path d="M16 91 L47 91 L78 83 L109 84 L140 66 L171 71 L202 50 L233 59 L272 43" fill="none" stroke="#9b7de5" stroke-width="3"/>
+        <path d="M16 91 L47 91 L78 83 L109 84 L140 66 L171 71 L202 50 L233 59 L272 43 L272 101 L16 101Z" fill="#9b7de5" opacity=".08"/>
+      </g>
+      <g transform="translate(124 340)">
+        <rect width="272" height="112" rx="10" fill="#1a2533" stroke="#2d3b4e"/>
+        <text x="16" y="25" class="metric">CPU TEMPERATURE</text>
+        <text x="16" y="58" class="value">54 C</text>
+        <path d="M16 91 L45 86 L74 88 L103 81 L132 83 L161 76 L190 78 L219 69 L256 72" fill="none" stroke="#3fbd86" stroke-width="3"/>
+      </g>
+      <g transform="translate(408 340)">
+        <rect width="288" height="112" rx="10" fill="#1a2533" stroke="#2d3b4e"/>
+        <text x="16" y="25" class="metric">GPU TEMPERATURE</text>
+        <text x="16" y="58" class="value">58 C</text>
+        <path d="M16 91 L47 88 L78 82 L109 85 L140 76 L171 79 L202 68 L233 70 L272 62" fill="none" stroke="#e99145" stroke-width="3"/>
+      </g>
+
+      <text x="124" y="486" class="section">System Overview</text>
+      <rect x="124" y="498" width="572" height="176" rx="10" fill="#1a2533" stroke="#2d3b4e"/>
+      <g class="row">
+        <text x="144" y="529">Compute units</text><text x="660" y="529" text-anchor="end" class="rowv">38 / 40</text>
+        <circle cx="678" cy="525" r="5" fill="#42c98b"/>
+        <line x1="144" y1="543" x2="678" y2="543" stroke="#2a3748"/>
+        <text x="144" y="568">CPU OC profile</text><text x="678" y="568" text-anchor="end" class="rowv">Enabled at boot</text>
+        <line x1="144" y1="582" x2="678" y2="582" stroke="#2a3748"/>
+        <text x="144" y="607">GPU governor</text><text x="660" y="607" text-anchor="end" class="rowv">Active  |  D-Bus ready</text>
+        <circle cx="678" cy="603" r="5" fill="#42c98b"/>
+        <line x1="144" y1="621" x2="678" y2="621" stroke="#2a3748"/>
+        <text x="144" y="646">CEC</text><text x="660" y="646" text-anchor="end" class="rowv">active</text>
+        <circle cx="678" cy="642" r="5" fill="#42c98b"/>
+      </g>
+
+      <text x="124" y="708" class="section">Power Health</text>
+      <rect x="124" y="720" width="572" height="104" rx="10" fill="#1a2533" stroke="#2d3b4e"/>
+      <text x="144" y="751" class="row">ACPI C/P-states</text><text x="660" y="751" text-anchor="end" class="rowv">Active</text><circle cx="678" cy="747" r="5" fill="#42c98b"/>
+      <line x1="144" y1="765" x2="678" y2="765" stroke="#2a3748"/>
+      <text x="144" y="791" class="row">CPU governor</text><text x="660" y="791" text-anchor="end" class="rowv">schedutil</text><circle cx="678" cy="787" r="5" fill="#42c98b"/>
+    </g>
+  </g>
+
+  <g transform="translate(273 887)" filter="url(#shadow)">
+    <rect width="274" height="42" rx="12" fill="#202a37" stroke="#3a4759"/>
+    <circle cx="28" cy="21" r="12" fill="#182332" stroke="#a8b5c5"/>
+    <path d="M22 24h12M24 19h8M27 15h2" stroke="#dce4ee" stroke-width="2" stroke-linecap="round"/>
+    <circle cx="37" cy="30" r="4" fill="#42c98b" stroke="#202a37" stroke-width="2"/>
+    <text x="56" y="26" class="ui" font-size="12">BC-250 healthy</text>
+    <text x="244" y="26" class="ui" font-size="12" fill="#9aa8b8">21:42</text>
+  </g>
+</svg>

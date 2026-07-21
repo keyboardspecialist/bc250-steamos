@@ -21,6 +21,52 @@ The tray popup includes Overview, GPU, CU, CPU, and CEC controls. Select
 **Open Full Controls** to run the same responsive interface through
 `plasmawindowed`.
 
+## UI Overview
+
+These dark-theme mockups follow the implemented Plasma QML and use
+representative healthy values from the bundled mock backend. They are UI
+previews rather than screenshots from BC-250 hardware; colors and control
+styling follow the active Plasma theme at runtime.
+
+### Overview and System Tray
+
+![BC-250 overview popup and system-tray health icon](mockups/01-overview-tray.png)
+
+The compact representation shows a health icon and status dot. Opening it
+reveals top navigation for the five control areas. Overview displays live CPU
+and GPU clocks, temperature history, CU availability, governor state, CEC
+health, and boot-persistence status. Telemetry polling runs only while the
+Overview tab is visible.
+
+### GPU Controls
+
+![BC-250 GPU frequency, load response, and ramp controls](mockups/02-gpu-controls.png)
+
+The wider `plasmawindowed` layout moves navigation into a sidebar. The GPU tab
+shows the live and saved frequency modes before exposing adaptive ranges,
+pinned clocks, load-response targets, and ramp timing. Potentially sustained
+clock modes display a confirmation before applying. Privileged changes request
+polkit authorization once for the current login session.
+
+### CU Routing and CPU Tuning
+
+![BC-250 compute-unit routing and CPU profile controls](mockups/03-cu-cpu.png)
+
+The CU tab presents all four shader rows as two-CU WGP pairs. Factory-routed
+pairs are visibly locked, and live editing remains behind an explicit advanced
+toggle and confirmation. The CPU tab reports the active profile, provides
+bounded detection inputs, and separates immediate application, boot enablement,
+and stock reversion. Longer sections scroll within the popup.
+
+### CEC Controls
+
+![BC-250 CEC television and receiver controls](mockups/04-cec-controls.png)
+
+The CEC tab combines daemon and active-source status with TV, receiver, volume,
+and behavior controls. It also edits the 14-byte CEC broadcast name. CEC reads
+and actions do not require a polkit prompt, while the service still validates
+every command and argument.
+
 ## Commands
 
 ```bash
