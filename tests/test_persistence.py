@@ -1,4 +1,5 @@
 import subprocess
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -90,6 +91,10 @@ class PersistenceUnitTests(unittest.TestCase):
         source = STORAGE.read_text(encoding="utf-8")
         self.assertIn("Continue with sudo? [y/N]", source)
         self.assertIn('sudo bash "$SELF" "$@"', source)
+        self.assertIn(
+            'Repair boot infrastructure|$(infrastructure_badge)|', source
+        )
+        self.assertIn('log "Boot infrastructure is healthy."', source)
 
     def test_storage_without_terminal_prints_help(self):
         result = subprocess.run(
@@ -99,6 +104,25 @@ class PersistenceUnitTests(unittest.TestCase):
         )
         self.assertEqual(result.returncode, 1)
         self.assertIn("Usage:", result.stderr)
+
+    def test_storage_enablement_is_safe_with_nounset(self):
+        with tempfile.TemporaryDirectory() as directory:
+            link = Path(directory) / "test.service"
+            subprocess.run(
+                [
+                    "bash",
+                    "-c",
+                    'storage=$1; link=$2; set -- help; source "$storage" >/dev/null; '
+                    'install() { :; }; install_enablement "$link" test.service',
+                    "_",
+                    str(STORAGE),
+                    str(link),
+                ],
+                check=True,
+                capture_output=True,
+                text=True,
+            )
+            self.assertEqual(link.readlink(), Path("../test.service"))
 
     def test_all_shell_entrypoints_parse(self):
         scripts = [

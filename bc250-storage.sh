@@ -175,7 +175,8 @@ atomic_write() {
 }
 
 install_enablement() {
-    local link="$1" unit="$2" expected="../$unit"
+    local link="$1" unit="$2" expected
+    expected="../$unit"
     install -d -o root -g root -m 0755 "$(dirname "$link")"
     if [[ -L "$link" ]]; then
         [[ "$(readlink "$link")" == "$expected" ]] && return 0
@@ -279,6 +280,7 @@ repair_infrastructure() {
     fi
     expected_mount_active || die "Failed to establish the expected $ROOT_DIR bind mount."
     secure_directory "$ROOT_DIR"
+    log "Boot infrastructure is healthy."
 }
 
 migrate_helper() {
@@ -553,7 +555,7 @@ pause_key() {
     printf '\r\033[K'
 }
 
-storage_badge() {
+infrastructure_healthy() {
     if expected_mount_active \
         && [[ -f "$RECOVERY_PATH" && -f "$UNIT_PATH" && -f "$KEEP_PATH" \
             && -f "$RECOVERY_HELPER" \
@@ -561,11 +563,29 @@ storage_badge() {
             && "$(readlink "$RECOVERY_WANTS")" == "../$RECOVERY_NAME" \
             && -L "$UNIT_WANTS" \
             && "$(readlink "$UNIT_WANTS")" == "../$UNIT_NAME" ]]; then
+        return 0
+    fi
+    return 1
+}
+
+storage_badge() {
+    if infrastructure_healthy; then
         printf '%s' "${CG}[healthy]${C0}"
     elif [[ -e "$BACKING_DIR" || -e "$RECOVERY_PATH" || -e "$UNIT_PATH" ]]; then
         printf '%s' "${CY}[repair]${C0}"
     else
         printf '%s' "${CY}[setup]${C0}"
+    fi
+}
+
+infrastructure_badge() {
+    if infrastructure_healthy; then
+        printf '%s' "${CG}[healthy]${C0}"
+    elif [[ -d "$BACKING_DIR" && ! -L "$BACKING_DIR" \
+        && -f "$RECOVERY_HELPER" && ! -L "$RECOVERY_HELPER" ]]; then
+        printf '%s' "${CY}[repair]${C0}"
+    else
+        printf '%s' "${CR}[unavailable]${C0}"
     fi
 }
 
@@ -614,7 +634,7 @@ cmd_menu() {
     while true; do
         local items=(
             "Install / repair storage|$(storage_badge)|Install persistent storage, recovery, units, and keep lists."
-            "Repair boot infrastructure||Validate and repair an established home-backed mount."
+            "Repair boot infrastructure|$(infrastructure_badge)|Validate and repair an established home-backed mount."
             "Show status||Show mount source, recovery integration, and keep-list paths."
         )
         menu_select "BC-250 persistent storage" "${items[@]}" || { echo; break; }
