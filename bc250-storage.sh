@@ -302,7 +302,7 @@ migrate_aic_helper() {
     local firmware="$SCRIPT_DIR/aic8800/src/USB/driver_fw/fw/aic8800D80"
     local helper="$SCRIPT_DIR/aic8800/aic8800-ensure-modules.sh"
     local unit=/etc/systemd/system/aic8800-modules.service
-    local stage repo_line repo
+    local stage repo_line repo source_link firmware_link header_fetcher
     [[ -f "$old" && ! -L "$old" ]] || return 0
     if [[ ! -f "$source/Makefile" && -f /etc/aic8800-paths.conf \
         && ! -L /etc/aic8800-paths.conf ]]; then
@@ -320,12 +320,24 @@ migrate_aic_helper() {
         log "Disabled unsafe legacy AIC8800 boot helper; rerun aic8800/steamdeck-setup.sh."
         return 0
     fi
-    if find "$source" "$firmware" -type l -print -quit | grep -q .; then
+    if [[ -L "$source/steamos-headers" ]]; then
+        source_link=$source/steamos-headers
+    else
+        source_link=$(find "$source" -path "$source/steamos-headers" -prune \
+            -o -type l -print -quit)
+    fi
+    firmware_link=$(find "$firmware" -type l -print -quit)
+    if [[ -n "$source_link" || -n "$firmware_link" ]]; then
         die "Refusing to snapshot AIC8800 source containing symlinks."
     fi
     install -d -o root -g root -m 0755 "$ROOT_DIR/aic8800"
     stage=$(mktemp -d "$ROOT_DIR/aic8800/.source-migrate.XXXXXX")
     cp -a "$source"/. "$stage"/
+    rm -rf "$stage/steamos-headers"
+    header_fetcher="$SCRIPT_DIR/fetch-steamos-package.sh"
+    if [[ -f "$header_fetcher" && ! -L "$header_fetcher" ]]; then
+        install -m 0755 "$header_fetcher" "$stage/fetch-steamos-package.sh"
+    fi
     chown -R root:root "$stage"
     chmod -R go-w "$stage"
     rm -rf "$ROOT_DIR/aic8800/source"

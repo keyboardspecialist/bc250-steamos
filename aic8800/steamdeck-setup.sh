@@ -53,7 +53,14 @@ KREL=$(uname -r)
 [ -d "$DRV" ] || { echo "Driver source not found at $DRV"; exit 1; }
 [ -d "$FW_SOURCE" ] || { echo "Firmware source not found at $FW_SOURCE"; exit 1; }
 [ -f "$STORAGE_SH" ] || { echo "Storage helper missing: $STORAGE_SH"; exit 1; }
-if find "$DRV" "$FW_SOURCE" -type l -print -quit | grep -q .; then
+if [ -L "$DRV/steamos-headers" ]; then
+    DRIVER_LINK=$DRV/steamos-headers
+else
+    DRIVER_LINK=$(find "$DRV" -path "$DRV/steamos-headers" -prune \
+        -o -type l -print -quit)
+fi
+FIRMWARE_LINK=$(find "$FW_SOURCE" -type l -print -quit)
+if [ -n "$DRIVER_LINK" ] || [ -n "$FIRMWARE_LINK" ]; then
     echo "Refusing to install AIC8800 source containing symlinks."
     exit 1
 fi
@@ -162,6 +169,9 @@ install -d -o root -g root -m 0755 "$FW" "$ROOT_SOURCE" \
     "$(dirname "$ROOT_HELPER")"
 cp -RL "$FW_SOURCE"/. "$FW"/
 cp -a "$DRV"/. "$ROOT_SOURCE"/
+# Headers are downloaded build input, not trusted source. The boot helper
+# fetches the exact package again if a future kernel needs a rebuild.
+rm -rf "$ROOT_SOURCE/steamos-headers"
 install -o root -g root -m 0755 "$HEADER_FETCHER" "$ROOT_SOURCE/fetch-steamos-package.sh"
 chown -R root:root "$ROOT_DATA_DIR/aic8800"
 chmod -R go-w "$ROOT_DATA_DIR/aic8800"
