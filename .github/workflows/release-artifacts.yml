@@ -17,7 +17,7 @@ jobs:
     name: Build artifacts
     runs-on: ubuntu-latest
     env:
-      DECKY_ARTIFACT_BASENAME: bc250-control-${{ github.ref_name }}
+      DECKY_ARTIFACT_BASENAME: bc250-decky-control-${{ github.ref_name }}
       DESKTOP_ARTIFACT_BASENAME: bc250-desktop-control-${{ github.ref_name }}
       TOOLKIT_ARTIFACT_BASENAME: bc250-steamos-toolkit-${{ github.ref_name }}
 
@@ -148,7 +148,7 @@ jobs:
       actions: read
       contents: write
     env:
-      DECKY_ARTIFACT_BASENAME: bc250-control-${{ github.ref_name }}
+      DECKY_ARTIFACT_BASENAME: bc250-decky-control-${{ github.ref_name }}
       DESKTOP_ARTIFACT_BASENAME: bc250-desktop-control-${{ github.ref_name }}
       TOOLKIT_ARTIFACT_BASENAME: bc250-steamos-toolkit-${{ github.ref_name }}
     steps:
