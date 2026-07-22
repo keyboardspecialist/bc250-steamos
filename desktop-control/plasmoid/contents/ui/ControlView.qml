@@ -62,8 +62,12 @@ Item {
                     Layout.fillWidth: true
                     QQC2.Label { text: "BC-250 Control"; font.pixelSize: Kirigami.Theme.defaultFont.pixelSize * 1.35; font.weight: Font.Bold }
                     QQC2.Label {
-                        text: root.backend.busy ? root.backend.busyLabel : root.backend.healthSummary
-                        color: root.backend.busy ? Kirigami.Theme.highlightColor : Kirigami.Theme.disabledTextColor
+                        text: root.backend.busy ? root.backend.busyLabel
+                            : root.backend.error ? root.backend.error
+                            : root.backend.notice ? root.backend.notice : root.backend.healthSummary
+                        color: root.backend.busy ? Kirigami.Theme.highlightColor
+                            : root.backend.error ? Kirigami.Theme.negativeTextColor
+                            : root.backend.notice ? Kirigami.Theme.positiveTextColor : Kirigami.Theme.disabledTextColor
                         elide: Text.ElideRight
                         Layout.fillWidth: true
                     }
@@ -87,29 +91,15 @@ Item {
                     QQC2.ToolTip.visible: hovered
                     QQC2.ToolTip.text: text
                 }
-                QQC2.Button {
-                    visible: root.wide
-                    text: "Open Full Controls"
-                    icon.name: "window-duplicate"
-                    onClicked: root.backend.openFullControls()
-                }
             }
         }
 
         QQC2.ProgressBar {
             Layout.fillWidth: true
-            visible: root.backend.busy
-            indeterminate: true
+            opacity: root.backend.busy ? 1 : 0
+            indeterminate: root.backend.busy
         }
 
-        Kirigami.InlineMessage {
-            Layout.fillWidth: true
-            visible: root.backend.error.length > 0
-            text: root.backend.error
-            type: Kirigami.MessageType.Error
-            showCloseButton: true
-            onVisibleChanged: if (!visible) root.backend.error = ""
-        }
         Kirigami.InlineMessage {
             Layout.fillWidth: true
             visible: Boolean(root.backend.snapshot) && (!root.backend.snapshot.toolkit.available
@@ -119,15 +109,6 @@ Item {
                 : "The system service is not privileged; hardware mutations are disabled."
             type: Kirigami.MessageType.Warning
         }
-        Kirigami.InlineMessage {
-            Layout.fillWidth: true
-            visible: root.backend.notice.length > 0 && root.backend.error.length === 0
-            text: root.backend.notice
-            type: Kirigami.MessageType.Positive
-            showCloseButton: true
-            onVisibleChanged: if (!visible) root.backend.notice = ""
-        }
-
         QQC2.ScrollView {
             id: topNavigation
             visible: !root.wide

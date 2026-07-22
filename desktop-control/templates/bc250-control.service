@@ -14,10 +14,8 @@ UMask=0022
 Restart=on-failure
 RestartSec=2
 Environment=PYTHONDONTWRITEBYTECODE=1
-NoNewPrivileges=true
 PrivateTmp=true
 LockPersonality=true
-RestrictSUIDSGID=true
 
 [Install]
 WantedBy=multi-user.target

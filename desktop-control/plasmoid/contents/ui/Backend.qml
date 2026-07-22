@@ -21,6 +21,13 @@ QtObject {
     property bool uiVisible: false
     property bool telemetryWanted: false
 
+    onNoticeChanged: {
+        if (notice)
+            noticeTimer.restart();
+        else
+            noticeTimer.stop();
+    }
+
     readonly property string healthState: {
         if (error)
             return "error";
@@ -341,6 +348,11 @@ QtObject {
         interval: 750
         repeat: true
         onTriggered: root._pollOperation()
+    }
+
+    property Timer noticeTimer: Timer {
+        interval: 5000
+        onTriggered: root.notice = ""
     }
 
     property Plasma5Support.DataSource executable: Plasma5Support.DataSource {

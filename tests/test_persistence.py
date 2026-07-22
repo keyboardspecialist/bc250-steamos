@@ -351,6 +351,8 @@ grep -Fxq "daemon-reload" "$SYSTEMCTL_LOG"
         )
         self.assertIn("User=root", unit)
         self.assertIn("Requires=bc250-desktop-control-repair.service", unit)
+        self.assertNotIn("NoNewPrivileges=", unit)
+        self.assertNotIn("RestrictSUIDSGID=", unit)
 
     def test_desktop_dbus_policy_defers_client_authorization_to_service(self):
         policy = (

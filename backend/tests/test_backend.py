@@ -395,8 +395,11 @@ class BackendMutationTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_cec_dbus_response_marks_daemon_active(self):
         backend = object.__new__(ToolkitBackend)
-        backend._cec_property = AsyncMock(
-            side_effect=["BC-250", True, False, False, True, False, 1000, 5]
+        backend._cec_properties = AsyncMock(
+            side_effect=[
+                ["BC-250", True, False, False, True],
+                [False, 1000, 5],
+            ]
         )
         backend._service = AsyncMock(
             return_value={"enabled": "static", "active": "inactive"}
@@ -406,6 +409,16 @@ class BackendMutationTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(status["service"]["active"], "active")
         backend._service.assert_awaited_once_with("cecd.service", user=True)
+
+    async def test_cec_property_batch_rejects_incomplete_response(self):
+        backend = object.__new__(ToolkitBackend)
+        backend._user_exec = AsyncMock(return_value=(0, 's "BC-250"\nb true', ""))
+
+        values = await backend._cec_properties(
+            "/daemon", "com.example.Config", ("Name", "Wake", "Suspend")
+        )
+
+        self.assertEqual(values, [None, None, None])
 
     async def test_rpc_rejects_boolean_frequency(self):
         backend = object.__new__(ToolkitBackend)

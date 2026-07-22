@@ -34,6 +34,28 @@ class DesktopReleaseTests(unittest.TestCase):
         self.assertNotIn("Plasmoid.switchWidth", main)
         self.assertNotIn("Plasmoid.toolTipMainText", main)
 
+        control = (plasmoid / "contents/ui/ControlView.qml").read_text(
+            encoding="utf-8"
+        )
+        self.assertEqual(control.count('text: "Open Full Controls"'), 1)
+        self.assertNotIn("Kirigami.MessageType.Positive", control)
+        self.assertNotIn("Kirigami.MessageType.Error", control)
+        self.assertIn("opacity: root.backend.busy ? 1 : 0", control)
+
+        cu_tab = (plasmoid / "contents/ui/tabs/CuTab.qml").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn("readonly property color stateColor", cu_tab)
+        self.assertIn("Layout.preferredWidth: 80", cu_tab)
+        self.assertIn("Flickable {\n            id: cuScroll", cu_tab)
+        self.assertNotIn("GridLayout {\n                id: cuGrid", cu_tab)
+
+        cec_tab = (plasmoid / "contents/ui/tabs/CecTab.qml").read_text(
+            encoding="utf-8"
+        )
+        self.assertEqual(cec_tab.count("onClicked: root.backend.setCecToggle"), 4)
+        self.assertNotIn("onToggled: root.backend.setCecToggle", cec_tab)
+
         icon = (plasmoid / "contents/ui/components/HealthIcon.qml").read_text(
             encoding="utf-8"
         )

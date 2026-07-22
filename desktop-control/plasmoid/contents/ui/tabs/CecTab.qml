@@ -114,22 +114,22 @@ ColumnLayout {
         QQC2.Switch {
             text: "Wake TV on resume"; checked: cec.wakeTv === true
             enabled: root.controlsEnabled && cec.wakeTv !== null
-            onToggled: root.backend.setCecToggle("wake-tv", checked)
+            onClicked: root.backend.setCecToggle("wake-tv", checked)
         }
         QQC2.Switch {
             text: "TV standby on suspend"; checked: cec.suspendTv === true
             enabled: root.controlsEnabled && cec.suspendTv !== null
-            onToggled: root.backend.setCecToggle("suspend-tv", checked)
+            onClicked: root.backend.setCecToggle("suspend-tv", checked)
         }
         QQC2.Switch {
             text: "Suspend when TV turns off"; checked: cec.allowStandby === true
             enabled: root.controlsEnabled && cec.allowStandby !== null
-            onToggled: root.backend.setCecToggle("allow-standby", checked)
+            onClicked: root.backend.setCecToggle("allow-standby", checked)
         }
         QQC2.Switch {
             text: "TV remote input"; checked: cec.uinput === true
             enabled: root.controlsEnabled && cec.uinput !== null
-            onToggled: root.backend.setCecToggle("uinput", checked)
+            onClicked: root.backend.setCecToggle("uinput", checked)
         }
         QQC2.Label {
             visible: !root.controlsEnabled

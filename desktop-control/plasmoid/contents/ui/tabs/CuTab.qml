@@ -63,35 +63,52 @@ ColumnLayout {
         title: cu.available ? "Active CU Routing" : "Saved CU Routing"
         visible: root.displayRows.length === 4
 
-        QQC2.ScrollView {
+        Flickable {
             id: cuScroll
             Layout.fillWidth: true
             Layout.preferredHeight: cuGrid.implicitHeight + Kirigami.Units.gridUnit
-            contentWidth: Math.max(availableWidth, cuGrid.implicitWidth)
+            contentWidth: Math.max(width, 520)
             contentHeight: cuGrid.implicitHeight
             clip: true
-            QQC2.ScrollBar.vertical.policy: QQC2.ScrollBar.AlwaysOff
-            QQC2.ScrollBar.horizontal.policy: QQC2.ScrollBar.AsNeeded
+            boundsBehavior: Flickable.StopAtBounds
+            flickableDirection: Flickable.HorizontalFlick
+            QQC2.ScrollBar.horizontal: QQC2.ScrollBar {}
 
-            GridLayout {
+            ColumnLayout {
                 id: cuGrid
-                width: Math.max(implicitWidth, cuScroll.availableWidth)
-                columns: 7
-                columnSpacing: Kirigami.Units.smallSpacing
-                rowSpacing: Kirigami.Units.smallSpacing
+                width: cuScroll.contentWidth
+                spacing: Kirigami.Units.smallSpacing
 
-                QQC2.Label { text: "" }
-                Repeater {
-                    model: 5
+                RowLayout {
+                    Layout.fillWidth: true
+                    spacing: Kirigami.Units.smallSpacing
                     QQC2.Label {
-                        required property int index
-                        text: "CU" + (index * 2) + "-" + (index * 2 + 1)
+                        text: ""
+                        Layout.minimumWidth: 72
+                        Layout.preferredWidth: 72
+                        Layout.maximumWidth: 72
+                    }
+                    Repeater {
+                        model: 5
+                        QQC2.Label {
+                            required property int index
+                            text: "CU" + (index * 2) + "-" + (index * 2 + 1)
+                            font: Kirigami.Theme.smallFont
+                            horizontalAlignment: Text.AlignHCenter
+                            Layout.fillWidth: true
+                            Layout.minimumWidth: 64
+                            Layout.preferredWidth: 80
+                        }
+                    }
+                    QQC2.Label {
+                        text: "Total"
                         font: Kirigami.Theme.smallFont
-                        horizontalAlignment: Text.AlignHCenter
-                        Layout.fillWidth: true
+                        horizontalAlignment: Text.AlignRight
+                        Layout.minimumWidth: 52
+                        Layout.preferredWidth: 52
+                        Layout.maximumWidth: 52
                     }
                 }
-                QQC2.Label { text: "Total"; font: Kirigami.Theme.smallFont }
 
                 Repeater {
                     model: root.displayRows
@@ -99,25 +116,45 @@ ColumnLayout {
                         id: rowDelegate
                         required property var modelData
                         required property int index
-                        Layout.columnSpan: 7
                         Layout.fillWidth: true
+                        spacing: Kirigami.Units.smallSpacing
 
                         QQC2.Label {
                             text: "SE" + rowDelegate.modelData.se + ".SH" + rowDelegate.modelData.sh
                             font: Kirigami.Theme.smallFont
-                            Layout.preferredWidth: 64
+                            Layout.minimumWidth: 72
+                            Layout.preferredWidth: 72
+                            Layout.maximumWidth: 72
                         }
                         Repeater {
                             model: 5
                             QQC2.Button {
+                                id: routeButton
                                 required property int index
                                 readonly property bool routed: Boolean(rowDelegate.modelData.wgps[index])
                                 readonly property bool factory: Boolean(rowDelegate.modelData.factoryWgps[index])
+                                readonly property color stateColor: factory
+                                    ? (routed ? Kirigami.Theme.neutralTextColor : Kirigami.Theme.negativeTextColor)
+                                    : routed ? Kirigami.Theme.positiveTextColor : Kirigami.Theme.negativeTextColor
                                 text: factory ? (routed ? "OEM" : "OEM!") : routed ? "ON" : "OFF"
                                 enabled: root.editable && !factory
-                                highlighted: routed
                                 Layout.fillWidth: true
-                                Layout.minimumWidth: 42
+                                Layout.minimumWidth: 64
+                                Layout.preferredWidth: 80
+                                background: Rectangle {
+                                    radius: 4
+                                    color: Qt.rgba(routeButton.stateColor.r, routeButton.stateColor.g,
+                                        routeButton.stateColor.b, 0.16)
+                                    border.color: routeButton.stateColor
+                                    border.width: 1
+                                }
+                                contentItem: QQC2.Label {
+                                    text: routeButton.text
+                                    font: routeButton.font
+                                    color: routeButton.stateColor
+                                    horizontalAlignment: Text.AlignHCenter
+                                    verticalAlignment: Text.AlignVCenter
+                                }
                                 QQC2.ToolTip.visible: hovered && !enabled
                                 QQC2.ToolTip.text: factory ? "Factory routing is locked." : root.disabledReason
                                 onClicked: {
@@ -132,7 +169,13 @@ ColumnLayout {
                                 }
                             }
                         }
-                        QQC2.Label { text: rowDelegate.modelData.cus + "/10"; horizontalAlignment: Text.AlignRight }
+                        QQC2.Label {
+                            text: rowDelegate.modelData.cus + "/10"
+                            horizontalAlignment: Text.AlignRight
+                            Layout.minimumWidth: 52
+                            Layout.preferredWidth: 52
+                            Layout.maximumWidth: 52
+                        }
                     }
                 }
             }

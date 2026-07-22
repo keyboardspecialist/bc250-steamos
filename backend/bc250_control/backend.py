@@ -1244,7 +1244,9 @@ class ToolkitBackend:
             return parts[1]
         return parts[1:]
 
-    async def _cec_property(self, path: str, interface: str, prop: str) -> Any:
+    async def _cec_properties(
+        self, path: str, interface: str, properties: tuple[str, ...]
+    ) -> list[Any]:
         rc, out, _ = await self._user_exec(
             [
                 BUSCTL,
@@ -1254,28 +1256,32 @@ class ToolkitBackend:
                 "com.steampowered.CecDaemon1",
                 path,
                 interface,
-                prop,
+                *properties,
             ],
             timeout=5,
             check=False,
         )
-        return self._bus_value(out) if rc == 0 else None
+        if rc != 0:
+            return [None] * len(properties)
+        values = [self._bus_value(line) for line in out.splitlines()]
+        return values if len(values) == len(properties) else [None] * len(properties)
 
     async def get_cec_status(self) -> dict[str, Any]:
         daemon_path = "/com/steampowered/CecDaemon1/Daemon"
         device_path = "/com/steampowered/CecDaemon1/Devices/Cec0"
         config_if = "com.steampowered.CecDaemon1.Config1"
         device_if = "com.steampowered.CecDaemon1.CecDevice1"
-        properties = await asyncio.gather(
-            self._cec_property(daemon_path, config_if, "OsdName"),
-            self._cec_property(daemon_path, config_if, "WakeTv"),
-            self._cec_property(daemon_path, config_if, "SuspendTv"),
-            self._cec_property(daemon_path, config_if, "AllowStandby"),
-            self._cec_property(daemon_path, config_if, "Uinput"),
-            self._cec_property(device_path, device_if, "Active"),
-            self._cec_property(device_path, device_if, "PhysicalAddress"),
-            self._cec_property(device_path, device_if, "AudioLogicalAddress"),
+        config = await self._cec_properties(
+            daemon_path,
+            config_if,
+            ("OsdName", "WakeTv", "SuspendTv", "AllowStandby", "Uinput"),
         )
+        device = await self._cec_properties(
+            device_path,
+            device_if,
+            ("Active", "PhysicalAddress", "AudioLogicalAddress"),
+        )
+        properties = [*config, *device]
         # Property access can D-Bus-activate cecd, so capture service state after it.
         service = await self._service("cecd.service", user=True)
         if any(value is not None for value in properties):
