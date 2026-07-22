@@ -28,6 +28,9 @@ class DesktopReleaseTests(unittest.TestCase):
         main = (plasmoid / "contents/ui/main.qml").read_text(encoding="utf-8")
         self.assertIn("switchWidth: 720", main)
         self.assertIn("toolTipMainText:", main)
+        self.assertIn("Backend { id: backendController }", main)
+        self.assertIn("backend: backendController", main)
+        self.assertNotIn("backend: backend\n", main)
         self.assertNotIn("Plasmoid.switchWidth", main)
         self.assertNotIn("Plasmoid.toolTipMainText", main)
 
