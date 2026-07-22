@@ -201,8 +201,8 @@ root_uninstall() {
         [[ -f "$POLKIT_POLICY" && ! -L "$POLKIT_POLICY" ]] \
             || die "Refusing to remove unsafe polkit path: $POLKIT_POLICY"
         local state
-        state=$(/usr/bin/steamos-readonly status 2>&1) \
-            || die "Could not determine the SteamOS readonly state."
+        # steamos-readonly returns 1 when the valid state is "disabled".
+        state=$(/usr/bin/steamos-readonly status 2>&1) || true
         case "${state,,}" in
             *enabled*)
                 UNINSTALL_READONLY_CHANGED=1

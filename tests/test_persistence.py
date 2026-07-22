@@ -395,8 +395,16 @@ grep -Fxq "daemon-reload" "$SYSTEMCTL_LOG"
         )
         self.assertIn("PAYLOAD_SWAPPED=1", installer)
         self.assertIn("trap restore_uninstall_readonly EXIT", installer)
+        self.assertIn(
+            "state=$(/usr/bin/steamos-readonly status 2>&1) || true",
+            installer,
+        )
         self.assertIn("READONLY_CHANGED=1", repair)
         self.assertIn("trap restore_readonly EXIT", repair)
+        self.assertIn(
+            "state=$(/usr/bin/steamos-readonly status 2>&1) || true",
+            repair,
+        )
         self.assertIn(
             "if [[ $READONLY_CHANGED -eq 1 ]]; then\n"
             "        /usr/bin/steamos-readonly enable",

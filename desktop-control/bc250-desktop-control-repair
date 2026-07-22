@@ -34,8 +34,8 @@ make_usr_writable() {
     local state
     [[ -x /usr/bin/steamos-readonly ]] \
         || die "/usr/bin/steamos-readonly is unavailable."
-    state=$(/usr/bin/steamos-readonly status 2>&1) \
-        || die "Could not determine the SteamOS readonly state."
+    # steamos-readonly returns 1 when the valid state is "disabled".
+    state=$(/usr/bin/steamos-readonly status 2>&1) || true
     case "${state,,}" in
         *enabled*)
             READONLY_CHANGED=1
