@@ -7,6 +7,7 @@ REL=$(uname -r)
 HERE=$(cd "$(dirname "$0")" && pwd)
 SRC=$HERE/amdgpu.ko.zst
 DST=/usr/lib/modules/$REL/updates/amdgpu.ko.zst
+MARKER=/usr/lib/modules/$REL/updates/.bc250-audio-fix
 
 [ -f "$SRC" ] || { echo "missing $SRC — the module is not shipped in the repo; build it against your running kernel first: ./fetch-sources.sh && ./build.sh"; exit 1; }
 [ "$(id -u)" = 0 ] || { echo "run with sudo"; exit 1; }
@@ -33,7 +34,7 @@ ROOTFS_WAS_READONLY=0
 INSTALL_STARTED=0
 INSTALL_OK=0
 TMPD=$(mktemp -d)
-PRIORITY_FILE=/usr/lib/depmod.d/10-updates.conf
+PRIORITY_FILE=/usr/lib/depmod.d/10-bc250-audio-fix.conf
 cleanup() {
     if [ "$INSTALL_STARTED" = 1 ] && [ "$INSTALL_OK" = 0 ]; then
         echo "install failed; restoring the previous module override" >&2
@@ -41,6 +42,11 @@ cleanup() {
             install -D -m644 "$TMPD/original.ko.zst" "$DST"
         else
             rm -f "$DST"
+        fi
+        if [ -f "$TMPD/original-marker" ]; then
+            install -D -m644 "$TMPD/original-marker" "$MARKER"
+        else
+            rm -f "$MARKER"
         fi
         if [ -f "$TMPD/original-priority.conf" ]; then
             install -D -m644 "$TMPD/original-priority.conf" "$PRIORITY_FILE"
@@ -55,6 +61,7 @@ cleanup() {
 }
 trap cleanup EXIT
 if [ -f "$DST" ]; then cp -a "$DST" "$TMPD/original.ko.zst"; fi
+if [ -f "$MARKER" ]; then cp -a "$MARKER" "$TMPD/original-marker"; fi
 if [ -f "$PRIORITY_FILE" ]; then cp -a "$PRIORITY_FILE" "$TMPD/original-priority.conf"; fi
 if steamos-readonly status 2>/dev/null | grep -qi enabled; then
     steamos-readonly disable
@@ -63,6 +70,8 @@ fi
 
 INSTALL_STARTED=1
 install -D -m644 "$SRC" "$DST"
+sha256sum "$DST" | awk '{print $1}' > "$MARKER"
+chmod 644 "$MARKER"
 depmod "$REL"
 
 RESOLVED=$(modinfo -k "$REL" -F filename amdgpu)
@@ -70,7 +79,10 @@ echo "amdgpu now resolves to: $RESOLVED"
 if [[ "$RESOLVED" != *"/updates/"* ]]; then
     echo "ERROR: updates/ override not winning; forcing depmod priority"
     mkdir -p /usr/lib/depmod.d
-    echo "search updates built-in" > "$PRIORITY_FILE"
+    cat > "$PRIORITY_FILE" <<'EOF'
+# Managed by bc250-audio-fix/install.sh
+search updates built-in
+EOF
     depmod "$REL"
     RESOLVED=$(modinfo -k "$REL" -F filename amdgpu)
     echo "amdgpu now resolves to: $RESOLVED"

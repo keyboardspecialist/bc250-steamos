@@ -185,10 +185,14 @@ root_uninstall() {
     trap restore_uninstall_readonly EXIT
     systemctl disable --now bc250-control.service \
         bc250-desktop-control-repair.service >/dev/null 2>&1 || true
+    if systemctl is-active --quiet bc250-control.service \
+        || systemctl is-active --quiet bc250-desktop-control-repair.service; then
+        die "Could not stop the desktop services; refusing to remove their files."
+    fi
     rm -f "$SERVICE_UNIT" "$REPAIR_UNIT" \
         /etc/systemd/system/multi-user.target.wants/bc250-control.service \
         /etc/systemd/system/multi-user.target.wants/bc250-desktop-control-repair.service \
-        "$DBUS_POLICY" "$KEEP_FILE"
+        "$DBUS_POLICY"
     rm -f /etc/systemd/system/bc250-control.service.d/10-bc250-storage.conf \
         /etc/systemd/system/bc250-desktop-control-repair.service.d/10-bc250-storage.conf
     rmdir /etc/systemd/system/bc250-control.service.d \
@@ -217,6 +221,7 @@ root_uninstall() {
     rm -rf "$PAYLOAD_DIR"
     systemctl daemon-reload
     systemctl reload dbus.service >/dev/null 2>&1 || true
+    bash "$REPO_DIR/bc250-update-persistence.sh" remove desktop
     log "Desktop service removed; shared BC-250 toolkit assets were preserved."
 }
 

@@ -75,9 +75,14 @@ USER_UNIT_DIR="$HOME/.config/systemd/user"
 WAKE_UNIT="$USER_UNIT_DIR/bc250-cec-boot-wake.service"
 WAKE_SVC="bc250-cec-boot-wake.service"
 WAKE_HELPER="$HOME/.local/bin/bc250-cec-boot-wake"
+WAKE_WANTS="$USER_UNIT_DIR/graphical-session.target.wants/$WAKE_SVC"
 STANDBY_UNIT="/etc/systemd/system/bc250-cec-poweroff-standby.service"
 STANDBY_SVC="bc250-cec-poweroff-standby.service"
 STANDBY_HELPER="/var/lib/bc250-control/helper/bc250-cec-poweroff-standby"
+STANDBY_WANTS="/etc/systemd/system/multi-user.target.wants/$STANDBY_SVC"
+STANDBY_DROPIN_DIR="/etc/systemd/system/$STANDBY_SVC.d"
+STANDBY_DROPIN="$STANDBY_DROPIN_DIR/10-bc250-storage.conf"
+LEGACY_STANDBY_HELPER="/etc/bc250-cec-poweroff-standby.sh"
 RECOVERY_SVC="bc250-persistence-recovery.service"
 
 # Receiver-follow toggles live in our own flat key=value file, read by the
@@ -85,6 +90,7 @@ RECOVERY_SVC="bc250-persistence-recovery.service"
 # reinstall. Root helpers get the absolute path baked in at install.
 AMP_CONF="$HOME/.config/bc250-cec.conf"
 SLEEP_HOOK="/etc/systemd/system-sleep/bc250-cec-amp.sh"
+CEC_KEEP_FILE="/etc/atomic-update.conf.d/bc250-cec.conf"
 UPDATE_PERSIST_SH="$SCRIPT_DIR/bc250-update-persistence.sh"
 STORAGE_SH="$SCRIPT_DIR/bc250-storage.sh"
 
@@ -99,9 +105,13 @@ install_update_persistence() {
     sudo bash "$UPDATE_PERSIST_SH" install cec
 }
 
-require_user() {
+require_normal_user() {
     [[ $EUID -ne 0 ]] || die "Run as deck, not root -- cecd lives on deck's user D-Bus session.
       Only 'shutdown-standby install' needs sudo, and it asks by itself."
+}
+
+require_user() {
+    require_normal_user
     [[ -S "${XDG_RUNTIME_DIR:-/run/user/$(id -u)}/bus" ]] \
         || die "No user D-Bus session (\$XDG_RUNTIME_DIR/bus missing) -- run from a logged-in deck session."
 }
@@ -526,6 +536,30 @@ badge_remote() {
 
 # ============================== status ====================================
 
+path_present() { [[ -e "$1" || -L "$1" ]]; }
+
+cec_integration_installed() {
+    local path
+    for path in \
+        "$WAKE_UNIT" "$WAKE_HELPER" "$WAKE_WANTS" \
+        "$STANDBY_UNIT" "$STANDBY_HELPER" "$STANDBY_WANTS" \
+        "$STANDBY_DROPIN" "$LEGACY_STANDBY_HELPER" \
+        "$SLEEP_HOOK" "$CEC_KEEP_FILE"; do
+        path_present "$path" && return 0
+    done
+    return 1
+}
+
+cmd_installed() {
+    require_normal_user
+    if cec_integration_installed; then
+        echo "installed"
+        return 0
+    fi
+    echo "not-installed"
+    return 1
+}
+
 cmd_status() {
     require_user
     echo -e "${CB}== CEC device ==${C0}"
@@ -578,6 +612,11 @@ cmd_status() {
     echo "  power status: $(tv_power_status)"
 
     echo -e "${CB}== installed extras ==${C0}"
+    if cec_integration_installed; then
+        echo "  aggregate integration: installed"
+    else
+        echo "  aggregate integration: not installed"
+    fi
     echo "  poweroff standby unit: $(c_state "$(unit_state is-enabled "$STANDBY_SVC")")"
     echo "  boot wake unit (user): $(c_state "$(unit_state --user is-enabled "$WAKE_SVC")")"
     echo "  amp suspend/resume hook: $([[ -f "$SLEEP_HOOK" ]] && echo present || echo absent)"
@@ -600,14 +639,15 @@ cmd_status() {
 # ============================ OSD name ====================================
 
 cmd_osd_name() {
-    require_user; require_daemon
+    require_user
     local name="${1:-}"
     if [[ "$name" == "--reset" ]]; then
         rm -f "$NAME_CONF"
-        daemon_reload_config >/dev/null
-        log "OSD name fragment removed -- back to cecd's default after next restart."
+        cecd_up && daemon_reload_config >/dev/null
+        log "OSD name fragment removed -- back to cecd's default after cecd restarts."
         return 0
     fi
+    require_daemon
     if [[ -z "$name" ]]; then
         ask "TV OSD name (max 14 bytes)" "$OSD_DEFAULT"; name="$REPLY"
     fi
@@ -689,7 +729,11 @@ cmd_clear_overrides() {
         return 0
     fi
     rm -f "$OVR_CONF"
-    cecd_up && daemon_reload_config >/dev/null
+    if ! cecd_up; then
+        log "Overrides cleared. Steam UI will regain control when cecd starts."
+        return 0
+    fi
+    daemon_reload_config >/dev/null
     log "Overrides cleared. Effective toggles now:"
     local key
     for key in wake_tv suspend_tv allow_standby uinput; do
@@ -748,7 +792,7 @@ grep -qx 'amp_poweroff=0' "$conf" 2>/dev/null \
 EOF
             } | sudo tee "$STANDBY_HELPER" >/dev/null
             sudo chmod +x "$STANDBY_HELPER"
-            sudo rm -f /etc/bc250-cec-poweroff-standby.sh
+            sudo rm -f "$LEGACY_STANDBY_HELPER"
             sudo tee "$STANDBY_UNIT" >/dev/null << EOF
 [Unit]
 Description=BC-250: CEC standby to TV + receiver on poweroff (polite)
@@ -778,7 +822,7 @@ EOF
             log "Removing $STANDBY_SVC (sudo)..."
             sudo systemctl disable --now "$STANDBY_SVC" >/dev/null 2>&1 || true
             sudo rm -f "$STANDBY_UNIT" "$STANDBY_HELPER" \
-                /etc/bc250-cec-poweroff-standby.sh
+                "$STANDBY_WANTS" "$LEGACY_STANDBY_HELPER"
             sudo systemctl daemon-reload
             log "Removed."
             ;;
@@ -933,7 +977,7 @@ EOF
         remove)
             require_user
             systemctl --user disable "$WAKE_SVC" >/dev/null 2>&1 || true
-            rm -f "$WAKE_UNIT" "$WAKE_HELPER"
+            rm -f "$WAKE_UNIT" "$WAKE_HELPER" "$WAKE_WANTS"
             systemctl --user daemon-reload
             log "Removed."
             ;;
@@ -1110,6 +1154,35 @@ cmd_setup() {
     echo
     log "Done. Already on out of the box: wake TV on resume, suspend console"
     log "when the TV turns off, TV remote as input. Check with: $0 status"
+}
+
+# ============================= uninstall ==================================
+
+cmd_uninstall() {
+    require_normal_user
+    if ! cec_integration_installed; then
+        log "CEC integration is not installed."
+        return 0
+    fi
+    if [[ -S "${XDG_RUNTIME_DIR:-/run/user/$(id -u)}/bus" ]]; then
+        systemctl --user disable "$WAKE_SVC" >/dev/null 2>&1 || true
+    fi
+    rm -f "$WAKE_UNIT" "$WAKE_HELPER" "$WAKE_WANTS"
+
+    sudo systemctl disable --now "$STANDBY_SVC" >/dev/null 2>&1 || true
+    sudo rm -f "$STANDBY_UNIT" "$STANDBY_HELPER" "$STANDBY_WANTS" \
+        "$LEGACY_STANDBY_HELPER" "$STANDBY_DROPIN" "$SLEEP_HOOK"
+    sudo rmdir "$STANDBY_DROPIN_DIR" 2>/dev/null || true
+    sudo systemctl daemon-reload
+    if [[ -S "${XDG_RUNTIME_DIR:-/run/user/$(id -u)}/bus" ]]; then
+        systemctl --user daemon-reload || true
+    fi
+
+    log "Removing CEC persistence metadata (sudo)..."
+    [[ -f "$UPDATE_PERSIST_SH" ]] \
+        || die "Update persistence helper missing: $UPDATE_PERSIST_SH"
+    sudo bash "$UPDATE_PERSIST_SH" remove cec
+    log "CEC integration uninstalled. User preferences, Valve/Steam CEC config, and shared BC-250 storage were preserved."
 }
 
 # ============================== tests =====================================
@@ -1658,7 +1731,7 @@ suspends the console when the TV turns off, and relays the TV remote as
 an input device. This script configures cecd and fills its gaps.
 
 Run as deck (NOT root/sudo) -- cecd lives on the user D-Bus session.
-Only 'shutdown-standby install' escalates, by itself, for one unit file.
+System integration commands and aggregate uninstall request sudo themselves.
 
 GUIDED MENU
   Run with no arguments in a terminal: arrow keys / j k, Enter, q.
@@ -1668,6 +1741,13 @@ SETUP
   setup            Recommended one-shot: osd-name BC-250, TV standby on
                    suspend + poweroff, wake TV at boot, and (optional
                    prompt) wake the receiver at boot too.
+  uninstall        Remove every user/system unit and helper installed by this
+                   script plus CEC update-persistence metadata. OSD, toggle,
+                   and receiver-follow preferences are preserved along with
+                   Valve's cecd/Steam config and shared BC-250 storage.
+  installed        Filesystem-only orchestration probe. Prints "installed" and
+                   exits 0 if any script-owned integration remains; otherwise
+                   prints "not-installed" and exits 1. No adapter/cecd required.
   osd-name [NAME]  Name shown in the TV's device/input list (max 14
                    bytes, default BC-250). 'osd-name --reset' removes it.
   toggle KEY [on|off]
@@ -1779,7 +1859,9 @@ if [[ $# -eq 0 && -t 0 && -t 1 ]]; then
 fi
 case "${1:-}" in
     status)            cmd_status ;;
+    installed)         (($# == 1)) || die "usage: $0 installed"; cmd_installed ;;
     setup)             cmd_setup ;;
+    uninstall)         (($# == 1)) || die "usage: $0 uninstall"; cmd_uninstall ;;
     osd-name)          shift; cmd_osd_name "$@" ;;
     toggle)            shift; cmd_toggle "$@" ;;
     clear-overrides)   cmd_clear_overrides ;;
@@ -1805,7 +1887,7 @@ case "${1:-}" in
     mute)              cmd_mute ;;
     menu)              cmd_menu ;;
     help|-h|--help)    cmd_help ;;
-    *) echo "Usage: $0 {status|setup|osd-name|toggle|clear-overrides|shutdown-standby|boot-wake|"
+    *) echo "Usage: $0 {status|installed|setup|uninstall|osd-name|toggle|clear-overrides|shutdown-standby|boot-wake|"
        echo "           active|handoff|release|amp-follow|amp-sleep|test|scan|repair|monitor|"
        echo "           remote|tv-on|tv-off|amp-on|amp-off|switch|vol-up|vol-down|mute|menu|help}"
        echo "  (no arguments on a terminal opens the guided menu)"

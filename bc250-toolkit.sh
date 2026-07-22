@@ -14,6 +14,7 @@ AIC_SETUP_SH="$SCRIPT_DIR/aic8800/steamdeck-setup.sh"
 AUDIO_FIX_SH="$SCRIPT_DIR/bc250-audio-fix/patch-driver.sh"
 DECKY_INSTALL_SH="$SCRIPT_DIR/decky-plugin/install.sh"
 DESKTOP_INSTALL_SH="$SCRIPT_DIR/desktop-control/install.sh"
+MAINTENANCE_SH="$SCRIPT_DIR/bc250-maintenance.sh"
 
 C0=$'\033[0m'; CB=$'\033[1m'; CD=$'\033[2m'; CI=$'\033[7m'
 CG=$'\033[32m'; CY=$'\033[33m'; CR=$'\033[31m'; CC=$'\033[36m'
@@ -206,6 +207,7 @@ cmd_menu() {
             "Patch AMDGPU Driver|${CY}[build]${C0}|Build and install the matching patched AMDGPU module."
             "Decky plugin|${CY}[installer]${C0}|Build and install the BC-250 Quick Access plugin."
             "Plasma desktop control|${CY}[installer]${C0}|Install the system service and Plasma system-tray control."
+            "Manage installed components|${CR}[maintenance]${C0}|Review uninstall plans, remove components, or purge preserved data."
         )
         menu_select "BC-250 SteamOS toolkit" "${items[@]}" || { echo; break; }
         case $MENU_CHOICE in
@@ -219,13 +221,14 @@ cmd_menu() {
             7) run_menu_action audio ;;
             8) run_menu_action decky ;;
             9) run_menu_action desktop ;;
+            10) run_menu_child manage ;;
         esac
     done
 }
 
 cmd_help() {
     cat << EOF
-Usage: $0 [menu|status|power|compute|cec|storage|persistence|wifi|audio|decky|desktop|help]
+Usage: $0 [menu|status|power|compute|cec|storage|persistence|wifi|audio|decky|desktop|manage|help]
 
 Run without arguments in a terminal to open the unified toolkit menu.
 Run the toolkit as the logged-in Deck user, not with sudo; child tools request
@@ -242,6 +245,7 @@ Commands:
   audio                  Confirm and run the AMDGPU clock-fix builder
   decky                  Confirm and run the Decky plugin installer
   desktop                Confirm and run the Plasma desktop-control installer
+  manage                 Open installed-component maintenance and cleanup
 EOF
 }
 
@@ -268,6 +272,7 @@ case "$command_name" in
     audio) (($# == 0)) || die "Usage: $0 audio"; install_audio_fix ;;
     decky) (($# == 0)) || die "Usage: $0 decky"; install_decky ;;
     desktop) (($# == 0)) || die "Usage: $0 desktop"; install_desktop ;;
+    manage) (($# == 0)) || die "Usage: $0 manage"; run_script "$MAINTENANCE_SH" menu ;;
     help|-h|--help) (($# == 0)) || die "Usage: $0 help"; cmd_help ;;
     *) cmd_help >&2; exit 1 ;;
 esac

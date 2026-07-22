@@ -1,6 +1,7 @@
 #!/bin/bash
 # One-shot (re)setup of the AIC8800D80 USB WiFi dongle on the Steam Deck.
-# Run:  sudo bash steamdeck-setup.sh
+# Run:  sudo bash steamdeck-setup.sh [install|uninstall]
+#       bash steamdeck-setup.sh status
 #
 # SteamOS updates/reinstalls wipe /usr (build tools + installed modules).
 # This script restores everything:
@@ -17,7 +18,265 @@
 # headers but deliberately leaves the expensive source fallback interactive.
 set -euo pipefail
 
+ROOT_DATA_DIR=/var/lib/bc250-control
+AIC_DATA_DIR=$ROOT_DATA_DIR/aic8800
+ROOT_SOURCE=$AIC_DATA_DIR/source
+ROOT_HELPER=$ROOT_DATA_DIR/helper/aic8800-ensure-modules
+UNINSTALL_PENDING=$AIC_DATA_DIR/uninstall-pending
+SERVICE_UNIT=/etc/systemd/system/aic8800-modules.service
+KEEP_FILE=/etc/atomic-update.conf.d/bc250-aic.conf
+KREL=$(uname -r)
+
+log() { echo "[aic8800] $*"; }
+
+runtime_artifact_present() {
+    local path
+    for path in \
+        /usr/lib/modules/*/updates/aic8800/aic_load_fw.ko \
+        /usr/lib/modules/*/updates/aic8800/aic8800_fdrv.ko \
+        "$AIC_DATA_DIR/firmware" "$AIC_DATA_DIR/modules" "$ROOT_HELPER" \
+        "$UNINSTALL_PENDING" \
+        /etc/modprobe.d/aic8800.conf \
+        /etc/udev/rules.d/40-aic8800-modeswitch.rules \
+        /etc/usb_modeswitch.d/1111:1111 "$SERVICE_UNIT"; do
+        [ ! -e "$path" ] && [ ! -L "$path" ] || return 0
+    done
+    return 1
+}
+
+show_status() {
+    local failed=0 state module_dir
+
+    if ! runtime_artifact_present; then
+        log "state: not-installed"
+        if [ -d "$ROOT_SOURCE" ]; then
+            log "persistent source: preserved ($ROOT_SOURCE)"
+        fi
+        return 1
+    fi
+
+    module_dir="/usr/lib/modules/$KREL/updates/aic8800"
+    if [ -f "$module_dir/aic_load_fw.ko" ] \
+       && [ -f "$module_dir/aic8800_fdrv.ko" ]; then
+        state=installed
+    elif [ -f "$AIC_DATA_DIR/modules/$KREL/aic_load_fw.ko" ] \
+         && [ -f "$AIC_DATA_DIR/modules/$KREL/aic8800_fdrv.ko" ]; then
+        state=staged
+    else
+        state=missing
+        failed=1
+    fi
+    log "modules for $KREL: $state"
+
+    if [ -d /sys/module/aic_load_fw ] && [ -d /sys/module/aic8800_fdrv ]; then
+        state=loaded
+    else
+        state=not-loaded
+    fi
+    log "module runtime: $state"
+
+    if [ -f "$SERVICE_UNIT" ] && [ -x "$ROOT_HELPER" ] \
+       && [ -f "$ROOT_SOURCE/Makefile" ] \
+       && command -v systemctl >/dev/null 2>&1 \
+       && systemctl is-enabled aic8800-modules.service >/dev/null 2>&1; then
+        state=enabled
+    else
+        state=disabled
+        failed=1
+    fi
+    log "repair service: $state"
+
+    if [ -f /etc/modprobe.d/aic8800.conf ] \
+       && [ -f /etc/udev/rules.d/40-aic8800-modeswitch.rules ] \
+       && [ -f /etc/usb_modeswitch.d/1111:1111 ]; then
+        state=installed
+    else
+        state=incomplete
+        failed=1
+    fi
+    log "device configuration: $state"
+
+    if [ -d "$AIC_DATA_DIR/firmware/aic8800D80" ]; then
+        state=installed
+    else
+        state=missing
+        failed=1
+    fi
+    log "runtime firmware: $state"
+    [ "$failed" = 0 ] && log "state: installed" || log "state: incomplete"
+    return "$failed"
+}
+
+UNINSTALL_ROOTFS_WAS_READONLY=0
+restore_uninstall_rootfs() {
+    local rc=$?
+    trap - EXIT
+    if [ "$UNINSTALL_ROOTFS_WAS_READONLY" = 1 ]; then
+        steamos-readonly enable || rc=1
+        UNINSTALL_ROOTFS_WAS_READONLY=0
+    fi
+    exit "$rc"
+}
+
+uninstall_aic8800() {
+    local module path rel existing reboot_required=0 modules_removed=0
+    local update_persist
+    local affected_releases=()
+
+    [ "$(id -u)" = 0 ] || { log "uninstall requires root; run: sudo bash $0 uninstall" >&2; return 1; }
+
+    # Stop and disable automatic repair before removing any of its inputs.
+    if command -v systemctl >/dev/null 2>&1; then
+        systemctl disable --now aic8800-modules.service >/dev/null 2>&1 || true
+        if systemctl is-active --quiet aic8800-modules.service \
+           || systemctl is-enabled --quiet aic8800-modules.service; then
+            log "could not disable the repair service; refusing uninstall" >&2
+            return 1
+        fi
+    fi
+    command -v flock >/dev/null || { log "flock is required" >&2; return 1; }
+    exec 9>/run/lock/bc250-aic8800.lock
+    flock 9
+    trap restore_uninstall_rootfs EXIT
+    update_persist="$(cd "$(dirname "$0")/.." && pwd)/bc250-update-persistence.sh"
+    [ -f "$update_persist" ] && [ ! -L "$update_persist" ] \
+        || { log "update persistence helper is missing or unsafe: $update_persist" >&2; return 1; }
+
+    if [ -e "$UNINSTALL_PENDING" ] || [ -L "$UNINSTALL_PENDING" ]; then
+        [ -f "$UNINSTALL_PENDING" ] && [ ! -L "$UNINSTALL_PENDING" ] \
+            || { log "unsafe pending rollback state: $UNINSTALL_PENDING" >&2; return 1; }
+        while IFS= read -r rel; do
+            [ -n "$rel" ] || continue
+            [[ "$rel" =~ ^[A-Za-z0-9._+-]+$ ]] \
+                || { log "unsafe pending kernel release: $rel" >&2; return 1; }
+            affected_releases+=("$rel")
+        done < "$UNINSTALL_PENDING"
+        modules_removed=1
+    fi
+
+    for module in aic8800_fdrv aic_load_fw; do
+        if [ -d "/sys/module/$module" ]; then
+            if ! modprobe -r "$module"; then
+                log "could not unload $module; removal will finish after reboot"
+                reboot_required=1
+            fi
+        fi
+    done
+
+    if steamos-readonly status 2>/dev/null | grep -qi enabled; then
+        steamos-readonly disable
+        UNINSTALL_ROOTFS_WAS_READONLY=1
+    fi
+
+    for path in /usr/lib/modules/*/updates/aic8800/aic_load_fw.ko \
+                /usr/lib/modules/*/updates/aic8800/aic8800_fdrv.ko; do
+        [ -e "$path" ] || [ -L "$path" ] || continue
+        [ -f "$path" ] && [ ! -L "$path" ] \
+            || { log "refusing unsafe module path: $path" >&2; return 1; }
+        rel=${path#/usr/lib/modules/}
+        rel=${rel%%/*}
+        if [[ ! "$rel" =~ ^[A-Za-z0-9._+-]+$ ]]; then
+            log "refusing module under unsafe kernel release: $rel"
+            return 1
+        fi
+        existing=0
+        for module in "${affected_releases[@]}"; do
+            [ "$module" != "$rel" ] || existing=1
+        done
+        if [ "$existing" = 0 ]; then
+            affected_releases+=("$rel")
+        fi
+        modules_removed=1
+    done
+    if [ "${#affected_releases[@]}" -gt 0 ]; then
+        command -v depmod >/dev/null \
+            || { log "depmod is required to finish module removal" >&2; return 1; }
+        command -v mkinitcpio >/dev/null \
+            || { log "mkinitcpio is required to rebuild boot images" >&2; return 1; }
+        install -d -o root -g root -m 0755 "$AIC_DATA_DIR"
+        printf '%s\n' "${affected_releases[@]}" > "$UNINSTALL_PENDING"
+        chmod 0644 "$UNINSTALL_PENDING"
+    fi
+    for path in /usr/lib/modules/*/updates/aic8800/aic_load_fw.ko \
+                /usr/lib/modules/*/updates/aic8800/aic8800_fdrv.ko; do
+        [ -e "$path" ] || [ -L "$path" ] || continue
+        rm -f "$path"
+    done
+    for rel in "${affected_releases[@]}"; do
+        rmdir "/usr/lib/modules/$rel/updates/aic8800" 2>/dev/null || true
+        depmod "$rel"
+    done
+
+    rm -f /etc/modprobe.d/aic8800.conf \
+        /etc/udev/rules.d/40-aic8800-modeswitch.rules \
+        /etc/usb_modeswitch.d/1111:1111 \
+        "$SERVICE_UNIT" "$ROOT_HELPER" \
+        /etc/aic8800-ensure-modules.sh /etc/aic8800-paths.conf \
+        /etc/systemd/system/multi-user.target.wants/aic8800-modules.service \
+        /etc/systemd/system/aic8800-modules.service.d/10-bc250-storage.conf
+    rmdir /etc/systemd/system/aic8800-modules.service.d 2>/dev/null || true
+    rm -rf "$AIC_DATA_DIR/firmware" "$AIC_DATA_DIR/modules"
+
+    if command -v udevadm >/dev/null 2>&1; then
+        udevadm control --reload || true
+    fi
+    if command -v systemctl >/dev/null 2>&1; then
+        systemctl daemon-reload
+    fi
+    if [ "$modules_removed" = 1 ]; then
+        mkinitcpio -P
+    fi
+    rm -f "$UNINSTALL_PENDING"
+    bash "$update_persist" remove aic
+
+    log "runtime modules, firmware, configuration, and repair service removed"
+    log "persistent source preserved at $ROOT_SOURCE"
+    log "repository source and build caches were not removed"
+    if [ "$reboot_required" = 1 ]; then
+        log "reboot required: yes (a module is still loaded)"
+    else
+        log "reboot required: no"
+    fi
+}
+
+usage() {
+    cat <<EOF
+Usage: $0 [install|status|uninstall|help]
+
+Install and uninstall run as root: sudo bash $0 install|uninstall
+Status is read-only and runs as the logged-in user: bash $0 status
+Uninstall preserves the persistent source snapshot and downloaded build caches.
+EOF
+}
+
+case "${1:-install}" in
+    status)
+        [ "$#" = 1 ] || { usage >&2; exit 2; }
+        show_status
+        exit
+        ;;
+    uninstall)
+        [ "$#" = 1 ] || { usage >&2; exit 2; }
+        uninstall_aic8800
+        exit
+        ;;
+    install)
+        [ "$#" -le 1 ] || { usage >&2; exit 2; }
+        ;;
+    help|-h|--help)
+        usage
+        exit
+        ;;
+    *)
+        usage >&2
+        exit 2
+        ;;
+esac
+
 [ "$(id -u)" = 0 ] || { echo "Please run with sudo."; exit 1; }
+command -v flock >/dev/null || { echo "flock is required" >&2; exit 1; }
+exec 9>/run/lock/bc250-aic8800.lock
+flock 9
 
 REAL_USER="${SUDO_USER:-deck}"
 REAL_HOME="${REAL_HOME:-$(getent passwd "$REAL_USER" | cut -d: -f6)}"
@@ -45,12 +304,8 @@ DRV=$REPO/src/USB/driver_fw/drivers/aic8800
 FW_SOURCE=$REPO/src/USB/driver_fw/fw/aic8800D80
 TOOLKIT_ROOT=$(cd "$REPO/.." && pwd)
 KERNEL_TREE=$TOOLKIT_ROOT/bc250-audio-fix/valve-kernel
-ROOT_DATA_DIR=/var/lib/bc250-control
 FW=$ROOT_DATA_DIR/aic8800/firmware/aic8800D80
-ROOT_SOURCE=$ROOT_DATA_DIR/aic8800/source
-ROOT_HELPER=$ROOT_DATA_DIR/helper/aic8800-ensure-modules
 BUILD_USER=$REAL_USER
-KREL=$(uname -r)
 ROOT_MODULE_STAGE=$ROOT_DATA_DIR/aic8800/modules/$KREL
 
 [ -d "$DRV" ] || { echo "Driver source not found at $DRV"; exit 1; }

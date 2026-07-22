@@ -70,6 +70,7 @@ sudo ./bc250-power.sh status
 | [`bc250-power.sh`](#power-management) | CPU power states, GPU governor, clock and voltage tuning, CPU overclocking |
 | [`bc250-cec.sh`](#cec) | TV, receiver, input, and power control over HDMI-CEC |
 | [`bc250-update-persistence.sh`](#steamos-updates) | Atomic-update allowlist and tuning recovery |
+| `bc250-maintenance.sh` | Installed-component inventory, uninstall orchestration, and optional data purge |
 | [`decky-plugin/`](#big-picture-plugin) | Quick Access interface for daily controls |
 | [`desktop-control/`](#plasma-desktop-control) | Plasma system-tray and windowed controls |
 | [`bc250-audio-fix/`](#display-clock) | DisplayPort video and audio clock correction |
@@ -90,7 +91,28 @@ Each child requests administrator access only when needed.
 | `./bc250-toolkit.sh` | Open the unified interactive menu |
 | `./bc250-toolkit.sh status` | Show the read-only component status overview |
 | `./bc250-toolkit.sh power` | Open a component menu directly |
+| `./bc250-toolkit.sh manage` | Review and remove installed components |
 | `./bc250-toolkit.sh help` | List launcher commands and components |
+
+### Uninstall And Cleanup
+
+Open **Manage installed components** in the toolkit, or run the maintenance
+script directly:
+
+```bash
+./bc250-maintenance.sh status
+./bc250-maintenance.sh plan all
+./bc250-maintenance.sh uninstall desktop
+./bc250-maintenance.sh uninstall all
+```
+
+Component uninstall restores stock behavior and removes services, drivers, and
+desktop integrations in dependency-safe order. Saved tuning profiles, CEC
+preferences, source/build caches, and persistent backing data are preserved by
+default. ACPI, compute routing, AMDGPU, and loaded AIC8800 rollback may require
+a reboot; the maintenance command reports this when applicable. After every
+component is removed, permanently delete retained data with
+`./bc250-maintenance.sh purge`.
 
 ## Compute Units
 

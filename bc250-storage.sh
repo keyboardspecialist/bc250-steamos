@@ -5,18 +5,20 @@ set -euo pipefail
 
 ROOT_DIR=/var/lib/bc250-control
 BACKING_DIR=/home/.steamos/offload/var/lib/bc250-control
+SYSTEMD_DIR=/etc/systemd/system
+ATOMIC_KEEP_DIR=/etc/atomic-update.conf.d
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SELF="$SCRIPT_DIR/$(basename "${BASH_SOURCE[0]}")"
 LEGACY_UMR_DIR=/etc/bc250-control/umr
 LEGACY_ROOT_DIR=/var/lib/bc250-40cu
 UNIT_NAME='var-lib-bc250\x2dcontrol.mount'
-UNIT_PATH="/etc/systemd/system/$UNIT_NAME"
-UNIT_WANTS="/etc/systemd/system/local-fs.target.wants/$UNIT_NAME"
+UNIT_PATH="$SYSTEMD_DIR/$UNIT_NAME"
+UNIT_WANTS="$SYSTEMD_DIR/local-fs.target.wants/$UNIT_NAME"
 RECOVERY_NAME=bc250-persistence-recovery.service
-RECOVERY_PATH="/etc/systemd/system/$RECOVERY_NAME"
-RECOVERY_WANTS="/etc/systemd/system/local-fs.target.wants/$RECOVERY_NAME"
+RECOVERY_PATH="$SYSTEMD_DIR/$RECOVERY_NAME"
+RECOVERY_WANTS="$SYSTEMD_DIR/local-fs.target.wants/$RECOVERY_NAME"
 RECOVERY_HELPER="$BACKING_DIR/helper/bc250-storage.sh"
-KEEP_PATH=/etc/atomic-update.conf.d/bc250-storage.conf
+KEEP_PATH="$ATOMIC_KEEP_DIR/bc250-storage.conf"
 ROOT_BACKED_SERVICES=(
     bc250-cu-live-manager.service
     bc250-acpi-heal.service
@@ -198,40 +200,44 @@ write_infrastructure_files() {
     install_enablement "$RECOVERY_WANTS" "$RECOVERY_NAME"
 }
 
-write_component_dropins() {
-    local unit base dropin
-    for unit in "${ROOT_BACKED_SERVICES[@]}"; do
-        base="/etc/systemd/system/$unit"
-        [[ -f "$base" && ! -L "$base" ]] || continue
-        dropin="/etc/systemd/system/$unit.d/10-bc250-storage.conf"
-        case "$unit" in
-            cyan-skillfish-governor-smu.service)
-                atomic_write "$dropin" 0644 << EOF
+render_component_dropin() {
+    case "$1" in
+        cyan-skillfish-governor-smu.service)
+            cat << EOF
 [Unit]
 Requires=$RECOVERY_NAME
 After=
 After=$RECOVERY_NAME bc250-cu-live-manager.service
 RequiresMountsFor=$ROOT_DIR
 EOF
-                ;;
-            bc250-cec-poweroff-standby.service)
-                atomic_write "$dropin" 0644 << EOF
+            ;;
+        bc250-cec-poweroff-standby.service)
+            cat << EOF
 [Unit]
 Requires=$RECOVERY_NAME
 After=
 After=$RECOVERY_NAME
 RequiresMountsFor=$ROOT_DIR
 EOF
-                ;;
-            *)
-                atomic_write "$dropin" 0644 << EOF
+            ;;
+        *)
+            cat << EOF
 [Unit]
 Requires=$RECOVERY_NAME
 After=$RECOVERY_NAME
 RequiresMountsFor=$ROOT_DIR
 EOF
-                ;;
-        esac
+            ;;
+    esac
+}
+
+write_component_dropins() {
+    local unit base dropin
+    for unit in "${ROOT_BACKED_SERVICES[@]}"; do
+        base="$SYSTEMD_DIR/$unit"
+        [[ -f "$base" && ! -L "$base" ]] || continue
+        dropin="$SYSTEMD_DIR/$unit.d/10-bc250-storage.conf"
+        render_component_dropin "$unit" | atomic_write "$dropin" 0644
     done
 }
 
@@ -495,8 +501,226 @@ install_storage() {
     log "$ROOT_DIR is backed by $BACKING_DIR"
 }
 
+list_dependencies() {
+    local unit component
+    for unit in "${ROOT_BACKED_SERVICES[@]}"; do
+        if [[ -e "$SYSTEMD_DIR/$unit" || -L "$SYSTEMD_DIR/$unit" ]]; then
+            printf 'service:%s\n' "$unit"
+        elif command -v systemctl >/dev/null \
+            && systemctl is-active --quiet "$unit"; then
+            printf 'service:%s\n' "$unit"
+        fi
+    done
+    for component in compute power cec aic desktop; do
+        if [[ -e "$ATOMIC_KEEP_DIR/bc250-$component.conf" \
+            || -L "$ATOMIC_KEEP_DIR/bc250-$component.conf" ]]; then
+            printf 'persistence:%s\n' "$component"
+        fi
+    done
+    if [[ -e "$ATOMIC_KEEP_DIR/bc250-steamos.conf" \
+        || -L "$ATOMIC_KEEP_DIR/bc250-steamos.conf" ]]; then
+        printf 'persistence:legacy\n'
+    fi
+}
+
+can_uninstall() {
+    local dependencies
+    dependencies=$(list_dependencies)
+    if [[ -n "$dependencies" ]]; then
+        printf '%s\n' "$dependencies"
+        return 1
+    fi
+    printf '%s\n' ready
+}
+
+require_no_dependencies() {
+    local action="$1" dependencies
+    dependencies=$(list_dependencies)
+    if [[ -n "$dependencies" ]]; then
+        printf '[bc250-storage] Refusing to %s; remove these dependencies first:\n' \
+            "$action" >&2
+        while IFS= read -r dependency; do
+            printf '  %s\n' "$dependency" >&2
+        done <<< "$dependencies"
+        exit 1
+    fi
+}
+
+validate_expected_link() {
+    local path="$1" expected="$2"
+    if [[ -L "$path" ]]; then
+        [[ "$(readlink "$path")" == "$expected" ]] \
+            || die "Refusing to remove unexpected enablement link: $path"
+    elif [[ -e "$path" ]]; then
+        die "Refusing to remove non-symlink enablement path: $path"
+    fi
+}
+
+validate_rendered_file() {
+    local path="$1" renderer="$2"
+    [[ -e "$path" || -L "$path" ]] || return 0
+    [[ -f "$path" && ! -L "$path" ]] \
+        || die "Refusing to remove unsafe infrastructure file: $path"
+    secure_file "$path"
+    cmp -s "$path" <("$renderer") \
+        || die "Refusing to remove unrecognized infrastructure file: $path"
+}
+
+validate_storage_paths() {
+    [[ "$ROOT_DIR" == /var/lib/bc250-control \
+        && "$BACKING_DIR" == /home/.steamos/offload/var/lib/bc250-control \
+        && "$RECOVERY_HELPER" == "$BACKING_DIR/helper/bc250-storage.sh" ]] \
+        || die "Refusing destructive action with unexpected storage paths."
+}
+
+preflight_uninstall() {
+    local unit dropin
+    validate_storage_paths
+    require_no_dependencies "uninstall storage"
+    if mountpoint -q "$ROOT_DIR"; then
+        expected_mount_active \
+            || die "Refusing to unmount unexpected mount at $ROOT_DIR"
+    fi
+    validate_expected_link "$UNIT_WANTS" "../$UNIT_NAME"
+    validate_expected_link "$RECOVERY_WANTS" "../$RECOVERY_NAME"
+    validate_rendered_file "$UNIT_PATH" render_mount_unit
+    validate_rendered_file "$RECOVERY_PATH" render_recovery_unit
+    validate_rendered_file "$KEEP_PATH" render_keep_file
+    if [[ -e "$RECOVERY_HELPER" || -L "$RECOVERY_HELPER" ]]; then
+        secure_file "$RECOVERY_HELPER"
+    fi
+    for unit in "${ROOT_BACKED_SERVICES[@]}"; do
+        dropin="$SYSTEMD_DIR/$unit.d/10-bc250-storage.conf"
+        [[ -e "$dropin" || -L "$dropin" ]] || continue
+        [[ -f "$dropin" && ! -L "$dropin" ]] \
+            || die "Refusing to remove unsafe storage drop-in: $dropin"
+        secure_file "$dropin"
+        cmp -s "$dropin" <(render_component_dropin "$unit") \
+            || die "Refusing to remove unrecognized storage drop-in: $dropin"
+    done
+}
+
+uninstall_storage() {
+    require_root
+    local unit dropin
+    preflight_uninstall
+
+    rm -f "$UNIT_WANTS" "$RECOVERY_WANTS"
+    if systemctl is-active --quiet "$UNIT_NAME"; then
+        if mountpoint -q "$ROOT_DIR"; then
+            expected_mount_active \
+                || die "Mount at $ROOT_DIR changed during uninstall; refusing to stop it."
+        fi
+        systemctl stop "$UNIT_NAME"
+    fi
+    if mountpoint -q "$ROOT_DIR"; then
+        expected_mount_active \
+            || die "Mount at $ROOT_DIR changed during uninstall; refusing to unmount it."
+        umount "$ROOT_DIR"
+    fi
+    mountpoint -q "$ROOT_DIR" \
+        && die "Failed to unmount $ROOT_DIR"
+
+    if systemctl is-active --quiet "$RECOVERY_NAME"; then
+        systemctl stop "$RECOVERY_NAME"
+    fi
+    rm -f "$UNIT_PATH" "$RECOVERY_PATH" "$KEEP_PATH"
+    for unit in "${ROOT_BACKED_SERVICES[@]}"; do
+        dropin="$SYSTEMD_DIR/$unit.d/10-bc250-storage.conf"
+        if [[ -f "$dropin" ]]; then
+            rm -f "$dropin"
+            rmdir "$(dirname "$dropin")" 2>/dev/null || true
+        fi
+    done
+    if [[ -f "$RECOVERY_HELPER" ]]; then
+        rm -f "$RECOVERY_HELPER"
+        rmdir "$(dirname "$RECOVERY_HELPER")" 2>/dev/null || true
+    fi
+    systemctl daemon-reload
+
+    if [[ -e "$ROOT_DIR" ]]; then
+        [[ -d "$ROOT_DIR" && ! -L "$ROOT_DIR" ]] \
+            || die "Unmounted storage path is unsafe: $ROOT_DIR"
+        secure_directory "$ROOT_DIR"
+        directory_empty "$ROOT_DIR" \
+            || die "Unmounted storage path is not empty: $ROOT_DIR"
+        rmdir "$ROOT_DIR"
+    fi
+    log "Storage infrastructure removed; backing data preserved at $BACKING_DIR"
+}
+
+infrastructure_present() {
+    local unit dropin
+    for unit in "$UNIT_PATH" "$UNIT_WANTS" "$RECOVERY_PATH" \
+        "$RECOVERY_WANTS" "$KEEP_PATH" "$RECOVERY_HELPER"; do
+        [[ ! -e "$unit" && ! -L "$unit" ]] || return 0
+    done
+    for unit in "${ROOT_BACKED_SERVICES[@]}"; do
+        dropin="$SYSTEMD_DIR/$unit.d/10-bc250-storage.conf"
+        [[ ! -e "$dropin" && ! -L "$dropin" ]] || return 0
+    done
+    return 1
+}
+
+cmd_installed() {
+    if expected_mount_active || infrastructure_present; then
+        printf '%s\n' installed
+        return 0
+    fi
+    printf '%s\n' not-installed
+    return 1
+}
+
+backing_has_mounts() {
+    local root target
+    while read -r root target; do
+        case "$target" in
+            "$BACKING_DIR"|"$BACKING_DIR"/*) return 0 ;;
+        esac
+        case "$root" in
+            '/.steamos/offload/var/lib/bc250-control'|\
+            '/.steamos/offload/var/lib/bc250-control/'*) return 0 ;;
+        esac
+    done < <(findmnt -rn -o FSROOT,TARGET)
+    return 1
+}
+
+purge_storage() {
+    require_root
+    local unsafe
+    require_no_dependencies "purge storage"
+    validate_storage_paths
+    if mountpoint -q "$ROOT_DIR"; then
+        die "Refusing to purge while $ROOT_DIR is mounted. Run uninstall first."
+    fi
+    if systemctl is-active --quiet "$UNIT_NAME" \
+        || systemctl is-active --quiet "$RECOVERY_NAME" \
+        || infrastructure_present; then
+        die "Refusing to purge while storage infrastructure remains. Run uninstall first."
+    fi
+    if [[ ! -e "$BACKING_DIR" && ! -L "$BACKING_DIR" ]]; then
+        log "Persistent backing data is already absent: $BACKING_DIR"
+        return 0
+    fi
+    [[ -d "$BACKING_DIR" && ! -L "$BACKING_DIR" ]] \
+        || die "Persistent backing path is unsafe: $BACKING_DIR"
+    secure_directory "$BACKING_DIR"
+    if backing_has_mounts; then
+        die "Refusing to purge storage containing a mounted filesystem."
+    fi
+    unsafe=$(find "$BACKING_DIR" ! -uid 0 -print -quit)
+    [[ -z "$unsafe" ]] \
+        || die "Refusing to purge data not owned by root: $unsafe"
+    unsafe=$(find "$BACKING_DIR" -perm /022 -print -quit)
+    [[ -z "$unsafe" ]] \
+        || die "Refusing to purge group/world-writable data: $unsafe"
+    rm -rf -- "$BACKING_DIR"
+    log "Purged persistent backing data at $BACKING_DIR"
+}
+
 show_status() {
-    local state=missing source=- recovery=- mount_enabled=-
+    local state=missing source=- recovery=- mount_enabled=- backing=missing
+    local dependencies
     if mountpoint -q "$ROOT_DIR"; then
         if expected_mount_active; then state=mounted; else state=unexpected; fi
         source=$(findmnt -rn -M "$ROOT_DIR" -o SOURCE)
@@ -507,6 +731,8 @@ show_status() {
         && recovery=enabled
     [[ -L "$UNIT_WANTS" && "$(readlink "$UNIT_WANTS")" == "../$UNIT_NAME" ]] \
         && mount_enabled=enabled
+    [[ -d "$BACKING_DIR" && ! -L "$BACKING_DIR" ]] && backing=preserved
+    dependencies=$(list_dependencies)
     log "storage: $state"
     log "path: $ROOT_DIR"
     log "source: $source"
@@ -514,6 +740,15 @@ show_status() {
     log "recovery: $RECOVERY_PATH ($recovery)"
     log "recovery helper: $RECOVERY_HELPER"
     log "atomic-update list: $KEEP_PATH"
+    log "backing data: $backing"
+    if [[ -n "$dependencies" ]]; then
+        log "uninstall readiness: blocked"
+        while IFS= read -r dependency; do
+            log "dependency: $dependency"
+        done <<< "$dependencies"
+    else
+        log "uninstall readiness: ready"
+    fi
 }
 
 C0=$'\033[0m'; CB=$'\033[1m'; CD=$'\033[2m'; CI=$'\033[7m'
@@ -620,6 +855,8 @@ run_privileged() {
         case "$1" in
             install|repair) install_storage ;;
             repair-infrastructure) repair_infrastructure ;;
+            uninstall) uninstall_storage ;;
+            purge) purge_storage ;;
         esac
     else
         request_sudo "$@"
@@ -662,10 +899,15 @@ cmd_menu() {
 
 cmd_help() {
     cat << EOF
-Usage: $0 {install|repair|repair-infrastructure|status|menu|help|render}
+Usage: $0 {install|repair|repair-infrastructure|uninstall|purge|installed|can-uninstall|status|menu|help|render}
 
 Run with no arguments in a terminal to open the interactive menu.
 Privileged actions request confirmation before invoking sudo.
+  uninstall       Remove mount/recovery infrastructure after all components are removed.
+                  Persistent backing data is preserved.
+  purge --yes     Permanently delete preserved backing data after uninstall.
+  installed       Print machine-readable infrastructure install state.
+  can-uninstall   Print blockers and exit nonzero, or print ready and exit zero.
 EOF
 }
 
@@ -679,7 +921,21 @@ if [[ $# -eq 0 ]]; then
 fi
 
 case "$1" in
-    install|repair|repair-infrastructure) run_privileged "$1" ;;
+    install|repair|repair-infrastructure)
+        (($# == 1)) || die "Usage: $0 $1"
+        run_privileged "$1"
+        ;;
+    uninstall)
+        (($# == 1)) || die "Usage: $0 uninstall"
+        run_privileged uninstall
+        ;;
+    purge)
+        [[ $# -eq 2 && $2 == --yes ]] \
+            || die "Usage: $0 purge --yes (permanently deletes preserved data)"
+        run_privileged purge
+        ;;
+    installed) cmd_installed ;;
+    can-uninstall) can_uninstall ;;
     status) show_status ;;
     menu) cmd_menu ;;
     help|-h|--help) cmd_help ;;

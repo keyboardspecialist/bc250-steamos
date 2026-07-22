@@ -41,6 +41,8 @@
 #   ./bc250-40cu.sh persist    relocate service off the wipeable rootfs
 #   ./bc250-40cu.sh verify     registers + service + guidance
 #   ./bc250-40cu.sh revert     disable service (reboot -> stock 24 CU)
+#   ./bc250-40cu.sh installed  machine-readable install detection
+#   ./bc250-40cu.sh uninstall  restore stock dispatch + remove integration
 #   ./bc250-40cu.sh all        check + prep + manager
 #
 set -euo pipefail
@@ -77,6 +79,10 @@ LEGACY_PREFIX="/var/lib/bc250-40cu"
 STORAGE_SH="$SCRIPT_DIR/bc250-storage.sh"
 UPDATE_PERSIST_SH="$SCRIPT_DIR/bc250-update-persistence.sh"
 UPDATE_KEEP_FILE="/etc/atomic-update.conf.d/bc250-compute.conf"
+SERVICE_DROPIN="$SERVICE.d/10-bc250-storage.conf"
+SERVICE_WANTS="/etc/systemd/system/multi-user.target.wants/bc250-cu-live-manager.service"
+VAR_USRLOCAL_MANAGER_BIN="/var/usrlocal/bin/bc250-cu-live-manager"
+OLD_UDEV_RULE="/etc/udev/rules.d/99-bc250-cu-live-manager.rules"
 
 log()  { echo -e "\033[1;32m[bc250]\033[0m $*"; }
 warn() { echo -e "\033[1;33m[bc250]\033[0m $*"; }
@@ -86,6 +92,11 @@ install_update_persistence() {
     [[ -f "$UPDATE_PERSIST_SH" ]] \
         || die "Update persistence helper missing: $UPDATE_PERSIST_SH"
     bash "$UPDATE_PERSIST_SH" install compute
+}
+remove_update_persistence() {
+    [[ -f "$UPDATE_PERSIST_SH" && ! -L "$UPDATE_PERSIST_SH" ]] \
+        || die "Update persistence helper missing or unsafe: $UPDATE_PERSIST_SH"
+    bash "$UPDATE_PERSIST_SH" remove compute
 }
 recover_update_settings() {
     [[ -f "$UPDATE_PERSIST_SH" ]] \
@@ -601,6 +612,72 @@ cmd_revert() {
     log "(Table kept at $SERVICE_CONF; re-enable the service to restore.)"
 }
 
+# UMR is intentionally excluded: it is shared with read-only status and other
+# controls. The retained WGP profile also does not make the component installed.
+compute_is_installed() {
+    [[ -e "$SERVICE" || -e "$SERVICE_DROPIN" || -e "$PERSIST_MANAGER_BIN" \
+        || -e "$ROOTFS_MANAGER_BIN" || -e "$VAR_USRLOCAL_MANAGER_BIN" \
+        || -e "$OLD_UDEV_RULE" || -e "$UPDATE_KEEP_FILE" \
+        || -L "$SERVICE_WANTS" ]]
+}
+
+cmd_installed() {
+    if compute_is_installed; then
+        printf '%s\n' installed
+        return 0
+    fi
+    printf '%s\n' not-installed
+    return 1
+}
+
+restore_stock_dispatch_live() {
+    if [[ ! -x "$PERSIST_MANAGER_BIN" || ! -x "$UMR_BIN" ]]; then
+        warn "Live stock restore unavailable (manager or UMR missing)."
+        return 1
+    fi
+    if ! grep -q 'stock-dispatch' "$PERSIST_MANAGER_BIN" 2>/dev/null; then
+        warn "Installed manager lacks stock-dispatch support."
+        return 1
+    fi
+    UMR="$UMR_BIN" UMR_DATABASE_PATH="$UMR_DATABASE" \
+        "$PERSIST_MANAGER_BIN" --yes stock-dispatch
+}
+
+cmd_uninstall() {
+    require_root
+    local live_reverted=0
+    cmd_revert
+    if systemctl is-active --quiet bc250-cu-live-manager.service; then
+        warn "Could not stop bc250-cu-live-manager.service; refusing to remove its files."
+        return 1
+    fi
+    if restore_stock_dispatch_live; then
+        live_reverted=1
+        log "Driver stock dispatch restored live."
+    else
+        warn "Live CU routing was not changed; reboot restores the boot driver topology."
+    fi
+
+    unlock_rootfs
+    trap relock_rootfs EXIT
+    rm -f "$SERVICE" "$SERVICE_DROPIN" "$SERVICE_WANTS" "$ROOTFS_MANAGER_BIN" \
+        "$VAR_USRLOCAL_MANAGER_BIN" "$PERSIST_MANAGER_BIN" "$OLD_UDEV_RULE"
+    rmdir "$SERVICE.d" 2>/dev/null || true
+    systemctl daemon-reload
+    relock_rootfs
+    trap - EXIT
+    remove_update_persistence
+
+    log "Compute service and manager payload removed."
+    log "Saved WGP profile kept at $SERVICE_CONF."
+    log "Shared UMR and its database kept at $UMR_PREFIX for other controls."
+    if [[ $live_reverted -eq 1 ]]; then
+        warn "REBOOT REQUIRED to guarantee a fully stock 24 CU boot topology."
+    else
+        warn "REBOOT REQUIRED to restore stock 24 CU dispatch."
+    fi
+}
+
 # ================================ help ====================================
 cmd_help() {
     cat << 'EOF'
@@ -668,6 +745,16 @@ COMMANDS (setup order)
   revert    Disable the boot service; reboot returns to stock 24 CU.
             The saved table is kept -- re-enable the service to restore.
 
+  installed Noninteractive lifecycle probe. Prints exactly "installed" and
+            exits 0 when compute integration/payloads are present; otherwise
+            prints "not-installed" and exits 1. Shared UMR and the preserved
+            WGP profile do not count as installed.
+
+  uninstall Disable the boot service, attempt a live driver-stock dispatch,
+            and remove component-owned service/manager/update files. Keeps
+            the saved WGP profile and shared UMR. REBOOT REQUIRED to guarantee
+            the stock 24 CU boot topology.
+
   all       check + prep + manager.
 
 FILE MAP
@@ -734,10 +821,12 @@ case "${1:-}" in
     persist) cmd_persist ;;
     verify)  cmd_verify ;;
     revert)  cmd_revert ;;
+    installed) (($# == 1)) || die "Usage: $0 installed"; cmd_installed ;;
+    uninstall) (($# == 1)) || die "Usage: $0 uninstall"; cmd_uninstall ;;
     all)     cmd_check; cmd_prep; cmd_manager ;;
     menu)    cmd_menu ;;
     help|-h|--help) cmd_help ;;
-    *) echo "Usage: $0 {check|prep|manager|persist|verify|revert|all|menu|help}"
+    *) echo "Usage: $0 {check|prep|manager|persist|verify|revert|installed|uninstall|all|menu|help}"
        echo "  (no arguments on a terminal opens the guided menu)"
        echo "Run '$0 help' for the full walkthrough of every command."
        exit 1 ;;

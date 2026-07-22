@@ -26,6 +26,8 @@
 #   ./bc250-power.sh acpi          install ACPI override + self-heal
 #   ./bc250-power.sh governor      install SMU GPU governor (test-start)
 #   ./bc250-power.sh enable        enable governor + cpufreq at boot
+#   ./bc250-power.sh installed     machine-readable install detection
+#   ./bc250-power.sh uninstall     restore stock behavior + remove integration
 #   ./bc250-power.sh status        clocks, C-states, temps, services
 #   ./bc250-power.sh all           acpi + governor
 set -euo pipefail
@@ -66,7 +68,10 @@ GOV_RAW="https://raw.githubusercontent.com/filippor/cyan-skillfish-governor/smu"
 
 HEAL_UNIT="/etc/systemd/system/bc250-acpi-heal.service"
 HEAL_HELPER="$ROOT_DATA_DIR/helper/bc250-acpi-heal"
+LEGACY_HEAL_HELPER="/etc/bc250-acpi-heal.sh"
 CPUFREQ_UNIT="/etc/systemd/system/bc250-cpufreq.service"
+POWER_KEEP_FILE="/etc/atomic-update.conf.d/bc250-power.conf"
+SYSTEMD_WANTS_DIR="/etc/systemd/system/multi-user.target.wants"
 
 FREQ_STATE="$ROOT_DATA_DIR/governor/freq-state"
 RESTORE_BIN="$BIN_DIR/bc250-gpu-freq-restore"
@@ -96,6 +101,11 @@ install_update_persistence() {
     [[ -f "$UPDATE_PERSIST_SH" ]] \
         || die "Update persistence helper missing: $UPDATE_PERSIST_SH"
     bash "$UPDATE_PERSIST_SH" install power
+}
+remove_update_persistence() {
+    [[ -f "$UPDATE_PERSIST_SH" && ! -L "$UPDATE_PERSIST_SH" ]] \
+        || die "Update persistence helper missing or unsafe: $UPDATE_PERSIST_SH"
+    bash "$UPDATE_PERSIST_SH" remove power
 }
 recover_update_settings() {
     [[ -f "$UPDATE_PERSIST_SH" ]] \
@@ -1401,6 +1411,168 @@ cmd_enable() {
     log "cpufreq + ACPI self-heal were enabled during 'acpi'. All set."
 }
 
+# Machine-readable lifecycle probe. Retained tuning and persistent data do not
+# count as an installation, so this returns not-installed after an uninstall.
+power_is_installed() {
+    [[ -e "$HEAL_UNIT" || -e "$CPUFREQ_UNIT" || -e "$GOV_UNIT" \
+        || -e "$RESTORE_UNIT" || -e "$OC_UNIT" || -e "$GRUB_ACPI_DEFAULT" \
+        || -e "$CPIO_BOOT" || -e "$DBUS_POLICY" || -e "$POWER_KEEP_FILE" \
+        || -e "$HEAL_HELPER" || -e "$GOV_BIN" || -e "$PERF_BIN" \
+        || -e "$RESTORE_BIN" || -e "$OC_DIR/bc250_apply.py" \
+        || -e "$OC_DIR/bc250_smu" || -e "$LEGACY_HEAL_HELPER" \
+        || -L "$SYSTEMD_WANTS_DIR/bc250-acpi-heal.service" \
+        || -L "$SYSTEMD_WANTS_DIR/bc250-cpufreq.service" \
+        || -L "$SYSTEMD_WANTS_DIR/$GOV_SVC" \
+        || -L "$SYSTEMD_WANTS_DIR/$RESTORE_SVC" \
+        || -L "$SYSTEMD_WANTS_DIR/$OC_SVC" ]]
+}
+
+cmd_installed() {
+    if power_is_installed; then
+        printf '%s\n' installed
+        return 0
+    fi
+    printf '%s\n' not-installed
+    return 1
+}
+
+remove_power_unit() {
+    local unit="$1"
+    rm -f "$unit" "$unit.d/10-bc250-storage.conf"
+    rmdir "$unit.d" 2>/dev/null || true
+}
+
+remove_acpi_boot_override() {
+    local regenerated=0
+    if [[ ! -e "$GRUB_ACPI_DEFAULT" && ! -e "$CPIO_BOOT" \
+        && ! -e "$HEAL_UNIT" && ! -e "$CPUFREQ_UNIT" ]] \
+        && ! grep -q 'acpi_override.cpio' "$GRUB_CFG" 2>/dev/null; then
+        return 0
+    fi
+    rm -f "$ACPI_READY" "$GRUB_ACPI_DEFAULT"
+    if command -v update-grub >/dev/null 2>&1; then
+        update-grub && regenerated=1
+    elif command -v grub-mkconfig >/dev/null 2>&1; then
+        grub-mkconfig -o "$GRUB_CFG" && regenerated=1
+    else
+        warn "No GRUB configuration generator found; retaining $CPIO_BOOT for boot safety."
+    fi
+
+    if [[ $regenerated -eq 1 ]] && ! grep -q 'acpi_override.cpio' "$GRUB_CFG" 2>/dev/null; then
+        rm -f "$CPIO_BOOT"
+        log "Removed the ACPI override from the next boot."
+        return 0
+    fi
+    if [[ -f "$CPIO_BOOT" ]]; then
+        warn "$CPIO_BOOT was retained because GRUB rollback could not be verified."
+        warn "The next boot remains safe, but may still load the ACPI override."
+    fi
+    mkdir -p "${GRUB_ACPI_DEFAULT%/*}"
+    printf '%s\n' 'GRUB_EARLY_INITRD_LINUX_CUSTOM="acpi_override.cpio"' \
+        > "$GRUB_ACPI_DEFAULT"
+    return 1
+}
+
+reset_cpu_stock_live() {
+    local rc=0
+    [[ -d "$OC_DIR/bc250_smu" ]] || return 1
+    pause_governor
+    PYTHONPATH="$OC_DIR" python3 - << 'EOF' || rc=$?
+from bc250_smu import Bc250Smu
+smu = Bc250Smu(use_flock=True)
+smu.check_test_message()
+smu.q3_0x8f_set_max_cpu_boost_clk(3500)
+smu.q3_0x50_scale_f_vid_curve(0)
+smu.disable_extra_cpu_gpu_voltage(False)
+smu.q3_0x8b_set_cpu_max_temperature(100)
+smu.q3_0x8c_set_gpu_max_temperature(100)
+print("CPU restored to stock: 3500 MHz, factory vid curve, 100 C limits")
+EOF
+    resume_governor || rc=$?
+    return "$rc"
+}
+
+cmd_uninstall() {
+    require_root
+    local acpi_reverted=0 cpu_reverted=0
+
+    if reset_cpu_stock_live; then
+        cpu_reverted=1
+        log "CPU overclock/undervolt reverted to stock live."
+    elif [[ -e "$OC_UNIT" || -e "$OC_CONF" ]]; then
+        warn "CPU stock reset was unavailable; reboot will reset the SMU safely."
+    fi
+
+    if systemctl is-active "$GOV_SVC" >/dev/null 2>&1; then
+        if [[ -x "$PERF_BIN" ]]; then
+            "$PERF_BIN" --off >/dev/null 2>&1 \
+                || warn "Could not clear GPU performance mode before stopping the governor."
+        else
+            busctl --system set-property "$BUS_NAME" "$BUS_PATH" "$BUS_IFACE" \
+                Enabled b false >/dev/null 2>&1 \
+                || warn "Could not clear GPU performance mode before stopping the governor."
+        fi
+    fi
+    local service
+    systemctl disable --now "$RESTORE_SVC" "$GOV_SVC" "$OC_SVC" \
+        bc250-acpi-heal.service bc250-cpufreq.service >/dev/null 2>&1 || true
+    for service in "$RESTORE_SVC" "$GOV_SVC" "$OC_SVC" \
+        bc250-acpi-heal.service bc250-cpufreq.service; do
+        if systemctl is-active --quiet "$service"; then
+            warn "Could not stop $service; refusing to remove its files."
+            return 1
+        fi
+    done
+
+    unlock_rootfs
+    trap relock_rootfs EXIT
+    remove_acpi_boot_override && acpi_reverted=1 || true
+
+    if [[ $acpi_reverted -eq 1 ]]; then
+        remove_power_unit "$HEAL_UNIT"
+        remove_power_unit "$CPUFREQ_UNIT"
+        rm -f "$SYSTEMD_WANTS_DIR/bc250-acpi-heal.service" \
+            "$SYSTEMD_WANTS_DIR/bc250-cpufreq.service"
+        rm -f "$HEAL_HELPER" "$LEGACY_HEAL_HELPER"
+    else
+        systemctl enable bc250-acpi-heal.service bc250-cpufreq.service \
+            >/dev/null 2>&1 || true
+    fi
+    remove_power_unit "$GOV_UNIT"
+    remove_power_unit "$RESTORE_UNIT"
+    remove_power_unit "$OC_UNIT"
+    rm -f "$SYSTEMD_WANTS_DIR/$GOV_SVC" "$SYSTEMD_WANTS_DIR/$RESTORE_SVC" \
+        "$SYSTEMD_WANTS_DIR/$OC_SVC"
+    rm -f "$DBUS_POLICY"
+    rm -f "$GOV_BIN" "$PERF_BIN" "$RESTORE_BIN"
+    rm -f "$OC_DIR/bc250_apply.py" "$OC_DIR/bc250_detect.py" \
+        "$OC_DIR/bc250_limits.py" "$OC_DIR/stress_helper.py"
+    rm -rf "$OC_DIR/bc250_smu" "$OC_DIR/__pycache__"
+    systemctl daemon-reload
+    busctl call org.freedesktop.DBus /org/freedesktop/DBus \
+        org.freedesktop.DBus ReloadConfig >/dev/null 2>&1 || true
+    relock_rootfs
+    trap - EXIT
+    [[ $acpi_reverted -eq 0 ]] || remove_update_persistence
+
+    log "Power governor/OC services, executables, and D-Bus policy removed."
+    if [[ $acpi_reverted -eq 1 ]]; then
+        log "ACPI services and power update keep list removed."
+    else
+        warn "ACPI self-heal and its update keep list were retained for boot safety."
+    fi
+    log "Preserved governor/OC settings, saved frequency state, and persistent ACPI data."
+    [[ $cpu_reverted -eq 1 ]] || warn "CPU SMU settings are guaranteed stock only after reboot."
+    if [[ $acpi_reverted -eq 1 ]]; then
+        warn "REBOOT REQUIRED to unload any active ACPI tables and guarantee stock SMU state."
+        warn "After reboot, CPU power behavior is stock and the custom services stay disabled."
+    else
+        warn "REBOOT REQUIRED, but ACPI boot rollback needs attention before stock behavior is guaranteed."
+        warn "Remove any remaining acpi_override.cpio GRUB reference, regenerate $GRUB_CFG, then reboot."
+        return 1
+    fi
+}
+
 # ============================ CPU overclock ===============================
 # Wraps bc250-collective/bc250_smu_oc: CPU max boost clock + vid-curve
 # undervolt via SMU mailbox messages (queue 3). CPU only -- it never touches
@@ -1548,19 +1720,7 @@ oc_off() {
     systemctl disable --now "$OC_SVC" 2>/dev/null || true
     install_oc_files
     if [[ -d "$OC_DIR/bc250_smu" ]]; then
-        pause_governor
-        PYTHONPATH="$OC_DIR" python3 - << 'EOF'
-from bc250_smu import Bc250Smu
-smu = Bc250Smu(use_flock=True)
-smu.check_test_message()
-smu.q3_0x8f_set_max_cpu_boost_clk(3500)
-smu.q3_0x50_scale_f_vid_curve(0)
-smu.disable_extra_cpu_gpu_voltage(False)
-smu.q3_0x8b_set_cpu_max_temperature(100)
-smu.q3_0x8c_set_gpu_max_temperature(100)
-print("CPU restored to stock: 3500 MHz, factory vid curve, 100 C limits")
-EOF
-        resume_governor
+        reset_cpu_stock_live || die "Could not restore stock CPU SMU settings."
     fi
     log "CPU OC disabled at boot and reverted to stock. Config kept --"
     log "re-activate any time with '$0 cpu-oc enable'."
@@ -1877,6 +2037,18 @@ SETUP COMMANDS (run once, in this order)
   enable      Enable the governor at boot. Run after you've load-tested
               a 'governor' install.
 
+  installed   Noninteractive lifecycle probe. Prints exactly "installed"
+              and exits 0 when power integration/payloads are present;
+              otherwise prints "not-installed" and exits 1. Preserved
+              settings and persistent data do not count as installed.
+
+  uninstall   Stop and disable power services, revert CPU OC live when
+              possible, remove the ACPI override from the next boot, and
+              remove component-owned units, executables, D-Bus policy, and
+              update keep list. Keeps governor/OC tuning, saved frequency
+              state, and persistent ACPI source data. REBOOT REQUIRED to
+              unload active ACPI tables and guarantee stock firmware state.
+
   all         acpi + governor in sequence.
 
 CPU OVERCLOCK / UNDERVOLT (bc250-collective/bc250_smu_oc, CPU only)
@@ -2013,11 +2185,13 @@ case "${1:-}" in
     ramp)         shift; cmd_ramp "$@" ;;
     cpu-oc)       shift; cmd_cpu_oc "$@" ;;
     enable)       cmd_enable ;;
+    installed)    (($# == 1)) || die "Usage: $0 installed"; cmd_installed ;;
+    uninstall)    (($# == 1)) || die "Usage: $0 uninstall"; cmd_uninstall ;;
     status)       cmd_status ;;
     all)          cmd_acpi; cmd_governor ;;
     menu)         cmd_menu ;;
     help|-h|--help) cmd_help ;;
-    *) echo "Usage: $0 {acpi|governor|helpers|freq|gpu-volt|load-target|ramp|cpu-oc|enable|status|all|menu|help}"
+    *) echo "Usage: $0 {acpi|governor|helpers|freq|gpu-volt|load-target|ramp|cpu-oc|enable|installed|uninstall|status|all|menu|help}"
        echo "  (no arguments on a terminal opens the guided menu)"
        echo "  freq                 show performance-mode state"
        echo "  freq 1800            pin GPU at 1800 MHz (perf mode)"

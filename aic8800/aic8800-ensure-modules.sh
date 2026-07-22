@@ -4,6 +4,9 @@
 # toolchain; this rebuilds from the root-owned source snapshot and loads with
 # insmod so the rootfs can stay read-only (except while reinstalling tools).
 set -euo pipefail
+command -v flock >/dev/null || { echo "flock is required" >&2; exit 1; }
+exec 9>/run/lock/bc250-aic8800.lock
+flock 9
 KVER="$(uname -r)"
 DRV=/var/lib/bc250-control/aic8800/source
 FWDIR=/var/lib/bc250-control/aic8800/firmware/aic8800D80

@@ -62,8 +62,7 @@ jobs:
 
       - name: Run desktop integration tests
         run: |
-          python3 -m unittest discover -s tests -p 'test_persistence.py'
-          python3 -m unittest discover -s tests -p 'test_desktop_release.py'
+          python3 -m unittest discover -s tests -p 'test_*.py'
           node tests/test_qml_utils.cjs
 
       - name: Package Decky runtime

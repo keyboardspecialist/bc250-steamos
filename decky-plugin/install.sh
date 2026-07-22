@@ -1,13 +1,12 @@
 #!/usr/bin/env bash
-# install.sh — build and install the BC-250 Control Decky plugin.
+# install.sh — manage the BC-250 Control Decky plugin.
 #
 # Everything lands in update-proof locations: pnpm + node go to
 # ~/.local/share/pnpm (SteamOS updates wipe /usr, not /home), and the
 # built plugin is copied to Decky's ~/homebrew/plugins directory.
 #
-# Run as the deck user, NOT root — pnpm/node must install into the deck
-# home. The copy into the root-owned plugins dir and the plugin_loader
-# restart use sudo (set a password with `passwd` first if you never have).
+# Run as the deck user, NOT root. Install/uninstall use sudo for Decky's
+# root-owned plugin directory and the plugin_loader restart.
 #
 # Steps:
 #   1. Install standalone pnpm if missing (and node LTS via pnpm)
@@ -47,7 +46,80 @@ umr_database_complete() {
 }
 trap cleanup EXIT
 
-[[ $EUID -ne 0 ]] || die "run as the deck user, not root (sudo is used where needed)"
+require_normal_user() {
+    [[ $EUID -ne 0 ]] || die "run as the deck user, not root (sudo is used where needed)"
+}
+
+plugin_owned() {
+    [[ -d "$DEST_DIR" && ! -L "$DEST_DIR" ]] || return 1
+    [[ -f "$DEST_DIR/.bc250-control-plugin" ]] && return 0
+    [[ -f "$DEST_DIR/plugin.json" ]] || return 1
+    python3 - "$DEST_DIR/plugin.json" <<'PY'
+import json
+import sys
+
+try:
+    with open(sys.argv[1], encoding="utf-8") as stream:
+        plugin = json.load(stream)
+except (OSError, ValueError, TypeError):
+    raise SystemExit(1)
+
+raise SystemExit(
+    0
+    if plugin.get("name") == "BC-250 Control"
+    and plugin.get("author") == "keyboardspecialist"
+    else 1
+)
+PY
+}
+
+restart_decky() {
+    log "Restarting plugin_loader"
+    sudo systemctl restart plugin_loader
+}
+
+show_status() {
+    require_normal_user
+    local state rc=0
+    if [[ -L "$DEST_DIR" || ( -e "$DEST_DIR" && ! -d "$DEST_DIR" ) ]]; then
+        state="unsafe path"
+        rc=1
+    elif plugin_owned; then
+        state="installed"
+    elif [[ -e "$DEST_DIR" ]]; then
+        state="unrecognized or incomplete"
+        rc=1
+    else
+        state="not installed"
+        rc=1
+    fi
+    printf 'plugin: %s (%s)\n' "$state" "$DEST_DIR"
+    if systemctl is-active -q plugin_loader 2>/dev/null; then
+        echo "Decky loader: active"
+    else
+        echo "Decky loader: inactive or unavailable"
+    fi
+    return "$rc"
+}
+
+uninstall_plugin() {
+    require_normal_user
+    if [[ ! -e "$DEST_DIR" && ! -L "$DEST_DIR" ]]; then
+        log "'$PLUGIN_NAME' is not installed."
+        return 0
+    fi
+    [[ ! -L "$DEST_DIR" && -d "$DEST_DIR" ]] \
+        || die "refusing to remove unsafe plugin path: $DEST_DIR"
+    plugin_owned \
+        || die "refusing to remove an unrecognized plugin directory: $DEST_DIR"
+    log "Removing $DEST_DIR (sudo)"
+    sudo rm -rf -- "$DEST_DIR"
+    restart_decky
+    log "Uninstalled '$PLUGIN_NAME'. Shared BC-250 hardware helpers and state were preserved."
+}
+
+install_plugin() {
+require_normal_user
 [[ -f "$SRC_DIR/plugin.json" ]] || die "plugin.json not found next to this script"
 [[ -d "$PLUGINS_DIR" ]] || die "$PLUGINS_DIR missing — install Decky Loader first"
 
@@ -180,14 +252,28 @@ else
 fi
 
 log "Installing to $DEST_DIR (sudo)"
+if [[ -e "$DEST_DIR" || -L "$DEST_DIR" ]]; then
+    [[ ! -L "$DEST_DIR" && -d "$DEST_DIR" ]] \
+        || die "refusing to replace unsafe plugin path: $DEST_DIR"
+    plugin_owned \
+        || die "refusing to replace an unrecognized plugin directory: $DEST_DIR"
+fi
 sudo rm -rf "$DEST_DIR"
 sudo install -d "$DEST_DIR"
 sudo cp -r "$SRC_DIR/out/." "$DEST_DIR/"
+sudo touch "$DEST_DIR/.bc250-control-plugin"
 # Flush to disk immediately — a BC-250 hard crash before writeback would
 # otherwise leave the installed files as zero-byte husks.
 sync
 
-log "Restarting plugin_loader"
-sudo systemctl restart plugin_loader
+restart_decky
 
 log "Done — '$PLUGIN_NAME' is available in the Quick Access menu (...)"
+}
+
+case "${1:-install}" in
+    install)   (($# <= 1)) || die "usage: $0 [install|status|uninstall]"; install_plugin ;;
+    status)    (($# == 1)) || die "usage: $0 status"; show_status ;;
+    uninstall) (($# == 1)) || die "usage: $0 uninstall"; uninstall_plugin ;;
+    *) die "usage: $0 [install|status|uninstall]" ;;
+esac

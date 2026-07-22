@@ -28,6 +28,8 @@ The build selects the patch from the running kernel and produces `amdgpu.ko.zst`
 | Command | Action |
 |---|---|
 | `./patch-driver.sh` | Fetch, build, validate, and install |
+| `./patch-driver.sh status` | Report installed per-kernel module overrides |
+| `./patch-driver.sh uninstall` | Noninteractively restore stock modules for all installed kernels |
 | `./fetch-sources.sh` | Fetch the matching kernel source, symbols, and dependencies |
 | `./prepare-kernel.sh` | Prepare an exact Kbuild tree for external modules |
 | `./build.sh` | Build and validate `amdgpu.ko.zst` |
@@ -35,6 +37,7 @@ The build selects the patch from the running kernel and produces `amdgpu.ko.zst`
 | `sudo ./install.sh` | Install the module and rebuild the initramfs |
 | `sudo ./rollback.sh` | Restore the stock module for the running kernel |
 | `sudo ./rollback.sh <kernel-release>` | Restore the stock module for a selected kernel |
+| `sudo ./rollback.sh --all` | Restore stock modules for every installed kernel override |
 | `sudo ./cleanup-other-slot.sh` | Restore the stock module in the alternate SteamOS slot |
 | `./clean.sh` | Reset build state and retain downloaded packages |
 | `./clean.sh --all` | Remove the kernel tree, dependencies, downloads, and generated builds |
@@ -77,7 +80,7 @@ Restore the stock module and reboot:
 
 ```bash
 cd ~/.local/share/bc250-fixes/bc250-steamos/bc250-audio-fix
-sudo ./rollback.sh
+./patch-driver.sh uninstall
 sudo reboot
 ```
 

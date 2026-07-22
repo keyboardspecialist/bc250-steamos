@@ -27,6 +27,7 @@ class ToolkitTests(unittest.TestCase):
             "wifi",
             "audio",
             "decky",
+            "manage",
         ):
             self.assertIn(command, result.stdout)
         self.assertIn("logged-in Deck user, not with sudo", result.stdout)
