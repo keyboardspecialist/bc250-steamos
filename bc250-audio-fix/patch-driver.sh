@@ -1,6 +1,7 @@
 #!/bin/bash
 # Single entry point: fetch sources, build, install — the full cycle after a
-# SteamOS update. Run as the normal user; sudo is invoked for install only.
+# SteamOS update. Run as the normal user; sudo is invoked for missing build
+# prerequisites and installation.
 #
 #   ./patch-driver.sh [--cg|--cg-unvalidated] [kernel-tree]  (default: ./valve-kernel)
 #   ./patch-driver.sh status
@@ -19,8 +20,9 @@ Usage: $0 [--cg|--cg-unvalidated] [kernel-tree]
        $0 status
        $0 uninstall
 
-Run as the logged-in user. Install and uninstall request sudo only for their
-privileged steps. Uninstall preserves source, downloads, and build output.
+Run as the logged-in user. The build requests sudo if a SteamOS update removed
+its host toolchain. Install and uninstall also request sudo for privileged
+steps. Uninstall preserves source, downloads, and build output.
 EOF
 }
 
@@ -121,7 +123,8 @@ case "${1:-}" in
         ;;
 esac
 
-[ "$(id -u)" != 0 ] || { echo "run as the normal user - sudo is used for the install step only"; exit 1; }
+[ "$(id -u)" != 0 ] || { echo "run as the normal user - sudo is used only for privileged steps"; exit 1; }
+"$HERE/ensure-build-prereqs.sh"
 command -v flock >/dev/null || { echo "flock is required" >&2; exit 1; }
 exec 9>"$HERE/.prepare-kernel.lock"
 flock 9

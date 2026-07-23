@@ -9,6 +9,7 @@ ROOT = Path(__file__).resolve().parents[1]
 AIC_INSTALLER = ROOT / "aic8800/steamdeck-setup.sh"
 AUDIO_INSTALLER = ROOT / "bc250-audio-fix/patch-driver.sh"
 AUDIO_ROLLBACK = ROOT / "bc250-audio-fix/rollback.sh"
+AUDIO_PREREQS = ROOT / "bc250-audio-fix/ensure-build-prereqs.sh"
 
 
 class DriverLifecycleTests(unittest.TestCase):
@@ -91,9 +92,30 @@ class DriverLifecycleTests(unittest.TestCase):
                 str(AUDIO_INSTALLER),
                 str(ROOT / "bc250-audio-fix/install.sh"),
                 str(AUDIO_ROLLBACK),
+                str(AUDIO_PREREQS),
             ],
             check=True,
         )
+
+    def test_audio_build_restores_and_validates_prerequisites(self):
+        installer = AUDIO_INSTALLER.read_text(encoding="utf-8")
+        builder = (ROOT / "bc250-audio-fix/build.sh").read_text(encoding="utf-8")
+        fetcher = (ROOT / "bc250-audio-fix/fetch-sources.sh").read_text(
+            encoding="utf-8"
+        )
+        preparer = (ROOT / "bc250-audio-fix/prepare-kernel.sh").read_text(
+            encoding="utf-8"
+        )
+        environment = (ROOT / "bc250-audio-fix/build-env.sh").read_text(
+            encoding="utf-8"
+        )
+        prerequisites = AUDIO_PREREQS.read_text(encoding="utf-8")
+
+        for entrypoint in (installer, builder, fetcher, preparer):
+            self.assertIn('"$HERE/ensure-build-prereqs.sh"', entrypoint)
+        self.assertIn("base-devel", prerequisites)
+        for tool in ("make", "gcc", "ld", "patch", "pahole", "bc", "zstd"):
+            self.assertIn(tool, environment)
 
 
 if __name__ == "__main__":

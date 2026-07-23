@@ -17,6 +17,7 @@ done
 TREE=${ARGS[0]:-$HERE/valve-kernel}
 
 [ "$(id -u)" != 0 ] || { echo "FATAL: prepare the kernel as the normal user, not root" >&2; exit 1; }
+"$HERE/ensure-build-prereqs.sh"
 command -v flock >/dev/null || { echo "FATAL: flock is required" >&2; exit 1; }
 
 exec 9>"$HERE/.prepare-kernel.lock"

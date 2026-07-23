@@ -12,7 +12,7 @@ cd ~/.local/share/bc250-fixes/bc250-steamos/bc250-audio-fix
 sudo reboot
 ```
 
-`patch-driver.sh` fetches matching sources and build dependencies, builds the module, validates it, and invokes `sudo` for installation. If Valve omitted the exact headers package, it builds the exact kernel source completely to generate the missing symbol inventory. That fallback can take hours and requires about 40 GiB of free temporary space.
+`patch-driver.sh` restores the SteamOS build toolchain if an OS update removed it, fetches matching sources and kernel-specific dependencies, builds the module, validates it, and invokes `sudo` for privileged steps. If Valve omitted the exact headers package, it builds the exact kernel source completely to generate the missing symbol inventory. That fallback can take hours and requires about 40 GiB of free temporary space.
 
 ## Kernel Support
 
@@ -31,6 +31,7 @@ The build selects the patch from the running kernel and produces `amdgpu.ko.zst`
 | `./patch-driver.sh status` | Report installed per-kernel module overrides |
 | `./patch-driver.sh uninstall` | Noninteractively restore stock modules for all installed kernels |
 | `./fetch-sources.sh` | Fetch the matching kernel source, symbols, and dependencies |
+| `./ensure-build-prereqs.sh` | Restore a missing SteamOS host build toolchain |
 | `./prepare-kernel.sh` | Prepare an exact Kbuild tree for external modules |
 | `./build.sh` | Build and validate `amdgpu.ko.zst` |
 | `./check-module.sh amdgpu.ko.zst` | Validate vermagic and ABI compatibility |
@@ -118,6 +119,7 @@ The complete fallback remains mandatory for the AMDGPU override. AIC8800 may ins
 |---|---|
 | `patch-driver.sh` | Complete build and installation workflow |
 | `fetch-sources.sh` | Source, symbol, and dependency acquisition |
+| `ensure-build-prereqs.sh` | Conditional SteamOS host-toolchain installation |
 | `prepare-kernel.sh` | Shared exact Kbuild preparation for Wi-Fi and GPU modules |
 | `build.sh` | Patch application, module build, packaging, and validation |
 | `check-module.sh` | Vermagic and ABI validation |

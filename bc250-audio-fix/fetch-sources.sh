@@ -27,6 +27,12 @@ HERE=$(cd "$(dirname "$0")" && pwd)
 REL=${KERNEL_RELEASE:-$(uname -r)}
 HEADER_FETCHER=$HERE/../fetch-steamos-package.sh
 
+# Keep cross-host source fetching possible with KERNEL_RELEASE, but make the
+# documented on-device command self-sufficient after a SteamOS update.
+if [ -r /proc/config.gz ]; then
+    "$HERE/ensure-build-prereqs.sh"
+fi
+
 MIRROR=${MIRROR:-https://steamdeck-packages.steamos.cloud/archlinux-mirror}
 KERNEL_REMOTE=${KERNEL_REMOTE:-https://github.com/Evlav/linux-integration.git}
 KERNEL_API=${KERNEL_API:-https://api.github.com/repos/Evlav/linux-integration}
@@ -194,10 +200,10 @@ for pkg in "${DEP_PKGS[@]}"; do
     echo "$pkg: $ENTRY extracted from $REPO"
 done
 
-step "verify build environment"
+step "verify complete build environment"
 # shellcheck source=bc250-audio-fix/build-env.sh
 ( source "$HERE/build-env.sh" ) || die "build-env.sh still unhappy after dep extraction"
-echo "build-env.sh OK (pahole, bc on PATH)"
+echo "build-env.sh OK (compiler, Kbuild tools, libraries, and packaging tools available)"
 
 echo
 echo "OK — sources and deps ready for $REL."

@@ -52,7 +52,8 @@ TREE=$(cd "$TREE_ARG" 2>/dev/null && pwd) || die "kernel tree not found: $TREE_A
 
 step "preflight"
 [ -r /proc/config.gz ] || die "no /proc/config.gz — run this on the BC-250, not a dev machine"
-[ "$(id -u)" != 0 ] || die "build as the normal user, not root (only install.sh needs sudo)"
+[ "$(id -u)" != 0 ] || die "build as the normal user; privileged prerequisite and install steps use sudo"
+"$HERE/ensure-build-prereqs.sh"
 grep -q '^VERSION' "$TREE/Makefile" 2>/dev/null || die "$TREE is not a kernel tree"
 
 # sha embedded in the running release, e.g. ...-g57ac0765fe0d
