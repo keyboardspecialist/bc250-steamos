@@ -39,7 +39,9 @@ removes the packaged kernel image so Kbuild consistently skips optional module
 BTF without adding a `pahole` dependency. The installer reports that once and
 filters Kbuild's repetitive per-module skip messages. The exact nonempty
 `Module.symvers` from the headers package is always required for strict modpost
-validation.
+validation. Valve's `make kernelrelease` can omit the final `-g<hash>` suffix,
+so identity comes from the packaged `include/config/kernel.release`; every
+built module is still required to have the full running-kernel vermagic.
 
 Validated source, per-kernel module stages, and driver-owned firmware copies
 live below `/home/.steamos/offload/var/lib/rtw89-steamos`. The installer owns

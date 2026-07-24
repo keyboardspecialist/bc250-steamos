@@ -498,8 +498,11 @@ find_kdir() {
     # The boot service runs as root, so never execute Kbuild input writable by
     # another user or containing links outside the validated tree.
     secure_kbuild_tree "$resolved" || return 1
-    release=$(make -s -C "$resolved" kernelrelease 2>/dev/null) || return 1
+    [[ -f $resolved/include/config/kernel.release \
+        && ! -L $resolved/include/config/kernel.release ]] || return 1
+    release=$(<"$resolved/include/config/kernel.release")
     [[ $release == "$KREL" ]] || return 1
+    make -s -C "$resolved" kernelrelease >/dev/null 2>&1 || return 1
     printf '%s\n' "$resolved"
 }
 

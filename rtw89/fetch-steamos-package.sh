@@ -14,7 +14,9 @@ case "$PACKAGE" in
 esac
 
 valid_archive() {
-    [[ -s $1 ]] && tar --zstd -tf "$1" >/dev/null 2>&1
+    [[ -s $1 ]] && tar --zstd -tf "$1" >/dev/null 2>&1 || return 1
+    [[ -z ${EXPECTED_MEMBER:-} ]] \
+        || tar --zstd -tf "$1" "$EXPECTED_MEMBER" >/dev/null 2>&1
 }
 
 if valid_archive "$DEST"; then
@@ -63,7 +65,7 @@ for repo in $REPOS; do
         trap - EXIT
         exit 0
     fi
-    UNCERTAIN="$UNCERTAIN $repo(download)"
+    UNCERTAIN="$UNCERTAIN $repo(download-or-content)"
     : > "$TMP"
 done
 

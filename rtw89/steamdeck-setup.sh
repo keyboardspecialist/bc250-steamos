@@ -741,10 +741,14 @@ prepare_kbuild() {
             || die "standalone kernel-header preparation failed"
     fi
     [[ -d $kdir ]] || die "prepare-kbuild.sh did not create $kdir"
-    release=$(runuser -u "$user" -- make -s -C "$kdir" kernelrelease) \
-        || die "prepared Kbuild is unusable"
+    [[ -f $kdir/include/config/kernel.release \
+        && ! -L $kdir/include/config/kernel.release ]] \
+        || die "prepared Kbuild lacks its exact release marker"
+    release=$(<"$kdir/include/config/kernel.release")
     [[ $release == "$KREL" ]] \
         || die "prepared Kbuild release '$release' does not equal '$KREL'"
+    runuser -u "$user" -- make -s -C "$kdir" kernelrelease >/dev/null \
+        || die "prepared Kbuild is unusable"
     printf '%s\n' "$kdir"
 }
 

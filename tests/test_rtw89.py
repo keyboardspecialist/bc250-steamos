@@ -118,6 +118,13 @@ class Rtw89Tests(unittest.TestCase):
         self.assertNotIn("vmlinux is required", combined)
         self.assertIn('rm -f "$EXTRACTED/vmlinux"', combined)
         self.assertIn('[[ -s $KDIR/Module.symvers ]]', combined)
+        self.assertIn("EXPECTED_MEMBER=", combined)
+        self.assertIn("headers contain Kbuild release", combined)
+        self.assertIn("make could not evaluate the prepared Kbuild tree", combined)
+        preparer = (RTW89 / "prepare-kbuild.sh").read_text(encoding="utf-8")
+        self.assertIn('configured=$(<"$KDIR/include/config/kernel.release")', preparer)
+        self.assertNotIn('[[ $release == "$REL" ]]', preparer)
+        self.assertIn('module_release "$dir/$module.ko"', combined)
         self.assertIn("LEGACY_HELPER_SHA=", combined)
         self.assertIn("finalize_legacy_migration", combined)
         install_flow = combined[combined.index("install_rtw89()") :]

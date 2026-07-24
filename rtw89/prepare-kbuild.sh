@@ -33,13 +33,36 @@ PACKAGE=linux-neptune-$FLAVOR-headers-$PKGVER-$PKGREL-x86_64.pkg.tar.zst
 ARCHIVE=$CACHE_ROOT/packages/$PACKAGE
 
 valid_kbuild() {
-    local release
+    local configured
     [[ -d $KDIR && ! -L $KDIR && -f $KDIR/.rtw89-steamos-kbuild ]] || return 1
     [[ $(<"$KDIR/.rtw89-steamos-kbuild") == "$REL" ]] || return 1
     [[ ! -e $KDIR/vmlinux && ! -L $KDIR/vmlinux ]] || return 1
-    release=$(make -s -C "$KDIR" kernelrelease 2>/dev/null) || return 1
-    [[ $release == "$REL" ]] || return 1
+    [[ -f $KDIR/include/config/kernel.release \
+        && ! -L $KDIR/include/config/kernel.release ]] || return 1
+    configured=$(<"$KDIR/include/config/kernel.release")
+    [[ $configured == "$REL" ]] || return 1
+    make -s -C "$KDIR" kernelrelease >/dev/null 2>&1 || return 1
     [[ -s $KDIR/Module.symvers ]] || return 1
+}
+
+validate_kbuild_or_die() {
+    local configured release
+    [[ -d $KDIR && ! -L $KDIR ]] || die "prepared Kbuild directory is missing"
+    [[ -f $KDIR/.rtw89-steamos-kbuild && ! -L $KDIR/.rtw89-steamos-kbuild \
+        && $(<"$KDIR/.rtw89-steamos-kbuild") == "$REL" ]] \
+        || die "prepared Kbuild ownership marker is missing or mismatched"
+    [[ ! -e $KDIR/vmlinux && ! -L $KDIR/vmlinux ]] \
+        || die "prepared Kbuild still contains vmlinux"
+    [[ -f $KDIR/include/config/kernel.release \
+        && ! -L $KDIR/include/config/kernel.release ]] \
+        || die "prepared Kbuild lacks include/config/kernel.release"
+    configured=$(<"$KDIR/include/config/kernel.release")
+    [[ $configured == "$REL" ]] \
+        || die "headers contain Kbuild release '$configured', running kernel is '$REL'"
+    release=$(make -s -C "$KDIR" kernelrelease 2>/dev/null) \
+        || die "make could not evaluate the prepared Kbuild tree"
+    [[ -n $release ]] || die "make returned an empty Kbuild release"
+    [[ -s $KDIR/Module.symvers ]] || die "prepared Kbuild lacks a nonempty Module.symvers"
 }
 
 if valid_kbuild; then
@@ -58,14 +81,19 @@ trap 'rm -rf "$STAGE"' EXIT
 if [[ -n $SOURCE_KDIR ]]; then
     SOURCE_KDIR=$(readlink -f "$SOURCE_KDIR") || die "cannot resolve local Kbuild tree"
     [[ -d $SOURCE_KDIR && ! -L $SOURCE_KDIR ]] || die "local Kbuild tree is unsafe"
-    [[ $(make -s -C "$SOURCE_KDIR" kernelrelease 2>/dev/null) == "$REL" ]] \
-        || die "local Kbuild tree does not match $REL"
+    [[ -f $SOURCE_KDIR/include/config/kernel.release \
+        && ! -L $SOURCE_KDIR/include/config/kernel.release \
+        && $(<"$SOURCE_KDIR/include/config/kernel.release") == "$REL" ]] \
+        || die "local Kbuild tree does not match exact release $REL"
+    make -s -C "$SOURCE_KDIR" kernelrelease >/dev/null 2>&1 \
+        || die "make could not evaluate the local Kbuild tree"
     [[ -s $SOURCE_KDIR/Module.symvers ]] || die "local Kbuild tree lacks Module.symvers"
     EXTRACTED=$STAGE/build
     mkdir "$EXTRACTED"
     cp -a "$SOURCE_KDIR"/. "$EXTRACTED"/
 else
-    "$FETCHER" "$PACKAGE" "$ARCHIVE" >&2 \
+    EXPECTED_MEMBER="usr/lib/modules/$REL/build/include/config/kernel.release" \
+        "$FETCHER" "$PACKAGE" "$ARCHIVE" >&2 \
         || die "exact SteamOS headers package is unavailable: $PACKAGE"
     tar --zstd -xf "$ARCHIVE" -C "$STAGE" "usr/lib/modules/$REL/build" \
         || die "headers package does not contain the exact Kbuild tree"
@@ -81,5 +109,5 @@ printf '%s\n' "$REL" > "$EXTRACTED/.rtw89-steamos-kbuild"
 mv "$EXTRACTED" "$KDIR"
 trap - EXIT
 rm -rf "$STAGE"
-valid_kbuild || die "extracted Kbuild tree failed release or symbol validation"
+validate_kbuild_or_die
 printf '%s\n' "$KDIR"
