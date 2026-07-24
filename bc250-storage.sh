@@ -7,8 +7,6 @@ ROOT_DIR=/var/lib/bc250-control
 BACKING_DIR=/home/.steamos/offload/var/lib/bc250-control
 SYSTEMD_DIR=/etc/systemd/system
 ATOMIC_KEEP_DIR=/etc/atomic-update.conf.d
-MODULE_BASE=/usr/lib/modules
-MODPROBE_DIR=/etc/modprobe.d
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SELF="$SCRIPT_DIR/$(basename "${BASH_SOURCE[0]}")"
 LEGACY_UMR_DIR=/etc/bc250-control/umr
@@ -29,7 +27,6 @@ ROOT_BACKED_SERVICES=(
     cyan-skillfish-governor-smu.service
     bc250-cec-poweroff-standby.service
     aic8800-modules.service
-    rtw89-modules.service
     bc250-control.service
     bc250-desktop-control-repair.service
 )
@@ -517,7 +514,7 @@ install_storage() {
 }
 
 list_dependencies() {
-    local unit component rtw89=0
+    local unit component
     for unit in "${ROOT_BACKED_SERVICES[@]}"; do
         if [[ -e "$SYSTEMD_DIR/$unit" || -L "$SYSTEMD_DIR/$unit" ]]; then
             printf 'service:%s\n' "$unit"
@@ -526,7 +523,7 @@ list_dependencies() {
             printf 'service:%s\n' "$unit"
         fi
     done
-    for component in compute power cec aic rtw89 desktop; do
+    for component in compute power cec aic desktop; do
         if [[ -e "$ATOMIC_KEEP_DIR/bc250-$component.conf" \
             || -L "$ATOMIC_KEEP_DIR/bc250-$component.conf" ]]; then
             printf 'persistence:%s\n' "$component"
@@ -536,17 +533,13 @@ list_dependencies() {
         || -L "$ATOMIC_KEEP_DIR/bc250-steamos.conf" ]]; then
         printf 'persistence:legacy\n'
     fi
-    [[ -e "$ROOT_DIR/helper/rtw89-ensure-modules" \
-        || -e "$ROOT_DIR/rtw89/firmware/manifest" \
-        || -e "$ROOT_DIR/rtw89/firmware/initramfs-pending" \
-        || -e "$ROOT_DIR/rtw89/modules/install-transaction" \
-        || -e "$ROOT_DIR/rtw89/uninstall-pending" \
+    if [[ -e "$ROOT_DIR/rtw89" || -L "$ROOT_DIR/rtw89" \
+        || -e "$ROOT_DIR/helper/rtw89-ensure-modules" \
         || -e "$SYSTEMD_DIR/rtw89-modules.service.d/10-bc250-storage.conf" \
-        || -e "$MODPROBE_DIR/bc250-rtw89.conf" \
-        || -L "$SYSTEMD_DIR/multi-user.target.wants/rtw89-modules.service" ]] \
-        && rtw89=1
-    compgen -G "$MODULE_BASE/*/updates/rtw89/*.ko" >/dev/null && rtw89=1
-    [[ $rtw89 -eq 0 ]] || printf 'component:rtw89\n'
+        || -e /etc/modprobe.d/bc250-rtw89.conf \
+        || -e "$ATOMIC_KEEP_DIR/bc250-rtw89.conf" ]]; then
+        printf 'component:legacy-rtw89\n'
+    fi
 }
 
 can_uninstall() {

@@ -120,7 +120,6 @@ class MaintenanceTests(unittest.TestCase):
                     "persistence:remove compute",
                     "audio:uninstall",
                     "rtw89:uninstall",
-                    "persistence:remove rtw89",
                     "aic:uninstall",
                     "persistence:remove aic",
                     "persistence:remove all",
@@ -174,6 +173,7 @@ class MaintenanceTests(unittest.TestCase):
                     "MODPROBE_DIR": str(root / "modprobe"),
                     "ATOMIC_KEEP_DIR": str(root / "keep"),
                     "MODULE_BASE": str(root / "modules"),
+                    "RTW89_DATA_DIR": str(root / "data"),
                 }
             )
             rtw89 = Path(env["RTW89_SH"])
@@ -193,6 +193,14 @@ class MaintenanceTests(unittest.TestCase):
             ["bash", "-n", str(MAINTENANCE), str(ROOT / "bc250-storage.sh")],
             check=True,
         )
+
+    def test_rtw89_purge_path_is_fixed(self):
+        source = MAINTENANCE.read_text(encoding="utf-8")
+        purge = source[source.index("purge_preserved_data()") :]
+        self.assertIn(
+            "sudo rm -rf -- /home/.steamos/offload/var/lib/rtw89-steamos", purge
+        )
+        self.assertNotIn('sudo rm -rf -- "$RTW89_DATA_DIR"', purge)
 
 
 if __name__ == "__main__":

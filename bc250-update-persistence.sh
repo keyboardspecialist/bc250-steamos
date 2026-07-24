@@ -7,7 +7,7 @@ KEEP_DIR=/etc/atomic-update.conf.d
 LEGACY_KEEP_FILE="$KEEP_DIR/bc250-steamos.conf"
 PREVIOUS_ETC=/etc/previous
 BACKUP_DIR=/var/lib/steamos-atomupd/etc_backup
-COMPONENTS=(compute power cec aic rtw89 desktop)
+COMPONENTS=(compute power cec aic desktop)
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 STORAGE_SH="$SCRIPT_DIR/bc250-storage.sh"
 STORAGE_UNIT='/etc/systemd/system/var-lib-bc250\x2dcontrol.mount'
@@ -80,7 +80,7 @@ print_storage_paths() {
 write_keep_file() {
     local component="$1" target="$KEEP_DIR/bc250-$1.conf" tmp
     case "$component" in
-        compute|power|cec|aic|rtw89|desktop) ;;
+        compute|power|cec|aic|desktop) ;;
         *) die "Unknown component: $component" ;;
     esac
     if [[ -e "$target" || -L "$target" ]]; then
@@ -144,15 +144,6 @@ EOF
 EOF
                 print_storage_paths
                 ;;
-            rtw89)
-                cat << EOF
-/etc/modprobe.d/bc250-rtw89.conf
-/etc/systemd/system/rtw89-modules.service
-/etc/systemd/system/rtw89-modules.service.d/10-bc250-storage.conf
-/etc/systemd/system/multi-user.target.wants/rtw89-modules.service
-EOF
-                print_storage_paths
-                ;;
             desktop)
                 cat << EOF
 /etc/dbus-1/system.d/io.github.keyboardspecialist.BC250Control1.conf
@@ -180,16 +171,6 @@ component_has_state() {
                     || -e /etc/systemd/system/bc250-acpi-heal.service ]] ;;
         cec)     [[ -e "$ROOT_DATA_DIR/helper/bc250-cec-poweroff-standby" || -e /etc/systemd/system-sleep/bc250-cec-amp.sh ]] ;;
         aic)     [[ -e "$ROOT_DATA_DIR/aic8800/source" || -e /etc/systemd/system/aic8800-modules.service ]] ;;
-        rtw89)   [[ -e "$ROOT_DATA_DIR/rtw89/source" \
-                    || -e "$ROOT_DATA_DIR/rtw89/firmware/manifest" \
-                    || -e "$ROOT_DATA_DIR/rtw89/firmware/initramfs-pending" \
-                    || -e "$ROOT_DATA_DIR/rtw89/modules/install-transaction" \
-                    || -e "$ROOT_DATA_DIR/rtw89/uninstall-pending" \
-                    || -e "$ROOT_DATA_DIR/helper/rtw89-ensure-modules" \
-                    || -e /etc/modprobe.d/bc250-rtw89.conf \
-                    || -e /etc/systemd/system/rtw89-modules.service \
-                    || -e /etc/systemd/system/rtw89-modules.service.d/10-bc250-storage.conf \
-                    || -L /etc/systemd/system/multi-user.target.wants/rtw89-modules.service ]] ;;
         desktop) [[ -e "$ROOT_DATA_DIR/desktop" || -e /etc/systemd/system/bc250-control.service ]] ;;
         *)       return 1 ;;
     esac
@@ -201,7 +182,7 @@ install_keep_list() {
     local -a selected=()
     case "$requested" in
         all) selected=("${COMPONENTS[@]}") ;;
-        compute|power|cec|aic|rtw89|desktop) selected=("$requested") ;;
+        compute|power|cec|aic|desktop) selected=("$requested") ;;
         *) die "Unknown component: $requested" ;;
     esac
     if [[ -e "$LEGACY_KEEP_FILE" || -L "$LEGACY_KEEP_FILE" ]]; then
@@ -231,7 +212,7 @@ install_keep_list() {
                 write_keep_file "$component"
             done
             ;;
-        compute|power|cec|aic|rtw89|desktop) write_keep_file "$requested" ;;
+        compute|power|cec|aic|desktop) write_keep_file "$requested" ;;
         *) die "Unknown component: $requested" ;;
     esac
 }
@@ -242,7 +223,7 @@ remove_keep_list() {
     local -a selected=()
     case "$requested" in
         all) selected=("${COMPONENTS[@]}") ;;
-        compute|power|cec|aic|rtw89|desktop) selected=("$requested") ;;
+        compute|power|cec|aic|desktop) selected=("$requested") ;;
         *) die "Unknown component: $requested" ;;
     esac
 
@@ -516,7 +497,6 @@ cmd_menu() {
             "Protect power|$(keep_badge power)|Preserve power services, GPU tuning, and CPU tuning."
             "Protect CEC|$(keep_badge cec)|Preserve CEC poweroff and sleep integration."
             "Protect AIC8800|$(keep_badge aic)|Preserve AIC8800 service and device configuration."
-            "Protect Realtek RTW89|$(keep_badge rtw89)|Preserve the Realtek RTW89 repair service and module blacklist."
             "Protect desktop control|$(keep_badge desktop)|Preserve the desktop service and repair integration after updates."
             "Protect all components||Install every component keep list."
             "Recover compute settings||Restore CU routing from the newest atomupd snapshot."
@@ -530,25 +510,24 @@ cmd_menu() {
             1) run_menu_action install power ;;
             2) run_menu_action install cec ;;
             3) run_menu_action install aic ;;
-            4) run_menu_action install rtw89 ;;
-            5) run_menu_action install desktop ;;
-            6) run_menu_action install all ;;
-            7) run_menu_action recover compute ;;
-            8) run_menu_action recover power ;;
-            9) run_menu_action recover all ;;
-            10) show_menu_status ;;
+            4) run_menu_action install desktop ;;
+            5) run_menu_action install all ;;
+            6) run_menu_action recover compute ;;
+            7) run_menu_action recover power ;;
+            8) run_menu_action recover all ;;
+            9) show_menu_status ;;
         esac
     done
 }
 
 cmd_help() {
     cat << EOF
-Usage: $0 {install|remove} [compute|power|cec|aic|rtw89|desktop|all]
+Usage: $0 {install|remove} [compute|power|cec|aic|desktop|all]
        $0 recover [compute|power|all] [--force]
        $0 {status|menu|help}
 
   remove COMPONENT     Remove only this helper's matching component keep list.
-                       COMPONENT is compute, power, cec, aic, rtw89, desktop, or all.
+                       COMPONENT is compute, power, cec, aic, desktop, or all.
 
 Run with no arguments in a terminal to open the interactive menu.
 EOF
@@ -564,7 +543,7 @@ case "$1" in
     remove)
         shift
         [[ $# -eq 1 ]] \
-            || die "Usage: $0 remove {compute|power|cec|aic|rtw89|desktop|all}"
+            || die "Usage: $0 remove {compute|power|cec|aic|desktop|all}"
         remove_keep_list "$1"
         ;;
     recover) shift; recover_settings "${1:-all}" "${2:-}" ;;

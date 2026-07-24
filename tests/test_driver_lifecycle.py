@@ -129,7 +129,8 @@ class DriverLifecycleTests(unittest.TestCase):
         self.assertLess(disable, remove)
         self.assertIn("validate_installed", installer[disable:remove])
         self.assertIn("uninstall-pending", installer)
-        self.assertIn('bash "$PERSISTENCE_SH" remove rtw89', installer)
+        self.assertIn("rtw89-steamos.conf", installer)
+        self.assertNotIn("PERSISTENCE_SH", installer)
         self.assertNotIn('rm -rf "$ROOT_SOURCE"', installer)
 
     def test_rtw89_boot_repair_is_offline(self):
@@ -137,8 +138,9 @@ class DriverLifecycleTests(unittest.TestCase):
         self.assertNotIn("curl ", helper)
         self.assertNotIn("pacman ", helper)
         self.assertNotIn("git clone", helper)
-        self.assertIn("bc250-driver-management.lock", helper)
+        self.assertIn("rtw89-steamos.lock", helper)
         self.assertIn("SOURCE_MANIFEST.sha256", helper)
+        self.assertNotIn("vmlinux is required", helper)
 
 
 if __name__ == "__main__":

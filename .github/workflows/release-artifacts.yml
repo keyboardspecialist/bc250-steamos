@@ -20,6 +20,7 @@ jobs:
       DECKY_ARTIFACT_BASENAME: bc250-decky-control-${{ github.ref_name }}
       DESKTOP_ARTIFACT_BASENAME: bc250-desktop-control-${{ github.ref_name }}
       TOOLKIT_ARTIFACT_BASENAME: bc250-steamos-toolkit-${{ github.ref_name }}
+      RTW89_ARTIFACT_BASENAME: rtw89-steamos-${{ github.ref_name }}
 
     steps:
       - name: Check out tag
@@ -110,6 +111,16 @@ jobs:
           (cd release-toolkit && zip -r "../${TOOLKIT_ARTIFACT_BASENAME}.zip" bc250-steamos)
           sha256sum "${TOOLKIT_ARTIFACT_BASENAME}.zip" > "${TOOLKIT_ARTIFACT_BASENAME}.zip.sha256"
 
+      - name: Package standalone RTW89 driver
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p release-rtw89
+          git archive --format=tar --prefix=rtw89-steamos/ HEAD:rtw89 \
+            | tar -xf - -C release-rtw89
+          (cd release-rtw89 && zip -r "../${RTW89_ARTIFACT_BASENAME}.zip" rtw89-steamos)
+          sha256sum "${RTW89_ARTIFACT_BASENAME}.zip" > "${RTW89_ARTIFACT_BASENAME}.zip.sha256"
+
       - name: Upload Decky plugin artifact
         uses: actions/upload-artifact@v4
         with:
@@ -127,6 +138,16 @@ jobs:
           path: |
             ${{ env.TOOLKIT_ARTIFACT_BASENAME }}.zip
             ${{ env.TOOLKIT_ARTIFACT_BASENAME }}.zip.sha256
+          if-no-files-found: error
+          retention-days: 90
+
+      - name: Upload standalone RTW89 artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.RTW89_ARTIFACT_BASENAME }}
+          path: |
+            ${{ env.RTW89_ARTIFACT_BASENAME }}.zip
+            ${{ env.RTW89_ARTIFACT_BASENAME }}.zip.sha256
           if-no-files-found: error
           retention-days: 90
 
@@ -151,6 +172,7 @@ jobs:
       DECKY_ARTIFACT_BASENAME: bc250-decky-control-${{ github.ref_name }}
       DESKTOP_ARTIFACT_BASENAME: bc250-desktop-control-${{ github.ref_name }}
       TOOLKIT_ARTIFACT_BASENAME: bc250-steamos-toolkit-${{ github.ref_name }}
+      RTW89_ARTIFACT_BASENAME: rtw89-steamos-${{ github.ref_name }}
     steps:
       - name: Attach artifacts to GitHub release
         env:
@@ -162,6 +184,7 @@ jobs:
           gh run download "$GITHUB_RUN_ID" --name "$DECKY_ARTIFACT_BASENAME" --dir .
           gh run download "$GITHUB_RUN_ID" --name "$DESKTOP_ARTIFACT_BASENAME" --dir .
           gh run download "$GITHUB_RUN_ID" --name "$TOOLKIT_ARTIFACT_BASENAME" --dir .
+          gh run download "$GITHUB_RUN_ID" --name "$RTW89_ARTIFACT_BASENAME" --dir .
           if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
             gh release upload "$GITHUB_REF_NAME" \
               "${DECKY_ARTIFACT_BASENAME}.zip" \
@@ -170,6 +193,8 @@ jobs:
               "${DESKTOP_ARTIFACT_BASENAME}.zip.sha256" \
               "${TOOLKIT_ARTIFACT_BASENAME}.zip" \
               "${TOOLKIT_ARTIFACT_BASENAME}.zip.sha256" \
+              "${RTW89_ARTIFACT_BASENAME}.zip" \
+              "${RTW89_ARTIFACT_BASENAME}.zip.sha256" \
               --clobber
           else
             gh release create "$GITHUB_REF_NAME" \
@@ -179,6 +204,8 @@ jobs:
               "${DESKTOP_ARTIFACT_BASENAME}.zip.sha256" \
               "${TOOLKIT_ARTIFACT_BASENAME}.zip" \
               "${TOOLKIT_ARTIFACT_BASENAME}.zip.sha256" \
+              "${RTW89_ARTIFACT_BASENAME}.zip" \
+              "${RTW89_ARTIFACT_BASENAME}.zip.sha256" \
               --verify-tag \
               --generate-notes \
               --title "$GITHUB_REF_NAME"

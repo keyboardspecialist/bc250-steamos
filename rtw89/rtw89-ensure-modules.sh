@@ -3,7 +3,7 @@
 set -euo pipefail
 
 export PATH=/usr/sbin:/usr/bin:/sbin:/bin
-DATA=/var/lib/bc250-control/rtw89
+DATA=/home/.steamos/offload/var/lib/rtw89-steamos
 SOURCE=$DATA/source
 MODULES=$DATA/modules
 MODULE_TXN=$MODULES/install-transaction
@@ -32,9 +32,7 @@ die() { printf '[rtw89] %s\n' "$*" >&2; exit 1; }
 
 [[ $EUID -eq 0 ]] || die "boot repair must run as root"
 command -v flock >/dev/null || die "flock is required"
-exec 8>/run/lock/bc250-driver-management.lock
-flock 8
-exec 9>/run/lock/bc250-rtw89.lock
+exec 9>/run/lock/rtw89-steamos.lock
 flock 9
 
 unlock_rootfs() {
@@ -65,6 +63,32 @@ secure_tree() {
     done
     bad=$(find "$path" -xdev \( -type l -o ! -uid 0 -o -perm /022 \) -print -quit)
     [[ -z $bad ]]
+}
+
+secure_kbuild_tree() {
+    local path=$1 bad link target
+    secure_tree_metadata "$path" || return 1
+    bad=$(find "$path" -xdev -mindepth 1 \
+        ! \( -type f -o -type d -o -type l \) -print -quit)
+    [[ -z $bad ]] || return 1
+    bad=$(find "$path" -xdev ! -type l \( ! -uid 0 -o -perm /022 \) -print -quit)
+    [[ -z $bad ]] || return 1
+    while IFS= read -r -d '' link; do
+        [[ $(stat -c '%u' "$link") == 0 ]] || return 1
+        target=$(readlink -f -- "$link") || return 1
+        case "$target" in "$path"/*) ;; *) return 1 ;; esac
+    done < <(find "$path" -xdev -type l -print0)
+}
+
+secure_tree_metadata() {
+    local current=$1 owner mode
+    while :; do
+        [[ -d $current && ! -L $current ]] || return 1
+        read -r owner mode < <(stat -Lc '%u %a' "$current")
+        [[ $owner == 0 && $((8#$mode & 8#022)) -eq 0 ]] || return 1
+        [[ $current == / ]] && break
+        current=${current%/*}; [[ -n $current ]] || current=/
+    done
 }
 
 safe_root_directory() {
@@ -138,7 +162,7 @@ find_matching_endpoints() {
 
 render_module_manifest() {
     local dir=$1 release=$2 endpoint=$3 module file
-    printf 'format bc250-rtw89-modules-v1\nrelease %s\nendpoint %s\n' \
+    printf 'format rtw89-steamos-modules-v1\nrelease %s\nendpoint %s\n' \
         "$release" "$endpoint"
     for module in "${EXPECTED_MODULES[@]}"; do
         file=$dir/$module.ko
@@ -194,7 +218,7 @@ module_transaction_release() {
     local marker=$1 format release_key release extra
     secure_file "$marker" || return 1
     read -r format extra < "$marker"
-    [[ $format == bc250-rtw89-module-transaction-v1 && -z ${extra:-} ]] || return 1
+    [[ $format == rtw89-steamos-module-transaction-v1 && -z ${extra:-} ]] || return 1
     read -r release_key release extra < <(sed -n '2p' "$marker")
     [[ $release_key == release && $release =~ ^[A-Za-z0-9._+-]+$ && -z ${extra:-} ]] || return 1
     [[ $(wc -l < "$marker") -eq 2 ]] || return 1
@@ -205,7 +229,7 @@ recover_module_transaction() {
     local release canonical new_stage old_stage destination root_new root_old mode='' orphan
     local canonical_valid=0 new_valid=0 old_valid=0
     if [[ ! -e $MODULE_TXN && ! -L $MODULE_TXN ]]; then
-        orphan=$MODULES/.${KREL}.bc250-new
+        orphan=$MODULES/.${KREL}.rtw89-new
         if [[ -e $orphan || -L $orphan ]]; then
             secure_tree "$orphan" || die "orphaned module staging path is unsafe: $orphan"
             rm -rf "$orphan"
@@ -216,11 +240,11 @@ recover_module_transaction() {
     release=$(module_transaction_release "$MODULE_TXN") \
         || die "module transaction marker is unsafe or corrupt"
     canonical=$MODULES/$release
-    new_stage=$MODULES/.${release}.bc250-new
-    old_stage=$MODULES/.${release}.bc250-old
+    new_stage=$MODULES/.${release}.rtw89-new
+    old_stage=$MODULES/.${release}.rtw89-old
     destination=$INSTALL_BASE/$release/updates/rtw89
-    root_new=$INSTALL_BASE/$release/updates/.rtw89.bc250-new
-    root_old=$INSTALL_BASE/$release/updates/.rtw89.bc250-old
+    root_new=$INSTALL_BASE/$release/updates/.rtw89.steamos-new
+    root_old=$INSTALL_BASE/$release/updates/.rtw89.steamos-old
     if [[ -e $INSTALL_BASE/$release || -L $INSTALL_BASE/$release ]]; then
         safe_root_directory "$INSTALL_BASE/$release" || die "unsafe module transaction parent for $release"
     fi
@@ -311,7 +335,7 @@ validate_firmware_manifest_file() {
     secure_tree "$FIRMWARE" || return 1
     secure_file "$manifest" || return 1
     IFS= read -r line < "$manifest"
-    [[ $line == 'format bc250-rtw89-firmware-v2' ]] || return 1
+    [[ $line == 'format rtw89-steamos-firmware-v2' ]] || return 1
     while read -r kind hash destination copy extra; do
         [[ -z ${kind:-} ]] && continue
         [[ $hash =~ ^[0-9a-f]{64}$ ]] || return 1
@@ -418,7 +442,7 @@ recover_firmware_transaction() {
         [[ -n $copy ]] || die "pending firmware cache entry disappeared: $destination"
         atomic_firmware_copy "$FIRMWARE/$copy" "$destination"
         FIRMWARE_CHANGED=1
-        log "restored toolkit-owned firmware $destination"
+        log "restored driver-owned firmware $destination"
     done < <(sed -n '2,$p' "$pending")
     mv -f "$pending" "$FIRMWARE/manifest"
 }
@@ -434,7 +458,7 @@ restore_firmware() {
     [[ -f $FIRMWARE/manifest || -f $FIRMWARE/manifest.pending ]] || return 0
     recover_firmware_transaction
     tmp=$(mktemp "$FIRMWARE/.manifest.new.XXXXXX")
-    printf 'format bc250-rtw89-firmware-v2\n' > "$tmp"
+    printf 'format rtw89-steamos-firmware-v2\n' > "$tmp"
     while read -r kind hash destination copy extra; do
         [[ $kind == cache ]] || continue
         printf 'cache %s %s %s\n' "$hash" "$destination" "$copy" >> "$tmp"
@@ -473,14 +497,23 @@ find_kdir() {
     [[ -n $resolved && -d $resolved ]] || return 1
     # The boot service runs as root, so never execute Kbuild input writable by
     # another user or containing links outside the validated tree.
-    secure_tree "$resolved" || return 1
+    secure_kbuild_tree "$resolved" || return 1
     release=$(make -s -C "$resolved" kernelrelease 2>/dev/null) || return 1
     [[ $release == "$KREL" ]] || return 1
     printf '%s\n' "$resolved"
 }
 
+build_external_modules() {
+    local build=$1 kdir=$2
+    if [[ ! -e $kdir/vmlinux && ! -L $kdir/vmlinux ]]; then
+        log "vmlinux is absent; optional module BTF will be skipped"
+    fi
+    make -C "$build" KDIR="$kdir" clean modules 2>&1 \
+        | sed '/Skipping BTF generation for .* due to unavailability of vmlinux/d'
+}
+
 build_stage() {
-    local kdir build stage endpoint module
+    local kdir build stage endpoint module kbuild_copy=''
     for module in make gcc ld modinfo sha256sum readlink; do
         command -v "$module" >/dev/null || \
             die "build prerequisite '$module' is absent; rerun interactive steamdeck-setup.sh"
@@ -489,10 +522,20 @@ build_stage() {
         die "exact Kbuild for $KREL is absent; rerun interactive steamdeck-setup.sh"
     validate_source
 
-    build=$(mktemp -d /var/tmp/bc250-rtw89-build.XXXXXX)
-    trap 'rm -rf "${build:-}"; relock_rootfs' EXIT
+    if [[ -e $kdir/vmlinux || -L $kdir/vmlinux ]]; then
+        [[ -f $kdir/vmlinux && ! -L $kdir/vmlinux ]] \
+            || die "local vmlinux path is unsafe"
+        kbuild_copy=$(mktemp -d /var/tmp/rtw89-steamos-kbuild.XXXXXX)
+        cp -a "$kdir"/. "$kbuild_copy"/
+        rm -f "$kbuild_copy/vmlinux"
+        secure_kbuild_tree "$kbuild_copy" || die "sanitized Kbuild copy is unsafe"
+        kdir=$kbuild_copy
+    fi
+
+    build=$(mktemp -d /var/tmp/rtw89-steamos-build.XXXXXX)
+    trap 'rm -rf "${build:-}" "${kbuild_copy:-}"; relock_rootfs' EXIT
     cp -a "$SOURCE"/. "$build"/
-    make -C "$build" KDIR="$kdir" clean modules
+    build_external_modules "$build" "$kdir"
     find_matching_endpoints "$build" \
         || die "no attached supported RTW89 device matches rebuilt module aliases"
     endpoint=${MATCH_ENDPOINTS[0]}
@@ -512,7 +555,7 @@ build_stage() {
     [[ ! -e $MODULES/$KREL && ! -L $MODULES/$KREL ]] \
         || die "refusing to replace an unrecognized stage for $KREL"
     mv "$stage" "$MODULES/$KREL"
-    rm -rf "$build"
+    rm -rf "$build" "$kbuild_copy"
     trap relock_rootfs EXIT
     log "built and staged modules for $KREL"
 }

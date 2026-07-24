@@ -30,15 +30,27 @@ bash rtw89/steamdeck-setup.sh help
 `install` builds as the invoking `SUDO_USER` against the exact running-kernel
 Kbuild tree. It does not use DKMS and never runs the vendored Makefile as root
 from this checkout. If `/usr/lib/modules/$(uname -r)/build` is absent, it uses
-`bc250-audio-fix/prepare-kernel.sh --wifi` as that normal user.
+the bundled `prepare-kbuild.sh` to fetch and extract the exact SteamOS headers
+package into that user's cache. It does not invoke anything outside this
+directory.
 
-Validated source, per-kernel module stages, and toolkit-owned firmware copies
-live below `/var/lib/bc250-control/rtw89`. The boot service can restore a wiped
-SteamOS root filesystem offline. It never downloads files or installs packages;
-if exact headers or the toolchain are unavailable, rerun interactive setup.
+The external-module build does not require `vmlinux`. The header preparer
+removes the packaged kernel image so Kbuild consistently skips optional module
+BTF without adding a `pahole` dependency. The installer reports that once and
+filters Kbuild's repetitive per-module skip messages. The exact nonempty
+`Module.symvers` from the headers package is always required for strict modpost
+validation.
+
+Validated source, per-kernel module stages, and driver-owned firmware copies
+live below `/home/.steamos/offload/var/lib/rtw89-steamos`. The installer owns
+its update keep list and boot service directly; it does not require the BC-250
+toolkit's storage, control, plugin, audio, or other driver scripts. The boot
+service can restore a wiped SteamOS root filesystem offline. It never downloads
+files or installs packages; if exact headers or the toolchain are unavailable,
+rerun interactive setup.
 
 `status` is read-only and exits 0 only for a complete current-kernel install.
-`uninstall` removes only manifest-owned modules and hash-matching toolkit
+`uninstall` removes only manifest-owned modules and hash-matching driver
 firmware. It preserves the persistent source snapshot and module build caches.
 Reboot after uninstall if a module could not be unloaded or to bind the stock
 driver cleanly.

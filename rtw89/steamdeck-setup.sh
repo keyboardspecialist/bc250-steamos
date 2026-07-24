@@ -5,24 +5,30 @@ set -euo pipefail
 export PATH=/usr/sbin:/usr/bin:/sbin:/bin
 SOURCE_LOGICAL_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -L)
 SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)
-PARENT_DIR=$(cd "$SCRIPT_DIR/.." && pwd -P)
-STORAGE_SH=$PARENT_DIR/bc250-storage.sh
-PERSISTENCE_SH=$PARENT_DIR/bc250-update-persistence.sh
-PREPARE_KERNEL=$PARENT_DIR/bc250-audio-fix/prepare-kernel.sh
-DATA=/var/lib/bc250-control/rtw89
+PREPARE_KBUILD=$SCRIPT_DIR/prepare-kbuild.sh
+DATA=/home/.steamos/offload/var/lib/rtw89-steamos
 ROOT_SOURCE=$DATA/source
 ROOT_MODULES=$DATA/modules
 ROOT_FIRMWARE=$DATA/firmware
 FIRMWARE_INITRAMFS_PENDING=$ROOT_FIRMWARE/initramfs-pending
-ROOT_HELPER=/var/lib/bc250-control/helper/rtw89-ensure-modules
+ROOT_HELPER=$DATA/helper/rtw89-ensure-modules
 MODULE_BASE=/usr/lib/modules
-CONFIG=/etc/modprobe.d/bc250-rtw89.conf
+CONFIG=/etc/modprobe.d/rtw89-steamos.conf
 UNIT=/etc/systemd/system/rtw89-modules.service
 ENABLEMENT=/etc/systemd/system/multi-user.target.wants/rtw89-modules.service
-STORAGE_DROPIN=/etc/systemd/system/rtw89-modules.service.d/10-bc250-storage.conf
-KEEP_FILE=/etc/atomic-update.conf.d/bc250-rtw89.conf
+KEEP_FILE=/etc/atomic-update.conf.d/rtw89-steamos.conf
 PENDING=$DATA/uninstall-pending
 MODULE_TXN=$ROOT_MODULES/install-transaction
+LEGACY_DATA=/var/lib/bc250-control/rtw89
+LEGACY_HELPER=/var/lib/bc250-control/helper/rtw89-ensure-modules
+LEGACY_CONFIG=/etc/modprobe.d/bc250-rtw89.conf
+LEGACY_KEEP_FILE=/etc/atomic-update.conf.d/bc250-rtw89.conf
+LEGACY_DROPIN=/etc/systemd/system/rtw89-modules.service.d/10-bc250-storage.conf
+LEGACY_HELPER_SHA=6979edebc9933789ec03ae72f984554cb74982e8d106050af8f852ea09a8d8e2
+LEGACY_UNIT_SHA=5548af3e04fc17459a35b2cd9da9afc4271d04d8fa9a264305f9b5330ac9ffe1
+LEGACY_CONFIG_SHA=d7f1b894e7448c50e82bc8f13b4265f6321b27137a1115ca3ec55997a262aedc
+LEGACY_KEEP_SHA=84b8654145db82683eb14bc4ebf6dfb7af38f1b62064243d5f0044220e493b94
+LEGACY_DROPIN_SHA=05e8bb4210fc5b7b69ca5b69bcf1a12cec07e039d06c1dea875451345d36a8fb
 EXPECTED_COMMIT=08b8d326937a200a706ec9c501374eec15835b5a
 EXPECTED_MAKEFILE_SHA=9e7157c446201a85990b0652b29e79a31d5602cbe3f128b876e612cd14b11a3e
 EXPECTED_CONFIG_SHA=59333c2a0312c11bc3a7ecc574f89881380d3c4c1946be1713d476ef62c2c2ee
@@ -41,6 +47,7 @@ ROOTFS_WAS_READONLY=0
 BUILD_DIR=''
 MATCH_ENDPOINT=''
 MATCH_DEVICE=''
+LEGACY_MIGRATED=0
 
 log() { printf '[rtw89] %s\n' "$*"; }
 die() { printf '[rtw89] %s\n' "$*" >&2; exit 1; }
@@ -59,20 +66,28 @@ EOF
 }
 
 render_config() {
-    printf '%s\n' '# Managed by bc250-steamos rtw89/steamdeck-setup.sh.' \
+    printf '%s\n' '# Managed by rtw89/steamdeck-setup.sh.' \
         '# Based on pinned morrownr/rtw89 configuration; local edits are not supported.'
     cat "$SCRIPT_DIR/rtw89.conf"
     printf '\n'
     cat "$SCRIPT_DIR/usb_storage.conf"
 }
 
-render_storage_dropin() {
-    cat << 'EOF'
-[Unit]
-Requires=bc250-persistence-recovery.service
-After=bc250-persistence-recovery.service
-RequiresMountsFor=/var/lib/bc250-control
+render_keep_file() {
+    cat << EOF
+# Managed by rtw89/steamdeck-setup.sh.
+# Standalone RTW89 state preserved across SteamOS atomic updates.
+$CONFIG
+$UNIT
+$ENABLEMENT
 EOF
+}
+
+keep_file_owned() {
+    local first
+    [[ -f $KEEP_FILE && ! -L $KEEP_FILE ]] || return 1
+    IFS= read -r first < "$KEEP_FILE" || return 1
+    [[ $first == '# Managed by rtw89/steamdeck-setup.sh.' ]]
 }
 
 module_release() {
@@ -89,7 +104,7 @@ endpoint_has_aliases() {
 
 render_module_manifest() {
     local dir=$1 release=$2 endpoint=$3 module
-    printf 'format bc250-rtw89-modules-v1\nrelease %s\nendpoint %s\n' \
+    printf 'format rtw89-steamos-modules-v1\nrelease %s\nendpoint %s\n' \
         "$release" "$endpoint"
     for module in "${EXPECTED_MODULES[@]}"; do
         printf 'module %s %s.ko\n' \
@@ -144,7 +159,7 @@ validate_firmware_manifest_file() {
     [[ -d $ROOT_FIRMWARE && ! -L $ROOT_FIRMWARE \
         && -f $manifest && ! -L $manifest ]] || return 1
     IFS= read -r line < "$manifest"
-    [[ $line == 'format bc250-rtw89-firmware-v2' ]] || return 1
+    [[ $line == 'format rtw89-steamos-firmware-v2' ]] || return 1
     while read -r kind hash destination copy extra; do
         [[ -z ${kind:-} ]] && continue
         [[ $hash =~ ^[0-9a-f]{64}$ ]] || return 1
@@ -238,6 +253,126 @@ safe_root_directory() {
     done
 }
 
+install_standalone_storage() {
+    local path
+    for path in /home/.steamos /home/.steamos/offload /home/.steamos/offload/var \
+        /home/.steamos/offload/var/lib "$DATA"; do
+        if [[ ! -e $path && ! -L $path ]]; then
+            install -d -o root -g root -m 0755 "$path"
+        fi
+        safe_root_directory "$path" \
+            || die "standalone persistent storage is unsafe: $path"
+    done
+}
+
+directory_empty() (
+    local -a entries
+    shopt -s nullglob dotglob
+    entries=("$1"/*)
+    ((${#entries[@]} == 0))
+)
+
+validate_legacy_file() {
+    local path=$1 hash=$2 description=$3
+    [[ -e $path || -L $path ]] || return 0
+    secure_root_file "$path" || die "unsafe legacy $description: $path"
+    [[ $(sha256sum "$path" | cut -d' ' -f1) == "$hash" ]] \
+        || die "refusing unrecognized legacy $description: $path"
+}
+
+rewrite_manifest_header() {
+    local path=$1 old=$2 new=$3 tmp first
+    secure_root_file "$path" || die "unsafe legacy manifest: $path"
+    IFS= read -r first < "$path"
+    [[ $first == "$old" ]] || die "unrecognized legacy manifest: $path"
+    tmp=$(mktemp "$(dirname "$path")/.manifest-migrate.XXXXXX")
+    { printf '%s\n' "$new"; sed -n '2,$p' "$path"; } > "$tmp"
+    chmod 0644 "$tmp"; chown root:root "$tmp"; mv -f "$tmp" "$path"
+}
+
+migrate_legacy_install() {
+    local stage path release unit_hash
+    [[ -e $LEGACY_DATA || -L $LEGACY_DATA \
+        || -e $LEGACY_HELPER || -L $LEGACY_HELPER \
+        || -e $LEGACY_CONFIG || -L $LEGACY_CONFIG \
+        || -e $LEGACY_KEEP_FILE || -L $LEGACY_KEEP_FILE \
+        || -e $LEGACY_DROPIN || -L $LEGACY_DROPIN ]] || return 0
+    [[ -d $LEGACY_DATA && ! -L $LEGACY_DATA ]] \
+        || die "legacy RTW89 integration exists without recognized persistent data"
+    secure_root_tree "$LEGACY_DATA" || die "legacy RTW89 persistent data is unsafe"
+    [[ -f $LEGACY_DATA/source/UPSTREAM_COMMIT \
+        && $(<"$LEGACY_DATA/source/UPSTREAM_COMMIT") == "$EXPECTED_COMMIT" ]] \
+        || die "legacy RTW89 source is unrecognized"
+    [[ ! -e $LEGACY_DATA/modules/install-transaction \
+        && ! -e $LEGACY_DATA/firmware/manifest.pending \
+        && ! -e $LEGACY_DATA/uninstall-pending ]] \
+        || die "finish the existing RTW89 transaction before standalone migration"
+    validate_legacy_file "$LEGACY_HELPER" "$LEGACY_HELPER_SHA" "boot helper"
+    validate_legacy_file "$LEGACY_CONFIG" "$LEGACY_CONFIG_SHA" "module configuration"
+    validate_legacy_file "$LEGACY_KEEP_FILE" "$LEGACY_KEEP_SHA" "keep file"
+    validate_legacy_file "$LEGACY_DROPIN" "$LEGACY_DROPIN_SHA" "storage drop-in"
+    if [[ -e $UNIT || -L $UNIT ]]; then
+        secure_root_file "$UNIT" || die "unsafe legacy service unit"
+        unit_hash=$(sha256sum "$UNIT" | cut -d' ' -f1)
+        [[ $unit_hash == "$LEGACY_UNIT_SHA" \
+            || $unit_hash == "$(sha256sum "$SCRIPT_DIR/rtw89-modules.service" | cut -d' ' -f1)" ]] \
+            || die "refusing unrecognized RTW89 service unit"
+    fi
+    if [[ -e $ENABLEMENT || -L $ENABLEMENT ]]; then
+        [[ -L $ENABLEMENT && $(readlink "$ENABLEMENT") == ../rtw89-modules.service ]] \
+            || die "unsafe legacy service enablement"
+    fi
+
+    if directory_empty "$DATA"; then
+        stage=$(mktemp -d "$(dirname "$DATA")/.rtw89-migrate.XXXXXX")
+        cp -a "$LEGACY_DATA"/. "$stage"/
+        chown -R root:root "$stage"; chmod -R go-w "$stage"
+        for path in "$stage"/modules/*/manifest; do
+            [[ -f $path ]] || continue
+            rewrite_manifest_header "$path" 'format bc250-rtw89-modules-v1' \
+                'format rtw89-steamos-modules-v1'
+        done
+        if [[ -f $stage/firmware/manifest ]]; then
+            rewrite_manifest_header "$stage/firmware/manifest" \
+                'format bc250-rtw89-firmware-v2' 'format rtw89-steamos-firmware-v2'
+        fi
+        rmdir "$DATA"
+        mv "$stage" "$DATA"
+    fi
+    secure_root_tree "$DATA" || die "migrated standalone data is unsafe"
+    secure_root_tree "$ROOT_SOURCE" && validate_pinned_source "$ROOT_SOURCE" \
+        || die "migrated standalone source failed validation"
+    for path in "$ROOT_MODULES"/*/manifest; do
+        [[ -f $path ]] || continue
+        release=${path#"$ROOT_MODULES"/}; release=${release%%/*}
+        validate_stage "$ROOT_MODULES/$release" "$release" \
+            || die "migrated module stage failed validation: $release"
+    done
+    validate_firmware_manifest || die "migrated firmware manifest failed validation"
+    LEGACY_MIGRATED=1
+    log "validated and copied the previous toolkit-managed RTW89 installation"
+}
+
+finalize_legacy_migration() {
+    [[ $LEGACY_MIGRATED -eq 1 ]] || return 0
+    rm -f "$LEGACY_HELPER" "$LEGACY_CONFIG" "$LEGACY_KEEP_FILE" "$LEGACY_DROPIN"
+    rmdir "$(dirname "$LEGACY_DROPIN")" 2>/dev/null || true
+    rm -rf "$LEGACY_DATA"
+    log "removed superseded toolkit-managed RTW89 state"
+}
+
+write_keep_file() {
+    local tmp
+    if [[ -e $KEEP_FILE || -L $KEEP_FILE ]]; then
+        keep_file_owned || die "refusing to replace unrecognized keep file: $KEEP_FILE"
+    fi
+    install -d -o root -g root -m 0755 "$(dirname "$KEEP_FILE")"
+    tmp=$(mktemp "$(dirname "$KEEP_FILE")/.rtw89-steamos.XXXXXX")
+    render_keep_file > "$tmp"
+    chmod 0644 "$tmp"; chown root:root "$tmp"
+    mv -f "$tmp" "$KEEP_FILE"
+}
+
 validate_module_destination_parent() {
     local release=$1
     safe_root_directory "$MODULE_BASE/$release" || return 1
@@ -271,7 +406,8 @@ validate_source_inventory() {
     difference=$(comm -3 \
         <({ manifest_paths "$tree/SOURCE_MANIFEST.sha256"; echo SOURCE_MANIFEST.sha256; \
             if [[ $checkout -eq 1 ]]; then
-                printf '%s\n' STEAMOS.md steamdeck-setup.sh rtw89-ensure-modules.sh rtw89-modules.service
+                printf '%s\n' STEAMOS.md steamdeck-setup.sh rtw89-ensure-modules.sh \
+                    rtw89-modules.service prepare-kbuild.sh fetch-steamos-package.sh
             fi; } | LC_ALL=C sort -u) \
         <(cd "$tree" && find . -type f -printf '%P\n' | LC_ALL=C sort))
     [[ -z $difference ]]
@@ -318,6 +454,10 @@ validate_checkout() {
         || die "service source is missing or unsafe"
     [[ -f $SCRIPT_DIR/rtw89-ensure-modules.sh && ! -L $SCRIPT_DIR/rtw89-ensure-modules.sh ]] \
         || die "boot helper source is missing or unsafe"
+    [[ -f $PREPARE_KBUILD && ! -L $PREPARE_KBUILD \
+        && -f $SCRIPT_DIR/fetch-steamos-package.sh \
+        && ! -L $SCRIPT_DIR/fetch-steamos-package.sh ]] \
+        || die "standalone Kbuild preparation scripts are missing or unsafe"
 }
 
 validate_kernel() {
@@ -396,9 +536,7 @@ cleanup_install() {
 
 acquire_locks() {
     command -v flock >/dev/null || die "flock is required"
-    exec 8>/run/lock/bc250-driver-management.lock
-    flock 8
-    exec 9>/run/lock/bc250-rtw89.lock
+    exec 9>/run/lock/rtw89-steamos.lock
     flock 9
 }
 
@@ -406,7 +544,7 @@ module_transaction_release() {
     local marker=$1 format release_key release extra
     secure_root_file "$marker" || return 1
     read -r format extra < "$marker"
-    [[ $format == bc250-rtw89-module-transaction-v1 && -z ${extra:-} ]] || return 1
+    [[ $format == rtw89-steamos-module-transaction-v1 && -z ${extra:-} ]] || return 1
     read -r release_key release extra < <(sed -n '2p' "$marker")
     [[ $release_key == release && $release =~ ^[A-Za-z0-9._+-]+$ && -z ${extra:-} ]] || return 1
     [[ $(wc -l < "$marker") -eq 2 ]] || return 1
@@ -417,7 +555,7 @@ recover_module_transaction() {
     local release canonical new_stage old_stage destination root_new root_old mode='' orphan
     local canonical_valid=0 new_valid=0 old_valid=0
     if [[ ! -e $MODULE_TXN && ! -L $MODULE_TXN ]]; then
-        orphan=$ROOT_MODULES/.${KREL}.bc250-new
+        orphan=$ROOT_MODULES/.${KREL}.rtw89-new
         if [[ -e $orphan || -L $orphan ]]; then
             secure_root_tree "$orphan" || die "orphaned module staging path is unsafe: $orphan"
             rm -rf "$orphan"
@@ -428,11 +566,11 @@ recover_module_transaction() {
     release=$(module_transaction_release "$MODULE_TXN") \
         || die "module transaction marker is unsafe or corrupt"
     canonical=$ROOT_MODULES/$release
-    new_stage=$ROOT_MODULES/.${release}.bc250-new
-    old_stage=$ROOT_MODULES/.${release}.bc250-old
+    new_stage=$ROOT_MODULES/.${release}.rtw89-new
+    old_stage=$ROOT_MODULES/.${release}.rtw89-old
     destination=$MODULE_BASE/$release/updates/rtw89
-    root_new=$MODULE_BASE/$release/updates/.rtw89.bc250-new
-    root_old=$MODULE_BASE/$release/updates/.rtw89.bc250-old
+    root_new=$MODULE_BASE/$release/updates/.rtw89.steamos-new
+    root_old=$MODULE_BASE/$release/updates/.rtw89.steamos-old
     validate_module_destination_parent "$release" || die "unsafe module transaction parent for $release"
     if [[ -e $canonical || -L $canonical ]]; then
         secure_root_tree "$canonical" && validate_stage "$canonical" "$release" \
@@ -531,9 +669,11 @@ replace_directory() {
 show_status() {
     local failed=0 present=0 stage=$ROOT_MODULES/$KREL installed endpoint state
     installed=$MODULE_BASE/$KREL/updates/rtw89
-    for state in "$CONFIG" "$UNIT" "$ENABLEMENT" "$STORAGE_DROPIN" "$ROOT_HELPER" \
+    for state in "$CONFIG" "$UNIT" "$ENABLEMENT" "$ROOT_HELPER" \
         "$KEEP_FILE" "$ROOT_FIRMWARE/manifest" "$ROOT_FIRMWARE/manifest.pending" \
-        "$FIRMWARE_INITRAMFS_PENDING" "$MODULE_TXN" "$PENDING" "$installed"; do
+        "$FIRMWARE_INITRAMFS_PENDING" "$MODULE_TXN" "$PENDING" "$installed" \
+        "$LEGACY_DATA" "$LEGACY_HELPER" "$LEGACY_CONFIG" "$LEGACY_KEEP_FILE" \
+        "$LEGACY_DROPIN"; do
         [[ ! -e $state && ! -L $state ]] || present=1
     done
     if [[ $present -eq 0 ]]; then
@@ -563,32 +703,26 @@ show_status() {
         failed=1
     fi
     if [[ -f $UNIT && ! -L $UNIT && -f $ROOT_HELPER && ! -L $ROOT_HELPER \
-        && -L $ENABLEMENT && $(readlink "$ENABLEMENT") == ../rtw89-modules.service \
-        && -f $STORAGE_DROPIN && ! -L $STORAGE_DROPIN ]] \
+        && -L $ENABLEMENT && $(readlink "$ENABLEMENT") == ../rtw89-modules.service ]] \
         && secure_root_file "$UNIT" && secure_root_file "$ROOT_HELPER" \
-        && secure_root_file "$STORAGE_DROPIN" \
         && cmp -s "$UNIT" "$SCRIPT_DIR/rtw89-modules.service" \
-        && cmp -s "$ROOT_HELPER" "$SCRIPT_DIR/rtw89-ensure-modules.sh" \
-        && cmp -s "$STORAGE_DROPIN" <(render_storage_dropin); then
+        && cmp -s "$ROOT_HELPER" "$SCRIPT_DIR/rtw89-ensure-modules.sh"; then
         log "repair service: enabled"
     else
         log "repair service: incomplete"
         failed=1
     fi
-    if secure_root_file "$KEEP_FILE" \
-        && grep -Fqx '# Toolkit state preserved by SteamOS atomic updates.' "$KEEP_FILE" \
-        && grep -Fqx "$CONFIG" "$KEEP_FILE" \
-        && grep -Fqx "$UNIT" "$KEEP_FILE" \
-        && grep -Fqx "$ENABLEMENT" "$KEEP_FILE"; then
+    if secure_root_file "$KEEP_FILE" && keep_file_owned \
+        && cmp -s "$KEEP_FILE" <(render_keep_file); then
         log "atomic-update persistence: installed"
     else
         log "atomic-update persistence: incomplete"
         failed=1
     fi
     if firmware_targets_valid; then
-        log "toolkit firmware: valid"
+        log "driver firmware: valid"
     else
-        log "toolkit firmware: incomplete or invalid"
+        log "driver firmware: incomplete or invalid"
         failed=1
     fi
     [[ $failed -eq 0 ]] && log "state: complete" || log "state: partial"
@@ -596,20 +730,17 @@ show_status() {
 }
 
 prepare_kbuild() {
-    local user=$1 kdir=/usr/lib/modules/$KREL/build release
-    if [[ -d $kdir ]]; then
-        release=$(runuser -u "$user" -- make -s -C "$kdir" kernelrelease) \
-            || die "running-kernel Kbuild is unusable: $kdir"
-        [[ $release == "$KREL" ]] \
-            || die "Kbuild release '$release' does not equal running release '$KREL'"
-        printf '%s\n' "$kdir"
-        return
+    local user=$1 source=/usr/lib/modules/$KREL/build kdir release
+    [[ -f $PREPARE_KBUILD && ! -L $PREPARE_KBUILD ]] \
+        || die "exact Kbuild is absent and standalone prepare-kbuild.sh is unavailable"
+    if [[ -d $source ]]; then
+        kdir=$(runuser -u "$user" -- env RTW89_KBUILD_SOURCE="$source" "$PREPARE_KBUILD") \
+            || die "standalone local Kbuild sanitization failed"
+    else
+        kdir=$(runuser -u "$user" -- "$PREPARE_KBUILD") \
+            || die "standalone kernel-header preparation failed"
     fi
-    [[ -f $PREPARE_KERNEL && ! -L $PREPARE_KERNEL ]] \
-        || die "exact Kbuild is absent and prepare-kernel.sh is unavailable"
-    runuser -u "$user" -- "$PREPARE_KERNEL" --wifi >&2
-    kdir=$PARENT_DIR/bc250-audio-fix/valve-kernel
-    [[ -d $kdir ]] || die "prepare-kernel.sh did not create $kdir"
+    [[ -d $kdir ]] || die "prepare-kbuild.sh did not create $kdir"
     release=$(runuser -u "$user" -- make -s -C "$kdir" kernelrelease) \
         || die "prepared Kbuild is unusable"
     [[ $release == "$KREL" ]] \
@@ -619,7 +750,7 @@ prepare_kbuild() {
 
 install_tools_if_needed() {
     local command missing=0
-    for command in make gcc ld modinfo sha256sum runuser tar; do
+    for command in make gcc ld modinfo sha256sum runuser tar curl zstd; do
         command -v "$command" >/dev/null || missing=1
     done
     [[ $missing -eq 0 ]] && return
@@ -629,9 +760,20 @@ install_tools_if_needed() {
     pacman-key --populate archlinux holo >/dev/null 2>&1 || true
     pacman -Sy --noconfirm --needed base-devel
     relock_rootfs
-    for command in make gcc ld modinfo sha256sum runuser tar; do
+    for command in make gcc ld modinfo sha256sum runuser tar curl zstd; do
         command -v "$command" >/dev/null || die "required build command is still absent: $command"
     done
+}
+
+build_modules_as_user() {
+    local user=$1 build=$2 kdir=$3
+    if [[ ! -e $kdir/vmlinux && ! -L $kdir/vmlinux ]]; then
+        log "vmlinux is absent; optional module BTF will be skipped"
+    fi
+    runuser -u "$user" -- bash -o pipefail -c '
+        make -C "$1" KDIR="$2" clean modules 2>&1 \
+            | sed "/Skipping BTF generation for .* due to unavailability of vmlinux/d"
+    ' _ "$build" "$kdir"
 }
 
 snapshot_source() {
@@ -651,7 +793,8 @@ snapshot_source() {
         --exclude='.*.cmd' --exclude='Module.symvers' --exclude='modules.order' \
         --exclude='./valve-kernel' --exclude='./steamos-headers' \
         --exclude='./steamdeck-setup.sh' --exclude='./rtw89-ensure-modules.sh' \
-        --exclude='./rtw89-modules.service' --exclude='./STEAMOS.md' \
+        --exclude='./rtw89-modules.service' --exclude='./prepare-kbuild.sh' \
+        --exclude='./fetch-steamos-package.sh' --exclude='./STEAMOS.md' \
         -cf - . | tar -C "$stage" --no-same-owner -xf -
     chown -R root:root "$stage"
     chmod -R go-w "$stage"
@@ -666,12 +809,12 @@ snapshot_source() {
 }
 
 stage_modules() {
-    local build=$1 endpoint=$2 stage=$ROOT_MODULES/.${KREL}.bc250-new module
+    local build=$1 endpoint=$2 stage=$ROOT_MODULES/.${KREL}.rtw89-new module
     local installed=$MODULE_BASE/$KREL/updates/rtw89 marker
     install -d -o root -g root -m 0755 "$ROOT_MODULES"
     [[ ! -e $MODULE_TXN && ! -L $MODULE_TXN ]] || die "module transaction recovery did not complete"
     [[ ! -e $stage && ! -L $stage ]] || die "stale new module transaction stage: $stage"
-    [[ ! -e $ROOT_MODULES/.${KREL}.bc250-old && ! -L $ROOT_MODULES/.${KREL}.bc250-old ]] \
+    [[ ! -e $ROOT_MODULES/.${KREL}.rtw89-old && ! -L $ROOT_MODULES/.${KREL}.rtw89-old ]] \
         || die "stale old module transaction stage for $KREL"
     if [[ -e $ROOT_MODULES/$KREL || -L $ROOT_MODULES/$KREL ]]; then
         secure_root_tree "$ROOT_MODULES/$KREL" \
@@ -695,7 +838,7 @@ stage_modules() {
     chmod -R go-w "$stage"
     validate_stage "$stage" "$KREL" || die "persistent module stage failed validation"
     marker=$(mktemp "$ROOT_MODULES/.install-transaction.XXXXXX")
-    printf 'bc250-rtw89-module-transaction-v1\nrelease %s\n' "$KREL" > "$marker"
+    printf 'rtw89-steamos-module-transaction-v1\nrelease %s\n' "$KREL" > "$marker"
     chmod 0644 "$marker"; chown root:root "$marker"
     mv "$marker" "$MODULE_TXN"
 }
@@ -753,7 +896,7 @@ stage_and_install_firmware() {
     recover_firmware_transaction
     install -d -o root -g root -m 0755 "$ROOT_FIRMWARE/files"
     tmp=$(mktemp "$ROOT_FIRMWARE/.manifest.new.XXXXXX")
-    printf 'format bc250-rtw89-firmware-v2\n' > "$tmp"
+    printf 'format rtw89-steamos-firmware-v2\n' > "$tmp"
     for source in "$SCRIPT_DIR"/firmware/*.bin; do
         [[ -f $source && ! -L $source ]] || die "unsafe bundled firmware: $source"
         name=${source##*/}
@@ -791,9 +934,9 @@ stage_and_install_firmware() {
 }
 
 install_rootfs_modules() {
-    local stage=$ROOT_MODULES/.${KREL}.bc250-new destination=$MODULE_BASE/$KREL/updates/rtw89
-    local new=$MODULE_BASE/$KREL/updates/.rtw89.bc250-new
-    local old=$MODULE_BASE/$KREL/updates/.rtw89.bc250-old module
+    local stage=$ROOT_MODULES/.${KREL}.rtw89-new destination=$MODULE_BASE/$KREL/updates/rtw89
+    local new=$MODULE_BASE/$KREL/updates/.rtw89.steamos-new
+    local old=$MODULE_BASE/$KREL/updates/.rtw89.steamos-old module
     [[ -f $MODULE_TXN && ! -L $MODULE_TXN ]] || die "module transaction marker is missing"
     validate_module_destination_parent "$KREL" \
         || die "running-kernel module destination parent is unsafe"
@@ -854,19 +997,19 @@ install_rtw89() {
     id "$SUDO_USER" >/dev/null 2>&1 || die "SUDO_USER does not identify a local user"
     validate_checkout
     validate_kernel
-    [[ -f $STORAGE_SH && ! -L $STORAGE_SH ]] || die "storage helper is missing or unsafe"
-    [[ -f $PERSISTENCE_SH && ! -L $PERSISTENCE_SH ]] || die "persistence helper is missing or unsafe"
     acquire_locks
     trap cleanup_install EXIT
+    install_standalone_storage
+    migrate_legacy_install
     recover_module_transaction
     install_tools_if_needed
     kdir=$(prepare_kbuild "$SUDO_USER")
 
-    BUILD_DIR=$(mktemp -d /var/tmp/bc250-rtw89-user.XXXXXX)
+    BUILD_DIR=$(mktemp -d /var/tmp/rtw89-steamos-user.XXXXXX)
     build_group=$(id -gn "$SUDO_USER")
     chown "$SUDO_USER:$build_group" "$BUILD_DIR"
     runuser -u "$SUDO_USER" -- cp -a "$SCRIPT_DIR"/. "$BUILD_DIR"/
-    runuser -u "$SUDO_USER" -- make -C "$BUILD_DIR" KDIR="$kdir" clean modules
+    build_modules_as_user "$SUDO_USER" "$BUILD_DIR" "$kdir"
     # Discovering the endpoint from built aliases proves both source support and
     # that the selected _git module actually handles an attached PCIe/USB device.
     if ! find_matching_endpoint "$BUILD_DIR"; then
@@ -877,7 +1020,6 @@ install_rtw89() {
     validate_module_files "$BUILD_DIR" "$KREL" "$endpoint" \
         || die "build output failed module name, type, alias, or vermagic validation"
 
-    bash "$STORAGE_SH" install
     snapshot_source
     stage_modules "$BUILD_DIR" "$endpoint"
     stage_and_install_firmware
@@ -887,21 +1029,22 @@ install_rtw89() {
     atomic_copy_file "$SCRIPT_DIR/rtw89-ensure-modules.sh" "$ROOT_HELPER" 0755
     atomic_copy_file "$SCRIPT_DIR/rtw89-modules.service" "$UNIT" 0644
     local config_tmp
-    config_tmp=$(mktemp /etc/modprobe.d/.bc250-rtw89.XXXXXX)
+    config_tmp=$(mktemp /etc/modprobe.d/.rtw89-steamos.XXXXXX)
     render_config > "$config_tmp"
     chmod 0644 "$config_tmp"
     chown root:root "$config_tmp"
     [[ ! -L $CONFIG && (! -e $CONFIG || -f $CONFIG) ]] \
         || die "unsafe module configuration destination: $CONFIG"
     mv -f "$config_tmp" "$CONFIG"
+    write_keep_file
     depmod "$KREL"
     mkinitcpio -P
     rm -f "$FIRMWARE_INITRAMFS_PENDING"
+    finalize_legacy_migration
     relock_rootfs
 
     systemctl daemon-reload
     systemctl enable rtw89-modules.service >/dev/null
-    bash "$PERSISTENCE_SH" install rtw89
     safe_load_endpoint "$endpoint"
     log "installation complete for Realtek RTW89 Wi-Fi on $KREL"
     log "Bluetooth is separate and is not provided by this driver"
@@ -919,29 +1062,27 @@ preflight_uninstall() {
     command -v systemctl >/dev/null || die "systemctl is required"
     command -v depmod >/dev/null || die "depmod is required"
     command -v mkinitcpio >/dev/null || die "mkinitcpio is required"
-    [[ -f $PERSISTENCE_SH && ! -L $PERSISTENCE_SH ]] || die "persistence helper is missing or unsafe"
     if [[ -e $CONFIG || -L $CONFIG ]]; then
         secure_root_file "$CONFIG" || die "unsafe module configuration: $CONFIG"
         cmp -s "$CONFIG" <(render_config) \
             || die "refusing to remove modified module configuration: $CONFIG"
     fi
-    validate_owned_file "$UNIT" "$SCRIPT_DIR/rtw89-modules.service" "service unit"
-    validate_owned_file "$ROOT_HELPER" "$SCRIPT_DIR/rtw89-ensure-modules.sh" "boot helper"
-    if [[ -e $STORAGE_DROPIN || -L $STORAGE_DROPIN ]]; then
-        secure_root_file "$STORAGE_DROPIN" || die "unsafe storage drop-in"
-        cmp -s "$STORAGE_DROPIN" <(render_storage_dropin) \
-            || die "refusing to remove unrecognized storage drop-in"
+    if [[ $LEGACY_MIGRATED -eq 1 && -f $UNIT && ! -L $UNIT \
+        && $(sha256sum "$UNIT" | cut -d' ' -f1) == "$LEGACY_UNIT_SHA" ]]; then
+        secure_root_file "$UNIT" || die "unsafe legacy service unit"
+    else
+        validate_owned_file "$UNIT" "$SCRIPT_DIR/rtw89-modules.service" "service unit"
     fi
+    validate_owned_file "$ROOT_HELPER" "$SCRIPT_DIR/rtw89-ensure-modules.sh" "boot helper"
     if [[ -e $ENABLEMENT || -L $ENABLEMENT ]]; then
         [[ -L $ENABLEMENT && $(readlink "$ENABLEMENT") == ../rtw89-modules.service ]] \
             || die "refusing unexpected service enablement path"
     fi
     if [[ -e $KEEP_FILE || -L $KEEP_FILE ]]; then
         secure_root_file "$KEEP_FILE" || die "unsafe atomic-update keep file"
-        grep -Fqx '# Toolkit state preserved by SteamOS atomic updates.' "$KEEP_FILE" \
-            || die "unrecognized atomic-update keep file"
-        grep -Fqx '# Generated by bc250-update-persistence.sh.' "$KEEP_FILE" \
-            || die "unrecognized atomic-update keep file"
+        keep_file_owned || die "unrecognized atomic-update keep file"
+        cmp -s "$KEEP_FILE" <(render_keep_file) \
+            || die "modified atomic-update keep file"
     fi
     validate_firmware_manifest || die "firmware manifest is unsafe or corrupt"
     [[ ! -e $ROOT_FIRMWARE/manifest.pending && ! -L $ROOT_FIRMWARE/manifest.pending ]] \
@@ -972,9 +1113,9 @@ preflight_uninstall() {
         while read -r kind hash destination copy extra; do
             [[ $kind == owned ]] || continue
             [[ ! -L $destination && (! -e $destination || -f $destination) ]] \
-                || die "unsafe toolkit firmware destination: $destination"
+                || die "unsafe driver firmware destination: $destination"
             [[ ! -f $destination ]] || secure_root_file "$destination" \
-                || die "toolkit firmware destination is not root-owned immutable data"
+                || die "driver firmware destination is not root-owned immutable data"
         done < <(sed -n '2,$p' "$ROOT_FIRMWARE/manifest")
     fi
 }
@@ -993,6 +1134,9 @@ uninstall_rtw89() {
     )
     [[ $EUID -eq 0 ]] || die "uninstall requires root; run: sudo bash $0 uninstall"
     validate_checkout
+    acquire_locks
+    install_standalone_storage
+    migrate_legacy_install
     preflight_uninstall
 
     systemctl disable --now rtw89-modules.service >/dev/null 2>&1 || true
@@ -1000,7 +1144,6 @@ uninstall_rtw89() {
         || systemctl is-enabled --quiet rtw89-modules.service; then
         die "could not disable the repair service; refusing uninstall"
     fi
-    acquire_locks
     preflight_uninstall
     trap relock_rootfs EXIT
 
@@ -1050,27 +1193,25 @@ uninstall_rtw89() {
             fi
         done < <(sed -n '2,$p' "$ROOT_FIRMWARE/manifest")
     fi
-    rm -f "$CONFIG" "$UNIT" "$ROOT_HELPER" "$ENABLEMENT" "$STORAGE_DROPIN"
-    rmdir "$(dirname "$STORAGE_DROPIN")" 2>/dev/null || true
+    rm -f "$CONFIG" "$UNIT" "$ROOT_HELPER" "$ENABLEMENT" "$KEEP_FILE"
     rm -rf "$ROOT_FIRMWARE"
     for rel in "${releases[@]}"; do
         [[ -d $MODULE_BASE/$rel ]] && depmod "$rel"
     done
     mkinitcpio -P
+    finalize_legacy_migration
     systemctl daemon-reload
     rm -f "$PENDING"
     relock_rootfs
     trap - EXIT
 
-    log "runtime modules, toolkit firmware, configuration, and repair service removed"
+    log "runtime modules, firmware, configuration, and repair service removed"
     log "persistent source and per-kernel module caches preserved under $DATA"
     if [[ $reboot -eq 1 ]]; then
         log "reboot required: yes; one or more _git modules remain loaded"
     else
         log "reboot required: yes; reboot to bind the restored stock driver cleanly"
     fi
-    # Persistence removal is deliberately the final operation.
-    bash "$PERSISTENCE_SH" remove rtw89
 }
 
 case "${1:-install}" in

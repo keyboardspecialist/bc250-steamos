@@ -138,33 +138,6 @@ class PersistenceUnitTests(unittest.TestCase):
             self.assertNotEqual(result.returncode, 0)
             self.assertIn("unrecognized storage keep list", result.stderr)
 
-    def test_rtw89_partial_artifact_blocks_storage_uninstall(self):
-        with tempfile.TemporaryDirectory() as directory:
-            root = Path(directory)
-            (root / "data/helper").mkdir(parents=True)
-            (root / "systemd").mkdir()
-            (root / "keep").mkdir()
-            (root / "modprobe").mkdir()
-            (root / "modules").mkdir()
-            (root / "data/helper/rtw89-ensure-modules").write_text("helper\n")
-            result = subprocess.run(
-                [
-                    "bash",
-                    "-c",
-                    'script=$1; base=$2; set -- help; source "$script" >/dev/null; '
-                    'ROOT_DIR="$base/data"; SYSTEMD_DIR="$base/systemd"; '
-                    'ATOMIC_KEEP_DIR="$base/keep"; MODPROBE_DIR="$base/modprobe"; '
-                    'MODULE_BASE="$base/modules"; can_uninstall',
-                    "_",
-                    str(STORAGE),
-                    str(root),
-                ],
-                capture_output=True,
-                text=True,
-            )
-            self.assertEqual(result.returncode, 1)
-            self.assertEqual(result.stdout.strip(), "component:rtw89")
-
     def test_storage_dependency_probe_is_machine_readable(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -215,6 +188,29 @@ class PersistenceUnitTests(unittest.TestCase):
                 ["service:bc250-control.service", "persistence:compute"],
             )
             self.assertEqual(ready.stdout.strip(), "ready")
+
+    def test_legacy_rtw89_blocks_shared_storage_removal(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "data/rtw89").mkdir(parents=True)
+            (root / "systemd").mkdir()
+            (root / "keep").mkdir()
+            result = subprocess.run(
+                [
+                    "bash",
+                    "-c",
+                    'script=$1; base=$2; set -- help; source "$script" >/dev/null; '
+                    'ROOT_DIR="$base/data"; SYSTEMD_DIR="$base/systemd"; '
+                    'ATOMIC_KEEP_DIR="$base/keep"; can_uninstall',
+                    "_",
+                    str(STORAGE),
+                    str(root),
+                ],
+                capture_output=True,
+                text=True,
+            )
+            self.assertEqual(result.returncode, 1)
+            self.assertEqual(result.stdout.strip(), "component:legacy-rtw89")
 
     def test_storage_uninstall_preserves_backing_and_stops_recovery(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -520,7 +516,7 @@ grep -Fxq "daemon-reload" "$SYSTEMCTL_LOG"
         )
         storage = STORAGE.read_text(encoding="utf-8")
         for expected in (
-            "COMPONENTS=(compute power cec aic rtw89 desktop)",
+            "COMPONENTS=(compute power cec aic desktop)",
             "/etc/systemd/system/bc250-control.service",
             "/etc/systemd/system/bc250-desktop-control-repair.service",
             "/etc/dbus-1/system.d/io.github.keyboardspecialist.BC250Control1.conf",
@@ -576,6 +572,8 @@ grep -Fxq "daemon-reload" "$SYSTEMCTL_LOG"
             "aic8800/aic8800-ensure-modules.sh",
             "rtw89/steamdeck-setup.sh",
             "rtw89/rtw89-ensure-modules.sh",
+            "rtw89/prepare-kbuild.sh",
+            "rtw89/fetch-steamos-package.sh",
             "fetch-steamos-package.sh",
             "bc250-audio-fix/fetch-sources.sh",
             "bc250-audio-fix/build.sh",

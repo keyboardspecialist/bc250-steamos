@@ -290,9 +290,17 @@ This driver provides WiFi. Bluetooth functions use their chipset-specific
 Bluetooth driver. The installer matches the attached adapter against built
 module aliases, validates every module against the exact running kernel, and
 stores a root-owned source snapshot, firmware manifest, and per-kernel module
-stage under `/var/lib/bc250-control/rtw89`. The offline boot helper restores
+stage under `/home/.steamos/offload/var/lib/rtw89-steamos`. The offline boot helper restores
 validated staged modules after SteamOS updates and rebuilds from the trusted
 snapshot when an exact local Kbuild tree and toolchain are available.
+
+The `rtw89/` directory is a standalone installer. It owns its persistent path,
+systemd service, modprobe configuration, and atomic-update keep file, and does
+not invoke the toolkit's control, plugin, audio, AIC8800, storage, or persistence
+scripts. Its bundled header preparer uses the exact SteamOS headers package and
+does not require `vmlinux`; it removes the packaged image so Kbuild skips
+optional module BTF without requiring `pahole`. A nonempty exact
+`Module.symvers` remains mandatory.
 
 USB adapters must already expose their WiFi function when setup runs. Realtek
 devices still presented in CD-ROM mode as `0bda:1a2b` or `0bda:a192` require
@@ -359,7 +367,6 @@ Run `./bc250-update-persistence.sh` to open the interactive menu with current pr
 | `sudo ./bc250-update-persistence.sh install power` | Protect power and tuning configuration |
 | `sudo ./bc250-update-persistence.sh install cec` | Protect CEC system integration |
 | `sudo ./bc250-update-persistence.sh install aic` | Protect AIC8800 system integration |
-| `sudo ./bc250-update-persistence.sh install rtw89` | Protect Realtek RTW89 system integration |
 | `sudo ./bc250-update-persistence.sh install all` | Protect every component |
 | `./bc250-update-persistence.sh status` | Show protection and recovery status |
 

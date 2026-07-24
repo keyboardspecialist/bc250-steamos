@@ -16,6 +16,7 @@ SYSTEMD_DIR="${SYSTEMD_DIR:-/etc/systemd/system}"
 MODPROBE_DIR="${MODPROBE_DIR:-/etc/modprobe.d}"
 ATOMIC_KEEP_DIR="${ATOMIC_KEEP_DIR:-/etc/atomic-update.conf.d}"
 MODULE_BASE="${MODULE_BASE:-/usr/lib/modules}"
+RTW89_DATA_DIR="${RTW89_DATA_DIR:-/home/.steamos/offload/var/lib/rtw89-steamos}"
 AUDIO_SH="${AUDIO_SH:-$SCRIPT_DIR/bc250-audio-fix/patch-driver.sh}"
 AUDIO_CLEAN_SH="${AUDIO_CLEAN_SH:-$SCRIPT_DIR/bc250-audio-fix/clean.sh}"
 DECKY_SH="${DECKY_SH:-$SCRIPT_DIR/decky-plugin/install.sh}"
@@ -120,14 +121,17 @@ component_has_artifacts() {
             ;;
         rtw89)
             [[ -e "$SYSTEMD_DIR/rtw89-modules.service" \
-                || -e "$SYSTEMD_DIR/rtw89-modules.service.d/10-bc250-storage.conf" \
+                || -e "$MODPROBE_DIR/rtw89-steamos.conf" \
+                || -e "$ATOMIC_KEEP_DIR/rtw89-steamos.conf" \
+                || -e "$RTW89_DATA_DIR/helper/rtw89-ensure-modules" \
+                || -e "$RTW89_DATA_DIR/firmware/manifest" \
+                || -e "$RTW89_DATA_DIR/firmware/initramfs-pending" \
+                || -e "$RTW89_DATA_DIR/modules/install-transaction" \
+                || -e "$RTW89_DATA_DIR/uninstall-pending" \
+                || -e "$ROOT_DATA_DIR/rtw89" \
+                || -e "$ROOT_DATA_DIR/helper/rtw89-ensure-modules" \
                 || -e "$MODPROBE_DIR/bc250-rtw89.conf" \
                 || -e "$ATOMIC_KEEP_DIR/bc250-rtw89.conf" \
-                || -e "$ROOT_DATA_DIR/helper/rtw89-ensure-modules" \
-                || -e "$ROOT_DATA_DIR/rtw89/firmware/manifest" \
-                || -e "$ROOT_DATA_DIR/rtw89/firmware/initramfs-pending" \
-                || -e "$ROOT_DATA_DIR/rtw89/modules/install-transaction" \
-                || -e "$ROOT_DATA_DIR/rtw89/uninstall-pending" \
                 || -L "$SYSTEMD_DIR/multi-user.target.wants/rtw89-modules.service" ]] \
                 || compgen -G "$MODULE_BASE/*/updates/rtw89/*.ko" >/dev/null
             ;;
@@ -209,7 +213,7 @@ show_plan() {
 remove_persistence_for() {
     local component="$1" persistence=""
     case "$component" in
-        desktop|cec|power|compute|aic|rtw89) persistence="$component" ;;
+        desktop|cec|power|compute|aic) persistence="$component" ;;
         *) return 0 ;;
     esac
     require_script "$PERSISTENCE_SH"
@@ -300,6 +304,7 @@ all_components_removed() {
 }
 
 purge_preserved_data() {
+    local path owner mode
     all_components_removed \
         || die "Installed or partial components remain. Run '$SELF uninstall all' first."
     require_script "$STORAGE_SH"
@@ -313,6 +318,17 @@ purge_preserved_data() {
     bash "$AUDIO_SH" uninstall
     bash "$AUDIO_CLEAN_SH" --all --dry-run >/dev/null
     sudo bash "$STORAGE_SH" purge --yes
+    for path in /home /home/.steamos /home/.steamos/offload \
+        /home/.steamos/offload/var /home/.steamos/offload/var/lib; do
+        sudo test -d "$path" && ! sudo test -L "$path" \
+            || die "Unsafe RTW89 persistent-data ancestor: $path"
+        read -r owner mode < <(sudo stat -Lc '%u %a' "$path")
+        [[ $owner == 0 && $((8#$mode & 8#022)) -eq 0 ]] \
+            || die "Unsafe RTW89 persistent-data ownership: $path"
+    done
+    sudo test ! -L /home/.steamos/offload/var/lib/rtw89-steamos \
+        || die "Refusing to purge symlinked RTW89 persistent data."
+    sudo rm -rf -- /home/.steamos/offload/var/lib/rtw89-steamos
 
     sudo rm -f -- /etc/bc250-cu-live-manager.conf /etc/bc250-smu-oc.conf
     sudo rm -rf -- /etc/cyan-skillfish-governor-smu
@@ -435,6 +451,7 @@ Purge permanently deletes preserved BC-250 data:
   - tuning and compute profiles under /etc
   - CEC preferences under $HOME/.config
   - persistent backing data under /home/.steamos/offload/var/lib/bc250-control
+  - standalone RTW89 source and module caches under $RTW89_DATA_DIR
   - reproducible AMDGPU and Decky build caches in this checkout
 
 The toolkit checkout and shared pnpm installation are retained. Purge is only
