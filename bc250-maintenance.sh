@@ -10,13 +10,19 @@ CEC_SH="${CEC_SH:-$SCRIPT_DIR/bc250-cec.sh}"
 STORAGE_SH="${STORAGE_SH:-$SCRIPT_DIR/bc250-storage.sh}"
 PERSISTENCE_SH="${PERSISTENCE_SH:-$SCRIPT_DIR/bc250-update-persistence.sh}"
 AIC_SH="${AIC_SH:-$SCRIPT_DIR/aic8800/steamdeck-setup.sh}"
+RTW89_SH="${RTW89_SH:-$SCRIPT_DIR/rtw89/steamdeck-setup.sh}"
+ROOT_DATA_DIR="${ROOT_DATA_DIR:-/var/lib/bc250-control}"
+SYSTEMD_DIR="${SYSTEMD_DIR:-/etc/systemd/system}"
+MODPROBE_DIR="${MODPROBE_DIR:-/etc/modprobe.d}"
+ATOMIC_KEEP_DIR="${ATOMIC_KEEP_DIR:-/etc/atomic-update.conf.d}"
+MODULE_BASE="${MODULE_BASE:-/usr/lib/modules}"
 AUDIO_SH="${AUDIO_SH:-$SCRIPT_DIR/bc250-audio-fix/patch-driver.sh}"
 AUDIO_CLEAN_SH="${AUDIO_CLEAN_SH:-$SCRIPT_DIR/bc250-audio-fix/clean.sh}"
 DECKY_SH="${DECKY_SH:-$SCRIPT_DIR/decky-plugin/install.sh}"
 DESKTOP_SH="${DESKTOP_SH:-$SCRIPT_DIR/desktop-control/install.sh}"
 
-COMPONENTS=(desktop decky cec power compute audio aic)
-UNINSTALL_ORDER=(desktop decky cec power compute audio aic)
+COMPONENTS=(desktop decky cec power compute audio aic rtw89)
+UNINSTALL_ORDER=(desktop decky cec power compute audio rtw89 aic)
 
 C0=$'\033[0m'; CB=$'\033[1m'; CD=$'\033[2m'; CI=$'\033[7m'
 CG=$'\033[32m'; CY=$'\033[33m'; CR=$'\033[31m'; CC=$'\033[36m'
@@ -38,7 +44,8 @@ component_label() {
         power) echo "Power management" ;;
         compute) echo "Compute-unit manager" ;;
         audio) echo "AMDGPU audio fix" ;;
-        aic) echo "AIC8800 WiFi / Bluetooth" ;;
+        aic) echo "AIC8800D80 WiFi / Bluetooth (USB)" ;;
+        rtw89) echo "Realtek RTW89 WiFi 6/7 (PCIe / USB)" ;;
         storage) echo "Persistent infrastructure" ;;
         *) die "Unknown component: $1" ;;
     esac
@@ -53,6 +60,7 @@ component_script() {
         compute) echo "$COMPUTE_SH" ;;
         audio) echo "$AUDIO_SH" ;;
         aic) echo "$AIC_SH" ;;
+        rtw89) echo "$RTW89_SH" ;;
         storage) echo "$STORAGE_SH" ;;
         *) die "Unknown component: $1" ;;
     esac
@@ -64,7 +72,7 @@ component_probe() {
     require_script "$script"
     case "$component" in
         power|compute|cec) bash "$script" installed >/dev/null 2>&1 ;;
-        desktop|decky|audio|aic) bash "$script" status >/dev/null 2>&1 ;;
+        desktop|decky|audio|aic|rtw89) bash "$script" status >/dev/null 2>&1 ;;
         storage) bash "$script" installed >/dev/null 2>&1 ;;
     esac
 }
@@ -109,6 +117,19 @@ component_has_artifacts() {
                 || -e /var/lib/bc250-control/aic8800/uninstall-pending \
                 || -L /etc/systemd/system/multi-user.target.wants/aic8800-modules.service ]] \
                 || compgen -G '/usr/lib/modules/*/updates/aic8800/*.ko' >/dev/null
+            ;;
+        rtw89)
+            [[ -e "$SYSTEMD_DIR/rtw89-modules.service" \
+                || -e "$SYSTEMD_DIR/rtw89-modules.service.d/10-bc250-storage.conf" \
+                || -e "$MODPROBE_DIR/bc250-rtw89.conf" \
+                || -e "$ATOMIC_KEEP_DIR/bc250-rtw89.conf" \
+                || -e "$ROOT_DATA_DIR/helper/rtw89-ensure-modules" \
+                || -e "$ROOT_DATA_DIR/rtw89/firmware/manifest" \
+                || -e "$ROOT_DATA_DIR/rtw89/firmware/initramfs-pending" \
+                || -e "$ROOT_DATA_DIR/rtw89/modules/install-transaction" \
+                || -e "$ROOT_DATA_DIR/rtw89/uninstall-pending" \
+                || -L "$SYSTEMD_DIR/multi-user.target.wants/rtw89-modules.service" ]] \
+                || compgen -G "$MODULE_BASE/*/updates/rtw89/*.ko" >/dev/null
             ;;
         storage)
             [[ -e /var/lib/bc250-control \
@@ -162,6 +183,7 @@ plan_component() {
         compute) echo "  Restore stock CU dispatch when possible and remove boot integration; preserve the WGP profile and UMR." ;;
         audio) echo "  Restore stock AMDGPU modules for every patched kernel; preserve source and build caches." ;;
         aic) echo "  Disable module repair, unload drivers when possible, and remove installed modules, firmware, and device rules." ;;
+        rtw89) echo "  Disable module repair, remove manifest-owned Realtek modules and firmware, and restore the stock WiFi driver after reboot." ;;
         storage) echo "  Remove the bind mount and recovery infrastructure; preserve the backing directory." ;;
     esac
 }
@@ -187,7 +209,7 @@ show_plan() {
 remove_persistence_for() {
     local component="$1" persistence=""
     case "$component" in
-        desktop|cec|power|compute|aic) persistence="$component" ;;
+        desktop|cec|power|compute|aic|rtw89) persistence="$component" ;;
         *) return 0 ;;
     esac
     require_script "$PERSISTENCE_SH"
@@ -200,7 +222,7 @@ run_component_uninstall() {
     require_script "$script"
     case "$component" in
         desktop|decky|cec|audio) bash "$script" uninstall || rc=$? ;;
-        power|compute|aic|storage) sudo bash "$script" uninstall || rc=$? ;;
+        power|compute|aic|rtw89|storage) sudo bash "$script" uninstall || rc=$? ;;
         *) die "Unknown component: $component" ;;
     esac
     [[ $rc -eq 0 ]] || return "$rc"
@@ -380,12 +402,12 @@ cmd_menu() {
         menu_select "BC-250 installed components" "${items[@]}" || { echo; break; }
         case $MENU_CHOICE in
             0) run_menu_action status ;;
-            1|2|3|4|5|6|7)
+            1|2|3|4|5|6|7|8)
                 component=${COMPONENTS[$((MENU_CHOICE - 1))]}
                 run_menu_action uninstall "$component"
                 ;;
-            8) run_menu_action uninstall all ;;
-            9) run_menu_action purge ;;
+            9) run_menu_action uninstall all ;;
+            10) run_menu_action purge ;;
         esac
     done
 }
@@ -394,7 +416,7 @@ cmd_help() {
     cat << EOF
 Usage: $0 {menu|status|plan [COMPONENT|all]|uninstall COMPONENT|all [--yes]|purge [--yes]|help}
 
-Components: desktop, decky, cec, power, compute, audio, aic, storage
+Components: desktop, decky, cec, power, compute, audio, aic, rtw89, storage
 
   status                 Show lifecycle state for every component.
   plan [COMPONENT|all]   Describe removals and preserved data without changing anything.

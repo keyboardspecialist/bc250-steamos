@@ -7,6 +7,8 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 AIC_INSTALLER = ROOT / "aic8800/steamdeck-setup.sh"
+RTW89_INSTALLER = ROOT / "rtw89/steamdeck-setup.sh"
+RTW89_REPAIR = ROOT / "rtw89/rtw89-ensure-modules.sh"
 AUDIO_INSTALLER = ROOT / "bc250-audio-fix/patch-driver.sh"
 AUDIO_ROLLBACK = ROOT / "bc250-audio-fix/rollback.sh"
 AUDIO_PREREQS = ROOT / "bc250-audio-fix/ensure-build-prereqs.sh"
@@ -16,6 +18,7 @@ class DriverLifecycleTests(unittest.TestCase):
     def test_status_entrypoints_are_read_only_and_do_not_require_sudo(self):
         for script, prefix in (
             (AIC_INSTALLER, "[aic8800]"),
+            (RTW89_INSTALLER, "[rtw89]"),
             (AUDIO_INSTALLER, "[bc250-audio]"),
         ):
             result = subprocess.run(
@@ -89,6 +92,8 @@ class DriverLifecycleTests(unittest.TestCase):
                 "bash",
                 "-n",
                 str(AIC_INSTALLER),
+                str(RTW89_INSTALLER),
+                str(RTW89_REPAIR),
                 str(AUDIO_INSTALLER),
                 str(ROOT / "bc250-audio-fix/install.sh"),
                 str(AUDIO_ROLLBACK),
@@ -116,6 +121,24 @@ class DriverLifecycleTests(unittest.TestCase):
         self.assertIn("base-devel", prerequisites)
         for tool in ("make", "gcc", "ld", "patch", "pahole", "bc", "zstd"):
             self.assertIn(tool, environment)
+
+    def test_rtw89_uninstall_is_manifest_owned_and_resumable(self):
+        installer = RTW89_INSTALLER.read_text(encoding="utf-8")
+        disable = installer.index("systemctl disable --now rtw89-modules.service")
+        remove = installer.index('rm -rf "$path"', disable)
+        self.assertLess(disable, remove)
+        self.assertIn("validate_installed", installer[disable:remove])
+        self.assertIn("uninstall-pending", installer)
+        self.assertIn('bash "$PERSISTENCE_SH" remove rtw89', installer)
+        self.assertNotIn('rm -rf "$ROOT_SOURCE"', installer)
+
+    def test_rtw89_boot_repair_is_offline(self):
+        helper = RTW89_REPAIR.read_text(encoding="utf-8")
+        self.assertNotIn("curl ", helper)
+        self.assertNotIn("pacman ", helper)
+        self.assertNotIn("git clone", helper)
+        self.assertIn("bc250-driver-management.lock", helper)
+        self.assertIn("SOURCE_MANIFEST.sha256", helper)
 
 
 if __name__ == "__main__":

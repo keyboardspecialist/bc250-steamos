@@ -1,0 +1,29 @@
+[Unit]
+Description=BC-250 Realtek RTW89 Wi-Fi module repair
+Requires=bc250-persistence-recovery.service
+After=bc250-persistence-recovery.service local-fs.target
+Before=network-pre.target NetworkManager.service
+Wants=network-pre.target
+RequiresMountsFor=/var/lib/bc250-control
+ConditionPathExists=/var/lib/bc250-control/rtw89/source/UPSTREAM_COMMIT
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+TimeoutStartSec=15min
+ExecStart=/var/lib/bc250-control/helper/rtw89-ensure-modules
+UMask=0022
+NoNewPrivileges=no
+PrivateTmp=yes
+IPAddressDeny=any
+ProtectHostname=yes
+ProtectKernelLogs=no
+ProtectKernelModules=no
+ProtectKernelTunables=no
+ProtectSystem=off
+RestrictAddressFamilies=AF_UNIX
+RestrictSUIDSGID=yes
+LockPersonality=yes
+
+[Install]
+WantedBy=multi-user.target

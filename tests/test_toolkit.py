@@ -25,12 +25,16 @@ class ToolkitTests(unittest.TestCase):
             "storage",
             "persistence",
             "wifi",
+            "aic8800",
+            "rtw89",
             "audio",
             "decky",
             "manage",
         ):
             self.assertIn(command, result.stdout)
         self.assertIn("logged-in Deck user, not with sudo", result.stdout)
+        self.assertIn("AIC8800D80 USB WiFi and Bluetooth", result.stdout)
+        self.assertIn("Realtek RTW89 PCIe/USB WiFi 6/7", result.stdout)
 
     def test_without_terminal_prints_help(self):
         result = subprocess.run(

@@ -95,6 +95,76 @@ class PersistenceUnitTests(unittest.TestCase):
             self.assertTrue(owned.exists())
             self.assertTrue(foreign.exists())
 
+    def test_keep_list_install_preflights_all_targets_before_writing(self):
+        with tempfile.TemporaryDirectory() as directory:
+            keep_dir = Path(directory)
+            foreign = keep_dir / "bc250-power.conf"
+            foreign.write_text("/etc/operator-owned-state\n", encoding="utf-8")
+            result = subprocess.run(
+                [
+                    "bash",
+                    "-c",
+                    'script=$1; keep=$2; set -- help; source "$script" >/dev/null; '
+                    'require_root() { :; }; install_storage() { :; }; KEEP_DIR=$keep; '
+                    'LEGACY_KEEP_FILE="$keep/bc250-steamos.conf"; install_keep_list all',
+                    "_",
+                    str(PERSISTENCE),
+                    str(keep_dir),
+                ],
+                capture_output=True,
+                text=True,
+            )
+            self.assertNotEqual(result.returncode, 0)
+            self.assertEqual(foreign.read_text(encoding="utf-8"), "/etc/operator-owned-state\n")
+            self.assertFalse((keep_dir / "bc250-compute.conf").exists())
+
+    def test_storage_refuses_foreign_keep_list(self):
+        with tempfile.TemporaryDirectory() as directory:
+            foreign = Path(directory) / "bc250-storage.conf"
+            foreign.write_text("operator state\n", encoding="utf-8")
+            result = subprocess.run(
+                [
+                    "bash",
+                    "-c",
+                    'script=$1; keep=$2; set -- help; source "$script" >/dev/null; '
+                    'KEEP_PATH=$keep; secure_file() { :; }; validate_keep_file_for_install',
+                    "_",
+                    str(STORAGE),
+                    str(foreign),
+                ],
+                capture_output=True,
+                text=True,
+            )
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("unrecognized storage keep list", result.stderr)
+
+    def test_rtw89_partial_artifact_blocks_storage_uninstall(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "data/helper").mkdir(parents=True)
+            (root / "systemd").mkdir()
+            (root / "keep").mkdir()
+            (root / "modprobe").mkdir()
+            (root / "modules").mkdir()
+            (root / "data/helper/rtw89-ensure-modules").write_text("helper\n")
+            result = subprocess.run(
+                [
+                    "bash",
+                    "-c",
+                    'script=$1; base=$2; set -- help; source "$script" >/dev/null; '
+                    'ROOT_DIR="$base/data"; SYSTEMD_DIR="$base/systemd"; '
+                    'ATOMIC_KEEP_DIR="$base/keep"; MODPROBE_DIR="$base/modprobe"; '
+                    'MODULE_BASE="$base/modules"; can_uninstall',
+                    "_",
+                    str(STORAGE),
+                    str(root),
+                ],
+                capture_output=True,
+                text=True,
+            )
+            self.assertEqual(result.returncode, 1)
+            self.assertEqual(result.stdout.strip(), "component:rtw89")
+
     def test_storage_dependency_probe_is_machine_readable(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -450,7 +520,7 @@ grep -Fxq "daemon-reload" "$SYSTEMCTL_LOG"
         )
         storage = STORAGE.read_text(encoding="utf-8")
         for expected in (
-            "COMPONENTS=(compute power cec aic desktop)",
+            "COMPONENTS=(compute power cec aic rtw89 desktop)",
             "/etc/systemd/system/bc250-control.service",
             "/etc/systemd/system/bc250-desktop-control-repair.service",
             "/etc/dbus-1/system.d/io.github.keyboardspecialist.BC250Control1.conf",
@@ -504,6 +574,8 @@ grep -Fxq "daemon-reload" "$SYSTEMCTL_LOG"
             "bc250-cec.sh",
             "aic8800/steamdeck-setup.sh",
             "aic8800/aic8800-ensure-modules.sh",
+            "rtw89/steamdeck-setup.sh",
+            "rtw89/rtw89-ensure-modules.sh",
             "fetch-steamos-package.sh",
             "bc250-audio-fix/fetch-sources.sh",
             "bc250-audio-fix/build.sh",

@@ -11,6 +11,7 @@ STORAGE_SH="$SCRIPT_DIR/bc250-storage.sh"
 PERSISTENCE_SH="$SCRIPT_DIR/bc250-update-persistence.sh"
 CU_STATUS_SH="$SCRIPT_DIR/bc250-cu-status.sh"
 AIC_SETUP_SH="$SCRIPT_DIR/aic8800/steamdeck-setup.sh"
+RTW89_SETUP_SH="$SCRIPT_DIR/rtw89/steamdeck-setup.sh"
 AUDIO_FIX_SH="$SCRIPT_DIR/bc250-audio-fix/patch-driver.sh"
 DECKY_INSTALL_SH="$SCRIPT_DIR/decky-plugin/install.sh"
 DESKTOP_INSTALL_SH="$SCRIPT_DIR/desktop-control/install.sh"
@@ -63,12 +64,20 @@ confirm_action() {
     esac
 }
 
-install_wifi() {
+install_aic8800() {
     require_normal_user
     require_script "$AIC_SETUP_SH"
     confirm_action \
         "Build and install the AIC8800 WiFi and Bluetooth drivers?" \
         sudo bash "$AIC_SETUP_SH"
+}
+
+install_rtw89() {
+    require_normal_user
+    require_script "$RTW89_SETUP_SH"
+    confirm_action \
+        "Build and install the Realtek RTW89 WiFi 6/7 driver (PCIe or USB; Bluetooth separate)?" \
+        sudo bash "$RTW89_SETUP_SH" install
 }
 
 install_audio_fix() {
@@ -203,7 +212,8 @@ cmd_menu() {
             "CEC / HDMI control|${CG}[menu]${C0}|Configure and control TVs, receivers, and active source."
             "Persistent storage|${CG}[menu]${C0}|Install, inspect, or repair privileged persistent storage."
             "SteamOS update persistence|${CG}[menu]${C0}|Protect or recover component configuration across updates."
-            "WiFi and Bluetooth|${CY}[installer]${C0}|Build and install the AIC8800 kernel modules and firmware."
+            "AIC8800D80 WiFi + Bluetooth (USB)|${CY}[installer]${C0}|AIC Tech USB dongle: install its WiFi, Bluetooth, firmware, and mode-switch integration."
+            "Realtek RTW89 WiFi 6/7 (PCIe / USB)|${CY}[installer]${C0}|Realtek RTL8851/RTL8852/RTL8922 families: install WiFi; Bluetooth uses its own driver."
             "Patch AMDGPU Driver|${CY}[build]${C0}|Build and install the matching patched AMDGPU module."
             "Decky plugin|${CY}[installer]${C0}|Build and install the BC-250 Quick Access plugin."
             "Plasma desktop control|${CY}[installer]${C0}|Install the system service and Plasma system-tray control."
@@ -217,18 +227,19 @@ cmd_menu() {
             3) run_menu_child cec ;;
             4) run_menu_child storage ;;
             5) run_menu_child persistence ;;
-            6) run_menu_action wifi ;;
-            7) run_menu_action audio ;;
-            8) run_menu_action decky ;;
-            9) run_menu_action desktop ;;
-            10) run_menu_child manage ;;
+            6) run_menu_action aic8800 ;;
+            7) run_menu_action rtw89 ;;
+            8) run_menu_action audio ;;
+            9) run_menu_action decky ;;
+            10) run_menu_action desktop ;;
+            11) run_menu_child manage ;;
         esac
     done
 }
 
 cmd_help() {
     cat << EOF
-Usage: $0 [menu|status|power|compute|cec|storage|persistence|wifi|audio|decky|desktop|manage|help]
+Usage: $0 [menu|status|power|compute|cec|storage|persistence|wifi|aic8800|rtw89|audio|decky|desktop|manage|help]
 
 Run without arguments in a terminal to open the unified toolkit menu.
 Run the toolkit as the logged-in Deck user, not with sudo; child tools request
@@ -241,7 +252,8 @@ Commands:
   cec                    Open the CEC / HDMI Control menu
   storage                Open the Persistent Storage menu
   persistence            Open the SteamOS Update Persistence menu
-  wifi                   Confirm and run the AIC8800 installer
+  wifi, aic8800          Install AIC8800D80 USB WiFi and Bluetooth
+  rtw89                  Install Realtek RTW89 PCIe/USB WiFi 6/7
   audio                  Confirm and run the AMDGPU clock-fix builder
   decky                  Confirm and run the Decky plugin installer
   desktop                Confirm and run the Plasma desktop-control installer
@@ -268,7 +280,8 @@ case "$command_name" in
     cec) (($# == 0)) || die "Usage: $0 cec"; require_normal_user; run_script "$CEC_SH" menu ;;
     storage) (($# == 0)) || die "Usage: $0 storage"; run_script "$STORAGE_SH" menu ;;
     persistence) (($# == 0)) || die "Usage: $0 persistence"; run_script "$PERSISTENCE_SH" menu ;;
-    wifi) (($# == 0)) || die "Usage: $0 wifi"; install_wifi ;;
+    wifi|aic8800) (($# == 0)) || die "Usage: $0 $command_name"; install_aic8800 ;;
+    rtw89) (($# == 0)) || die "Usage: $0 rtw89"; install_rtw89 ;;
     audio) (($# == 0)) || die "Usage: $0 audio"; install_audio_fix ;;
     decky) (($# == 0)) || die "Usage: $0 decky"; install_decky ;;
     desktop) (($# == 0)) || die "Usage: $0 desktop"; install_desktop ;;

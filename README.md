@@ -24,7 +24,8 @@ Open the unified toolkit menu as the logged-in Deck user:
 | Power management | `sudo ./bc250-power.sh all`, then `sudo ./bc250-power.sh enable` |
 | Compute-unit manager | `sudo ./bc250-40cu.sh` |
 | CEC | `./bc250-cec.sh setup` |
-| AIC8800 | `sudo bash ./aic8800/steamdeck-setup.sh` |
+| AIC8800D80 USB WiFi + Bluetooth | `sudo bash ./aic8800/steamdeck-setup.sh` |
+| Realtek RTW89 PCIe/USB WiFi 6/7 | `sudo bash ./rtw89/steamdeck-setup.sh install` |
 | Decky plugin | `bash ./decky-plugin/install.sh` |
 | Plasma desktop control | `bash ./desktop-control/install.sh install` |
 | Persistent storage and recovery | Automatic with each setup workflow; `./bc250-storage.sh` opens its menu |
@@ -52,7 +53,8 @@ sudo ./bc250-storage.sh install
 | ACPI and CPU frequency | `sudo ./bc250-power.sh acpi` |
 | Compute-unit manager | `sudo ./bc250-40cu.sh persist` |
 | CEC shutdown integration | `./bc250-cec.sh shutdown-standby install` |
-| AIC8800 | `sudo bash ./aic8800/steamdeck-setup.sh` |
+| AIC8800D80 USB WiFi + Bluetooth | `sudo bash ./aic8800/steamdeck-setup.sh` |
+| Realtek RTW89 PCIe/USB WiFi 6/7 | `sudo bash ./rtw89/steamdeck-setup.sh install` |
 | Plasma desktop control | `bash ./desktop-control/install.sh install` |
 
 ```bash
@@ -64,7 +66,7 @@ sudo ./bc250-power.sh status
 
 | Tool | Purpose |
 |---|---|
-| [`bc250-toolkit.sh`](#toolkit-menu) | Unified menu and read-only status overview for all toolkit components |
+| [`bc250-toolkit.sh`](#toolkit-menu) | Unified menu and read-only status overview for core system services |
 | [`bc250-40cu.sh`](#compute-units) | Runtime 40 CU configuration and boot persistence |
 | [`bc250-cu-status.sh`](#compute-units) | CU dispatch status |
 | [`bc250-power.sh`](#power-management) | CPU power states, GPU governor, clock and voltage tuning, CPU overclocking |
@@ -75,6 +77,7 @@ sudo ./bc250-power.sh status
 | [`desktop-control/`](#plasma-desktop-control) | Plasma system-tray and windowed controls |
 | [`bc250-audio-fix/`](#display-clock) | DisplayPort video and audio clock correction |
 | [`aic8800/`](#wifi-and-bluetooth) | AIC8800D80 USB WiFi and Bluetooth driver |
+| [`rtw89/`](#realtek-rtw89-wifi) | Realtek RTW89 PCIe/USB WiFi 6/7 driver |
 
 The unified launcher and individual component scripts remain independently usable. Use the child scripts directly for command-line automation.
 
@@ -91,6 +94,8 @@ Each child requests administrator access only when needed.
 | `./bc250-toolkit.sh` | Open the unified interactive menu |
 | `./bc250-toolkit.sh status` | Show the read-only component status overview |
 | `./bc250-toolkit.sh power` | Open a component menu directly |
+| `./bc250-toolkit.sh aic8800` | Install the AIC8800D80 USB WiFi/Bluetooth driver |
+| `./bc250-toolkit.sh rtw89` | Install the Realtek RTW89 PCIe/USB WiFi driver |
 | `./bc250-toolkit.sh manage` | Review and remove installed components |
 | `./bc250-toolkit.sh help` | List launcher commands and components |
 
@@ -109,7 +114,7 @@ script directly:
 Component uninstall restores stock behavior and removes services, drivers, and
 desktop integrations in dependency-safe order. Saved tuning profiles, CEC
 preferences, source/build caches, and persistent backing data are preserved by
-default. ACPI, compute routing, AMDGPU, and loaded AIC8800 rollback may require
+default. ACPI, compute routing, AMDGPU, AIC8800, and RTW89 rollback may require
 a reboot; the maintenance command reports this when applicable. After every
 component is removed, permanently delete retained data with
 `./bc250-maintenance.sh purge`.
@@ -272,6 +277,34 @@ sudo bash aic8800/steamdeck-setup.sh
 
 The installer snapshots driver source, firmware, and verified per-kernel modules into root-owned storage. When Valve omitted headers, interactive setup prepares the exact source and builds AIC8800 without compiling the complete kernel if module versioning is disabled. The boot helper reuses staged modules or rebuilds from published headers, but never prepares kernel source as root.
 
+## Realtek RTW89 WiFi
+
+Install the vendored morrownr RTW89 WiFi 6/7 driver for supported Realtek
+RTL8851, RTL8852, and RTL8922A-based AE/AU PCIe or USB adapters:
+
+```bash
+sudo bash rtw89/steamdeck-setup.sh install
+```
+
+This driver provides WiFi. Bluetooth functions use their chipset-specific
+Bluetooth driver. The installer matches the attached adapter against built
+module aliases, validates every module against the exact running kernel, and
+stores a root-owned source snapshot, firmware manifest, and per-kernel module
+stage under `/var/lib/bc250-control/rtw89`. The offline boot helper restores
+validated staged modules after SteamOS updates and rebuilds from the trusted
+snapshot when an exact local Kbuild tree and toolchain are available.
+
+USB adapters must already expose their WiFi function when setup runs. Realtek
+devices still presented in CD-ROM mode as `0bda:1a2b` or `0bda:a192` require
+`usb_modeswitch` first; the installed modprobe configuration includes the
+upstream `usb_storage` quirks for subsequent boots. RTL8922DE is not included
+because this pinned upstream build does not enable its modules or firmware.
+
+Source: morrownr/rtw89 commit
+`08b8d326937a200a706ec9c501374eec15835b5a`. The source is copied into this
+repository as regular tracked files; `rtw89/UPSTREAM_COMMIT` and
+`rtw89/SOURCE_MANIFEST.sha256` pin its contents.
+
 ## SteamOS Updates
 
 | Component | Update action |
@@ -281,6 +314,7 @@ The installer snapshots driver source, firmware, and verified per-kernel modules
 | CEC | Home configuration and allowlisted system integration carry forward |
 | Display clock module | Run `bc250-audio-fix/patch-driver.sh` after each kernel update |
 | AIC8800 modules | The boot helper reuses staged modules or published headers; rerun setup if it requests interactive source preparation |
+| Realtek RTW89 modules | The offline boot helper restores a validated current-kernel stage or rebuilds from the trusted snapshot and exact local Kbuild tree; rerun setup when prerequisites are absent |
 
 Current installers preserve their configuration across normal atomic updates.
 
@@ -325,6 +359,7 @@ Run `./bc250-update-persistence.sh` to open the interactive menu with current pr
 | `sudo ./bc250-update-persistence.sh install power` | Protect power and tuning configuration |
 | `sudo ./bc250-update-persistence.sh install cec` | Protect CEC system integration |
 | `sudo ./bc250-update-persistence.sh install aic` | Protect AIC8800 system integration |
+| `sudo ./bc250-update-persistence.sh install rtw89` | Protect Realtek RTW89 system integration |
 | `sudo ./bc250-update-persistence.sh install all` | Protect every component |
 | `./bc250-update-persistence.sh status` | Show protection and recovery status |
 
@@ -357,6 +392,7 @@ Run the normal component setup commands afterward to regenerate services for the
 | Cyan Skillfish Governor | [Repository](https://github.com/filippor/cyan-skillfish-governor/tree/smu) · [Performance-mode script](https://github.com/filippor/cyan-skillfish-governor/blob/smu/scripts/cyan-skillfish-performance-mode) | `bc250-power.sh` |
 | BC-250 SMU OC | [Repository](https://github.com/bc250-collective/bc250_smu_oc) | `bc250-power.sh` |
 | Valve kernel mirror | [Repository](https://github.com/Evlav/linux-integration) | `bc250-audio-fix/fetch-sources.sh` |
-| SteamOS package mirror | [Package index](https://steamdeck-packages.steamos.cloud/archlinux-mirror/) | Audio-driver and AIC8800 build scripts; stable channels are discovered automatically |
+| SteamOS package mirror | [Package index](https://steamdeck-packages.steamos.cloud/archlinux-mirror/) | Audio, AIC8800, and RTW89 build preparation; stable channels are discovered automatically |
 | SteamOS atomic-update keep list | [Defaults](https://github.com/evlaV/steamos-customizations/blob/master/atomic-update/rauc/atomic-update-keep.conf.in) · [Drop-in example](https://github.com/evlaV/steamos-customizations/blob/master/atomic-update/rauc/example-additional-keep-list.conf.in) | `bc250-update-persistence.sh` |
 | AIC8800 | [Repository](https://github.com/radxa-pkg/aic8800) | `aic8800/steamdeck-setup.sh` |
+| Realtek RTW89 | [Repository](https://github.com/morrownr/rtw89) | Vendored source and `rtw89/steamdeck-setup.sh` |

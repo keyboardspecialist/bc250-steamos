@@ -30,6 +30,7 @@ class MaintenanceTests(unittest.TestCase):
             "CEC_SH": "cec",
             "STORAGE_SH": "storage",
             "AIC_SH": "aic",
+            "RTW89_SH": "rtw89",
             "AUDIO_SH": "audio",
             "DECKY_SH": "decky",
             "DESKTOP_SH": "desktop",
@@ -91,7 +92,7 @@ class MaintenanceTests(unittest.TestCase):
                 text=True,
                 env=env,
             )
-            self.assertEqual(status.stdout.count("installed"), 8)
+            self.assertEqual(status.stdout.count("installed"), 9)
             self.assertIn("Saved tuning profiles", plan.stdout)
             self.assertFalse(call_log.exists())
 
@@ -118,6 +119,8 @@ class MaintenanceTests(unittest.TestCase):
                     "compute:uninstall",
                     "persistence:remove compute",
                     "audio:uninstall",
+                    "rtw89:uninstall",
+                    "persistence:remove rtw89",
                     "aic:uninstall",
                     "persistence:remove aic",
                     "persistence:remove all",
@@ -155,6 +158,35 @@ class MaintenanceTests(unittest.TestCase):
             self.assertNotIn("persistence:remove all", calls)
             self.assertNotIn("storage:uninstall", calls)
             self.assertIn("aic:uninstall", calls)
+            self.assertIn("rtw89:uninstall", calls)
+
+    def test_rtw89_helper_only_state_is_partial(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            env, _ = self.make_environment(root)
+            helper = root / "data/helper/rtw89-ensure-modules"
+            helper.parent.mkdir(parents=True)
+            helper.write_text("helper\n", encoding="utf-8")
+            env.update(
+                {
+                    "ROOT_DATA_DIR": str(root / "data"),
+                    "SYSTEMD_DIR": str(root / "systemd"),
+                    "MODPROBE_DIR": str(root / "modprobe"),
+                    "ATOMIC_KEEP_DIR": str(root / "keep"),
+                    "MODULE_BASE": str(root / "modules"),
+                }
+            )
+            rtw89 = Path(env["RTW89_SH"])
+            rtw89.write_text("#!/bin/sh\nexit 1\n", encoding="utf-8")
+            rtw89.chmod(0o755)
+            result = subprocess.run(
+                ["bash", str(MAINTENANCE), "status"],
+                check=True,
+                capture_output=True,
+                text=True,
+                env=env,
+            )
+            self.assertIn("Realtek RTW89 WiFi 6/7 (PCIe / USB): partial", result.stdout)
 
     def test_scripts_parse(self):
         subprocess.run(
