@@ -335,6 +335,14 @@ class MeshShaderTests(unittest.TestCase):
     def test_script_parses(self):
         subprocess.run(["bash", "-n", str(MESH)], check=True)
 
+    def test_menu_uses_toolkit_navigation_pattern(self):
+        source = MESH.read_text(encoding="utf-8")
+        self.assertIn("menu_select()", source)
+        self.assertIn("up/down move - Enter select - q back", source)
+        self.assertIn("press any key to return to the menu", source)
+        self.assertIn("BC-250 mesh shaders", source)
+        self.assertNotIn("  1) Status", source)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -4,6 +4,7 @@
 # repository currently has no declared license.
 set -euo pipefail
 
+SELF="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/$(basename "${BASH_SOURCE[0]}")"
 UPSTREAM_REPO="https://github.com/lonewolf0622/BC-250-Mesh-Shader-Patch---driconf-Edition-opt-in-per-application-"
 UPSTREAM_COMMIT="b66203e012594204e5e3049856b28a2681112985"
 RAW_BASE="https://raw.githubusercontent.com/lonewolf0622/BC-250-Mesh-Shader-Patch---driconf-Edition-opt-in-per-application-/$UPSTREAM_COMMIT"
@@ -21,8 +22,20 @@ ICD="${BC250_MESH_ICD:-$HOME/radeon_driconf_icd.x86_64.json}"
 BUILD_ROOT="$STATE_DIR/build"
 LOCK_FILE="${BC250_MESH_LOCK_FILE:-$HOME/.cache/bc250-mesh-shader.lock}"
 
+C0=$'\033[0m'; CB=$'\033[1m'; CD=$'\033[2m'; CI=$'\033[7m'
+CG=$'\033[32m'; CY=$'\033[33m'; CR=$'\033[31m'; CC=$'\033[36m'
+TUI_CURSOR_HIDDEN=0
+
 log() { echo "[bc250-mesh] $*"; }
 die() { echo "[bc250-mesh] $*" >&2; exit 1; }
+
+tui_show_cursor() {
+    if [[ $TUI_CURSOR_HIDDEN -eq 1 ]]; then
+        printf '\033[?25h'
+        TUI_CURSOR_HIDDEN=0
+    fi
+}
+trap tui_show_cursor EXIT
 
 shell_word() {
     python3 - "$1" <<'PY'
@@ -684,39 +697,160 @@ cmd_purge() (
     log "Removed downloaded patch and toolkit-owned Mesa build cache."
 )
 
+menu_select() {
+    local title="$1"
+    shift
+    local items=("$@") n=$# cur=0 drawn=0 key rest i label badge hint
+    local lines=$((n + 4))
+    printf '\033[?25l'
+    TUI_CURSOR_HIDDEN=1
+    while true; do
+        if [[ $drawn -eq 1 ]]; then printf '\033[%dA' "$lines"; fi
+        printf '\r\033[K%s\n' "${CB}${CC}${title}${C0}"
+        printf '\033[K%s\n' "${CD}  up/down move - Enter select - q back${C0}"
+        for i in "${!items[@]}"; do
+            IFS='|' read -r label badge hint <<< "${items[$i]}"
+            if [[ $i -eq $cur ]]; then
+                printf '\033[K%s\n' "  ${CI}${CB} > ${label} ${C0} ${badge}"
+            else
+                printf '\033[K%s\n' "     ${label}  ${badge}"
+            fi
+        done
+        IFS='|' read -r label badge hint <<< "${items[$cur]}"
+        printf '\033[K\n\033[K%s\n' "  ${CD}${hint}${C0}"
+        drawn=1
+        IFS= read -rsn1 key || { tui_show_cursor; return 1; }
+        if [[ $key == $'\033' ]]; then
+            rest=""
+            IFS= read -rsn2 -t 0.05 rest || true
+            key+="$rest"
+        fi
+        case "$key" in
+            $'\033[A'|k) if ((cur > 0)); then cur=$((cur - 1)); else cur=$((n - 1)); fi ;;
+            $'\033[B'|j) if ((cur < n - 1)); then cur=$((cur + 1)); else cur=0; fi ;;
+            "") MENU_CHOICE=$cur; tui_show_cursor; return 0 ;;
+            q|Q|$'\033') tui_show_cursor; return 1 ;;
+        esac
+    done
+}
+
+pause_key() {
+    echo
+    printf '%s' "${CD}-- press any key to return to the menu --${C0}"
+    IFS= read -rsn1 || true
+    printf '\r\033[K'
+}
+
+runtime_badge() {
+    if verify_owned_runtime; then
+        printf '%s' "${CG}[ready]${C0}"
+    elif [[ -e "$DRIVER" || -L "$DRIVER" || -e "$ICD" || -L "$ICD" \
+        || -e "$MANIFEST" || -e "$TRANSACTION_DIR" ]]; then
+        printf '%s' "${CR}[repair]${C0}"
+    else
+        printf '%s' "${CY}[setup]${C0}"
+    fi
+}
+
+games_badge() {
+    local games count
+    if ! games=$(manage_games list 2>/dev/null); then
+        printf '%s' "${CR}[invalid]${C0}"
+        return
+    fi
+    if [[ -z "$games" ]]; then
+        printf '%s' "${CD}[none]${C0}"
+        return
+    fi
+    count=$(printf '%s\n' "$games" | wc -l)
+    count=${count//[[:space:]]/}
+    printf '%s' "${CG}[${count} enabled]${C0}"
+}
+
+run_menu_action() {
+    local rc=0
+    echo
+    bash "$SELF" "$@" || rc=$?
+    if [[ $rc -ne 0 ]]; then
+        printf '%s\n' "${CR}${CB}[bc250-mesh]${C0} action failed (exit $rc)"
+    fi
+    pause_key
+}
+
+show_menu_status() {
+    local rc=0
+    echo
+    cmd_status || rc=$?
+    if [[ $rc -gt 1 ]]; then
+        printf '%s\n' "${CR}${CB}[bc250-mesh]${C0} status failed (exit $rc)"
+    fi
+    pause_key
+}
+
+show_menu_games() {
+    local games rc=0
+    echo
+    games=$(manage_games list) || rc=$?
+    if [[ $rc -ne 0 ]]; then
+        printf '%s\n' "${CR}${CB}[bc250-mesh]${C0} game configuration is invalid (exit $rc)"
+    elif [[ -n "$games" ]]; then
+        printf '%s\n' "$games"
+    else
+        echo "No games are enabled."
+    fi
+    pause_key
+}
+
+confirm_menu_action() {
+    local prompt="$1" answer
+    shift
+    printf '%s' "${CB}${prompt} [y/N] ${C0}"
+    IFS= read -r answer
+    case "$answer" in
+        y|Y|yes|YES) run_menu_action "$@" ;;
+        *) log "Cancelled."; pause_key ;;
+    esac
+}
+
 cmd_menu() {
     require_normal_user
-    [[ -t 0 && -t 1 ]] || die "The menu requires an interactive terminal."
-    local choice executable name
+    [[ -t 0 && -t 1 ]] \
+        || die "The menu needs an interactive terminal. Use '$0 help' for CLI commands."
     while true; do
-        cat <<'EOF'
-
-BC-250 mesh shader patch (per-application opt-in)
-  1) Status
-  2) Build/install alternate RADV ICD
-  3) Enable one game
-  4) Disable one game
-  5) List enabled games
-  6) Uninstall
-  q) Back
-EOF
-        read -rp "> " choice
-        case "$choice" in
-            1) cmd_status || true ;;
-            2) echo "Setup builds audited Mesa $DEFAULT_MESA_TAG and may install signed SteamOS build dependencies (20-40+ minutes)."
-               read -rp "Continue? [y/N] " choice
-               if [[ "$choice" =~ ^[Yy]$ ]]; then
-                   cmd_setup
-               fi ;;
-            3) read -rp "Game executable/process name (for example ff7rebirth_.exe): " executable
-               read -rp "Friendly name [$executable]: " name
-               cmd_game enable "$executable" "${name:-$executable}" ;;
-            4) read -rp "Game executable/process name: " executable; cmd_game disable "$executable" ;;
-            5) cmd_game list ;;
-            6) read -rp "Remove alternate driver and all managed game toggles? [y/N] " name
-               [[ "$name" =~ ^[Yy]$ ]] && cmd_uninstall || true ;;
-            q|Q) return 0 ;;
-            *) log "Unknown selection." ;;
+        local runtime_state games_state
+        runtime_state=$(runtime_badge)
+        games_state=$(games_badge)
+        local items=(
+            "Status overview|${runtime_state}|Verify the alternate RADV runtime and show every enabled game."
+            "Build / install alternate RADV|${runtime_state}|Build audited Mesa $DEFAULT_MESA_TAG. May install signed dependencies and take 20-40+ minutes."
+            "Enable one executable|${games_state}|Add a process name to the managed driconf block and print its launch option."
+            "Disable one executable|${games_state}|Remove one process name. Its Steam launch option must also be removed."
+            "List enabled games|${games_state}|Show toolkit-managed executable names and friendly names."
+            "Uninstall mesh runtime|${runtime_state}|Remove the alternate driver, ICD, and managed game entries; preserve build caches."
+            "Full help||Show CLI commands, launch-option format, and upstream source."
+        )
+        menu_select "BC-250 mesh shaders  ${CD}(per-game RADV opt-in)${C0}" "${items[@]}" \
+            || { echo; break; }
+        case $MENU_CHOICE in
+            0) show_menu_status ;;
+            1) confirm_menu_action \
+                "Build and install the alternate RADV runtime?" setup ;;
+            2) local executable name
+               printf '%s' "${CB}Game executable/process name (for example ff7rebirth_.exe): ${C0}"
+               IFS= read -r executable
+               if [[ -z "$executable" ]]; then log "Cancelled."; pause_key; continue; fi
+               printf '%s' "${CB}Friendly name [${executable}]: ${C0}"
+               IFS= read -r name
+               run_menu_action game enable "$executable" "${name:-$executable}" ;;
+            3) local executable
+               printf '%s' "${CB}Game executable/process name: ${C0}"
+               IFS= read -r executable
+               if [[ -z "$executable" ]]; then log "Cancelled."; pause_key; continue; fi
+               run_menu_action game disable "$executable" ;;
+            4) show_menu_games ;;
+            5) confirm_menu_action \
+                "Remove the alternate driver and all managed game toggles?" uninstall ;;
+            6) echo; cmd_help; pause_key ;;
         esac
     done
 }
