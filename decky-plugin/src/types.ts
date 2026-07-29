@@ -121,6 +121,21 @@ export interface CecStatus {
   protected: boolean;
 }
 
+export interface MeshGame {
+  executable: string;
+  name: string;
+}
+
+export interface MeshStatus {
+  scriptAvailable: boolean;
+  runtimeState: "ready" | "not-installed" | "invalid";
+  mesaVersion: string | null;
+  icdPath: string;
+  configValid: boolean;
+  error: string | null;
+  games: MeshGame[];
+}
+
 export interface Snapshot {
   toolkit: {
     available: boolean;

@@ -1,4 +1,5 @@
 import hashlib
+import json
 import os
 import subprocess
 import tempfile
@@ -78,6 +79,106 @@ class MeshShaderTests(unittest.TestCase):
             self.assertIn("not installed", result.stdout)
             self.assertFalse(Path(env["BC250_MESH_STATE_DIR"]).exists())
             self.assertFalse(Path(env["BC250_MESH_DRIRC"]).exists())
+
+    def test_status_json_is_structured_and_read_only_when_not_installed(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            env = self.environment(root)
+            result = subprocess.run(
+                ["bash", str(MESH), "status-json"],
+                check=True,
+                capture_output=True,
+                text=True,
+                env=env,
+            )
+            status = json.loads(result.stdout)
+            self.assertTrue(status["scriptAvailable"])
+            self.assertEqual(status["runtimeState"], "not-installed")
+            self.assertTrue(status["configValid"])
+            self.assertEqual(status["games"], [])
+            self.assertFalse(Path(env["BC250_MESH_STATE_DIR"]).exists())
+            self.assertFalse(Path(env["BC250_MESH_DRIRC"]).exists())
+
+    def test_status_json_lists_appid_alias_and_enable_prints_override(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            env = self.environment(root)
+            self.install_runtime(root, env)
+            enabled = subprocess.run(
+                [
+                    "bash",
+                    str(MESH),
+                    "game",
+                    "enable",
+                    "bc250-steam-1462040",
+                    "Final Fantasy VII Rebirth",
+                ],
+                check=True,
+                capture_output=True,
+                text=True,
+                env=env,
+            )
+            self.assertIn(
+                "MESA_DRICONF_EXECUTABLE_OVERRIDE='bc250-steam-1462040'",
+                enabled.stdout,
+            )
+            status_result = subprocess.run(
+                ["bash", str(MESH), "status-json"],
+                check=True,
+                capture_output=True,
+                text=True,
+                env=env,
+            )
+            status = json.loads(status_result.stdout)
+            self.assertEqual(status["runtimeState"], "ready")
+            self.assertEqual(status["mesaVersion"], "mesa-26.1.4")
+            self.assertEqual(
+                status["games"],
+                [
+                    {
+                        "executable": "bc250-steam-1462040",
+                        "name": "Final Fantasy VII Rebirth",
+                    }
+                ],
+            )
+
+    def test_enable_shell_quotes_printed_launch_option(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            env = self.environment(root)
+            self.install_runtime(root, env)
+            result = subprocess.run(
+                ["bash", str(MESH), "game", "enable", "game'$(touch nope).exe"],
+                check=True,
+                capture_output=True,
+                text=True,
+                env=env,
+                cwd=root,
+            )
+            self.assertIn(
+                "MESA_DRICONF_EXECUTABLE_OVERRIDE='game'\"'\"'$(touch nope).exe'",
+                result.stdout,
+            )
+            self.assertFalse((root / "nope").exists())
+
+    def test_status_json_reports_invalid_drirc_without_failing_transport(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            env = self.environment(root)
+            self.install_runtime(root, env)
+            Path(env["BC250_MESH_DRIRC"]).write_text("<not-closed>", encoding="utf-8")
+            result = subprocess.run(
+                ["bash", str(MESH), "status-json"],
+                check=True,
+                capture_output=True,
+                text=True,
+                env=env,
+            )
+            status = json.loads(result.stdout)
+            self.assertEqual(status["runtimeState"], "ready")
+            self.assertFalse(status["configValid"])
+            self.assertIn("not valid XML", status["error"])
+            self.assertEqual(status["games"], [])
 
     def test_per_game_toggle_preserves_unrelated_drirc_content(self):
         with tempfile.TemporaryDirectory() as directory:

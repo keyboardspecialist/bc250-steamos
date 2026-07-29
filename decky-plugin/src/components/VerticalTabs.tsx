@@ -6,7 +6,7 @@ export interface VerticalTab {
   id: string;
   label: string;
   icon: ReactNode;
-  healthy: boolean;
+  healthy?: boolean;
   content: ReactNode;
 }
 
@@ -65,17 +65,19 @@ export function VerticalTabs({
             >
               <span style={{ fontSize: 17, lineHeight: 1 }}>{tab.icon}</span>
               <span>{tab.label}</span>
-              <span
-                style={{
-                  position: "absolute",
-                  right: 5,
-                  top: 5,
-                  width: 6,
-                  height: 6,
-                  borderRadius: "50%",
-                  background: tab.healthy ? "#59d185" : "#e6ad55",
-                }}
-              />
+              {tab.healthy !== undefined && (
+                <span
+                  style={{
+                    position: "absolute",
+                    right: 5,
+                    top: 5,
+                    width: 6,
+                    height: 6,
+                    borderRadius: "50%",
+                    background: tab.healthy ? "#59d185" : "#e6ad55",
+                  }}
+                />
+              )}
             </Focusable>
           );
         })}

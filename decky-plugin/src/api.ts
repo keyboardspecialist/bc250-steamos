@@ -1,5 +1,5 @@
 import { callable } from "@decky/api";
-import type { Snapshot, TelemetrySample } from "./types";
+import type { MeshStatus, Snapshot, TelemetrySample } from "./types";
 
 export const getSnapshot = callable<[], Snapshot>("get_snapshot");
 export const getTelemetry = callable<[], TelemetrySample>("get_telemetry");
@@ -29,3 +29,8 @@ export const setCecToggle = callable<
   void
 >("set_cec_toggle");
 export const setCecName = callable<[name: string], void>("set_cec_name");
+export const getMeshStatus = callable<[], MeshStatus>("get_mesh_status");
+export const setMeshGameEnabled = callable<
+  [appId: number, friendlyName: string, enabled: boolean],
+  void
+>("set_mesh_game_enabled");

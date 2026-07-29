@@ -24,6 +24,13 @@ LOCK_FILE="${BC250_MESH_LOCK_FILE:-$HOME/.cache/bc250-mesh-shader.lock}"
 log() { echo "[bc250-mesh] $*"; }
 die() { echo "[bc250-mesh] $*" >&2; exit 1; }
 
+shell_word() {
+    python3 - "$1" <<'PY'
+import sys
+print("'" + sys.argv[1].replace("'", "'\"'\"'") + "'")
+PY
+}
+
 require_normal_user() {
     [[ $EUID -ne 0 ]] || die "Run as the logged-in user, not with sudo. Setup requests sudo when needed."
 }
@@ -429,16 +436,16 @@ finally:
 PY
     committed=1
     log "Alternate RADV ICD installed and ownership-recorded."
-    log "It remains inactive until a game is enabled and given this launch option:"
-    printf 'VK_ICD_FILENAMES="%s" %%command%%\n' "$ICD"
+    log "It remains inactive until a game is enabled and given the launch option printed by 'game enable'."
 )
 
 manage_games() {
     local action="$1" executable="${2:-}" name="${3:-}"
     [[ ! -L "$DRIRC" ]] || die "Refusing symlinked driconf file: $DRIRC"
-    [[ "$action" == list ]] || ensure_state_dir
+    if [[ "$action" != list && "$action" != list-json ]]; then ensure_state_dir; fi
     python3 - "$action" "$executable" "$name" "$DRIRC" <<'PY'
 from html import escape
+import json
 from pathlib import Path
 import re
 import sys
@@ -498,6 +505,9 @@ elif action == "list":
     for game in games:
         print("%s\t%s" % (game["executable"], game["name"]))
     raise SystemExit(0)
+elif action == "list-json":
+    print(json.dumps(games, ensure_ascii=True, separators=(",", ":")))
+    raise SystemExit(0)
 else:
     raise SystemExit("unknown game action")
 
@@ -544,13 +554,14 @@ cmd_game() {
             verify_owned_runtime || die "Install the alternate ICD first with '$0 setup'."
             manage_games enable "$executable" "$name"
             log "Enabled mesh-shader spoof for process: $executable"
-            printf 'Steam launch option: VK_ICD_FILENAMES="%s" %%command%%\n' "$ICD"
+            printf 'Steam launch option: MESA_DRICONF_EXECUTABLE_OVERRIDE=%s VK_ICD_FILENAMES=%s %%command%%\n' \
+                "$(shell_word "$executable")" "$(shell_word "$ICD")"
             ;;
         disable)
             [[ $# -eq 2 ]] || die "Usage: $0 game disable <executable>"
             manage_games disable "$executable"
             log "Disabled mesh-shader spoof for process: $executable"
-            log "Also remove its VK_ICD_FILENAMES launch option in Steam."
+            log "Also remove its MESA_DRICONF_EXECUTABLE_OVERRIDE and VK_ICD_FILENAMES launch option in Steam."
             ;;
         list)
             [[ $# -eq 1 ]] || die "Usage: $0 game list"
@@ -587,6 +598,38 @@ cmd_status() {
     return "$failed"
 }
 
+cmd_status_json() {
+    local runtime_state="not-installed" mesa_version="" config_valid=1 games="[]" error=""
+    if verify_owned_runtime; then
+        runtime_state="ready"
+        mesa_version="$STORED_MESA_TAG"
+    elif [[ -e "$DRIVER" || -L "$DRIVER" || -e "$ICD" || -L "$ICD" \
+        || -e "$MANIFEST" || -e "$TRANSACTION_DIR" ]]; then
+        runtime_state="invalid"
+        if read_manifest; then mesa_version="$STORED_MESA_TAG"; fi
+    fi
+    if ! games=$(manage_games list-json 2>&1); then
+        config_valid=0
+        error="$games"
+        games="[]"
+    fi
+    python3 - "$runtime_state" "$mesa_version" "$ICD" "$config_valid" "$error" "$games" <<'PY'
+import json
+import sys
+
+runtime_state, mesa_version, icd_path, config_valid, error, games = sys.argv[1:]
+print(json.dumps({
+    "scriptAvailable": True,
+    "runtimeState": runtime_state,
+    "mesaVersion": mesa_version or None,
+    "icdPath": icd_path,
+    "configValid": config_valid == "1",
+    "error": error or None,
+    "games": json.loads(games),
+}, ensure_ascii=True, separators=(",", ":")))
+PY
+}
+
 cmd_uninstall() (
     require_normal_user
     local ro_was_enabled=0
@@ -619,7 +662,7 @@ cmd_uninstall() (
     fi
     rm -f "$ICD" "$MANIFEST"
     log "Removed the alternate RADV driver, ICD, and all toolkit-managed game toggles."
-    log "Remove VK_ICD_FILENAMES from each game's Steam launch options."
+    log "Remove MESA_DRICONF_EXECUTABLE_OVERRIDE and VK_ICD_FILENAMES from each game's Steam launch options."
     log "Downloaded upstream patch and Mesa build output were preserved for rebuilds."
 )
 
@@ -680,7 +723,7 @@ EOF
 
 cmd_help() {
     cat <<EOF
-Usage: $0 [menu|setup|status|game ACTION|uninstall|purge|help]
+Usage: $0 [menu|setup|status|status-json|game ACTION|uninstall|purge|help]
 
   setup                        Fetch the verified upstream patch, build the
                                audited Mesa commit, and install a separate ICD.
@@ -688,11 +731,12 @@ Usage: $0 [menu|setup|status|game ACTION|uninstall|purge|help]
   game disable EXE             Remove one executable from the managed .drirc block.
   game list                    List opted-in executables.
   status                       Verify runtime ownership and list enabled games.
+  status-json                  Print machine-readable runtime and game status.
   uninstall                    Remove the alternate ICD and managed game entries.
   purge                        After uninstall, remove patch/source/build caches.
 
 The alternate ICD is never registered globally. Each enabled game also needs:
-  VK_ICD_FILENAMES="$ICD" %command%
+  MESA_DRICONF_EXECUTABLE_OVERRIDE='EXE' VK_ICD_FILENAMES=$(shell_word "$ICD") %command%
 
 Upstream (pinned to $UPSTREAM_COMMIT):
   $UPSTREAM_REPO/tree/Steam-OS
@@ -703,6 +747,7 @@ case "${1:-menu}" in
     menu) (($# <= 1)) || die "Usage: $0 menu"; cmd_menu ;;
     setup) (($# == 1)) || die "Usage: $0 setup"; cmd_setup ;;
     status) (($# == 1)) || die "Usage: $0 status"; cmd_status ;;
+    status-json) (($# == 1)) || die "Usage: $0 status-json"; cmd_status_json ;;
     game) shift; cmd_game "$@" ;;
     uninstall) (($# == 1)) || die "Usage: $0 uninstall"; cmd_uninstall ;;
     purge) (($# == 1)) || die "Usage: $0 purge"; cmd_purge ;;

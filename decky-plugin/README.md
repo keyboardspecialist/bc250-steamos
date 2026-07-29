@@ -13,6 +13,7 @@ CEC quick controls. Select
 - GPU frequency, load target, and ramp behavior
 - CPU overclock detection, apply, boot replay, and stock restore controls
 - HDMI-CEC controls
+- Per-game mesh-shader opt-in synchronized with installed Steam games
 
 GPU voltage editing and saving WGP routing for boot remain in the toolkit CLI.
 
@@ -37,8 +38,8 @@ the controller-focused fullscreen route.
 
 ![BC-250 Decky fullscreen Overview](mockups/02-full-overview.png)
 
-Fullscreen controls use a vertical gamepad-navigation rail. Each tab carries a
-green or amber health dot, and focus moves directly between the rail and the
+Fullscreen controls use a vertical gamepad-navigation rail. Hardware tabs carry
+a green or amber health dot, and focus moves directly between the rail and the
 scrolling content. Overview expands the Quick Access telemetry with power,
 ACPI, governor, persistence, CPU profile, CU, and CEC status.
 
@@ -68,7 +69,8 @@ Access actions.
 - Toolkit checkout at `~/.local/share/bc250-fixes/bc250-steamos`
 - Installed toolkit components for the controls being used
 
-The plugin backend runs with Decky's `root` flag. CEC commands are delegated to the logged-in Deck user session.
+The plugin backend runs with Decky's `root` flag. CEC and mesh-shader commands
+are delegated to the logged-in Deck user session.
 
 ### Privileged operations
 
@@ -115,6 +117,8 @@ copied into the Decky artifact at build time; the installed plugin never imports
 or calls the Plasma desktop utility. Hardware mutations are serialized and
 validated. Privileged GPU changes use fixed D-Bus, configuration interfaces, or
 the trusted CU manager. CEC commands invoke a toolkit script after dropping to
-the logged-in Deck user.
+the logged-in Deck user. Mesh status and AppID-based game toggles use the same
+user boundary; Steam launch options are managed by Steam's frontend API and
+custom options are never overwritten.
 
 `tomli` is vendored under `py_modules/` for the Python 3.8 runtime shipped by older SteamOS releases.

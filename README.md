@@ -334,13 +334,17 @@ Or use the CLI:
 The game also needs the launch option printed by the enable command:
 
 ```text
-VK_ICD_FILENAMES="/home/deck/radeon_driconf_icd.x86_64.json" %command%
+MESA_DRICONF_EXECUTABLE_OVERRIDE='ff7rebirth_.exe' VK_ICD_FILENAMES='/home/deck/radeon_driconf_icd.x86_64.json' %command%
 ```
 
 Replace `/home/deck` if the logged-in user's home differs. Two independent
 conditions keep this opt-in: only the named executable receives the driconf
 capability spoof, and only a game with that launch option loads the alternate
 ICD. The toolkit never creates a global Vulkan environment override.
+
+The Decky plugin can synchronize installed Steam games and uses stable
+`bc250-steam-APPID` aliases for them. This avoids depending on a Proton game's
+final executable name. Existing executable-based entries remain supported.
 
 Disable or remove it:
 

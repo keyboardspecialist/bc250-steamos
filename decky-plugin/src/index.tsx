@@ -16,6 +16,7 @@ import {
   FaCog,
   FaMemory,
   FaMicrochip,
+  FaProjectDiagram,
   FaSyncAlt,
   FaTv,
 } from "react-icons/fa";
@@ -27,6 +28,7 @@ import { CecTab } from "./tabs/CecTab";
 import { CpuTab } from "./tabs/CpuTab";
 import { CuTab } from "./tabs/CuTab";
 import { GpuTab } from "./tabs/GpuTab";
+import { MeshTab } from "./tabs/MeshTab";
 import {
   OverviewTab,
   OverviewSummary,
@@ -243,6 +245,12 @@ function FullControl() {
       icon: <FaTv />,
       healthy: serviceActive(snapshot.cec.service.active),
       content: <CecTab {...tabProps} />,
+    },
+    {
+      id: "mesh",
+      label: "Mesh",
+      icon: <FaProjectDiagram />,
+      content: <MeshTab />,
     },
   ];
 

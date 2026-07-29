@@ -16,11 +16,21 @@ class Plugin:
     async def get_telemetry(self):
         return await self.backend.get_telemetry()
 
+    async def get_mesh_status(self):
+        return await self.backend.get_mesh_status()
+
     async def set_cu_wgp(self, se: int, sh: int, wgp: int, enabled: bool):
         return await self.backend.set_cu_wgp(se, sh, wgp, enabled)
 
     async def set_gpu_frequency(self, mode: str, minimum: int, maximum: int):
         return await self.backend.set_gpu_frequency(mode, minimum, maximum)
+
+    async def set_mesh_game_enabled(
+        self, app_id: int, friendly_name: str, enabled: bool
+    ):
+        return await self.backend.set_mesh_game_enabled(
+            app_id, friendly_name, enabled
+        )
 
     async def set_load_target(self, preset: str):
         return await self.backend.set_load_target(preset)

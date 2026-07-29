@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import fcntl
 import glob
+import json
 import math
 import os
 import pwd
@@ -1345,10 +1346,113 @@ class ToolkitBackend:
             async with self._process_lock():
                 return await self._get_snapshot()
 
+    async def get_mesh_status(self) -> dict[str, Any]:
+        if not self._user_script_available("bc250-mesh-shader.sh"):
+            return {
+                "scriptAvailable": False,
+                "runtimeState": "not-installed",
+                "mesaVersion": None,
+                "icdPath": str(
+                    self.user_home / "radeon_driconf_icd.x86_64.json"
+                ),
+                "configValid": True,
+                "error": None,
+                "games": [],
+            }
+
+        async with self._mutation_lock:
+            async with self._process_lock():
+                output = await self._user_tool(
+                    "bc250-mesh-shader.sh", "status-json", timeout=30
+                )
+        try:
+            status = json.loads(output)
+        except (TypeError, ValueError) as error:
+            raise CommandError("Mesh-shader status returned invalid JSON.") from error
+        if not isinstance(status, dict):
+            raise CommandError("Mesh-shader status returned invalid data.")
+
+        runtime_state = status.get("runtimeState")
+        games = status.get("games")
+        if runtime_state not in {"ready", "not-installed", "invalid"} or not isinstance(
+            games, list
+        ):
+            raise CommandError("Mesh-shader status returned invalid data.")
+        normalized_games = []
+        for game in games:
+            if not isinstance(game, dict):
+                raise CommandError("Mesh-shader game status returned invalid data.")
+            executable = game.get("executable")
+            name = game.get("name")
+            if not isinstance(executable, str) or not isinstance(name, str):
+                raise CommandError("Mesh-shader game status returned invalid data.")
+            normalized_games.append({"executable": executable, "name": name})
+
+        mesa_version = status.get("mesaVersion")
+        icd_path = status.get("icdPath")
+        config_valid = status.get("configValid")
+        status_error = status.get("error")
+        if mesa_version is not None and not isinstance(mesa_version, str):
+            raise CommandError("Mesh-shader status returned an invalid Mesa version.")
+        if (
+            not isinstance(icd_path, str)
+            or not icd_path.startswith("/")
+            or len(icd_path) > 4096
+            or not icd_path.isprintable()
+        ):
+            raise CommandError("Mesh-shader status returned an invalid ICD path.")
+        if type(config_valid) is not bool:
+            raise CommandError("Mesh-shader status returned invalid configuration state.")
+        if status_error is not None and not isinstance(status_error, str):
+            raise CommandError("Mesh-shader status returned an invalid error message.")
+        return {
+            "scriptAvailable": True,
+            "runtimeState": runtime_state,
+            "mesaVersion": mesa_version,
+            "icdPath": icd_path,
+            "configValid": config_valid,
+            "error": status_error,
+            "games": normalized_games,
+        }
+
     async def _mutate(self, callback: Any) -> None:
         async with self._mutation_lock:
             async with self._process_lock():
                 await callback()
+
+    async def set_mesh_game_enabled(
+        self, app_id: int, friendly_name: str, enabled: bool
+    ) -> None:
+        if type(app_id) is not int or not 1 <= app_id <= 0xFFFFFFFF:
+            raise CommandError("Steam AppID must be a positive 32-bit integer.")
+        if type(enabled) is not bool:
+            raise CommandError("Mesh-shader game state must be a boolean.")
+        if enabled:
+            if type(friendly_name) is not str:
+                raise CommandError("Steam game name must be text.")
+            try:
+                byte_length = len(friendly_name.encode("utf-8"))
+            except UnicodeEncodeError as error:
+                raise CommandError("Steam game name contains invalid text.") from error
+            if (
+                not friendly_name.strip()
+                or byte_length > 256
+                or not friendly_name.isprintable()
+            ):
+                raise CommandError(
+                    "Steam game name must be printable and at most 256 bytes."
+                )
+
+        async def action() -> None:
+            alias = f"bc250-steam-{app_id}"
+            arguments = ["game", "enable" if enabled else "disable", alias]
+            if enabled:
+                arguments.append(friendly_name)
+            await self._user_tool(
+                "bc250-mesh-shader.sh", *arguments, timeout=30
+            )
+
+        return await self._mutate(action)
 
     async def set_cu_wgp(
         self, se: int, sh: int, wgp: int, enabled: bool
