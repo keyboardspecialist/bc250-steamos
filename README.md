@@ -200,6 +200,51 @@ sudo ./bc250-power.sh cpu-oc off
 
 `cpu-oc detect` stress-tests each frequency step. Keep the VID limit at or below 1325 mV.
 
+### Experimental CPU Core Unlock
+
+[`rw-r-r-0644/bc250-core-unlock`](https://github.com/rw-r-r-0644/bc250-core-unlock)
+discovered the SMU command that changes the BC-250 core-presence mask from
+`0x77` to `0xff`, allowing AGESA to enumerate 8 cores and 16 threads.
+
+```bash
+sudo ./bc250-power.sh cpu-unlock test
+sudo reboot
+sudo ./bc250-power.sh cpu-unlock status
+# Stress-test the extra cores and inspect dmesg, then opt into persistence:
+sudo ./bc250-power.sh cpu-unlock enable
+```
+
+The mask survives warm reboots but resets after a full power-off. AGESA reads
+it before Linux starts, so initramfs cannot apply it early enough. On a later
+cold boot, the enabled service safely writes the mask and requests one warm
+reboot. A persistent pending marker prevents a failed unlock from creating a
+reboot loop.
+
+| Command | Action |
+|---|---|
+| `sudo ./bc250-power.sh cpu-unlock test` | Apply the volatile mask once without installing boot persistence; reboot manually |
+| `sudo ./bc250-power.sh cpu-unlock enable` | After testing, verify eight cores are already active and install boot replay |
+| `sudo ./bc250-power.sh cpu-unlock status` | Show service, topology, and reboot-guard state |
+| `sudo ./bc250-power.sh cpu-unlock off` | Disable boot replay but retain the helper |
+| `sudo ./bc250-power.sh cpu-unlock uninstall` | Remove the service, helper, license copy, and pending state |
+
+`test` does not create a systemd unit, enablement symlink, or atomic-update
+entry. If the extra cores are unstable, do not run `enable`; power the system
+off fully to restore the factory six-core mask.
+
+The SMU command has no known inverse; `off` and `uninstall` stop future replay,
+but a full power-off is required to return to six cores. The disabled cores may
+be defective. Upstream tested BIOS 3.0 with kernel 6.18.40; BIOS 5 is untested.
+Stress-test all cores and inspect `dmesg` for hardware errors before relying on
+them.
+
+The vendored helper is pinned to upstream commit
+[`87ec098`](https://github.com/rw-r-r-0644/bc250-core-unlock/commit/87ec09877df57d2e310a9b9961584a78b6d1c79d)
+under its MIT license. Toolkit changes are documented in
+[`core-unlock/README.md`](core-unlock/README.md): whole-transaction locking,
+strict mailbox timeout handling, topology checks, service modes, and the
+guarded cold-boot reboot flow.
+
 ## CEC
 
 Run CEC commands from the logged-in user session:
@@ -356,6 +401,7 @@ Run the normal component setup commands afterward to regenerate services for the
 | BC-250 ACPI Fix | [Repository](https://github.com/bc250-collective/bc250-acpi-fix) · [SSDT-CST](https://github.com/bc250-collective/bc250-acpi-fix/blob/main/SSDT-CST.aml) · [SSDT-PST](https://github.com/bc250-collective/bc250-acpi-fix/blob/main/SSDT-PST.aml) | `bc250-power.sh` |
 | Cyan Skillfish Governor | [Repository](https://github.com/filippor/cyan-skillfish-governor/tree/smu) · [Performance-mode script](https://github.com/filippor/cyan-skillfish-governor/blob/smu/scripts/cyan-skillfish-performance-mode) | `bc250-power.sh` |
 | BC-250 SMU OC | [Repository](https://github.com/bc250-collective/bc250_smu_oc) | `bc250-power.sh` |
+| BC-250 CPU Core Unlock | [Repository](https://github.com/rw-r-r-0644/bc250-core-unlock) | Original SMU method and helper adapted by `bc250-power.sh` |
 | Valve kernel mirror | [Repository](https://github.com/Evlav/linux-integration) | `bc250-audio-fix/fetch-sources.sh` |
 | SteamOS package mirror | [Package index](https://steamdeck-packages.steamos.cloud/archlinux-mirror/) | Audio-driver and AIC8800 build scripts; stable channels are discovered automatically |
 | SteamOS atomic-update keep list | [Defaults](https://github.com/evlaV/steamos-customizations/blob/master/atomic-update/rauc/atomic-update-keep.conf.in) · [Drop-in example](https://github.com/evlaV/steamos-customizations/blob/master/atomic-update/rauc/example-additional-keep-list.conf.in) | `bc250-update-persistence.sh` |

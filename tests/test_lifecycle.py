@@ -73,6 +73,7 @@ class LifecycleTests(unittest.TestCase):
         self.assertNotIn('rm -f "$OC_CONF"', power_uninstall)
         self.assertNotIn('rm -f "$FREQ_STATE"', power_uninstall)
         self.assertNotIn('rm -rf "$ACPI_DIR"', power_uninstall)
+        self.assertIn('rm -f "$CORE_UNLOCK_BIN"', power_uninstall)
 
         compute = COMPUTE.read_text(encoding="utf-8")
         compute_uninstall = compute[
@@ -98,6 +99,8 @@ require_root() { :; }
 reset_cpu_stock_live() { return 0; }
 remove_acpi_boot_override() { return 0; }
 remove_update_persistence() { rm -f "$POWER_KEEP_FILE"; }
+core_unlock_lifecycle_lock() { :; }
+core_unlock_operation_lock() { :; }
 unlock_rootfs() { :; }
 relock_rootfs() { :; }
 systemctl() { [[ "${1:-}" != is-active ]]; }
@@ -108,11 +111,17 @@ CPUFREQ_UNIT="$base/system/bc250-cpufreq.service"
 GOV_UNIT="$base/system/cyan.service"
 RESTORE_UNIT="$base/system/restore.service"
 OC_UNIT="$base/system/oc.service"
+CORE_UNLOCK_UNIT="$base/system/core-unlock.service"
 HEAL_HELPER="$base/data/helper/acpi"
 LEGACY_HEAL_HELPER="$base/legacy-acpi"
 GOV_BIN="$base/data/bin/governor"
 PERF_BIN="$base/data/bin/perf"
 RESTORE_BIN="$base/data/bin/restore"
+CORE_UNLOCK_BIN="$base/data/helper/core-unlock"
+CORE_UNLOCK_LICENSE="$base/data/licenses/core-unlock-LICENSE"
+CORE_UNLOCK_STATE_DIR="$base/data/core-unlock"
+CORE_UNLOCK_PENDING="$CORE_UNLOCK_STATE_DIR/reboot-pending"
+CORE_UNLOCK_SVC="core-unlock.service"
 DBUS_POLICY="$base/etc/governor.conf"
 POWER_KEEP_FILE="$base/keep/power.conf"
 GOV_CONF="$base/settings/config.toml"
@@ -121,14 +130,17 @@ OC_CONF="$base/settings/oc.conf"
 OC_DIR="$base/data/smu-oc"
 OC_STAGE_CONF="$OC_DIR/overclock.conf"
 mkdir -p "$base/system" "$base/data/helper" "$base/data/bin" \
-    "$base/etc" "$base/keep" "$base/settings" "$OC_DIR/bc250_smu"
+    "$base/data/licenses" "$CORE_UNLOCK_STATE_DIR" "$base/etc" "$base/keep" \
+    "$base/settings" "$OC_DIR/bc250_smu"
 touch "$HEAL_UNIT" "$CPUFREQ_UNIT" "$GOV_UNIT" "$RESTORE_UNIT" \
-    "$OC_UNIT" "$HEAL_HELPER" "$LEGACY_HEAL_HELPER" "$GOV_BIN" \
+    "$OC_UNIT" "$CORE_UNLOCK_UNIT" "$HEAL_HELPER" "$LEGACY_HEAL_HELPER" "$GOV_BIN" \
     "$PERF_BIN" "$RESTORE_BIN" "$DBUS_POLICY" "$POWER_KEEP_FILE" \
     "$GOV_CONF" "$FREQ_STATE" "$OC_CONF" "$OC_STAGE_CONF" \
-    "$OC_DIR/bc250_apply.py" "$OC_DIR/bc250_smu/api.py"
+    "$OC_DIR/bc250_apply.py" "$OC_DIR/bc250_smu/api.py" "$CORE_UNLOCK_BIN" \
+    "$CORE_UNLOCK_LICENSE" "$CORE_UNLOCK_PENDING"
 cmd_uninstall >/dev/null
 [[ ! -e "$GOV_UNIT" && ! -e "$GOV_BIN" && ! -e "$OC_DIR/bc250_apply.py" ]]
+[[ ! -e "$CORE_UNLOCK_UNIT" && ! -e "$CORE_UNLOCK_BIN" && ! -e "$CORE_UNLOCK_PENDING" ]]
 [[ -e "$GOV_CONF" && -e "$FREQ_STATE" && -e "$OC_CONF" && -e "$OC_STAGE_CONF" ]]
 ''',
                     "_",
@@ -141,6 +153,50 @@ cmd_uninstall >/dev/null
                 env=script_env(directory),
             )
             self.assertEqual(result.stderr, "")
+
+    def test_core_unlock_can_be_uninstalled_without_other_power_features(self):
+        with tempfile.TemporaryDirectory() as directory:
+            subprocess.run(
+                [
+                    "bash",
+                    "-c",
+                    r'''
+script=$1; base=$2
+set -- help
+source "$script" >/dev/null
+require_root() { :; }
+systemctl() { [[ "${1:-}" != is-active ]]; }
+install_update_persistence() { return 9; }
+remove_update_persistence() { rm -f "$POWER_KEEP_FILE"; }
+core_unlock_lifecycle_lock() { :; }
+core_unlock_lifecycle_unlock() { :; }
+core_unlock_operation_lock() { :; }
+core_unlock_operation_unlock() { :; }
+SYSTEMD_WANTS_DIR="$base/wants"
+CORE_UNLOCK_UNIT="$base/system/core-unlock.service"
+CORE_UNLOCK_BIN="$base/data/helper/core-unlock"
+CORE_UNLOCK_LICENSE="$base/data/licenses/core-unlock-LICENSE"
+CORE_UNLOCK_STATE_DIR="$base/data/core-unlock"
+CORE_UNLOCK_PENDING="$CORE_UNLOCK_STATE_DIR/reboot-pending"
+POWER_KEEP_FILE="$base/keep/power.conf"
+mkdir -p "$SYSTEMD_WANTS_DIR" "$(dirname "$CORE_UNLOCK_UNIT")" \
+    "$(dirname "$CORE_UNLOCK_BIN")" "$(dirname "$CORE_UNLOCK_LICENSE")" \
+    "$CORE_UNLOCK_STATE_DIR" "$(dirname "$POWER_KEEP_FILE")"
+touch "$CORE_UNLOCK_UNIT" "$CORE_UNLOCK_BIN" "$CORE_UNLOCK_LICENSE" \
+    "$CORE_UNLOCK_PENDING" "$POWER_KEEP_FILE"
+core_unlock_uninstall >/dev/null
+[[ ! -e "$CORE_UNLOCK_UNIT" && ! -e "$CORE_UNLOCK_BIN" ]]
+[[ ! -e "$CORE_UNLOCK_PENDING" && ! -e "$POWER_KEEP_FILE" ]]
+''',
+                    "_",
+                    str(POWER),
+                    directory,
+                ],
+                check=True,
+                capture_output=True,
+                text=True,
+                env=script_env(directory),
+            )
 
     def test_compute_uninstall_preserves_profile_and_shared_umr(self):
         with tempfile.TemporaryDirectory() as directory:

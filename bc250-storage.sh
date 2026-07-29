@@ -23,6 +23,7 @@ ROOT_BACKED_SERVICES=(
     bc250-cu-live-manager.service
     bc250-acpi-heal.service
     bc250-gpu-freq-restore.service
+    bc250-core-unlock.service
     bc250-smu-oc.service
     cyan-skillfish-governor-smu.service
     bc250-cec-poweroff-standby.service

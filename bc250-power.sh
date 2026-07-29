@@ -26,6 +26,7 @@
 #   ./bc250-power.sh acpi          install ACPI override + self-heal
 #   ./bc250-power.sh governor      install SMU GPU governor (test-start)
 #   ./bc250-power.sh enable        enable governor + cpufreq at boot
+#   ./bc250-power.sh cpu-unlock    manage the optional 8-core unlock
 #   ./bc250-power.sh installed     machine-readable install detection
 #   ./bc250-power.sh uninstall     restore stock behavior + remove integration
 #   ./bc250-power.sh status        clocks, C-states, temps, services
@@ -90,6 +91,16 @@ OC_STAGE_CONF="$OC_DIR/overclock.conf"
 OC_CONF="/etc/bc250-smu-oc.conf"
 OC_UNIT="/etc/systemd/system/bc250-smu-oc.service"
 OC_SVC="bc250-smu-oc.service"
+CORE_UNLOCK_SOURCE="$SCRIPT_DIR/core-unlock/bc250-unlock-cores.py"
+CORE_UNLOCK_LICENSE_SOURCE="$SCRIPT_DIR/core-unlock/LICENSE"
+CORE_UNLOCK_BIN="$ROOT_DATA_DIR/helper/bc250-unlock-cores"
+CORE_UNLOCK_LICENSE="$ROOT_DATA_DIR/licenses/bc250-core-unlock-LICENSE"
+CORE_UNLOCK_STATE_DIR="$ROOT_DATA_DIR/core-unlock"
+CORE_UNLOCK_PENDING="$CORE_UNLOCK_STATE_DIR/reboot-pending"
+CORE_UNLOCK_LOCK="/run/lock/bc250-core-unlock.lock"
+CORE_UNLOCK_LIFECYCLE_LOCK="/run/lock/bc250-core-unlock-lifecycle.lock"
+CORE_UNLOCK_UNIT="/etc/systemd/system/bc250-core-unlock.service"
+CORE_UNLOCK_SVC="bc250-core-unlock.service"
 UPDATE_PERSIST_SH="$SCRIPT_DIR/bc250-update-persistence.sh"
 STORAGE_SH="$SCRIPT_DIR/bc250-storage.sh"
 
@@ -143,7 +154,7 @@ cleanup_legacy_data() {
     [[ -d "$LEGACY_PREFIX" ]] || return 0
     for file in /etc/systemd/system/bc250-cu-live-manager.service \
         /etc/bc250-cu-live-manager.conf "$HEAL_UNIT" "$GOV_UNIT" \
-        "$RESTORE_UNIT" "$OC_UNIT"; do
+        "$RESTORE_UNIT" "$OC_UNIT" "$CORE_UNLOCK_UNIT"; do
         if [[ -f "$file" ]] && grep -qF "$LEGACY_PREFIX" "$file"; then
             warn "Legacy data retained while $file still references it."
             return 0
@@ -190,7 +201,12 @@ GOV_STOPPED=0
 pause_governor() {
     if systemctl is-active "$GOV_SVC" >/dev/null 2>&1; then
         log "Pausing GPU governor while touching the SMU..."
-        systemctl stop "$GOV_SVC"; GOV_STOPPED=1
+        if systemctl stop "$GOV_SVC"; then
+            GOV_STOPPED=1
+        else
+            warn "Could not stop $GOV_SVC; refusing concurrent SMU access."
+            return 1
+        fi
     fi
 }
 resume_governor() {
@@ -1413,10 +1429,10 @@ cmd_enable() {
 
 # Machine-readable lifecycle probe. Retained tuning and persistent data do not
 # count as an installation, so this returns not-installed after an uninstall.
-power_is_installed() {
+other_power_payload_is_installed() {
     [[ -e "$HEAL_UNIT" || -e "$CPUFREQ_UNIT" || -e "$GOV_UNIT" \
         || -e "$RESTORE_UNIT" || -e "$OC_UNIT" || -e "$GRUB_ACPI_DEFAULT" \
-        || -e "$CPIO_BOOT" || -e "$DBUS_POLICY" || -e "$POWER_KEEP_FILE" \
+        || -e "$CPIO_BOOT" || -e "$DBUS_POLICY" \
         || -e "$HEAL_HELPER" || -e "$GOV_BIN" || -e "$PERF_BIN" \
         || -e "$RESTORE_BIN" || -e "$OC_DIR/bc250_apply.py" \
         || -e "$OC_DIR/bc250_smu" || -e "$LEGACY_HEAL_HELPER" \
@@ -1425,6 +1441,54 @@ power_is_installed() {
         || -L "$SYSTEMD_WANTS_DIR/$GOV_SVC" \
         || -L "$SYSTEMD_WANTS_DIR/$RESTORE_SVC" \
         || -L "$SYSTEMD_WANTS_DIR/$OC_SVC" ]]
+}
+
+core_unlock_service_enabled() {
+    [[ "$(systemctl is-enabled "$CORE_UNLOCK_SVC" 2>/dev/null || true)" == enabled \
+        || -L "$SYSTEMD_WANTS_DIR/$CORE_UNLOCK_SVC" ]]
+}
+
+core_unlock_auto_attempt_this_boot() {
+    local marker_boot="" marker_kind="" current_boot=""
+    [[ -f "$CORE_UNLOCK_PENDING" && -r "$CORE_UNLOCK_PENDING" ]] || return 1
+    read -r marker_boot marker_kind < "$CORE_UNLOCK_PENDING" || return 1
+    [[ -r /proc/sys/kernel/random/boot_id ]] || return 1
+    read -r current_boot < /proc/sys/kernel/random/boot_id || return 1
+    [[ "$marker_boot" == "$current_boot" \
+        && ( "$marker_kind" == automatic || -z "$marker_kind" ) ]]
+}
+
+core_unlock_lifecycle_lock() {
+    command -v flock >/dev/null 2>&1 \
+        || { warn "flock is required for safe core-unlock removal."; return 1; }
+    exec 8> "$CORE_UNLOCK_LIFECYCLE_LOCK" \
+        || { warn "Could not open $CORE_UNLOCK_LIFECYCLE_LOCK"; return 1; }
+    flock 8 \
+        || { exec 8>&-; warn "Could not lock $CORE_UNLOCK_LIFECYCLE_LOCK"; return 1; }
+}
+
+core_unlock_operation_lock() {
+    exec 9> "$CORE_UNLOCK_LOCK" \
+        || { warn "Could not open $CORE_UNLOCK_LOCK"; return 1; }
+    flock 9 \
+        || { exec 9>&-; warn "Could not lock $CORE_UNLOCK_LOCK"; return 1; }
+}
+
+core_unlock_lifecycle_unlock() {
+    flock -u 8 2>/dev/null || true
+    exec 8>&-
+}
+
+core_unlock_operation_unlock() {
+    flock -u 9 2>/dev/null || true
+    exec 9>&-
+}
+
+power_is_installed() {
+    other_power_payload_is_installed || [[ -e "$POWER_KEEP_FILE" ]] \
+        || [[ -e "$CORE_UNLOCK_UNIT" || -e "$CORE_UNLOCK_BIN" \
+            || -e "$CORE_UNLOCK_LICENSE" || -e "$CORE_UNLOCK_PENDING" \
+            || -L "$SYSTEMD_WANTS_DIR/$CORE_UNLOCK_SVC" ]]
 }
 
 cmd_installed() {
@@ -1437,9 +1501,10 @@ cmd_installed() {
 }
 
 remove_power_unit() {
-    local unit="$1"
-    rm -f "$unit" "$unit.d/10-bc250-storage.conf"
+    local unit="$1" rc=0
+    rm -f "$unit" "$unit.d/10-bc250-storage.conf" || rc=$?
     rmdir "$unit.d" 2>/dev/null || true
+    return "$rc"
 }
 
 remove_acpi_boot_override() {
@@ -1496,6 +1561,17 @@ cmd_uninstall() {
     require_root
     local acpi_reverted=0 cpu_reverted=0
 
+    core_unlock_lifecycle_lock || return $?
+    if [[ -e "$CORE_UNLOCK_UNIT" || -e "$CORE_UNLOCK_BIN" \
+        || -e "$CORE_UNLOCK_PENDING" || -L "$SYSTEMD_WANTS_DIR/$CORE_UNLOCK_SVC" ]]; then
+        core_unlock_operation_lock || return $?
+        if core_unlock_auto_attempt_this_boot; then
+            warn "A core-unlock automatic attempt/reboot is already in progress."
+            warn "Refusing removal until the next boot so a queued reboot cannot be misreported."
+            return 1
+        fi
+    fi
+
     if reset_cpu_stock_live; then
         cpu_reverted=1
         log "CPU overclock/undervolt reverted to stock live."
@@ -1514,9 +1590,9 @@ cmd_uninstall() {
         fi
     fi
     local service
-    systemctl disable --now "$RESTORE_SVC" "$GOV_SVC" "$OC_SVC" \
+    systemctl disable --now "$RESTORE_SVC" "$GOV_SVC" "$OC_SVC" "$CORE_UNLOCK_SVC" \
         bc250-acpi-heal.service bc250-cpufreq.service >/dev/null 2>&1 || true
-    for service in "$RESTORE_SVC" "$GOV_SVC" "$OC_SVC" \
+    for service in "$RESTORE_SVC" "$GOV_SVC" "$OC_SVC" "$CORE_UNLOCK_SVC" \
         bc250-acpi-heal.service bc250-cpufreq.service; do
         if systemctl is-active --quiet "$service"; then
             warn "Could not stop $service; refusing to remove its files."
@@ -1541,10 +1617,13 @@ cmd_uninstall() {
     remove_power_unit "$GOV_UNIT"
     remove_power_unit "$RESTORE_UNIT"
     remove_power_unit "$OC_UNIT"
+    remove_power_unit "$CORE_UNLOCK_UNIT"
     rm -f "$SYSTEMD_WANTS_DIR/$GOV_SVC" "$SYSTEMD_WANTS_DIR/$RESTORE_SVC" \
-        "$SYSTEMD_WANTS_DIR/$OC_SVC"
+        "$SYSTEMD_WANTS_DIR/$OC_SVC" "$SYSTEMD_WANTS_DIR/$CORE_UNLOCK_SVC"
     rm -f "$DBUS_POLICY"
     rm -f "$GOV_BIN" "$PERF_BIN" "$RESTORE_BIN"
+    rm -f "$CORE_UNLOCK_BIN" "$CORE_UNLOCK_LICENSE" "$CORE_UNLOCK_PENDING"
+    rmdir "$CORE_UNLOCK_STATE_DIR" "$ROOT_DATA_DIR/licenses" 2>/dev/null || true
     rm -f "$OC_DIR/bc250_apply.py" "$OC_DIR/bc250_detect.py" \
         "$OC_DIR/bc250_limits.py" "$OC_DIR/stress_helper.py"
     rm -rf "$OC_DIR/bc250_smu" "$OC_DIR/__pycache__"
@@ -1555,22 +1634,195 @@ cmd_uninstall() {
     trap - EXIT
     [[ $acpi_reverted -eq 0 ]] || remove_update_persistence
 
-    log "Power governor/OC services, executables, and D-Bus policy removed."
+    log "Power governor/OC/core-unlock services, executables, and D-Bus policy removed."
     if [[ $acpi_reverted -eq 1 ]]; then
         log "ACPI services and power update keep list removed."
     else
         warn "ACPI self-heal and its update keep list were retained for boot safety."
     fi
     log "Preserved governor/OC settings, saved frequency state, and persistent ACPI data."
-    [[ $cpu_reverted -eq 1 ]] || warn "CPU SMU settings are guaranteed stock only after reboot."
+    [[ $cpu_reverted -eq 1 ]] || warn "CPU overclock settings are guaranteed stock only after reboot."
     if [[ $acpi_reverted -eq 1 ]]; then
-        warn "REBOOT REQUIRED to unload any active ACPI tables and guarantee stock SMU state."
-        warn "After reboot, CPU power behavior is stock and the custom services stay disabled."
+        warn "REBOOT REQUIRED to unload active ACPI tables and reset normal SMU tuning."
+        warn "A full power-off is required to restore the firmware's six-core mask."
+        warn "After power-off, CPU behavior is stock and the custom services stay disabled."
     else
         warn "REBOOT REQUIRED, but ACPI boot rollback needs attention before stock behavior is guaranteed."
         warn "Remove any remaining acpi_override.cpio GRUB reference, regenerate $GRUB_CFG, then reboot."
         return 1
     fi
+}
+
+# ============================ CPU core unlock =============================
+# The SMU write changes what AGESA sees on the next boot. Linux and initramfs
+# start too late to affect the current enumeration, so a cold boot needs one
+# guarded automatic warm reboot before all eight cores are available.
+
+install_core_unlock_files() {
+    migrate_legacy_data || return $?
+    [[ -f "$CORE_UNLOCK_SOURCE" && ! -L "$CORE_UNLOCK_SOURCE" ]] \
+        || die "Core-unlock helper missing or unsafe: $CORE_UNLOCK_SOURCE"
+    [[ -f "$CORE_UNLOCK_LICENSE_SOURCE" && ! -L "$CORE_UNLOCK_LICENSE_SOURCE" ]] \
+        || die "Core-unlock MIT license missing or unsafe: $CORE_UNLOCK_LICENSE_SOURCE"
+    install -d -o root -g root -m 0755 "$ROOT_DATA_DIR/helper" \
+        "$ROOT_DATA_DIR/licenses" "$CORE_UNLOCK_STATE_DIR" \
+        || die "Could not create core-unlock directories."
+    install -o root -g root -m 0755 "$CORE_UNLOCK_SOURCE" "$CORE_UNLOCK_BIN" \
+        || die "Could not install the core-unlock helper."
+    install -o root -g root -m 0644 "$CORE_UNLOCK_LICENSE_SOURCE" "$CORE_UNLOCK_LICENSE" \
+        || die "Could not install the core-unlock license."
+}
+
+write_core_unlock_unit() {
+    local tmp
+    tmp=$(mktemp "${CORE_UNLOCK_UNIT%/*}/.bc250-core-unlock.XXXXXX") \
+        || die "Could not stage $CORE_UNLOCK_UNIT"
+    cat > "$tmp" << EOF
+[Unit]
+Description=BC-250 eight-core unlock (rw-r-r-0644 SMU method)
+Documentation=https://github.com/rw-r-r-0644/bc250-core-unlock
+Requires=$RECOVERY_SVC
+After=$RECOVERY_SVC
+Before=$OC_SVC $GOV_SVC
+RequiresMountsFor=$ROOT_DATA_DIR
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+Environment=BC250_CORE_UNLOCK_STATE_DIR=$CORE_UNLOCK_STATE_DIR
+ExecStart=/usr/bin/python3 -I $CORE_UNLOCK_BIN boot
+
+[Install]
+WantedBy=multi-user.target
+EOF
+    install -o root -g root -m 0644 "$tmp" "$CORE_UNLOCK_UNIT" \
+        || { rm -f "$tmp"; die "Could not install $CORE_UNLOCK_UNIT"; }
+    rm -f "$tmp"
+}
+
+core_unlock_test() {
+    require_root
+    core_unlock_lifecycle_lock || return $?
+    if core_unlock_service_enabled; then
+        die "Core-unlock persistence is already enabled; run '$0 cpu-unlock off' before a one-time test."
+    fi
+    install_core_unlock_files || return $?
+    pause_governor || return $?
+    local rc=0 resume_rc=0
+    BC250_CORE_UNLOCK_STATE_DIR="$CORE_UNLOCK_STATE_DIR" \
+        python3 -I "$CORE_UNLOCK_BIN" apply || rc=$?
+    resume_governor || resume_rc=$?
+    [[ $rc -eq 0 ]] || return "$rc"
+    core_unlock_lifecycle_unlock
+    return "$resume_rc"
+}
+
+core_unlock_enable() {
+    require_root
+    core_unlock_lifecycle_lock || return $?
+    install_core_unlock_files || return $?
+    BC250_CORE_UNLOCK_STATE_DIR="$CORE_UNLOCK_STATE_DIR" \
+        python3 -I "$CORE_UNLOCK_BIN" verify-unlocked || return $?
+    write_core_unlock_unit || return $?
+    systemctl daemon-reload || return $?
+    systemctl enable "$CORE_UNLOCK_SVC" || return $?
+    if ! install_update_persistence; then
+        systemctl disable "$CORE_UNLOCK_SVC" >/dev/null 2>&1 || true
+        if core_unlock_service_enabled; then
+            warn "Could not disable $CORE_UNLOCK_SVC after persistence failed; it remains enabled."
+        else
+            warn "Update persistence failed; disabled $CORE_UNLOCK_SVC for safety."
+        fi
+        return 1
+    fi
+    core_unlock_lifecycle_unlock
+    log "Eight-core unlock enabled at boot (before CPU OC and the GPU governor)."
+    log "Persistence enabled only after verifying this boot already has eight cores."
+    warn "After later cold boots, the service automatically requests one guarded warm reboot."
+}
+
+core_unlock_status() {
+    echo -e "${CB}=== CPU core unlock (rw-r-r-0644) ===${C0}"
+    local en ac
+    en=$(systemctl is-enabled "$CORE_UNLOCK_SVC" 2>/dev/null) || en=-
+    ac=$(systemctl is-active "$CORE_UNLOCK_SVC" 2>/dev/null) || ac=-
+    printf '  %-38s %s / %s\n' "$CORE_UNLOCK_SVC" "$(c_state "$en")" "$(c_state "$ac")"
+    if [[ -x "$CORE_UNLOCK_BIN" ]]; then
+        BC250_CORE_UNLOCK_STATE_DIR="$CORE_UNLOCK_STATE_DIR" \
+            python3 -I "$CORE_UNLOCK_BIN" status
+    else
+        local cores
+        cores=$(awk -F: '/^core id/ { seen[$2]=1 } END { print length(seen) }' /proc/cpuinfo)
+        echo "  detected physical cores: ${cores:-unknown}; helper not installed"
+    fi
+}
+
+core_unlock_off() {
+    require_root
+    core_unlock_lifecycle_lock || return $?
+    core_unlock_operation_lock || return $?
+    if core_unlock_auto_attempt_this_boot; then
+        die "An automatic unlock attempt/reboot is already in progress; wait for the next boot."
+    fi
+    systemctl disable --now "$CORE_UNLOCK_SVC" 2>/dev/null || true
+    if systemctl is-active --quiet "$CORE_UNLOCK_SVC" \
+        || core_unlock_service_enabled; then
+        die "Could not fully disable $CORE_UNLOCK_SVC; automatic unlock remains enabled."
+    fi
+    rm -f "$CORE_UNLOCK_PENDING" \
+        || die "Could not remove the core-unlock reboot guard."
+    core_unlock_operation_unlock
+    core_unlock_lifecycle_unlock
+    log "Automatic core unlock and warm reboot disabled; helper retained."
+    warn "A full power-off is required for firmware to restore the six-core mask."
+}
+
+core_unlock_uninstall() {
+    require_root
+    core_unlock_lifecycle_lock || return $?
+    core_unlock_operation_lock || return $?
+    if core_unlock_auto_attempt_this_boot; then
+        die "An automatic unlock attempt/reboot is already in progress; wait for the next boot."
+    fi
+    systemctl disable --now "$CORE_UNLOCK_SVC" 2>/dev/null || true
+    if systemctl is-active --quiet "$CORE_UNLOCK_SVC" \
+        || core_unlock_service_enabled; then
+        die "Could not fully disable $CORE_UNLOCK_SVC; refusing to remove its files."
+    fi
+    remove_power_unit "$CORE_UNLOCK_UNIT" || return $?
+    rm -f "$SYSTEMD_WANTS_DIR/$CORE_UNLOCK_SVC" "$CORE_UNLOCK_BIN" \
+        "$CORE_UNLOCK_LICENSE" "$CORE_UNLOCK_PENDING" \
+        || die "Could not remove all core-unlock files."
+    [[ ! -e "$CORE_UNLOCK_UNIT" && ! -e "$CORE_UNLOCK_BIN" \
+        && ! -e "$CORE_UNLOCK_LICENSE" && ! -e "$CORE_UNLOCK_PENDING" \
+        && ! -e "$CORE_UNLOCK_UNIT.d/10-bc250-storage.conf" \
+        && ! -L "$SYSTEMD_WANTS_DIR/$CORE_UNLOCK_SVC" ]] \
+        || die "Core-unlock files remain; refusing to report a successful uninstall."
+    rmdir "$CORE_UNLOCK_STATE_DIR" "$ROOT_DATA_DIR/licenses" 2>/dev/null || true
+    systemctl daemon-reload || return $?
+    if other_power_payload_is_installed; then
+        install_update_persistence || return $?
+    else
+        remove_update_persistence || return $?
+    fi
+    core_unlock_operation_unlock
+    core_unlock_lifecycle_unlock
+    log "CPU core-unlock service, helper, license copy, and pending state removed."
+    warn "A full power-off is required for firmware to restore the six-core mask."
+}
+
+cmd_cpu_unlock() {
+    local sub="${1:-status}"
+    shift || true
+    (($# == 0)) || die "Usage: $0 cpu-unlock {status|test|enable|off|uninstall}"
+    case "$sub" in
+        status)    core_unlock_status ;;
+        test)      core_unlock_test ;;
+        enable)    core_unlock_enable ;;
+        off)       core_unlock_off ;;
+        uninstall) core_unlock_uninstall ;;
+        *) die "Usage: $0 cpu-unlock {status|test|enable|off|uninstall}" ;;
+    esac
 }
 
 # ============================ CPU overclock ===============================
@@ -1814,7 +2066,7 @@ cmd_cpu_oc() {
 cmd_status() {
     echo -e "${CB}=== Services ===${C0}"
     local s en ac
-    for s in "$RECOVERY_SVC" bc250-cu-live-manager "$GOV_SVC" bc250-acpi-heal bc250-cpufreq "$RESTORE_SVC" "$OC_SVC"; do
+    for s in "$RECOVERY_SVC" bc250-cu-live-manager "$CORE_UNLOCK_SVC" "$GOV_SVC" bc250-acpi-heal bc250-cpufreq "$RESTORE_SVC" "$OC_SVC"; do
         en=$(systemctl is-enabled "$s" 2>/dev/null) || en=-
         ac=$(systemctl is-active "$s" 2>/dev/null) || ac=-
         printf '  %-38s %s / %s\n' "$s" "$(c_state "$en")" "$(c_state "$ac")"
@@ -1962,6 +2214,26 @@ menu_cpu_oc() {
     done
 }
 
+menu_cpu_unlock() {
+    while true; do
+        local items=(
+            "Show core-unlock status||Report service state, physical cores, and reboot-loop guard."
+            "Test eight cores once||Write the volatile mask only. Manually reboot, stress-test, then return here."
+            "Enable boot persistence||Only allowed when this boot already has eight tested cores."
+            "Disable automatic unlock||Stop boot replay. A full power-off restores six cores."
+            "Uninstall core unlock||Remove its service, trusted helper, license copy, and pending state."
+        )
+        menu_select "CPU core unlock  ${CD}(experimental: 6c/12t to 8c/16t)${C0}" "${items[@]}" || return 0
+        case $MENU_CHOICE in
+            0) run_action core_unlock_status ;;
+            1) run_action core_unlock_test ;;
+            2) run_action core_unlock_enable ;;
+            3) run_action core_unlock_off ;;
+            4) run_action core_unlock_uninstall ;;
+        esac
+    done
+}
+
 cmd_menu() {
     [[ -t 0 && -t 1 ]] || die "The menu needs an interactive terminal. See '$0 help' for CLI commands."
     if [[ $EUID -ne 0 ]]; then
@@ -1980,6 +2252,7 @@ cmd_menu() {
             "GPU load targets|$(badge_load_target)|When to clock up/down. Fixes light games stuck at idle clocks."
             "GPU ramp behavior|$(badge_ramp)|How fast + how granular clocks move. One number, rest derived."
             "CPU overclock / undervolt|$(badge_oc)|bc250_smu_oc: ~200 mV undervolt even at stock clocks."
+            "CPU core unlock||Experimental 6c/12t to 8c/16t; cold boots need one automatic warm reboot."
             "Reinstall D-Bus helpers||Fixes 'name is not activatable' errors from freq control."
             "Full help||The complete manual for every CLI command."
         )
@@ -1993,8 +2266,9 @@ cmd_menu() {
             5) menu_load_target ;;
             6) menu_ramp ;;
             7) menu_cpu_oc ;;
-            8) run_action cmd_helpers ;;
-            9) cmd_help; pause_key ;;
+            8) menu_cpu_unlock ;;
+            9) run_action cmd_helpers ;;
+            10) cmd_help; pause_key ;;
         esac
     done
 }
@@ -2043,11 +2317,12 @@ SETUP COMMANDS (run once, in this order)
               settings and persistent data do not count as installed.
 
   uninstall   Stop and disable power services, revert CPU OC live when
-              possible, remove the ACPI override from the next boot, and
+              possible, remove CPU core-unlock replay, remove the ACPI
+              override from the next boot, and
               remove component-owned units, executables, D-Bus policy, and
               update keep list. Keeps governor/OC tuning, saved frequency
-              state, and persistent ACPI source data. REBOOT REQUIRED to
-              unload active ACPI tables and guarantee stock firmware state.
+              state, and persistent ACPI source data. A full power-off is
+              required to unload active ACPI tables and restore six cores.
 
   all         acpi + governor in sequence.
 
@@ -2076,6 +2351,27 @@ CPU OVERCLOCK / UNDERVOLT (bc250-collective/bc250_smu_oc, CPU only)
                     with our patches overlaid from smu-oc-patches/ --
                     no local clone, no pip, no git needed. The first
                     detect/apply/enable fetches automatically (network).
+
+CPU CORE UNLOCK (rw-r-r-0644/bc250-core-unlock, experimental)
+  cpu-unlock test      Write the fixed 0xff mask ONCE without installing boot
+                       persistence. Manually reboot, confirm 8c/16t, then
+                       stress-test and check dmesg for hardware errors. If the
+                       system is unstable, power off fully to restore six cores.
+  cpu-unlock enable    Only after a successful test: verify this boot already
+                       exposes eight physical cores, then install and enable
+                       boot replay. It refuses while the system has six cores.
+                       On later cold boots the firmware resets to six cores;
+                       the service writes the mask and requests ONE guarded
+                       warm reboot so AGESA can enumerate 8c/16t. Initramfs
+                       cannot avoid this because AGESA runs before Linux.
+  cpu-unlock status    Show service, physical-core, and loop-guard state.
+  cpu-unlock off       Disable boot replay. The helper is retained.
+  cpu-unlock uninstall Remove the unit, helper, license copy, and guard state.
+                       Off/uninstall cannot relock live: a full power-off is
+                       required to restore the firmware's six-core mask.
+               WARNING: disabled cores may be defective. Upstream tested only
+               BIOS 3.0/kernel 6.18.40; BIOS 5 is untested. Stress-test and
+               check dmesg for hardware errors before relying on them.
 
 EVERYDAY COMMANDS
   status      One-screen health check: all services, GPU DPM level
@@ -2156,6 +2452,8 @@ FILE MAP
   /var/lib/bc250-control/smu-oc/
                                CPU OC tool (fetched @ pinned commit,
                                patched from smu-oc-patches/)
+  /var/lib/bc250-control/helper/bc250-unlock-cores
+                               modified MIT helper from rw-r-r-0644
   /etc/bc250-smu-oc.conf       CPU OC config       (atomic-update keep list)
   /etc/cyan-skillfish-governor-smu/config.toml     (atomic-update keep list)
   /var/lib/bc250-control/governor/freq-state  last 'freq' setting,
@@ -2184,6 +2482,7 @@ case "${1:-}" in
     load-target)  shift; cmd_load_target "$@" ;;
     ramp)         shift; cmd_ramp "$@" ;;
     cpu-oc)       shift; cmd_cpu_oc "$@" ;;
+    cpu-unlock)   shift; cmd_cpu_unlock "$@" ;;
     enable)       cmd_enable ;;
     installed)    (($# == 1)) || die "Usage: $0 installed"; cmd_installed ;;
     uninstall)    (($# == 1)) || die "Usage: $0 uninstall"; cmd_uninstall ;;
@@ -2191,7 +2490,7 @@ case "${1:-}" in
     all)          cmd_acpi; cmd_governor ;;
     menu)         cmd_menu ;;
     help|-h|--help) cmd_help ;;
-    *) echo "Usage: $0 {acpi|governor|helpers|freq|gpu-volt|load-target|ramp|cpu-oc|enable|installed|uninstall|status|all|menu|help}"
+    *) echo "Usage: $0 {acpi|governor|helpers|freq|gpu-volt|load-target|ramp|cpu-oc|cpu-unlock|enable|installed|uninstall|status|all|menu|help}"
        echo "  (no arguments on a terminal opens the guided menu)"
        echo "  freq                 show performance-mode state"
        echo "  freq 1800            pin GPU at 1800 MHz (perf mode)"

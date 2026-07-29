@@ -288,6 +288,40 @@ grep -Fxq "daemon-reload" "$SYSTEMCTL_LOG"
             "cyan-skillfish-governor-tt.service oberon-governor.service",
             source,
         )
+        self.assertIn("bc250-core-unlock.service", source)
+        storage = (ROOT / "bc250-storage.sh").read_text(encoding="utf-8")
+        self.assertIn("bc250-core-unlock.service", storage)
+
+    def test_core_unlock_is_attributed_guarded_and_removable(self):
+        helper = (ROOT / "core-unlock" / "bc250-unlock-cores.py").read_text(
+            encoding="utf-8"
+        )
+        notes = (ROOT / "core-unlock" / "README.md").read_text(encoding="utf-8")
+        power = (ROOT / "bc250-power.sh").read_text(encoding="utf-8")
+        self.assertIn("rw-r-r-0644/bc250-core-unlock", notes)
+        self.assertIn("87ec098", helper)
+        self.assertIn("fcntl.LOCK_EX", helper)
+        self.assertIn('CORE_UNLOCK_LOCK="/run/lock/bc250-core-unlock.lock"', power)
+        self.assertIn("CORE_UNLOCK_LIFECYCLE_LOCK=", power)
+        self.assertIn("core_unlock_lifecycle_lock", power)
+        self.assertIn("reboot-loop guard", helper)
+        self.assertIn("Before=$OC_SVC $GOV_SVC", power)
+        self.assertIn("core_unlock_uninstall()", power)
+        enable = power[
+            power.index("core_unlock_enable()") : power.index(
+                "core_unlock_status()", power.index("core_unlock_enable()")
+            )
+        ]
+        self.assertIn("verify-unlocked", enable)
+        self.assertNotIn("core_unlock_test", enable)
+        self.assertLess(enable.index("verify-unlocked"), enable.index("systemctl enable"))
+        test = power[
+            power.index("core_unlock_test()") : power.index(
+                "core_unlock_enable()", power.index("core_unlock_test()")
+            )
+        ]
+        self.assertNotIn("systemctl enable", test)
+        self.assertNotIn("install_update_persistence", test)
 
     def test_acpi_persistence_targets_active_steamos_grub_config(self):
         source = (ROOT / "bc250-power.sh").read_text(encoding="utf-8")

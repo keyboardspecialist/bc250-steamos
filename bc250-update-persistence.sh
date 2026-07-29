@@ -118,6 +118,14 @@ EOF
 /etc/systemd/system/multi-user.target.wants/bc250-smu-oc.service
 /etc/systemd/system/multi-user.target.wants/cyan-skillfish-governor-smu.service
 EOF
+                if [[ -e /etc/systemd/system/bc250-core-unlock.service \
+                    || -L /etc/systemd/system/multi-user.target.wants/bc250-core-unlock.service ]]; then
+                    cat << EOF
+/etc/systemd/system/bc250-core-unlock.service
+/etc/systemd/system/bc250-core-unlock.service.d/10-bc250-storage.conf
+/etc/systemd/system/multi-user.target.wants/bc250-core-unlock.service
+EOF
+                fi
                 print_storage_paths
                 ;;
             cec)
@@ -164,7 +172,8 @@ component_has_state() {
         compute) [[ -e /etc/bc250-cu-live-manager.conf || -e "$ROOT_DATA_DIR/umr" \
                     || -e /etc/systemd/system/bc250-cu-live-manager.service ]] ;;
         power)   [[ -e /etc/cyan-skillfish-governor-smu || -e /etc/bc250-smu-oc.conf \
-                    || -e /etc/systemd/system/bc250-acpi-heal.service ]] ;;
+                    || -e /etc/systemd/system/bc250-acpi-heal.service \
+                    || -e /etc/systemd/system/bc250-core-unlock.service ]] ;;
         cec)     [[ -e "$ROOT_DATA_DIR/helper/bc250-cec-poweroff-standby" || -e /etc/systemd/system-sleep/bc250-cec-amp.sh ]] ;;
         aic)     [[ -e "$ROOT_DATA_DIR/aic8800/source" || -e /etc/systemd/system/aic8800-modules.service ]] ;;
         desktop) [[ -e "$ROOT_DATA_DIR/desktop" || -e /etc/systemd/system/bc250-control.service ]] ;;
