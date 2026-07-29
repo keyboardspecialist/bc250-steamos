@@ -12,6 +12,7 @@ PERSISTENCE_SH="$SCRIPT_DIR/bc250-update-persistence.sh"
 CU_STATUS_SH="$SCRIPT_DIR/bc250-cu-status.sh"
 AIC_SETUP_SH="$SCRIPT_DIR/aic8800/steamdeck-setup.sh"
 AUDIO_FIX_SH="$SCRIPT_DIR/bc250-audio-fix/patch-driver.sh"
+MESH_SHADER_SH="$SCRIPT_DIR/bc250-mesh-shader.sh"
 DECKY_INSTALL_SH="$SCRIPT_DIR/decky-plugin/install.sh"
 DESKTOP_INSTALL_SH="$SCRIPT_DIR/desktop-control/install.sh"
 MAINTENANCE_SH="$SCRIPT_DIR/bc250-maintenance.sh"
@@ -112,12 +113,20 @@ status_section() {
 
 show_status() {
     require_normal_user
-    local failed=0
+    local failed=0 mesh_rc=0
     status_section "Persistent storage" "$STORAGE_SH" status || failed=1
     status_section "Power management" "$POWER_SH" status || failed=1
     status_section "CEC" "$CEC_SH" status || failed=1
     status_section "SteamOS update persistence" "$PERSISTENCE_SH" status \
         || failed=1
+    printf '\n%s\n' "${CB}${CC}-- Per-game mesh shaders --${C0}"
+    if [[ -f "$MESH_SHADER_SH" && ! -L "$MESH_SHADER_SH" ]]; then
+        bash "$MESH_SHADER_SH" status || mesh_rc=$?
+        [[ $mesh_rc -le 1 ]] || failed=1
+    else
+        log "Component is missing or unsafe: $MESH_SHADER_SH"
+        failed=1
+    fi
     printf '\n%s\n' "${CB}${CC}-- Compute units --${C0}"
     if [[ -f "$CU_STATUS_SH" && ! -L "$CU_STATUS_SH" ]]; then
         printf '%s\n' "Run 'sudo bash $CU_STATUS_SH' for register status."
@@ -205,6 +214,7 @@ cmd_menu() {
             "SteamOS update persistence|${CG}[menu]${C0}|Protect or recover component configuration across updates."
             "WiFi and Bluetooth|${CY}[installer]${C0}|Build and install the AIC8800 kernel modules and firmware."
             "Patch AMDGPU Driver|${CY}[build]${C0}|Build and install the matching patched AMDGPU module."
+            "Mesh shaders (per game)|${CY}[optional]${C0}|Build a separate RADV ICD and opt individual games into it."
             "Decky plugin|${CY}[installer]${C0}|Build and install the BC-250 Quick Access plugin."
             "Plasma desktop control|${CY}[installer]${C0}|Install the system service and Plasma system-tray control."
             "Manage installed components|${CR}[maintenance]${C0}|Review uninstall plans, remove components, or purge preserved data."
@@ -219,16 +229,17 @@ cmd_menu() {
             5) run_menu_child persistence ;;
             6) run_menu_action wifi ;;
             7) run_menu_action audio ;;
-            8) run_menu_action decky ;;
-            9) run_menu_action desktop ;;
-            10) run_menu_child manage ;;
+            8) run_menu_child mesh ;;
+            9) run_menu_action decky ;;
+            10) run_menu_action desktop ;;
+            11) run_menu_child manage ;;
         esac
     done
 }
 
 cmd_help() {
     cat << EOF
-Usage: $0 [menu|status|power|compute|cec|storage|persistence|wifi|audio|decky|desktop|manage|help]
+Usage: $0 [menu|status|power|compute|cec|storage|persistence|wifi|audio|mesh|decky|desktop|manage|help]
 
 Run without arguments in a terminal to open the unified toolkit menu.
 Run the toolkit as the logged-in Deck user, not with sudo; child tools request
@@ -243,6 +254,7 @@ Commands:
   persistence            Open the SteamOS Update Persistence menu
   wifi                   Confirm and run the AIC8800 installer
   audio                  Confirm and run the AMDGPU clock-fix builder
+  mesh                   Open per-game mesh-shader setup and toggles
   decky                  Confirm and run the Decky plugin installer
   desktop                Confirm and run the Plasma desktop-control installer
   manage                 Open installed-component maintenance and cleanup
@@ -270,6 +282,7 @@ case "$command_name" in
     persistence) (($# == 0)) || die "Usage: $0 persistence"; run_script "$PERSISTENCE_SH" menu ;;
     wifi) (($# == 0)) || die "Usage: $0 wifi"; install_wifi ;;
     audio) (($# == 0)) || die "Usage: $0 audio"; install_audio_fix ;;
+    mesh) (($# == 0)) || die "Usage: $0 mesh"; require_normal_user; run_script "$MESH_SHADER_SH" menu ;;
     decky) (($# == 0)) || die "Usage: $0 decky"; install_decky ;;
     desktop) (($# == 0)) || die "Usage: $0 desktop"; install_desktop ;;
     manage) (($# == 0)) || die "Usage: $0 manage"; run_script "$MAINTENANCE_SH" menu ;;

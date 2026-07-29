@@ -12,11 +12,14 @@ PERSISTENCE_SH="${PERSISTENCE_SH:-$SCRIPT_DIR/bc250-update-persistence.sh}"
 AIC_SH="${AIC_SH:-$SCRIPT_DIR/aic8800/steamdeck-setup.sh}"
 AUDIO_SH="${AUDIO_SH:-$SCRIPT_DIR/bc250-audio-fix/patch-driver.sh}"
 AUDIO_CLEAN_SH="${AUDIO_CLEAN_SH:-$SCRIPT_DIR/bc250-audio-fix/clean.sh}"
+MESH_SH="${MESH_SH:-$SCRIPT_DIR/bc250-mesh-shader.sh}"
 DECKY_SH="${DECKY_SH:-$SCRIPT_DIR/decky-plugin/install.sh}"
 DESKTOP_SH="${DESKTOP_SH:-$SCRIPT_DIR/desktop-control/install.sh}"
 
-COMPONENTS=(desktop decky cec power compute audio aic)
-UNINSTALL_ORDER=(desktop decky cec power compute audio aic)
+COMPONENTS=(desktop decky cec power compute mesh audio aic)
+UNINSTALL_ORDER=(desktop decky cec power compute mesh audio aic)
+MESH_STATE_DIR="${BC250_MESH_STATE_DIR:-$HOME/.local/share/bc250-mesh-shader}"
+MESH_LOCK_FILE="${BC250_MESH_LOCK_FILE:-$HOME/.cache/bc250-mesh-shader.lock}"
 
 C0=$'\033[0m'; CB=$'\033[1m'; CD=$'\033[2m'; CI=$'\033[7m'
 CG=$'\033[32m'; CY=$'\033[33m'; CR=$'\033[31m'; CC=$'\033[36m'
@@ -37,6 +40,7 @@ component_label() {
         cec) echo "CEC integration" ;;
         power) echo "Power management" ;;
         compute) echo "Compute-unit manager" ;;
+        mesh) echo "Per-game mesh shaders" ;;
         audio) echo "AMDGPU audio fix" ;;
         aic) echo "AIC8800 WiFi / Bluetooth" ;;
         storage) echo "Persistent infrastructure" ;;
@@ -51,6 +55,7 @@ component_script() {
         cec) echo "$CEC_SH" ;;
         power) echo "$POWER_SH" ;;
         compute) echo "$COMPUTE_SH" ;;
+        mesh) echo "$MESH_SH" ;;
         audio) echo "$AUDIO_SH" ;;
         aic) echo "$AIC_SH" ;;
         storage) echo "$STORAGE_SH" ;;
@@ -64,7 +69,7 @@ component_probe() {
     require_script "$script"
     case "$component" in
         power|compute|cec) bash "$script" installed >/dev/null 2>&1 ;;
-        desktop|decky|audio|aic) bash "$script" status >/dev/null 2>&1 ;;
+        desktop|decky|mesh|audio|aic) bash "$script" status >/dev/null 2>&1 ;;
         storage) bash "$script" installed >/dev/null 2>&1 ;;
     esac
 }
@@ -94,6 +99,13 @@ component_has_artifacts() {
                 || -e /etc/systemd/system/bc250-smu-oc.service ]]
             ;;
         compute) [[ -e /etc/systemd/system/bc250-cu-live-manager.service ]] ;;
+        mesh)
+            [[ -e "$MESH_STATE_DIR/install.conf" \
+                || -e "$MESH_STATE_DIR/install-transaction" \
+                || -e "$HOME/radeon_driconf_icd.x86_64.json" \
+                || -e /usr/lib/libvulkan_radeon_driconf.so ]] \
+                || grep -qF '<!-- BEGIN BC250 MESH SHADER MANAGED -->' "$HOME/.drirc" 2>/dev/null
+            ;;
         audio)
             compgen -G '/usr/lib/modules/*/updates/amdgpu.ko.zst' >/dev/null \
                 || compgen -G '/usr/lib/modules/*/updates/.bc250-audio-fix' >/dev/null \
@@ -160,6 +172,7 @@ plan_component() {
         cec) echo "  Remove CEC boot, shutdown, and sleep integrations; preserve CEC preferences." ;;
         power) echo "  Restore stock CPU state, disable tuning services, and remove the ACPI override on next boot." ;;
         compute) echo "  Restore stock CU dispatch when possible and remove boot integration; preserve the WGP profile and UMR." ;;
+        mesh) echo "  Remove the alternate RADV ICD and toolkit-managed per-game toggles; preserve build caches." ;;
         audio) echo "  Restore stock AMDGPU modules for every patched kernel; preserve source and build caches." ;;
         aic) echo "  Disable module repair, unload drivers when possible, and remove installed modules, firmware, and device rules." ;;
         storage) echo "  Remove the bind mount and recovery infrastructure; preserve the backing directory." ;;
@@ -199,7 +212,7 @@ run_component_uninstall() {
     script=$(component_script "$component")
     require_script "$script"
     case "$component" in
-        desktop|decky|cec|audio) bash "$script" uninstall || rc=$? ;;
+        desktop|decky|cec|mesh|audio) bash "$script" uninstall || rc=$? ;;
         power|compute|aic|storage) sudo bash "$script" uninstall || rc=$? ;;
         *) die "Unknown component: $component" ;;
     esac
@@ -278,6 +291,11 @@ all_components_removed() {
 }
 
 purge_preserved_data() {
+    command -v flock >/dev/null 2>&1 || die "flock is required for safe mesh-shader cleanup."
+    mkdir -p "${MESH_LOCK_FILE%/*}"
+    [[ ! -L "$MESH_LOCK_FILE" ]] || die "Refusing symlinked mesh-shader lock: $MESH_LOCK_FILE"
+    exec 8> "$MESH_LOCK_FILE"
+    flock 8
     all_components_removed \
         || die "Installed or partial components remain. Run '$SELF uninstall all' first."
     require_script "$STORAGE_SH"
@@ -301,6 +319,8 @@ purge_preserved_data() {
     rmdir "$HOME/.config/cecd/config.d" "$HOME/.config/cecd" 2>/dev/null || true
 
     bash "$AUDIO_CLEAN_SH" --all
+    [[ ! -L "$MESH_STATE_DIR" ]] || die "Refusing symlinked mesh-shader state: $MESH_STATE_DIR"
+    rm -rf -- "$MESH_STATE_DIR"
     rm -rf -- "$SCRIPT_DIR/decky-plugin/out" "$SCRIPT_DIR/decky-plugin/node_modules"
     log "Preserved BC-250 settings, backing data, and reproducible build caches were purged."
     log "The toolkit checkout and shared pnpm installation were retained."
@@ -378,15 +398,16 @@ cmd_menu() {
             "Purge preserved data|${CR}[permanent]${C0}|After uninstall, delete profiles, backing data, and reproducible build caches."
         )
         menu_select "BC-250 installed components" "${items[@]}" || { echo; break; }
-        case $MENU_CHOICE in
-            0) run_menu_action status ;;
-            1|2|3|4|5|6|7)
-                component=${COMPONENTS[$((MENU_CHOICE - 1))]}
-                run_menu_action uninstall "$component"
-                ;;
-            8) run_menu_action uninstall all ;;
-            9) run_menu_action purge ;;
-        esac
+        if [[ $MENU_CHOICE -eq 0 ]]; then
+            run_menu_action status
+        elif (( MENU_CHOICE >= 1 && MENU_CHOICE <= ${#COMPONENTS[@]} )); then
+            component=${COMPONENTS[$((MENU_CHOICE - 1))]}
+            run_menu_action uninstall "$component"
+        elif (( MENU_CHOICE == ${#COMPONENTS[@]} + 1 )); then
+            run_menu_action uninstall all
+        else
+            run_menu_action purge
+        fi
     done
 }
 
@@ -394,7 +415,7 @@ cmd_help() {
     cat << EOF
 Usage: $0 {menu|status|plan [COMPONENT|all]|uninstall COMPONENT|all [--yes]|purge [--yes]|help}
 
-Components: desktop, decky, cec, power, compute, audio, aic, storage
+Components: desktop, decky, cec, power, compute, mesh, audio, aic, storage
 
   status                 Show lifecycle state for every component.
   plan [COMPONENT|all]   Describe removals and preserved data without changing anything.
@@ -414,6 +435,7 @@ Purge permanently deletes preserved BC-250 data:
   - CEC preferences under $HOME/.config
   - persistent backing data under /home/.steamos/offload/var/lib/bc250-control
   - reproducible AMDGPU and Decky build caches in this checkout
+  - toolkit-created mesh-shader Mesa build and downloaded upstream patch
 
 The toolkit checkout and shared pnpm installation are retained. Purge is only
 allowed after every installed or partial component has been removed.

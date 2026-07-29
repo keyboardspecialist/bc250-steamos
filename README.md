@@ -27,6 +27,7 @@ Open the unified toolkit menu as the logged-in Deck user:
 | AIC8800 | `sudo bash ./aic8800/steamdeck-setup.sh` |
 | Decky plugin | `bash ./decky-plugin/install.sh` |
 | Plasma desktop control | `bash ./desktop-control/install.sh install` |
+| Mesh shaders (optional) | `./bc250-mesh-shader.sh` |
 | Persistent storage and recovery | Automatic with each setup workflow; `./bc250-storage.sh` opens its menu |
 | Verification | `sudo ./bc250-storage.sh status` |
 
@@ -74,6 +75,7 @@ sudo ./bc250-power.sh status
 | [`decky-plugin/`](#big-picture-plugin) | Quick Access interface for daily controls |
 | [`desktop-control/`](#plasma-desktop-control) | Plasma system-tray and windowed controls |
 | [`bc250-audio-fix/`](#display-clock) | DisplayPort video and audio clock correction |
+| [`bc250-mesh-shader.sh`](#mesh-shaders-optional) | Separate RADV ICD with per-game mesh-shader opt-in |
 | [`aic8800/`](#wifi-and-bluetooth) | AIC8800D80 USB WiFi and Bluetooth driver |
 
 The unified launcher and individual component scripts remain independently usable. Use the child scripts directly for command-line automation.
@@ -81,7 +83,7 @@ The unified launcher and individual component scripts remain independently usabl
 ## Toolkit Menu
 
 Run `./bc250-toolkit.sh` without `sudo`. It opens Power, Compute Units, CEC,
-Storage, and Update Persistence as child menus, then returns to the toolkit
+Storage, Update Persistence, and Mesh Shaders as child menus, then returns to the toolkit
 when they exit. WiFi, display/audio, Decky, and Plasma desktop installation
 entries require confirmation before starting their longer setup workflows.
 Each child requests administrator access only when needed.
@@ -91,6 +93,7 @@ Each child requests administrator access only when needed.
 | `./bc250-toolkit.sh` | Open the unified interactive menu |
 | `./bc250-toolkit.sh status` | Show the read-only component status overview |
 | `./bc250-toolkit.sh power` | Open a component menu directly |
+| `./bc250-toolkit.sh mesh` | Open per-game mesh-shader setup and toggles |
 | `./bc250-toolkit.sh manage` | Review and remove installed components |
 | `./bc250-toolkit.sh help` | List launcher commands and components |
 
@@ -307,6 +310,65 @@ sudo ./rollback.sh
 
 See [`bc250-audio-fix/README.md`](bc250-audio-fix/README.md) for kernel support, build controls, and clock-gating options.
 
+## Mesh Shaders (Optional)
+
+This is separate from the patched `amdgpu` kernel module. It builds an
+alternate Mesa/RADV Vulkan ICD from
+[`lonewolf0622/BC-250-Mesh-Shader-Patch`](https://github.com/lonewolf0622/BC-250-Mesh-Shader-Patch---driconf-Edition-opt-in-per-application-/tree/Steam-OS)
+and leaves the stock Vulkan driver as the system default.
+
+Open the menu as the logged-in user:
+
+```bash
+./bc250-mesh-shader.sh
+```
+
+Or use the CLI:
+
+```bash
+./bc250-mesh-shader.sh setup
+./bc250-mesh-shader.sh game enable ff7rebirth_.exe "FF7 Rebirth"
+./bc250-mesh-shader.sh status
+```
+
+The game also needs the launch option printed by the enable command:
+
+```text
+VK_ICD_FILENAMES="/home/deck/radeon_driconf_icd.x86_64.json" %command%
+```
+
+Replace `/home/deck` if the logged-in user's home differs. Two independent
+conditions keep this opt-in: only the named executable receives the driconf
+capability spoof, and only a game with that launch option loads the alternate
+ICD. The toolkit never creates a global Vulkan environment override.
+
+Disable or remove it:
+
+```bash
+./bc250-mesh-shader.sh game disable ff7rebirth_.exe
+./bc250-mesh-shader.sh uninstall
+```
+
+Disabling a game removes its managed driconf entry; remove its Steam launch
+option as well. Uninstall verifies recorded hashes before removing the
+alternate driver and preserves unrelated `~/.drirc` content.
+
+The upstream SteamOS branch is pinned to commit
+[`b66203e`](https://github.com/lonewolf0622/BC-250-Mesh-Shader-Patch---driconf-Edition-opt-in-per-application-/commit/b66203e012594204e5e3049856b28a2681112985).
+Because that repository currently declares no license, its patch is not
+redistributed here. Explicit setup downloads that patch from the pinned commit
+and verifies its SHA-256 hash. Toolkit-owned code then fetches audited Mesa
+`mesa-26.1.4` commit `6dfbc555b4128ee51139c5f78c5aba2594c9701b`, requires
+zero-fuzz patch application, and uses only signed SteamOS packages for build
+prerequisites. It restores the previous alternate ICD after build failure,
+restores SteamOS read-only-root state, records installed hashes, and confines
+`.drirc` edits to a marked block.
+
+Mesh shaders are experimental on GFX1013. Async compute remains unavailable,
+and ray tracing and VRS are untested. A Mesa update can require a rebuild; if
+the pinned patch no longer applies exactly, setup aborts instead of installing
+a partial build.
+
 ## AIC8800 Class WiFi and Bluetooth Driver
 
 Install the AIC8800D80 USB modules and firmware configuration:
@@ -325,6 +387,7 @@ The installer snapshots driver source, firmware, and verified per-kernel modules
 | Power management | The keep list retains tuning and GRUB defaults; the ACPI service validates and restores the `/boot` override and EFI GRUB config |
 | CEC | Home configuration and allowlisted system integration carry forward |
 | Display clock module | Run `bc250-audio-fix/patch-driver.sh` after each kernel update |
+| Mesh-shader RADV ICD | Per-game configuration remains in `/home`; rerun `bc250-mesh-shader.sh setup` after a Mesa update if the alternate ICD stops loading |
 | AIC8800 modules | The boot helper reuses staged modules or published headers; rerun setup if it requests interactive source preparation |
 
 Current installers preserve their configuration across normal atomic updates.
@@ -402,6 +465,7 @@ Run the normal component setup commands afterward to regenerate services for the
 | Cyan Skillfish Governor | [Repository](https://github.com/filippor/cyan-skillfish-governor/tree/smu) · [Performance-mode script](https://github.com/filippor/cyan-skillfish-governor/blob/smu/scripts/cyan-skillfish-performance-mode) | `bc250-power.sh` |
 | BC-250 SMU OC | [Repository](https://github.com/bc250-collective/bc250_smu_oc) | `bc250-power.sh` |
 | BC-250 CPU Core Unlock | [Repository](https://github.com/rw-r-r-0644/bc250-core-unlock) | Original SMU method and helper adapted by `bc250-power.sh` |
+| BC-250 Mesh Shader Patch | [SteamOS branch](https://github.com/lonewolf0622/BC-250-Mesh-Shader-Patch---driconf-Edition-opt-in-per-application-/tree/Steam-OS) | Pinned alternate RADV build fetched by `bc250-mesh-shader.sh` |
 | Valve kernel mirror | [Repository](https://github.com/Evlav/linux-integration) | `bc250-audio-fix/fetch-sources.sh` |
 | SteamOS package mirror | [Package index](https://steamdeck-packages.steamos.cloud/archlinux-mirror/) | Audio-driver and AIC8800 build scripts; stable channels are discovered automatically |
 | SteamOS atomic-update keep list | [Defaults](https://github.com/evlaV/steamos-customizations/blob/master/atomic-update/rauc/atomic-update-keep.conf.in) · [Drop-in example](https://github.com/evlaV/steamos-customizations/blob/master/atomic-update/rauc/example-additional-keep-list.conf.in) | `bc250-update-persistence.sh` |

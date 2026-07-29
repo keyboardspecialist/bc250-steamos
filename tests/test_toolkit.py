@@ -26,6 +26,7 @@ class ToolkitTests(unittest.TestCase):
             "persistence",
             "wifi",
             "audio",
+            "mesh",
             "decky",
             "manage",
         ):
