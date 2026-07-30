@@ -146,6 +146,59 @@ class PersistenceUnitTests(unittest.TestCase):
             )
             self.assertEqual(ready.stdout.strip(), "ready")
 
+    def test_ram_payload_blocks_storage_uninstall(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "bin").mkdir()
+            (root / "bin/bc250memcfg").write_text("tool\n", encoding="utf-8")
+            systemd = root / "systemd"
+            keep = root / "keep"
+            systemd.mkdir()
+            keep.mkdir()
+            result = subprocess.run(
+                [
+                    "bash",
+                    "-c",
+                    'script=$1; data=$2; systemd=$3; keep=$4; set -- help; '
+                    'source "$script" >/dev/null; ROOT_DIR=$data; SYSTEMD_DIR=$systemd; '
+                    'ATOMIC_KEEP_DIR=$keep; can_uninstall',
+                    "_",
+                    str(STORAGE),
+                    str(root),
+                    str(systemd),
+                    str(keep),
+                ],
+                capture_output=True,
+                text=True,
+            )
+
+            self.assertEqual(result.returncode, 1)
+            self.assertEqual(result.stdout.strip(), "component:ram")
+
+    def test_ram_keep_list_contains_owned_ttm_fragment(self):
+        with tempfile.TemporaryDirectory() as directory:
+            keep = Path(directory)
+            result = subprocess.run(
+                [
+                    "bash",
+                    "-c",
+                    'script=$1; keep=$2; set -- help; source "$script" >/dev/null; '
+                    'require_root() { :; }; install_storage() { :; }; KEEP_DIR=$keep; '
+                    'LEGACY_KEEP_FILE="$keep/bc250-steamos.conf"; install_keep_list ram',
+                    "_",
+                    str(PERSISTENCE),
+                    str(keep),
+                ],
+                check=True,
+                capture_output=True,
+                text=True,
+            )
+            payload = (keep / "bc250-ram.conf").read_text(encoding="utf-8")
+
+            self.assertIn("Atomic-update keep list installed", result.stdout)
+            self.assertIn("/etc/default/grub.d/bc250-ttm.cfg", payload)
+            self.assertIn("bc250-persistence-recovery.service", payload)
+
     def test_storage_uninstall_preserves_backing_and_stops_recovery(self):
         with tempfile.TemporaryDirectory() as directory:
             result = subprocess.run(
@@ -484,7 +537,7 @@ grep -Fxq "daemon-reload" "$SYSTEMCTL_LOG"
         )
         storage = STORAGE.read_text(encoding="utf-8")
         for expected in (
-            "COMPONENTS=(compute power cec aic desktop)",
+            "COMPONENTS=(compute power ram cec aic desktop)",
             "/etc/systemd/system/bc250-control.service",
             "/etc/systemd/system/bc250-desktop-control-repair.service",
             "/etc/dbus-1/system.d/io.github.keyboardspecialist.BC250Control1.conf",
@@ -534,6 +587,7 @@ grep -Fxq "daemon-reload" "$SYSTEMCTL_LOG"
             "bc250-storage.sh",
             "bc250-update-persistence.sh",
             "bc250-power.sh",
+            "bc250-ram-split.sh",
             "bc250-40cu.sh",
             "bc250-cec.sh",
             "aic8800/steamdeck-setup.sh",

@@ -7,7 +7,7 @@ KEEP_DIR=/etc/atomic-update.conf.d
 LEGACY_KEEP_FILE="$KEEP_DIR/bc250-steamos.conf"
 PREVIOUS_ETC=/etc/previous
 BACKUP_DIR=/var/lib/steamos-atomupd/etc_backup
-COMPONENTS=(compute power cec aic desktop)
+COMPONENTS=(compute power ram cec aic desktop)
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 STORAGE_SH="$SCRIPT_DIR/bc250-storage.sh"
 STORAGE_UNIT='/etc/systemd/system/var-lib-bc250\x2dcontrol.mount'
@@ -80,9 +80,13 @@ print_storage_paths() {
 write_keep_file() {
     local component="$1" target="$KEEP_DIR/bc250-$1.conf" tmp
     case "$component" in
-        compute|power|cec|aic|desktop) ;;
+        compute|power|ram|cec|aic|desktop) ;;
         *) die "Unknown component: $component" ;;
     esac
+    if [[ -e "$target" || -L "$target" ]]; then
+        keep_file_owned "$target" \
+            || die "Refusing to replace unrecognized keep list: $target"
+    fi
     tmp=$(mktemp "$KEEP_DIR/.bc250-$component.XXXXXX")
     {
         printf '%s\n' '# Toolkit state preserved by SteamOS atomic updates.' \
@@ -126,6 +130,10 @@ EOF
 /etc/systemd/system/multi-user.target.wants/bc250-core-unlock.service
 EOF
                 fi
+                print_storage_paths
+                ;;
+            ram)
+                printf '%s\n' /etc/default/grub.d/bc250-ttm.cfg
                 print_storage_paths
                 ;;
             cec)
@@ -174,6 +182,9 @@ component_has_state() {
         power)   [[ -e /etc/cyan-skillfish-governor-smu || -e /etc/bc250-smu-oc.conf \
                     || -e /etc/systemd/system/bc250-acpi-heal.service \
                     || -e /etc/systemd/system/bc250-core-unlock.service ]] ;;
+        ram)     [[ -e /etc/default/grub.d/bc250-ttm.cfg \
+                    || -e "$ROOT_DATA_DIR/bin/bc250memcfg" \
+                    || -e "$ROOT_DATA_DIR/ram-split/install.conf" ]] ;;
         cec)     [[ -e "$ROOT_DATA_DIR/helper/bc250-cec-poweroff-standby" || -e /etc/systemd/system-sleep/bc250-cec-amp.sh ]] ;;
         aic)     [[ -e "$ROOT_DATA_DIR/aic8800/source" || -e /etc/systemd/system/aic8800-modules.service ]] ;;
         desktop) [[ -e "$ROOT_DATA_DIR/desktop" || -e /etc/systemd/system/bc250-control.service ]] ;;
@@ -201,7 +212,7 @@ install_keep_list() {
                 write_keep_file "$component"
             done
             ;;
-        compute|power|cec|aic|desktop) write_keep_file "$requested" ;;
+        compute|power|ram|cec|aic|desktop) write_keep_file "$requested" ;;
         *) die "Unknown component: $requested" ;;
     esac
 }
@@ -212,7 +223,7 @@ remove_keep_list() {
     local -a selected=()
     case "$requested" in
         all) selected=("${COMPONENTS[@]}") ;;
-        compute|power|cec|aic|desktop) selected=("$requested") ;;
+        compute|power|ram|cec|aic|desktop) selected=("$requested") ;;
         *) die "Unknown component: $requested" ;;
     esac
 
@@ -446,6 +457,7 @@ pause_key() {
 
 keep_badge() {
     if [[ -f "$KEEP_DIR/bc250-$1.conf" ]] \
+        && keep_file_owned "$KEEP_DIR/bc250-$1.conf" \
         && grep -Fxq "$STORAGE_UNIT" "$KEEP_DIR/bc250-$1.conf" \
         && grep -Fxq "$STORAGE_WANTS" "$KEEP_DIR/bc250-$1.conf" \
         && grep -Fxq "$RECOVERY_UNIT" "$KEEP_DIR/bc250-$1.conf" \
@@ -484,6 +496,7 @@ cmd_menu() {
         local items=(
             "Protect compute|$(keep_badge compute)|Preserve UMR, compute-unit routing, and its boot service."
             "Protect power|$(keep_badge power)|Preserve power services, GPU tuning, and CPU tuning."
+            "Protect RAM split|$(keep_badge ram)|Preserve the dynamic TTM VRAM boot setting."
             "Protect CEC|$(keep_badge cec)|Preserve CEC poweroff and sleep integration."
             "Protect AIC8800|$(keep_badge aic)|Preserve AIC8800 service and device configuration."
             "Protect desktop control|$(keep_badge desktop)|Preserve the desktop service and repair integration after updates."
@@ -497,26 +510,27 @@ cmd_menu() {
         case $MENU_CHOICE in
             0) run_menu_action install compute ;;
             1) run_menu_action install power ;;
-            2) run_menu_action install cec ;;
-            3) run_menu_action install aic ;;
-            4) run_menu_action install desktop ;;
-            5) run_menu_action install all ;;
-            6) run_menu_action recover compute ;;
-            7) run_menu_action recover power ;;
-            8) run_menu_action recover all ;;
-            9) show_menu_status ;;
+            2) run_menu_action install ram ;;
+            3) run_menu_action install cec ;;
+            4) run_menu_action install aic ;;
+            5) run_menu_action install desktop ;;
+            6) run_menu_action install all ;;
+            7) run_menu_action recover compute ;;
+            8) run_menu_action recover power ;;
+            9) run_menu_action recover all ;;
+            10) show_menu_status ;;
         esac
     done
 }
 
 cmd_help() {
     cat << EOF
-Usage: $0 {install|remove} [compute|power|cec|aic|desktop|all]
+Usage: $0 {install|remove} [compute|power|ram|cec|aic|desktop|all]
        $0 recover [compute|power|all] [--force]
        $0 {status|menu|help}
 
   remove COMPONENT     Remove only this helper's matching component keep list.
-                       COMPONENT is compute, power, cec, aic, desktop, or all.
+                       COMPONENT is compute, power, ram, cec, aic, desktop, or all.
 
 Run with no arguments in a terminal to open the interactive menu.
 EOF
@@ -532,7 +546,7 @@ case "$1" in
     remove)
         shift
         [[ $# -eq 1 ]] \
-            || die "Usage: $0 remove {compute|power|cec|aic|desktop|all}"
+            || die "Usage: $0 remove {compute|power|ram|cec|aic|desktop|all}"
         remove_keep_list "$1"
         ;;
     recover) shift; recover_settings "${1:-all}" "${2:-}" ;;

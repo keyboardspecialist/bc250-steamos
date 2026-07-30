@@ -20,6 +20,7 @@ class ToolkitTests(unittest.TestCase):
         for command in (
             "status",
             "power",
+            "ram",
             "compute",
             "cec",
             "storage",

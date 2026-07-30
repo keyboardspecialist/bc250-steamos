@@ -22,6 +22,7 @@ Open the unified toolkit menu as the logged-in Deck user:
 | Component | Setup command |
 |---|---|
 | Power management | `sudo ./bc250-power.sh all`, then `sudo ./bc250-power.sh enable` |
+| RAM / VRAM split | `./bc250-ram-split.sh` |
 | Compute-unit manager | `sudo ./bc250-40cu.sh` |
 | CEC | `./bc250-cec.sh setup` |
 | AIC8800 | `sudo bash ./aic8800/steamdeck-setup.sh` |
@@ -69,6 +70,7 @@ sudo ./bc250-power.sh status
 | [`bc250-40cu.sh`](#compute-units) | Runtime 40 CU configuration and boot persistence |
 | [`bc250-cu-status.sh`](#compute-units) | CU dispatch status |
 | [`bc250-power.sh`](#power-management) | CPU power states, GPU governor, clock and voltage tuning, CPU overclocking |
+| [`bc250-ram-split.sh`](#ram--vram-split) | CMOS minimum VRAM and dynamic TTM VRAM limit |
 | [`bc250-cec.sh`](#cec) | TV, receiver, input, and power control over HDMI-CEC |
 | [`bc250-update-persistence.sh`](#steamos-updates) | Atomic-update allowlist and tuning recovery |
 | `bc250-maintenance.sh` | Installed-component inventory, uninstall orchestration, and optional data purge |
@@ -82,8 +84,8 @@ The unified launcher and individual component scripts remain independently usabl
 
 ## Toolkit Menu
 
-Run `./bc250-toolkit.sh` without `sudo`. It opens Power, Compute Units, CEC,
-Storage, Update Persistence, and Mesh Shaders as child menus, then returns to the toolkit
+Run `./bc250-toolkit.sh` without `sudo`. It opens Power, RAM / VRAM Split,
+Compute Units, CEC, Storage, Update Persistence, and Mesh Shaders as child menus, then returns to the toolkit
 when they exit. WiFi, display/audio, Decky, and Plasma desktop installation
 entries require confirmation before starting their longer setup workflows.
 Each child requests administrator access only when needed.
@@ -93,6 +95,7 @@ Each child requests administrator access only when needed.
 | `./bc250-toolkit.sh` | Open the unified interactive menu |
 | `./bc250-toolkit.sh status` | Show the read-only component status overview |
 | `./bc250-toolkit.sh power` | Open a component menu directly |
+| `./bc250-toolkit.sh ram` | Open RAM / VRAM split settings |
 | `./bc250-toolkit.sh mesh` | Open per-game mesh-shader setup and toggles |
 | `./bc250-toolkit.sh manage` | Review and remove installed components |
 | `./bc250-toolkit.sh help` | List launcher commands and components |
@@ -112,8 +115,8 @@ script directly:
 Component uninstall restores stock behavior and removes services, drivers, and
 desktop integrations in dependency-safe order. Saved tuning profiles, CEC
 preferences, source/build caches, and persistent backing data are preserved by
-default. ACPI, compute routing, AMDGPU, and loaded AIC8800 rollback may require
-a reboot; the maintenance command reports this when applicable. After every
+default. RAM firmware reset uses a CMOS clear. ACPI, TTM, compute routing,
+AMDGPU, and loaded AIC8800 rollback may require a reboot. After every
 component is removed, permanently delete retained data with
 `./bc250-maintenance.sh purge`.
 
@@ -142,6 +145,47 @@ CU status:
 sudo ./bc250-cu-status.sh
 sudo ./bc250-cu-status.sh -q
 ```
+
+## RAM / VRAM Split
+
+```bash
+./bc250-ram-split.sh
+```
+
+| Utility | Configuration |
+|---|---|
+| Source | [`fanoush/bc250_memcfg`](https://github.com/fanoush/bc250_memcfg) latest stable release |
+| Delivery | Explicit runtime download |
+| Verification | GitHub SHA-256 digest and x86-64 ELF validation |
+| Install path | `/var/lib/bc250-control/bin/bc250memcfg` |
+| Exposed field | `UMA_SIZE` |
+| Upstream license metadata | Unspecified |
+
+| UMA property | Value |
+|---|---|
+| Meaning | Minimum reserved VRAM |
+| Storage | Battery-backed CMOS |
+| Activation | Reboot |
+| Supported range | 256 MiB through 12 GiB, aligned to 16 MiB |
+| Known Linux boot failure | 2048 MiB |
+| Firmware-default recovery | Clear CMOS with the board jumper or battery |
+
+| Command | Action |
+|---|---|
+| `sudo ./bc250-ram-split.sh install` | Install or update the verified utility |
+| `sudo ./bc250-ram-split.sh show` | Read the current CMOS memory configuration |
+| `sudo ./bc250-ram-split.sh set 512 --yes` | Set a 512 MiB minimum VRAM allocation |
+| `sudo ./bc250-ram-split.sh ttm-set 3014656 --yes` | Apply the BC-250 guide TTM preset |
+| `./bc250-ram-split.sh status` | Show utility, UMA profile, and TTM status |
+
+| TTM property | Value |
+|---|---|
+| Parameter | `ttm.pages_limit` |
+| Purpose | Dynamic system-memory-backed GPU allocation cap |
+| Configuration | `/etc/default/grub.d/bc250-ttm.cfg` |
+| Guide preset | `3014656` pages: 11.50 GiB dynamic, approximately 12 GB total with 512 MiB UMA |
+| Exact 12 GiB dynamic | `3145728` pages |
+| Status states | Active, reboot needed, default, or foreign configuration |
 
 ## Power Management
 
@@ -225,6 +269,7 @@ reboot loop.
 
 | Command | Action |
 |---|---|
+| `./bc250-power.sh cpu-unlock topology` | Show active CPU cores grouped by CCX |
 | `sudo ./bc250-power.sh cpu-unlock test` | Apply the volatile mask once without installing boot persistence; reboot manually |
 | `sudo ./bc250-power.sh cpu-unlock enable` | After testing, verify eight cores are already active and install boot replay |
 | `sudo ./bc250-power.sh cpu-unlock status` | Show service, topology, and reboot-guard state |
@@ -389,6 +434,7 @@ The installer snapshots driver source, firmware, and verified per-kernel modules
 |---|---|
 | Compute-unit manager | Run `sudo ./bc250-40cu.sh verify` after an update |
 | Power management | The keep list retains tuning and GRUB defaults; the ACPI service validates and restores the `/boot` override and EFI GRUB config |
+| RAM / VRAM split | CMOS persists independently; the keep list retains the TTM GRUB drop-in |
 | CEC | Home configuration and allowlisted system integration carry forward |
 | Display clock module | Run `bc250-audio-fix/patch-driver.sh` after each kernel update |
 | Mesh-shader RADV ICD | Per-game configuration remains in `/home`; rerun `bc250-mesh-shader.sh setup` after a Mesa update if the alternate ICD stops loading |
@@ -435,6 +481,7 @@ Run `./bc250-update-persistence.sh` to open the interactive menu with current pr
 |---|---|
 | `sudo ./bc250-update-persistence.sh install compute` | Protect compute-unit configuration |
 | `sudo ./bc250-update-persistence.sh install power` | Protect power and tuning configuration |
+| `sudo ./bc250-update-persistence.sh install ram` | Protect the TTM dynamic VRAM setting |
 | `sudo ./bc250-update-persistence.sh install cec` | Protect CEC system integration |
 | `sudo ./bc250-update-persistence.sh install aic` | Protect AIC8800 system integration |
 | `sudo ./bc250-update-persistence.sh install all` | Protect every component |
@@ -469,6 +516,7 @@ Run the normal component setup commands afterward to regenerate services for the
 | Cyan Skillfish Governor | [Repository](https://github.com/filippor/cyan-skillfish-governor/tree/smu) · [Performance-mode script](https://github.com/filippor/cyan-skillfish-governor/blob/smu/scripts/cyan-skillfish-performance-mode) | `bc250-power.sh` |
 | BC-250 SMU OC | [Repository](https://github.com/bc250-collective/bc250_smu_oc) | `bc250-power.sh` |
 | BC-250 CPU Core Unlock | [Repository](https://github.com/rw-r-r-0644/bc250-core-unlock) | Original SMU method and helper adapted by `bc250-power.sh` |
+| BC-250 Memory Config | [Repository](https://github.com/fanoush/bc250_memcfg) · [VRAM guide](https://elektricm.github.io/amd-bc250-docs/bios/vram/) | CMOS UMA utility fetched by `bc250-ram-split.sh` |
 | BC-250 Mesh Shader Patch | [SteamOS branch](https://github.com/lonewolf0622/BC-250-Mesh-Shader-Patch---driconf-Edition-opt-in-per-application-/tree/Steam-OS) | Pinned alternate RADV build fetched by `bc250-mesh-shader.sh` |
 | Valve kernel mirror | [Repository](https://github.com/Evlav/linux-integration) | `bc250-audio-fix/fetch-sources.sh` |
 | SteamOS package mirror | [Package index](https://steamdeck-packages.steamos.cloud/archlinux-mirror/) | Audio-driver and AIC8800 build scripts; stable channels are discovered automatically |

@@ -5,6 +5,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SELF="$SCRIPT_DIR/$(basename "${BASH_SOURCE[0]}")"
 POWER_SH="$SCRIPT_DIR/bc250-power.sh"
+RAM_SPLIT_SH="$SCRIPT_DIR/bc250-ram-split.sh"
 COMPUTE_SH="$SCRIPT_DIR/bc250-40cu.sh"
 CEC_SH="$SCRIPT_DIR/bc250-cec.sh"
 STORAGE_SH="$SCRIPT_DIR/bc250-storage.sh"
@@ -116,6 +117,7 @@ show_status() {
     local failed=0 mesh_rc=0
     status_section "Persistent storage" "$STORAGE_SH" status || failed=1
     status_section "Power management" "$POWER_SH" status || failed=1
+    status_section "RAM / VRAM split" "$RAM_SPLIT_SH" status || failed=1
     status_section "CEC" "$CEC_SH" status || failed=1
     status_section "SteamOS update persistence" "$PERSISTENCE_SH" status \
         || failed=1
@@ -208,6 +210,7 @@ cmd_menu() {
         local items=(
             "System status|${CD}[read only]${C0}|Show storage, power, CEC, update, and CU status paths."
             "Power management|${CG}[menu]${C0}|Configure power states, GPU tuning, and CPU overclocking."
+            "RAM / VRAM split|${CG}[menu]${C0}|Configure the CMOS UMA minimum and Linux dynamic TTM VRAM limit."
             "Compute units|${CG}[menu]${C0}|Prepare UMR, configure CU routing, and manage persistence."
             "CEC / HDMI control|${CG}[menu]${C0}|Configure and control TVs, receivers, and active source."
             "Persistent storage|${CG}[menu]${C0}|Install, inspect, or repair privileged persistent storage."
@@ -223,23 +226,24 @@ cmd_menu() {
         case $MENU_CHOICE in
             0) run_menu_action status ;;
             1) run_menu_child power ;;
-            2) run_menu_child compute ;;
-            3) run_menu_child cec ;;
-            4) run_menu_child storage ;;
-            5) run_menu_child persistence ;;
-            6) run_menu_action wifi ;;
-            7) run_menu_action audio ;;
-            8) run_menu_child mesh ;;
-            9) run_menu_action decky ;;
-            10) run_menu_action desktop ;;
-            11) run_menu_child manage ;;
+            2) run_menu_child ram ;;
+            3) run_menu_child compute ;;
+            4) run_menu_child cec ;;
+            5) run_menu_child storage ;;
+            6) run_menu_child persistence ;;
+            7) run_menu_action wifi ;;
+            8) run_menu_action audio ;;
+            9) run_menu_child mesh ;;
+            10) run_menu_action decky ;;
+            11) run_menu_action desktop ;;
+            12) run_menu_child manage ;;
         esac
     done
 }
 
 cmd_help() {
     cat << EOF
-Usage: $0 [menu|status|power|compute|cec|storage|persistence|wifi|audio|mesh|decky|desktop|manage|help]
+Usage: $0 [menu|status|power|ram|compute|cec|storage|persistence|wifi|audio|mesh|decky|desktop|manage|help]
 
 Run without arguments in a terminal to open the unified toolkit menu.
 Run the toolkit as the logged-in Deck user, not with sudo; child tools request
@@ -248,6 +252,7 @@ administrator access when needed.
 Commands:
   status                 Show a read-only component status overview
   power                  Open the Power Management menu
+  ram                    Open the RAM / VRAM Split menu
   compute                Open the Compute Units menu
   cec                    Open the CEC / HDMI Control menu
   storage                Open the Persistent Storage menu
@@ -276,6 +281,7 @@ case "$command_name" in
     menu) (($# == 0)) || die "Usage: $0 menu"; cmd_menu ;;
     status) (($# == 0)) || die "Usage: $0 status"; show_status ;;
     power) (($# == 0)) || die "Usage: $0 power"; run_script "$POWER_SH" menu ;;
+    ram) (($# == 0)) || die "Usage: $0 ram"; run_script "$RAM_SPLIT_SH" menu ;;
     compute) (($# == 0)) || die "Usage: $0 compute"; run_script "$COMPUTE_SH" menu ;;
     cec) (($# == 0)) || die "Usage: $0 cec"; require_normal_user; run_script "$CEC_SH" menu ;;
     storage) (($# == 0)) || die "Usage: $0 storage"; run_script "$STORAGE_SH" menu ;;

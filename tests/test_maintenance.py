@@ -26,6 +26,7 @@ class MaintenanceTests(unittest.TestCase):
 
         scripts = {
             "POWER_SH": "power",
+            "RAM_SH": "ram",
             "COMPUTE_SH": "compute",
             "CEC_SH": "cec",
             "STORAGE_SH": "storage",
@@ -92,7 +93,7 @@ class MaintenanceTests(unittest.TestCase):
                 text=True,
                 env=env,
             )
-            self.assertEqual(status.stdout.count("installed"), 9)
+            self.assertEqual(status.stdout.count("installed"), 10)
             self.assertIn("Saved tuning profiles", plan.stdout)
             self.assertFalse(call_log.exists())
 
@@ -116,6 +117,8 @@ class MaintenanceTests(unittest.TestCase):
                     "persistence:remove cec",
                     "power:uninstall",
                     "persistence:remove power",
+                    "ram:uninstall",
+                    "persistence:remove ram",
                     "compute:uninstall",
                     "persistence:remove compute",
                     "mesh:uninstall",

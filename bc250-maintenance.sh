@@ -5,6 +5,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SELF="$SCRIPT_DIR/$(basename "${BASH_SOURCE[0]}")"
 POWER_SH="${POWER_SH:-$SCRIPT_DIR/bc250-power.sh}"
+RAM_SH="${RAM_SH:-$SCRIPT_DIR/bc250-ram-split.sh}"
 COMPUTE_SH="${COMPUTE_SH:-$SCRIPT_DIR/bc250-40cu.sh}"
 CEC_SH="${CEC_SH:-$SCRIPT_DIR/bc250-cec.sh}"
 STORAGE_SH="${STORAGE_SH:-$SCRIPT_DIR/bc250-storage.sh}"
@@ -16,8 +17,8 @@ MESH_SH="${MESH_SH:-$SCRIPT_DIR/bc250-mesh-shader.sh}"
 DECKY_SH="${DECKY_SH:-$SCRIPT_DIR/decky-plugin/install.sh}"
 DESKTOP_SH="${DESKTOP_SH:-$SCRIPT_DIR/desktop-control/install.sh}"
 
-COMPONENTS=(desktop decky cec power compute mesh audio aic)
-UNINSTALL_ORDER=(desktop decky cec power compute mesh audio aic)
+COMPONENTS=(desktop decky cec power ram compute mesh audio aic)
+UNINSTALL_ORDER=(desktop decky cec power ram compute mesh audio aic)
 MESH_STATE_DIR="${BC250_MESH_STATE_DIR:-$HOME/.local/share/bc250-mesh-shader}"
 MESH_LOCK_FILE="${BC250_MESH_LOCK_FILE:-$HOME/.cache/bc250-mesh-shader.lock}"
 
@@ -39,6 +40,7 @@ component_label() {
         decky) echo "Decky plugin" ;;
         cec) echo "CEC integration" ;;
         power) echo "Power management" ;;
+        ram) echo "RAM / VRAM split" ;;
         compute) echo "Compute-unit manager" ;;
         mesh) echo "Per-game mesh shaders" ;;
         audio) echo "AMDGPU audio fix" ;;
@@ -54,6 +56,7 @@ component_script() {
         decky) echo "$DECKY_SH" ;;
         cec) echo "$CEC_SH" ;;
         power) echo "$POWER_SH" ;;
+        ram) echo "$RAM_SH" ;;
         compute) echo "$COMPUTE_SH" ;;
         mesh) echo "$MESH_SH" ;;
         audio) echo "$AUDIO_SH" ;;
@@ -68,7 +71,7 @@ component_probe() {
     script=$(component_script "$component")
     require_script "$script"
     case "$component" in
-        power|compute|cec) bash "$script" installed >/dev/null 2>&1 ;;
+        power|ram|compute|cec) bash "$script" installed >/dev/null 2>&1 ;;
         desktop|decky|mesh|audio|aic) bash "$script" status >/dev/null 2>&1 ;;
         storage) bash "$script" installed >/dev/null 2>&1 ;;
     esac
@@ -97,6 +100,16 @@ component_has_artifacts() {
             [[ -e /etc/systemd/system/cyan-skillfish-governor-smu.service \
                 || -e /etc/systemd/system/bc250-acpi-heal.service \
                 || -e /etc/systemd/system/bc250-smu-oc.service ]]
+            ;;
+        ram)
+            [[ -e /var/lib/bc250-control/bin/bc250memcfg \
+                || -L /var/lib/bc250-control/bin/bc250memcfg \
+                || -e /var/lib/bc250-control/ram-split/install.conf \
+                || -L /var/lib/bc250-control/ram-split/install.conf \
+                || -e /etc/default/grub.d/bc250-ttm.cfg \
+                || -L /etc/default/grub.d/bc250-ttm.cfg \
+                || -e /etc/atomic-update.conf.d/bc250-ram.conf \
+                || -L /etc/atomic-update.conf.d/bc250-ram.conf ]]
             ;;
         compute) [[ -e /etc/systemd/system/bc250-cu-live-manager.service ]] ;;
         mesh)
@@ -171,6 +184,7 @@ plan_component() {
         decky) echo "  Remove the Decky plugin and restart plugin_loader; shared hardware helpers remain." ;;
         cec) echo "  Remove CEC boot, shutdown, and sleep integrations; preserve CEC preferences." ;;
         power) echo "  Restore stock CPU state, disable tuning services, and remove the ACPI override on next boot." ;;
+        ram) echo "  Remove the memory utility and TTM boot limit; preserve the profile. The CMOS split is unchanged." ;;
         compute) echo "  Restore stock CU dispatch when possible and remove boot integration; preserve the WGP profile and UMR." ;;
         mesh) echo "  Remove the alternate RADV ICD and toolkit-managed per-game toggles; preserve build caches." ;;
         audio) echo "  Restore stock AMDGPU modules for every patched kernel; preserve source and build caches." ;;
@@ -200,7 +214,7 @@ show_plan() {
 remove_persistence_for() {
     local component="$1" persistence=""
     case "$component" in
-        desktop|cec|power|compute|aic) persistence="$component" ;;
+        desktop|cec|power|ram|compute|aic) persistence="$component" ;;
         *) return 0 ;;
     esac
     require_script "$PERSISTENCE_SH"
@@ -213,7 +227,7 @@ run_component_uninstall() {
     require_script "$script"
     case "$component" in
         desktop|decky|cec|mesh|audio) bash "$script" uninstall || rc=$? ;;
-        power|compute|aic|storage) sudo bash "$script" uninstall || rc=$? ;;
+        power|ram|compute|aic|storage) sudo bash "$script" uninstall || rc=$? ;;
         *) die "Unknown component: $component" ;;
     esac
     [[ $rc -eq 0 ]] || return "$rc"
@@ -415,7 +429,7 @@ cmd_help() {
     cat << EOF
 Usage: $0 {menu|status|plan [COMPONENT|all]|uninstall COMPONENT|all [--yes]|purge [--yes]|help}
 
-Components: desktop, decky, cec, power, compute, mesh, audio, aic, storage
+Components: desktop, decky, cec, power, ram, compute, mesh, audio, aic, storage
 
   status                 Show lifecycle state for every component.
   plan [COMPONENT|all]   Describe removals and preserved data without changing anything.

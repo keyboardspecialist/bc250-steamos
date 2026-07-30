@@ -101,6 +101,7 @@ CORE_UNLOCK_LOCK="/run/lock/bc250-core-unlock.lock"
 CORE_UNLOCK_LIFECYCLE_LOCK="/run/lock/bc250-core-unlock-lifecycle.lock"
 CORE_UNLOCK_UNIT="/etc/systemd/system/bc250-core-unlock.service"
 CORE_UNLOCK_SVC="bc250-core-unlock.service"
+TOPOLOGY_SH="${TOPOLOGY_SH:-$SCRIPT_DIR/topology.sh}"
 UPDATE_PERSIST_SH="$SCRIPT_DIR/bc250-update-persistence.sh"
 STORAGE_SH="$SCRIPT_DIR/bc250-storage.sh"
 
@@ -1658,6 +1659,12 @@ cmd_uninstall() {
 # start too late to affect the current enumeration, so a cold boot needs one
 # guarded automatic warm reboot before all eight cores are available.
 
+core_unlock_topology() {
+    [[ -f "$TOPOLOGY_SH" && ! -L "$TOPOLOGY_SH" ]] \
+        || die "CPU topology helper missing or unsafe: $TOPOLOGY_SH"
+    bash "$TOPOLOGY_SH"
+}
+
 install_core_unlock_files() {
     migrate_legacy_data || return $?
     [[ -f "$CORE_UNLOCK_SOURCE" && ! -L "$CORE_UNLOCK_SOURCE" ]] \
@@ -1814,14 +1821,15 @@ core_unlock_uninstall() {
 cmd_cpu_unlock() {
     local sub="${1:-status}"
     shift || true
-    (($# == 0)) || die "Usage: $0 cpu-unlock {status|test|enable|off|uninstall}"
+    (($# == 0)) || die "Usage: $0 cpu-unlock {topology|status|test|enable|off|uninstall}"
     case "$sub" in
+        topology)  core_unlock_topology ;;
         status)    core_unlock_status ;;
         test)      core_unlock_test ;;
         enable)    core_unlock_enable ;;
         off)       core_unlock_off ;;
         uninstall) core_unlock_uninstall ;;
-        *) die "Usage: $0 cpu-unlock {status|test|enable|off|uninstall}" ;;
+        *) die "Usage: $0 cpu-unlock {topology|status|test|enable|off|uninstall}" ;;
     esac
 }
 
@@ -2218,6 +2226,7 @@ menu_cpu_unlock() {
     while true; do
         local items=(
             "Show core-unlock status||Report service state, physical cores, and reboot-loop guard."
+            "Show CCX core map||Display active and unavailable CPU cores grouped by CCX."
             "Test eight cores once||Write the volatile mask only. Manually reboot, stress-test, then return here."
             "Enable boot persistence||Only allowed when this boot already has eight tested cores."
             "Disable automatic unlock||Stop boot replay. A full power-off restores six cores."
@@ -2226,10 +2235,11 @@ menu_cpu_unlock() {
         menu_select "CPU core unlock  ${CD}(experimental: 6c/12t to 8c/16t)${C0}" "${items[@]}" || return 0
         case $MENU_CHOICE in
             0) run_action core_unlock_status ;;
-            1) run_action core_unlock_test ;;
-            2) run_action core_unlock_enable ;;
-            3) run_action core_unlock_off ;;
-            4) run_action core_unlock_uninstall ;;
+            1) run_action core_unlock_topology ;;
+            2) run_action core_unlock_test ;;
+            3) run_action core_unlock_enable ;;
+            4) run_action core_unlock_off ;;
+            5) run_action core_unlock_uninstall ;;
         esac
     done
 }
@@ -2353,6 +2363,7 @@ CPU OVERCLOCK / UNDERVOLT (bc250-collective/bc250_smu_oc, CPU only)
                     detect/apply/enable fetches automatically (network).
 
 CPU CORE UNLOCK (rw-r-r-0644/bc250-core-unlock, experimental)
+  cpu-unlock topology  Show active and unavailable CPU cores grouped by CCX.
   cpu-unlock test      Write the fixed 0xff mask ONCE without installing boot
                        persistence. Manually reboot, confirm 8c/16t, then
                        stress-test and check dmesg for hardware errors. If the
