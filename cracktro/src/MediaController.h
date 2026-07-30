@@ -36,7 +36,8 @@ class MediaController final : public QObject
 
 public:
     explicit MediaController(QObject *parent = nullptr, bool autoPlay = true,
-                             const QString &settingsApplication = QStringLiteral("bc250-cracktro"));
+                             const QString &settingsApplication = QStringLiteral("bc250-cracktro"),
+                             bool mediaProcessingEnabled = true);
     ~MediaController() override;
 
     QStringList trackTitles() const;
@@ -111,6 +112,7 @@ private:
     QAudioDecoder *m_decoder = nullptr;
     QFileSystemWatcher *m_watcher = nullptr;
     QTimer *m_rescanTimer = nullptr;
+    bool m_mediaProcessingEnabled = true;
     QVector<Track> m_tracks;
     QVector<float> m_analysisPeaks;
     QVector<float> m_visualizerLevels;
@@ -120,6 +122,8 @@ private:
     QString m_settingsApplication;
     QString m_error;
     QString m_waveformError;
+    double m_volume = 0.55;
+    bool m_muted = false;
     int m_currentIndex = -1;
     int m_analysisChunkFrames = 0;
     float m_analysisChunkPeak = 0.0f;

@@ -15,7 +15,7 @@ The application does not invoke scripts, `sudo`, `busctl`, or any subprocess. Ha
 - Asynchronous QtDBus operation tracking, protected-operation cancellation state, and service lifetime monitoring
 - Collapsible music library with transport, natural track ordering, and folder watching
 - Synchronized whole-track waveform and dedicated beat-energy visualizer
-- Persisted music directory, current track, mute, and volume via `QSettings`
+- Persisted music directory, current track, and volume via `QSettings`; mute is session-only
 - `--mock` development mode that never contacts hardware
 
 The installed service must include `GetCpuUnlockStatus()` and `CpuUnlockAction(string)` for core-unlock controls. Older services remain usable for status, GPU, CU, and CPU-overclock features; the UI reports the missing extension rather than falling back to command execution.

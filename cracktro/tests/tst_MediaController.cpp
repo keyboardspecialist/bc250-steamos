@@ -179,7 +179,7 @@ private slots:
         QCOMPARE(controller.currentIndex(), 0);
     }
 
-    void clampsAndPersistsSettings()
+    void clampsAndPersistsSettingsWithoutPersistingMute()
     {
         QTemporaryDir directory;
         writeWav(directory.filePath(QStringLiteral("song.wav")));
@@ -198,16 +198,22 @@ private slots:
         settings.sync();
         const QString canonicalDirectory = QFileInfo(directory.path()).canonicalFilePath();
         QCOMPARE(settings.value(QStringLiteral("audio/volume")).toDouble(), 1.0);
-        QCOMPARE(settings.value(QStringLiteral("audio/muted")).toBool(), true);
+        QVERIFY(!settings.contains(QStringLiteral("audio/muted")));
         QCOMPARE(settings.value(QStringLiteral("audio/directory")).toString(), canonicalDirectory);
         QCOMPARE(QFileInfo(settings.value(QStringLiteral("audio/currentTrack")).toString()).canonicalFilePath(),
                  QFileInfo(directory.filePath(QStringLiteral("song.wav"))).canonicalFilePath());
 
+        settings.setValue(QStringLiteral("audio/muted"), true);
+        settings.sync();
         MediaController restored(nullptr, false, settingsApplication());
         QCOMPARE(restored.volume(), 1.0);
-        QVERIFY(restored.muted());
+        QVERIFY(!restored.muted());
         QCOMPARE(restored.selectedDirectory(), canonicalDirectory);
         QCOMPARE(restored.currentTitle(), QStringLiteral("song"));
+
+        QSettings cleanedSettings(QStringLiteral("keyboardspecialist"), settingsApplication());
+        cleanedSettings.sync();
+        QVERIFY(!cleanedSettings.contains(QStringLiteral("audio/muted")));
     }
 
     void convertsPcmFormatsAndCombinesChannels()
@@ -256,6 +262,22 @@ private slots:
         QCOMPARE(envelope.at(1).toFloat(), 1.0f);
         QVERIFY(std::abs(envelope.at(2).toFloat() - 0.8f) < 0.0001f);
         QVERIFY(MediaController::compactEnvelope({}, 10).isEmpty());
+    }
+
+    void disablesMediaProcessingForStartupSmokeTests()
+    {
+        QTemporaryDir directory;
+        writeWav(directory.filePath(QStringLiteral("smoke.wav")));
+
+        MediaController controller(nullptr, false, settingsApplication(), false);
+        controller.setDirectory(directory.path());
+        QTest::qWait(100);
+
+        QCOMPARE(controller.trackTitles(), QStringList({QStringLiteral("smoke")}));
+        QCOMPARE(controller.currentTitle(), QStringLiteral("smoke"));
+        QVERIFY(controller.waveform().isEmpty());
+        QVERIFY(controller.visualizerData().isEmpty());
+        QVERIFY(controller.waveformError().isEmpty());
     }
 
     void decodesGeneratedWavWithoutBlockingPlaybackState()

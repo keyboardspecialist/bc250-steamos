@@ -370,7 +370,7 @@ an offscreen startup test before installation.
 - Scaling on 1280x800 and larger displays
 - Keyboard shortcuts and focus behavior
 - Bundled and external directory playback, navigation, waveform, visualizer,
-  volume, and mute persistence
+  volume persistence, and unmuted startup
 - Polkit prompts associated with the application D-Bus sender
 - Read-only status before any hardware mutation
 - Conservative GPU control verification

@@ -67,12 +67,14 @@ T readSample(const char *data)
 }
 }
 
-MediaController::MediaController(QObject *parent, bool autoPlay, const QString &settingsApplication)
+MediaController::MediaController(QObject *parent, bool autoPlay, const QString &settingsApplication,
+                                 bool mediaProcessingEnabled)
     : QObject(parent)
-    , m_player(new QMediaPlayer(this))
-    , m_audioOutput(new QAudioOutput(this))
+    , m_player(mediaProcessingEnabled ? new QMediaPlayer(this) : nullptr)
+    , m_audioOutput(mediaProcessingEnabled ? new QAudioOutput(this) : nullptr)
     , m_watcher(new QFileSystemWatcher(this))
     , m_rescanTimer(new QTimer(this))
+    , m_mediaProcessingEnabled(mediaProcessingEnabled)
     , m_waveform(quietWaveform())
     , m_settingsApplication(settingsApplication)
 {
@@ -84,9 +86,13 @@ MediaController::MediaController(QObject *parent, bool autoPlay, const QString &
     double storedVolume = mediaSettings.value(QString::fromLatin1(VolumeKey), 0.55).toDouble();
     if (!std::isfinite(storedVolume))
         storedVolume = 0.55;
-    m_audioOutput->setVolume(static_cast<float>(std::clamp(storedVolume, 0.0, 1.0)));
-    m_audioOutput->setMuted(mediaSettings.value(QString::fromLatin1(MutedKey), false).toBool());
-    m_player->setAudioOutput(m_audioOutput);
+    m_volume = std::clamp(storedVolume, 0.0, 1.0);
+    m_muted = false;
+    mediaSettings.remove(QString::fromLatin1(MutedKey));
+    if (m_audioOutput) {
+        m_audioOutput->setVolume(static_cast<float>(m_volume));
+        m_audioOutput->setMuted(m_muted);
+    }
 
     m_rescanTimer->setInterval(200);
     m_rescanTimer->setSingleShot(true);
@@ -94,23 +100,30 @@ MediaController::MediaController(QObject *parent, bool autoPlay, const QString &
     connect(m_watcher, &QFileSystemWatcher::directoryChanged, m_rescanTimer,
             qOverload<>(&QTimer::start));
 
-    connect(m_player, &QMediaPlayer::playbackStateChanged, this,
-            &MediaController::playbackStateChanged);
-    connect(m_player, &QMediaPlayer::positionChanged, this, &MediaController::positionChanged);
-    connect(m_player, &QMediaPlayer::durationChanged, this, &MediaController::durationChanged);
-    connect(m_player, &QMediaPlayer::mediaStatusChanged, this, [this](QMediaPlayer::MediaStatus status) {
-        if (status == QMediaPlayer::EndOfMedia)
-            next();
-    });
-    connect(m_player, &QMediaPlayer::errorOccurred, this,
-            [this](QMediaPlayer::Error, const QString &message) {
-                setError(message.isEmpty() ? QStringLiteral("Soundtrack playback is unavailable.") : message);
-            });
-    connect(m_audioOutput, &QAudioOutput::volumeChanged, this, &MediaController::volumeChanged);
-    connect(m_audioOutput, &QAudioOutput::mutedChanged, this, &MediaController::mutedChanged);
+    if (m_player) {
+        m_player->setAudioOutput(m_audioOutput);
+        connect(m_player, &QMediaPlayer::playbackStateChanged, this,
+                &MediaController::playbackStateChanged);
+        connect(m_player, &QMediaPlayer::positionChanged, this, &MediaController::positionChanged);
+        connect(m_player, &QMediaPlayer::durationChanged, this, &MediaController::durationChanged);
+        connect(m_player, &QMediaPlayer::mediaStatusChanged, this,
+                [this](QMediaPlayer::MediaStatus status) {
+                    if (status == QMediaPlayer::EndOfMedia)
+                        next();
+                });
+        connect(m_player, &QMediaPlayer::errorOccurred, this,
+                [this](QMediaPlayer::Error, const QString &message) {
+                    setError(message.isEmpty()
+                        ? QStringLiteral("Soundtrack playback is unavailable.") : message);
+                });
+    }
+    if (m_audioOutput) {
+        connect(m_audioOutput, &QAudioOutput::volumeChanged, this, &MediaController::volumeChanged);
+        connect(m_audioOutput, &QAudioOutput::mutedChanged, this, &MediaController::mutedChanged);
+    }
 
     rescan();
-    if (autoPlay) {
+    if (autoPlay && m_mediaProcessingEnabled) {
         QTimer::singleShot(0, this, [this] {
             if (m_currentIndex >= 0)
                 m_player->play();
@@ -143,27 +156,27 @@ QString MediaController::currentTitle() const
 
 QMediaPlayer::PlaybackState MediaController::playbackState() const
 {
-    return m_player->playbackState();
+    return m_player ? m_player->playbackState() : QMediaPlayer::StoppedState;
 }
 
 qint64 MediaController::position() const
 {
-    return m_player->position();
+    return m_player ? m_player->position() : 0;
 }
 
 qint64 MediaController::duration() const
 {
-    return m_player->duration();
+    return m_player ? m_player->duration() : 0;
 }
 
 double MediaController::volume() const
 {
-    return m_audioOutput->volume();
+    return m_audioOutput ? m_audioOutput->volume() : m_volume;
 }
 
 bool MediaController::muted() const
 {
-    return m_audioOutput->isMuted();
+    return m_audioOutput ? m_audioOutput->isMuted() : m_muted;
 }
 
 void MediaController::setVolume(double volume)
@@ -171,24 +184,34 @@ void MediaController::setVolume(double volume)
     if (!std::isfinite(volume))
         volume = 0.0;
     const float clamped = static_cast<float>(std::clamp(volume, 0.0, 1.0));
-    if (qFuzzyCompare(m_audioOutput->volume(), clamped))
+    if (qFuzzyCompare(this->volume(), static_cast<double>(clamped)))
         return;
-    m_audioOutput->setVolume(clamped);
+    if (m_audioOutput)
+        m_audioOutput->setVolume(clamped);
+    else {
+        m_volume = clamped;
+        emit volumeChanged();
+    }
     QSettings mediaSettings = settings();
-    mediaSettings.setValue(QString::fromLatin1(VolumeKey), m_audioOutput->volume());
+    mediaSettings.setValue(QString::fromLatin1(VolumeKey), this->volume());
 }
 
 void MediaController::setMuted(bool muted)
 {
-    if (m_audioOutput->isMuted() == muted)
+    if (this->muted() == muted)
         return;
-    m_audioOutput->setMuted(muted);
-    QSettings mediaSettings = settings();
-    mediaSettings.setValue(QString::fromLatin1(MutedKey), muted);
+    if (m_audioOutput)
+        m_audioOutput->setMuted(muted);
+    else {
+        m_muted = muted;
+        emit mutedChanged();
+    }
 }
 
 void MediaController::playPause()
 {
+    if (!m_player)
+        return;
     if (m_player->playbackState() == QMediaPlayer::PlayingState)
         m_player->pause();
     else
@@ -197,11 +220,12 @@ void MediaController::playPause()
 
 void MediaController::previous()
 {
-    const int target = indexForPrevious(m_currentIndex, m_tracks.size(), m_player->position());
+    const int target = indexForPrevious(m_currentIndex, m_tracks.size(), position());
     if (target < 0)
         return;
     if (target == m_currentIndex) {
-        m_player->setPosition(0);
+        if (m_player)
+            m_player->setPosition(0);
         return;
     }
     activateTrack(target, true);
@@ -262,7 +286,7 @@ void MediaController::rescan()
         ? mediaSettings.value(QString::fromLatin1(CurrentTrackKey)).toString() : oldPath;
     const int oldIndex = m_currentIndex;
     const QStringList oldTitles = trackTitles();
-    const bool wasPlaying = m_player->playbackState() == QMediaPlayer::PlayingState;
+    const bool wasPlaying = playbackState() == QMediaPlayer::PlayingState;
 
     QVector<Track> tracks = scanDirectory();
     if (tracks.isEmpty()) {
@@ -274,8 +298,10 @@ void MediaController::rescan()
         if (oldIndex >= 0)
             emit currentTrackChanged();
         mediaSettings.remove(QString::fromLatin1(CurrentTrackKey));
-        m_player->stop();
-        m_player->setSource({});
+        if (m_player) {
+            m_player->stop();
+            m_player->setSource({});
+        }
         startWaveformAnalysis();
         return;
     }
@@ -305,10 +331,12 @@ void MediaController::rescan()
     mediaSettings.setValue(QString::fromLatin1(CurrentTrackKey), newPath);
     if (sourceChanged) {
         setError({});
-        m_player->setSource(m_tracks.at(m_currentIndex).source);
-        startWaveformAnalysis();
-        if (wasPlaying)
-            m_player->play();
+        if (m_mediaProcessingEnabled) {
+            m_player->setSource(m_tracks.at(m_currentIndex).source);
+            startWaveformAnalysis();
+            if (wasPlaying)
+                m_player->play();
+        }
     }
 }
 
@@ -456,7 +484,8 @@ void MediaController::activateTrack(int index, bool play)
 {
     if (index < 0 || index >= m_tracks.size())
         return;
-    const bool changed = m_currentIndex != index || m_player->source() != m_tracks.at(index).source;
+    const bool changed = m_currentIndex != index
+        || (m_mediaProcessingEnabled && m_player->source() != m_tracks.at(index).source);
     m_currentIndex = index;
     if (changed)
         emit currentTrackChanged();
@@ -464,6 +493,8 @@ void MediaController::activateTrack(int index, bool play)
     QSettings mediaSettings = settings();
     mediaSettings.setValue(QString::fromLatin1(CurrentTrackKey), currentCanonicalPath());
     setError({});
+    if (!m_mediaProcessingEnabled)
+        return;
     m_player->setSource(m_tracks.at(index).source);
     startWaveformAnalysis();
     if (play)
@@ -472,6 +503,9 @@ void MediaController::activateTrack(int index, bool play)
 
 void MediaController::startWaveformAnalysis()
 {
+    if (!m_mediaProcessingEnabled)
+        return;
+
     const quint64 generation = ++m_analysisGeneration;
     if (m_decoder) {
         disconnect(m_decoder, nullptr, this, nullptr);

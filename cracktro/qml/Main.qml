@@ -49,11 +49,130 @@ ApplicationWindow {
     onCurrentPageChanged: bridge.statusPageActive = currentPage === 0
 
     Image {
+        id: backgroundImage
         anchors.fill: parent
         source: "qrc:/assets/background.png"
         fillMode: Image.PreserveAspectFit
         smooth: true
         mipmap: true
+    }
+
+    HoverHandler {
+        id: backgroundHover
+        onHoveredChanged: if (hovered) backgroundDistortion.resetTrail()
+    }
+
+    Item {
+        id: backgroundDistortion
+        anchors.fill: parent
+        enabled: false
+        visible: opacity > 0
+        opacity: backgroundHover.hovered ? 1 : 0
+        property real phase: 0
+        property var trailPoints: []
+        readonly property real effectRadius: Math.max(44, Math.min(72, root.width * 0.06))
+        readonly property real diameter: effectRadius * 2
+        readonly property int gridSize: 9
+        readonly property real cellSize: diameter / gridSize
+        readonly property real pointerX: backgroundHover.point.position.x
+        readonly property real pointerY: backgroundHover.point.position.y
+
+        function currentPoint() {
+            return Qt.point(pointerX, pointerY)
+        }
+
+        function resetTrail() {
+            var point = currentPoint()
+            trailPoints = [point, point, point]
+        }
+
+        function sampleTrail() {
+            var point = currentPoint()
+            trailPoints = [point,
+                           trailPoints.length > 0 ? trailPoints[0] : point,
+                           trailPoints.length > 1 ? trailPoints[1] : point]
+        }
+
+        function pointForLayer(layer) {
+            if (layer === 0)
+                return currentPoint()
+            return trailPoints.length >= layer ? trailPoints[layer - 1] : currentPoint()
+        }
+
+        Behavior on opacity { NumberAnimation { duration: 240; easing.type: Easing.OutCubic } }
+
+        NumberAnimation on phase {
+            from: 0
+            to: Math.PI * 2
+            duration: 850
+            loops: Animation.Infinite
+            running: backgroundDistortion.visible
+        }
+
+        Timer {
+            interval: 45
+            repeat: true
+            running: backgroundHover.hovered
+            triggeredOnStart: true
+            onTriggered: backgroundDistortion.sampleTrail()
+        }
+
+        Repeater {
+            model: 4
+            Item {
+                id: trailLayer
+                required property int index
+                anchors.fill: parent
+                readonly property point trailPoint: backgroundDistortion.pointForLayer(index)
+                readonly property real strength: index === 0 ? 0.68
+                    : index === 1 ? 0.22 : index === 2 ? 0.12 : 0.06
+
+                Repeater {
+                    model: backgroundDistortion.gridSize * backgroundDistortion.gridSize
+                    Item {
+                        required property int index
+                        readonly property int row: Math.floor(index / backgroundDistortion.gridSize)
+                        readonly property int column: index % backgroundDistortion.gridSize
+                        readonly property real localCenterX: (column + 0.5)
+                            * backgroundDistortion.cellSize - backgroundDistortion.effectRadius
+                        readonly property real localCenterY: (row + 0.5)
+                            * backgroundDistortion.cellSize - backgroundDistortion.effectRadius
+                        readonly property real normalizedDistance: Math.sqrt(
+                            localCenterX * localCenterX + localCenterY * localCenterY)
+                            / backgroundDistortion.effectRadius
+                        readonly property real edgeFade: Math.pow(Math.max(0, Math.min(1,
+                            (1 - normalizedDistance) / 0.42)), 2)
+                        readonly property real glitchX: Math.sin(backgroundDistortion.phase * 2
+                            + row * 1.7 + trailLayer.index * 0.8) * (1.5 + row % 3)
+                        readonly property real glitchY: Math.cos(backgroundDistortion.phase
+                            + column * 1.3 + trailLayer.index) * 1.2
+
+                        x: trailLayer.trailPoint.x - backgroundDistortion.effectRadius
+                            + column * backgroundDistortion.cellSize
+                        y: trailLayer.trailPoint.y - backgroundDistortion.effectRadius
+                            + row * backgroundDistortion.cellSize
+                        width: backgroundDistortion.cellSize + 0.5
+                        height: backgroundDistortion.cellSize + 0.5
+                        visible: normalizedDistance < 1
+                        opacity: trailLayer.strength * edgeFade
+                        clip: true
+
+                        Image {
+                            x: -parent.x + parent.glitchX
+                            y: -parent.y + parent.glitchY
+                            width: backgroundDistortion.width
+                            height: backgroundDistortion.height
+                            source: backgroundImage.source
+                            sourceSize: Qt.size(Math.max(1, Math.ceil(width / 10)),
+                                                Math.max(1, Math.ceil(height / 10)))
+                            fillMode: Image.PreserveAspectFit
+                            smooth: false
+                            cache: true
+                        }
+                    }
+                }
+            }
+        }
     }
 
     MouseArea {

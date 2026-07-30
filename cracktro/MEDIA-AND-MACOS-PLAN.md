@@ -64,7 +64,7 @@ The controller will:
   to QML.
 - Expose play/pause, previous, next, track selection, directory selection, and
   rescan operations to QML.
-- Preserve the existing `audio/volume` and `audio/muted` `QSettings` keys.
+- Preserve the existing `audio/volume` setting and clear the legacy `audio/muted` key so each launch starts unmuted.
 - Add settings for the selected directory and current track path.
 - Auto-start playback to preserve current behavior.
 - Advance to the next track at end-of-media and wrap at either end.

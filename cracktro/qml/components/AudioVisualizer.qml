@@ -15,6 +15,9 @@ Item {
     property real phase: 0
     property real syncPosition: position
     property double syncTime: Date.now()
+    property int frameIndex: 0
+    readonly property int barCount: 34
+    readonly property real barGap: 2
 
     function resync() {
         syncPosition = position
@@ -41,12 +44,13 @@ Item {
         if (!active) {
             liveLevel = 0
             beatPulse = 0
-            visualizer.requestPaint()
+            frameIndex = 0
             return
         }
 
         var fraction = estimatedPosition() / duration
         var index = Math.min(levels.length - 1, Math.floor(fraction * levels.length))
+        frameIndex = index
         var current = levelAt(index)
         var average = 0
         var count = 0
@@ -63,7 +67,6 @@ Item {
         liveLevel += (current - liveLevel) * 0.34
         beatPulse = Math.max(beatPulse * 0.78, Math.min(1, onset * 4.2))
         phase += playing ? 0.075 + liveLevel * 0.08 : 0
-        visualizer.requestPaint()
     }
 
     onPositionChanged: resync()
@@ -74,11 +77,9 @@ Item {
             liveLevel = 0
             beatPulse = 0
         }
+        resync()
     }
     onDurationChanged: resync()
-    onMutedChanged: visualizer.requestPaint()
-    onWidthChanged: visualizer.requestPaint()
-    onHeightChanged: visualizer.requestPaint()
 
     Timer {
         interval: 33
@@ -88,63 +89,64 @@ Item {
         onTriggered: root.updateFrame()
     }
 
-    Canvas {
-        id: visualizer
+    Rectangle {
         anchors.fill: parent
+        color: "#050b11b8"
 
-        onPaint: {
-            var context = getContext("2d")
-            context.reset()
-            context.clearRect(0, 0, width, height)
-
-            context.fillStyle = "#050b11b8"
-            context.fillRect(0, 0, width, height)
-            context.strokeStyle = "#17343d"
-            context.lineWidth = 1
-            for (var gridX = 0.5; gridX < width; gridX += 22) {
-                context.beginPath()
-                context.moveTo(gridX, 0)
-                context.lineTo(gridX, height)
-                context.stroke()
+        Repeater {
+            model: Math.ceil(root.width / 22)
+            Rectangle {
+                required property int index
+                x: index * 22
+                width: 1
+                height: root.height
+                color: "#17343d"
             }
-            context.beginPath()
-            context.moveTo(0, height / 2 + 0.5)
-            context.lineTo(width, height / 2 + 0.5)
-            context.stroke()
+        }
 
-            if (!root.active)
-                return
+        Rectangle {
+            anchors.verticalCenter: parent.verticalCenter
+            width: parent.width
+            height: 1
+            color: "#17343d"
+        }
 
-            var estimated = root.estimatedPosition()
-            var currentIndex = Math.min(root.levels.length - 1,
-                                        Math.floor(estimated / root.duration * root.levels.length))
-            var bars = 34
-            var gap = 2
-            var barWidth = Math.max(2, (width - (bars - 1) * gap) / bars)
-            var centerY = height / 2
-            var maximumHeight = height * 0.41
-            for (var bar = 0; bar < bars; ++bar) {
-                var sourceOffset = bar - Math.floor(bars / 2)
-                var level = root.levelAt(currentIndex + sourceOffset)
-                var wave = 0.86 + Math.sin(root.phase + bar * 0.68) * 0.14
-                var emphasis = 1 + root.beatPulse * Math.max(0, 1 - Math.abs(sourceOffset) / 12)
-                var barHeight = Math.max(1, level * wave * emphasis * maximumHeight)
-                var x = bar * (barWidth + gap)
-                var passed = sourceOffset <= 0
-                context.fillStyle = passed
-                    ? (root.muted ? "#b34891" : "#ef48bb")
-                    : (root.muted ? "#436975" : "#22e7f2")
-                context.globalAlpha = 0.48 + level * 0.5
-                context.fillRect(x, centerY - barHeight, barWidth, barHeight * 2)
+        Repeater {
+            model: root.barCount
+            Rectangle {
+                required property int index
+                objectName: "visualizerBar" + index
+                readonly property int sourceOffset: index - Math.floor(root.barCount / 2)
+                readonly property real level: root.levelAt(root.frameIndex + sourceOffset)
+                readonly property real wave: 0.86 + Math.sin(root.phase + index * 0.68) * 0.14
+                readonly property real emphasis: 1 + root.beatPulse
+                    * Math.max(0, 1 - Math.abs(sourceOffset) / 12)
+                readonly property real barHeight: Math.max(1, level * wave * emphasis
+                                                            * root.height * 0.41)
+                readonly property bool passed: sourceOffset <= 0
+
+                visible: root.active
+                x: index * (width + root.barGap)
+                y: root.height / 2 - barHeight
+                width: Math.max(2, (root.width - (root.barCount - 1) * root.barGap)
+                                / root.barCount)
+                height: barHeight * 2
+                color: passed ? (root.muted ? "#b34891" : "#ef48bb")
+                              : (root.muted ? "#436975" : "#22e7f2")
+                opacity: 0.48 + level * 0.5
             }
-            context.globalAlpha = 1
+        }
 
-            var coreRadius = 2.5 + root.liveLevel * 4 + root.beatPulse * 7
-            context.strokeStyle = root.muted ? "#ef70cc" : "#dffcff"
-            context.lineWidth = 1.5
-            context.beginPath()
-            context.arc(width / 2, centerY, coreRadius, 0, Math.PI * 2)
-            context.stroke()
+        Rectangle {
+            readonly property real coreRadius: 2.5 + root.liveLevel * 4 + root.beatPulse * 7
+            anchors.centerIn: parent
+            visible: root.active
+            width: coreRadius * 2
+            height: width
+            radius: width / 2
+            color: "transparent"
+            border.color: root.muted ? "#ef70cc" : "#dffcff"
+            border.width: 1.5
         }
     }
 

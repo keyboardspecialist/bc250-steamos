@@ -18,6 +18,17 @@ SHARED = ROOT / "desktop-control/shared-service-install.sh"
 
 
 class CracktroReleaseTests(unittest.TestCase):
+    def test_distrobox_checks_qml_and_multimedia_runtime_packages(self):
+        helper = (ROOT / "cracktro/build-distrobox.sh").read_text(encoding="utf-8")
+        for expected in (
+            "dpkg-query -W",
+            "qml6-module-qtquick-dialogs",
+            "gstreamer1.0-plugins-base",
+            "gstreamer1.0-plugins-good",
+            "gstreamer1.0-pulseaudio",
+        ):
+            self.assertIn(expected, helper)
+
     def test_archive_and_checksum_are_deterministic_and_standalone(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
@@ -232,6 +243,8 @@ class CracktroReleaseTests(unittest.TestCase):
             "qt6-base-dev",
             "qt6-declarative-dev",
             "qt6-multimedia-dev",
+            "qml6-module-qtquick-dialogs",
+            "gstreamer1.0-plugins-good",
             "ctest --test-dir build/cracktro --output-on-failure",
             "--target qml-lint",
             "--mock --smoke-test",

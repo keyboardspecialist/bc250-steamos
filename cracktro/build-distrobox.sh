@@ -15,11 +15,11 @@ if ! distrobox enter "${container}" -- true >/dev/null 2>&1; then
     distrobox create --name "${container}" --image ubuntu:24.04 --yes
 fi
 
-check='command -v cmake >/dev/null && command -v ninja >/dev/null && command -v g++ >/dev/null && pkg-config --exists Qt6Core Qt6Quick Qt6QuickControls2 Qt6DBus Qt6Multimedia Qt6Test'
+check='command -v cmake >/dev/null && command -v ninja >/dev/null && command -v g++ >/dev/null && pkg-config --exists Qt6Core Qt6Quick Qt6QuickControls2 Qt6DBus Qt6Multimedia Qt6Test && dpkg-query -W qml6-module-qt-labs-settings qml6-module-qtmultimedia qml6-module-qtqml-workerscript qml6-module-qtquick qml6-module-qtquick-controls qml6-module-qtquick-dialogs qml6-module-qtquick-layouts qml6-module-qtquick-templates qml6-module-qtquick-window qml6-module-qttest gstreamer1.0-plugins-base gstreamer1.0-plugins-good gstreamer1.0-pulseaudio >/dev/null 2>&1'
 if ! distrobox enter "${container}" -- bash -lc "${check}"; then
     printf '%s\n' "The build container is missing required tools. Run:" >&2
     printf '  distrobox enter %q -- sudo apt update\n' "${container}" >&2
-    printf '  distrobox enter %q -- sudo apt install cmake ninja-build g++ pkg-config qt6-base-dev qt6-declarative-dev qt6-multimedia-dev qt6-tools-dev qt6-tools-dev-tools qml6-module-qtqml-workerscript qml6-module-qtquick-controls qml6-module-qtquick-dialogs qml6-module-qtquick-templates qml6-module-qtmultimedia qml6-module-qttest\n' "${container}" >&2
+    printf '  distrobox enter %q -- sudo apt install cmake ninja-build g++ pkg-config qt6-base-dev qt6-declarative-dev qt6-multimedia-dev qt6-tools-dev qt6-tools-dev-tools qml6-module-qt-labs-settings qml6-module-qtmultimedia qml6-module-qtqml-workerscript qml6-module-qtquick qml6-module-qtquick-controls qml6-module-qtquick-dialogs qml6-module-qtquick-layouts qml6-module-qtquick-templates qml6-module-qtquick-window qml6-module-qttest gstreamer1.0-plugins-base gstreamer1.0-plugins-good gstreamer1.0-pulseaudio\n' "${container}" >&2
     printf '%s\n' "Then rerun this helper. It never modifies the SteamOS root." >&2
     exit 2
 fi

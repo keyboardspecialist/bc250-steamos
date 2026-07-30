@@ -60,7 +60,9 @@ jobs:
             qml6-module-qtquick-dialogs \
             qml6-module-qtquick-templates \
             qml6-module-qtquick-layouts qml6-module-qtquick-window \
-            qml6-module-qttest
+            qml6-module-qttest \
+            gstreamer1.0-plugins-base gstreamer1.0-plugins-good \
+            gstreamer1.0-pulseaudio
 
       - name: Set up pnpm
         uses: pnpm/action-setup@v4

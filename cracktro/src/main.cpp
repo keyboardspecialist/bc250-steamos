@@ -23,7 +23,8 @@ int main(int argc, char *argv[])
     const bool smokeTest = arguments.contains(QStringLiteral("--smoke-test"));
 
     Bc250Bridge bridge(mockMode);
-    MediaController mediaController;
+    MediaController mediaController(nullptr, !smokeTest, QStringLiteral("bc250-cracktro"),
+                                    !smokeTest);
     QQmlApplicationEngine engine;
     engine.rootContext()->setContextProperty(QStringLiteral("bridge"), &bridge);
     engine.rootContext()->setContextProperty(QStringLiteral("mediaController"), &mediaController);

@@ -184,6 +184,9 @@ TestCase {
         var visualizer = findChild(fixture.pane, "audioVisualizer")
         verify(visualizer !== null)
         verify(visualizer.active)
+        var centerBar = findChild(visualizer, "visualizerBar17")
+        verify(centerBar !== null)
+        tryVerify(function() { return centerBar.height > 2 }, 500)
         tryVerify(function() { return visualizer.liveLevel > 0 }, 500)
 
         fixture.controller.playing = false
@@ -195,6 +198,10 @@ TestCase {
         fixture.controller.visualizerData = []
         verify(!visualizer.active)
         compare(visualizer.liveLevel, 0)
+
+        fixture.controller.visualizerData = [0.2, 0.8, 0.4]
+        verify(visualizer.active)
+        tryVerify(function() { return centerBar.height > 2 }, 500)
     }
 
     function test_panelConsumesBackgroundPresses() {
