@@ -32,14 +32,14 @@ ColumnLayout {
     }
     RowLayout {
         Layout.fillWidth: true
-        SpinBox {
+        C.NeonSpinBox {
             from: 0; to: 2150; stepSize: 50; value: root.minimum; editable: true
             enabled: root.enabledControls && (root.mode === "adaptive" || root.mode === "range")
             Layout.fillWidth: true; onValueModified: root.minimum = value
             textFromValue: function(value) { return "MIN " + value + " MHz" }
             valueFromText: function(text) { return parseInt(text) || 0 }
         }
-        SpinBox {
+        C.NeonSpinBox {
             from: 100; to: 2150; stepSize: 50; value: root.maximum; editable: true
             enabled: root.enabledControls && root.mode !== "max"
             Layout.fillWidth: true; onValueModified: root.maximum = value

@@ -26,7 +26,52 @@ Button {
         border.width: control.activeFocus ? 2 : 1
         radius: 2
     }
-    ToolTip.visible: hovered && hint.length > 0
-    ToolTip.text: hint
+    ToolTip {
+        id: hintPopup
+        objectName: "neonToolTip"
+        visible: control.hovered && control.hint.length > 0
+        text: control.hint
+        delay: 450
+        timeout: 6000
+        margins: 8
+        leftPadding: 10
+        rightPadding: 10
+        topPadding: 8
+        bottomPadding: 8
+        font.family: "monospace"
+        font.pixelSize: 9
+        implicitWidth: Math.min(340, Math.max(110,
+            hintText.implicitWidth + leftPadding + rightPadding))
+        implicitHeight: hintText.implicitHeight + topPadding + bottomPadding
+
+        contentItem: Text {
+            id: hintText
+            width: hintPopup.availableWidth
+            text: hintPopup.text
+            textFormat: Text.PlainText
+            color: "#bcebf0"
+            font: hintPopup.font
+            wrapMode: Text.Wrap
+        }
+
+        background: Rectangle {
+            objectName: "neonToolTipFrame"
+            color: "#071018f2"
+            border.color: control.accent
+            border.width: 1
+            radius: 2
+
+            Rectangle {
+                anchors.left: parent.left
+                anchors.right: parent.right
+                anchors.top: parent.top
+                anchors.leftMargin: 3
+                anchors.rightMargin: 3
+                height: 2
+                color: "#ef48bb"
+                opacity: 0.8
+            }
+        }
+    }
     Accessible.description: hint
 }

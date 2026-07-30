@@ -83,9 +83,9 @@ ColumnLayout {
     C.StatusRow { label: "Detected profile"; value: ((root.cpu.staged || root.cpu.installed || {}).detected) || "None" }
     RowLayout {
         Layout.fillWidth: true
-        SpinBox { from: 3500; to: 4500; stepSize: 100; value: root.frequency; editable: true; enabled: root.cpuControls; Layout.fillWidth: true; onValueModified: root.frequency = value; textFromValue: function(v) { return v + " MHz" } }
-        SpinBox { from: 950; to: 1325; stepSize: 25; value: root.voltage; editable: true; enabled: root.cpuControls; Layout.fillWidth: true; onValueModified: root.voltage = value; textFromValue: function(v) { return v + " mV" } }
-        SpinBox { from: 50; to: 100; stepSize: 5; value: root.temperature; editable: true; enabled: root.cpuControls; Layout.fillWidth: true; onValueModified: root.temperature = value; textFromValue: function(v) { return v + " C" } }
+        C.NeonSpinBox { from: 3500; to: 4500; stepSize: 100; value: root.frequency; editable: true; enabled: root.cpuControls; Layout.fillWidth: true; onValueModified: root.frequency = value; textFromValue: function(v) { return v + " MHz" } }
+        C.NeonSpinBox { from: 950; to: 1325; stepSize: 25; value: root.voltage; editable: true; enabled: root.cpuControls; Layout.fillWidth: true; onValueModified: root.voltage = value; textFromValue: function(v) { return v + " mV" } }
+        C.NeonSpinBox { from: 50; to: 100; stepSize: 5; value: root.temperature; editable: true; enabled: root.cpuControls; Layout.fillWidth: true; onValueModified: root.temperature = value; textFromValue: function(v) { return v + " C" } }
     }
     RowLayout {
         Layout.fillWidth: true

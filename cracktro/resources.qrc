@@ -7,6 +7,7 @@
         <file alias="qml/components/AudioVisualizer.qml">qml/components/AudioVisualizer.qml</file>
         <file alias="qml/components/MediaPane.qml">qml/components/MediaPane.qml</file>
         <file alias="qml/components/NeonButton.qml">qml/components/NeonButton.qml</file>
+        <file alias="qml/components/NeonSpinBox.qml">qml/components/NeonSpinBox.qml</file>
         <file alias="qml/components/NeonPanel.qml">qml/components/NeonPanel.qml</file>
         <file alias="qml/components/SectionHeader.qml">qml/components/SectionHeader.qml</file>
         <file alias="qml/components/StatusRow.qml">qml/components/StatusRow.qml</file>
