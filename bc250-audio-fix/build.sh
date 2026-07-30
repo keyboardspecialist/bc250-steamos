@@ -258,19 +258,6 @@ fi
 
 step "apply Cyan Skillfish GPU telemetry patch"
 METRICS_PATCH=$HERE/bc250-cyan-skillfish-gpu-telemetry.patch
-LEGACY_METRICS_PATCH=$HERE/bc250-cyan-skillfish-8core-metrics.patch
-LEGACY_MODULE_PATCH=$HERE/bc250-cyan-skillfish-module-link.patch
-LEGACY_GPU_PATCH=$HERE/bc250-cyan-skillfish-gpu-metrics.patch
-
-# Early core-unlock builds incorrectly expanded the firmware metrics table.
-# Reverse every applied layer before installing the corrected stock-layout
-# parser; keep this migration because build trees survive toolkit updates.
-for legacy_patch in "$LEGACY_GPU_PATCH" "$LEGACY_MODULE_PATCH" "$LEGACY_METRICS_PATCH"; do
-    if patch -p1 -R --dry-run -s -f < "$legacy_patch" >/dev/null 2>&1; then
-        patch -p1 -R -s < "$legacy_patch"
-        echo "reversed legacy metrics patch: $(basename "$legacy_patch")"
-    fi
-done
 
 if patch -p1 -R --dry-run -s -f < "$METRICS_PATCH" >/dev/null 2>&1; then
     echo "GPU telemetry patch already applied"

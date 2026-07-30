@@ -1,10 +1,10 @@
 # AMDGPU corrections
 
 Corrects DisplayPort video/audio timing and Cyan Skillfish GPU telemetry
-through a patched `amdgpu` module. The firmware keeps its published six-core
-metrics table layout after the CPU unlock, but its GFX clock slot becomes an
-unrelated `0-100` value. The driver queries the clock directly from the SMU;
-telemetry for the two extra CPU cores is not available in the metrics table.
+through one patched `amdgpu` module. Six-core and eight-core CPU topologies use
+the firmware's published `SmuMetrics_t` layout. GPU activity comes from GC
+status sampling, GFX clock comes from a direct SMU query, and per-core CPU
+metrics contain the firmware's six entries.
 
 ## Install
 
@@ -26,10 +26,55 @@ sudo reboot
 | 3.9.x | `linux-neptune-618` | [`bc250-dp-audio-clock-6.18.patch`](bc250-dp-audio-clock-6.18.patch) |
 
 Both versions also apply the Cyan Skillfish telemetry patches. They preserve
-the firmware's published metrics layout, query the GFX clock directly, and
-sample GPU activity because the table does not provide it.
+the firmware's published metrics layout, query the GFX clock through the SMU,
+and sample GPU activity from GC status.
 The build selects the display patch from the running kernel and produces
 `amdgpu.ko.zst` for that exact release.
+
+## GPU Metrics Patches
+
+Display/audio and telemetry corrections share the same per-kernel `amdgpu`
+override.
+
+### Runtime Patch Set
+
+| Patch | Operation |
+|---|---|
+| `bc250-cyan-skillfish-gpu-telemetry.patch` | Apply GC activity sampling while retaining `SmuMetrics_t` |
+| `bc250-cyan-skillfish-gfxclk.patch` | Apply direct SMU GFX-clock reporting |
+
+### Runtime Data
+
+| Export | Source | Representation |
+|---|---|---|
+| `AMDGPU_PP_SENSOR_GPU_LOAD` | `GRBM_STATUS.GUI_ACTIVE` sampling | `0-100` percent |
+| `gpu_metrics_v2_2.average_gfx_activity` | `GRBM_STATUS.GUI_ACTIVE` sampling | `0-10000` centipercent |
+| `METRICS_CURR_GFXCLK` | `PPSMC_MSG_GetGfxFrequency` | Point-in-time MHz |
+| `gpu_metrics_v2_2.current_gfxclk` | `PPSMC_MSG_GetGfxFrequency` | Point-in-time MHz |
+| `gpu_metrics_v2_2.average_gfxclk_frequency` | `PPSMC_MSG_GetGfxFrequency` | Point-in-time MHz |
+| CPU core arrays | Firmware `SmuMetrics_t` | Six per-core entries |
+
+### Activity Sampling
+
+`gpu-telemetry` samples `GRBM_STATUS.GUI_ACTIVE` 32 times at 50-microsecond
+intervals. The approximately 1.55-millisecond window supplies both activity
+exports. The `average_gfx_activity` member name follows the
+`gpu_metrics_v2_2` ABI; its value represents this sampling window.
+
+### GFX Clock Query
+
+`gfxclk` maps `SMU_MSG_GetGfxclkFrequency` to Cyan Skillfish firmware command
+`PPSMC_MSG_GetGfxFrequency`. One SMU reply populates `METRICS_CURR_GFXCLK`,
+`current_gfxclk`, and `average_gfxclk_frequency`. Query errors propagate to the
+metrics caller.
+
+### Core Count
+
+The runtime patches use the published `SmuMetrics_t` transfer size for stock
+6-core/12-thread and unlocked 8-core/16-thread topologies. AGESA and Linux expose
+the active topology. The firmware metrics ABI supplies six CPU rows. GPU
+activity and GFX clock reporting use topology-independent register and SMU
+sources.
 
 ## Commands
 
@@ -138,8 +183,7 @@ The complete fallback remains mandatory for the AMDGPU override. AIC8800 may ins
 | `build-env.sh` | Local build environment |
 | `bc250-dp-audio-clock-6.16.patch` | SteamOS 3.8.x display clock patch |
 | `bc250-dp-audio-clock-6.18.patch` | SteamOS 3.9.x display clock patch |
-| `bc250-cyan-skillfish-gpu-telemetry.patch` | Preserve firmware metrics offsets and add GPU activity reporting |
-| `bc250-cyan-skillfish-gfxclk.patch` | Read GFX clock through the dedicated SMU query |
-| `bc250-cyan-skillfish-{8core-metrics,module-link,gpu-metrics}.patch` | Legacy migration patches retained to clean existing build trees |
+| `bc250-cyan-skillfish-gpu-telemetry.patch` | Runtime GPU activity export using the published metrics layout |
+| `bc250-cyan-skillfish-gfxclk.patch` | Runtime GFX clock export using a direct SMU query |
 | `bc250-cg-flags.patch` | Experimental GFX clock gating |
 | `bc250-cg-flags-unvalidated.patch` | Experimental expanded clock gating |
