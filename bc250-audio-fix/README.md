@@ -24,7 +24,9 @@ sudo reboot
 | 3.8.x | `linux-neptune-616` | [`bc250-dp-audio-clock-6.16.patch`](bc250-dp-audio-clock-6.16.patch) |
 | 3.9.x | `linux-neptune-618` | [`bc250-dp-audio-clock-6.18.patch`](bc250-dp-audio-clock-6.18.patch) |
 
-Both versions also apply [`bc250-cyan-skillfish-8core-metrics.patch`](bc250-cyan-skillfish-8core-metrics.patch).
+Both versions also apply the Cyan Skillfish metrics patch set. It preserves the
+firmware's six-entry C0 residency array while expanding the eight-core CPU
+arrays, and samples GPU activity because the firmware table does not provide it.
 The build selects the display patch from the running kernel and produces
 `amdgpu.ko.zst` for that exact release.
 
@@ -136,5 +138,7 @@ The complete fallback remains mandatory for the AMDGPU override. AIC8800 may ins
 | `bc250-dp-audio-clock-6.16.patch` | SteamOS 3.8.x display clock patch |
 | `bc250-dp-audio-clock-6.18.patch` | SteamOS 3.9.x display clock patch |
 | `bc250-cyan-skillfish-8core-metrics.patch` | Runtime six/eight-core SMU metrics parser |
+| `bc250-cyan-skillfish-module-link.patch` | External-module-safe CPU topology detection |
+| `bc250-cyan-skillfish-gpu-metrics.patch` | Correct GPU offsets and activity reporting |
 | `bc250-cg-flags.patch` | Experimental GFX clock gating |
 | `bc250-cg-flags-unvalidated.patch` | Experimental expanded clock gating |

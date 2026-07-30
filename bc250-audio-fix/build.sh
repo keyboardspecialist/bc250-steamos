@@ -258,13 +258,40 @@ fi
 
 step "apply Cyan Skillfish 6/8-core metrics patch"
 METRICS_PATCH=$HERE/bc250-cyan-skillfish-8core-metrics.patch
-if patch -p1 -R --dry-run -s -f < "$METRICS_PATCH" >/dev/null 2>&1; then
+# topology_is_primary_thread() expands to an unexported x86 kernel symbol, so
+# the metrics code must use only module-visible CPU topology state.
+METRICS_MODULE_PATCH=$HERE/bc250-cyan-skillfish-module-link.patch
+METRICS_GPU_PATCH=$HERE/bc250-cyan-skillfish-gpu-metrics.patch
+if patch -p1 -R --dry-run -s -f < "$METRICS_GPU_PATCH" >/dev/null 2>&1; then
+    echo "metrics patches already applied"
+elif patch -p1 -R --dry-run -s -f < "$METRICS_MODULE_PATCH" >/dev/null 2>&1; then
+    # The follow-up changes lines introduced by the main patch, so its reverse
+    # check is also the idempotence check before the GPU correction is applied.
     echo "metrics patch already applied"
-elif patch -p1 --dry-run -s -f < "$METRICS_PATCH" >/dev/null 2>&1; then
-    patch -p1 -s < "$METRICS_PATCH"
-    echo "metrics patch applied"
+    echo "metrics external-module link fix already applied"
 else
-    die "metrics patch neither applies nor reverses cleanly — tree has drifted; inspect by hand"
+    if patch -p1 -R --dry-run -s -f < "$METRICS_PATCH" >/dev/null 2>&1; then
+        echo "metrics patch already applied"
+    elif patch -p1 --dry-run -s -f < "$METRICS_PATCH" >/dev/null 2>&1; then
+        patch -p1 -s < "$METRICS_PATCH"
+        echo "metrics patch applied"
+    else
+        die "metrics patch neither applies nor reverses cleanly — tree has drifted; inspect by hand"
+    fi
+    if patch -p1 --dry-run -s -f < "$METRICS_MODULE_PATCH" >/dev/null 2>&1; then
+        patch -p1 -s < "$METRICS_MODULE_PATCH"
+        echo "metrics external-module link fix applied"
+    else
+        die "metrics external-module link fix does not apply cleanly — tree has drifted; inspect by hand"
+    fi
+fi
+if ! patch -p1 -R --dry-run -s -f < "$METRICS_GPU_PATCH" >/dev/null 2>&1; then
+    if patch -p1 --dry-run -s -f < "$METRICS_GPU_PATCH" >/dev/null 2>&1; then
+        patch -p1 -s < "$METRICS_GPU_PATCH"
+        echo "metrics GPU offset and activity fix applied"
+    else
+        die "metrics GPU correction does not apply cleanly — tree has drifted; inspect by hand"
+    fi
 fi
 
 step "clock-gating patches (BC-250 idle power) — EXPERIMENTAL, opt-in"
