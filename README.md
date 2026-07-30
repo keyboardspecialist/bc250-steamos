@@ -129,6 +129,7 @@ sudo ./bc250-40cu.sh
 
 | Command | Action |
 |---|---|
+| `./bc250-40cu.sh topology` | Show active CPU cores grouped by CCX |
 | `sudo ./bc250-40cu.sh check` | Show board, debugfs, UMR, and service state |
 | `sudo ./bc250-40cu.sh prep` | Build and install UMR |
 | `sudo ./bc250-40cu.sh manager` | Open the live CU manager |

@@ -36,6 +36,7 @@
 #
 # Usage (run as root):
 #   ./bc250-40cu.sh check      board / debugfs / install state
+#   ./bc250-40cu.sh topology   CPU core map grouped by CCX
 #   ./bc250-40cu.sh prep       deps + build umr into the persistent checkout
 #   ./bc250-40cu.sh manager    launch the live-manager TUI correctly
 #   ./bc250-40cu.sh persist    relocate service off the wipeable rootfs
@@ -78,6 +79,7 @@ PERSIST_MANAGER_BIN="$ROOT_DATA_DIR/helper/bc250-cu-live-manager"
 LEGACY_PREFIX="/var/lib/bc250-40cu"
 STORAGE_SH="$SCRIPT_DIR/bc250-storage.sh"
 UPDATE_PERSIST_SH="$SCRIPT_DIR/bc250-update-persistence.sh"
+TOPOLOGY_SH="${TOPOLOGY_SH:-$SCRIPT_DIR/topology.sh}"
 UPDATE_KEEP_FILE="/etc/atomic-update.conf.d/bc250-compute.conf"
 SERVICE_DROPIN="$SERVICE.d/10-bc250-storage.conf"
 SERVICE_WANTS="/etc/systemd/system/multi-user.target.wants/bc250-cu-live-manager.service"
@@ -357,6 +359,12 @@ quarantine_stale_umr() {
 }
 
 # ================================ check ===================================
+cmd_topology() {
+    [[ -f "$TOPOLOGY_SH" && ! -L "$TOPOLOGY_SH" ]] \
+        || die "CPU topology helper missing or unsafe: $TOPOLOGY_SH"
+    bash "$TOPOLOGY_SH"
+}
+
 cmd_check() {
     require_root   # debugfs mount + globbing inside /sys/kernel/debug need root
     log "Board:"
@@ -701,6 +709,10 @@ flips dispatch after boot. Compute scales ~1.6x; graphics only ~+4%.
 Research: duggasco/bc250-40cu-unlock.
 
 COMMANDS (setup order)
+  topology  Show the CPU core map grouped by CCX. Filled squares are active
+            cores and empty squares are unavailable cores. Read-only; no root
+            access is required when invoked directly.
+
   check     Preflight: BC-250 PCI ID present, debugfs + amdgpu register
             interface available, what's installed so far. Needs root.
 
@@ -788,6 +800,7 @@ cmd_menu() {
     fi
     while true; do
         local items=(
+            "CPU core topology|$(b_off "read only")|Show active and unavailable CPU cores grouped by CCX."
             "Board / install check||Read-only report: board, debugfs, umr, service. Start here."
             "Step 1 - Build umr|$(badge_umr)|Deps + build under the hidden toolkit directory. Unlocks rootfs; takes a few minutes."
             "Step 2 - Live CU manager|$(badge_service)|Dashboard TUI. READ the harvest map first: contiguous -> [f], scattered -> [e]."
@@ -798,13 +811,14 @@ cmd_menu() {
         )
         menu_select "BC-250 40 CU unlock  ${CD}(SteamOS)${C0}" "${items[@]}" || { echo; break; }
         case $MENU_CHOICE in
-            0) run_action cmd_check ;;
-            1) run_action cmd_prep ;;
-            2) run_action cmd_manager ;;
-            3) run_action cmd_persist ;;
-            4) run_action cmd_verify ;;
-            5) run_action cmd_revert ;;
-            6) cmd_help; pause_key ;;
+            0) run_action cmd_topology ;;
+            1) run_action cmd_check ;;
+            2) run_action cmd_prep ;;
+            3) run_action cmd_manager ;;
+            4) run_action cmd_persist ;;
+            5) run_action cmd_verify ;;
+            6) run_action cmd_revert ;;
+            7) cmd_help; pause_key ;;
         esac
     done
 }
@@ -815,6 +829,7 @@ if [[ $# -eq 0 && -t 0 && -t 1 ]]; then
     exit 0
 fi
 case "${1:-}" in
+    topology) (($# == 1)) || die "Usage: $0 topology"; cmd_topology ;;
     check)   cmd_check ;;
     prep)    cmd_prep ;;
     manager) shift; cmd_manager "$@" ;;
@@ -826,7 +841,7 @@ case "${1:-}" in
     all)     cmd_check; cmd_prep; cmd_manager ;;
     menu)    cmd_menu ;;
     help|-h|--help) cmd_help ;;
-    *) echo "Usage: $0 {check|prep|manager|persist|verify|revert|installed|uninstall|all|menu|help}"
+    *) echo "Usage: $0 {topology|check|prep|manager|persist|verify|revert|installed|uninstall|all|menu|help}"
        echo "  (no arguments on a terminal opens the guided menu)"
        echo "Run '$0 help' for the full walkthrough of every command."
        exit 1 ;;
