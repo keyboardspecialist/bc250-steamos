@@ -256,26 +256,50 @@ else
     die "patch neither applies nor reverses cleanly — tree has drifted; inspect by hand"
 fi
 
-step "apply Cyan Skillfish GPU telemetry patch"
+step "apply Cyan Skillfish GPU metrics patches"
 METRICS_PATCH=$HERE/bc250-cyan-skillfish-gpu-telemetry.patch
-
-if patch -p1 -R --dry-run -s -f < "$METRICS_PATCH" >/dev/null 2>&1; then
-    echo "GPU telemetry patch already applied"
-elif patch -p1 --dry-run -s -f < "$METRICS_PATCH" >/dev/null 2>&1; then
-    patch -p1 -s < "$METRICS_PATCH"
-    echo "GPU telemetry patch applied"
-else
-    die "GPU telemetry patch neither applies nor reverses cleanly — tree has drifted; inspect by hand"
-fi
-
 GFXCLK_PATCH=$HERE/bc250-cyan-skillfish-gfxclk.patch
-if patch -p1 -R --dry-run -s -f < "$GFXCLK_PATCH" >/dev/null 2>&1; then
-    echo "GPU clock query patch already applied"
-elif patch -p1 --dry-run -s -f < "$GFXCLK_PATCH" >/dev/null 2>&1; then
-    patch -p1 -s < "$GFXCLK_PATCH"
-    echo "GPU clock query patch applied"
+CORE_METRICS_PATCH=$HERE/bc250-cyan-skillfish-8core-metrics.patch
+
+if patch -p1 -R --dry-run -s -f < "$CORE_METRICS_PATCH" >/dev/null 2>&1; then
+    # The top layer only applies after activity and clock reporting, so this
+    # reverse check proves the complete stack is already present.
+    echo "GPU metrics patches already applied"
 else
-    die "GPU clock query patch neither applies nor reverses cleanly — tree has drifted; inspect by hand"
+    METRICS_SOURCE=drivers/gpu/drm/amd/pm/swsmu/smu11/cyan_skillfish_ppt.c
+    METRICS_HEADER=drivers/gpu/drm/amd/pm/swsmu/inc/pmfw_if/smu11_driver_if_cyan_skillfish.h
+    if grep -q 'SmuMetricsTable8_t' "$METRICS_HEADER"; then
+        [ -f "$TREE/.bc250-managed-tree" ] \
+            || die "legacy Cyan Skillfish metrics patch found in a custom tree; restore its stock metrics source and header first"
+        git --git-dir="$GITDIR" --work-tree="$TREE" checkout -qf "$FULLSHA" -- \
+            "$METRICS_SOURCE" "$METRICS_HEADER"
+        echo "restored legacy Cyan Skillfish metrics files from $SHA"
+    fi
+
+    if patch -p1 -R --dry-run -s -f < "$METRICS_PATCH" >/dev/null 2>&1; then
+        echo "GPU telemetry patch already applied"
+    elif patch -p1 --dry-run -s -f < "$METRICS_PATCH" >/dev/null 2>&1; then
+        patch -p1 -s < "$METRICS_PATCH"
+        echo "GPU telemetry patch applied"
+    else
+        die "GPU telemetry patch neither applies nor reverses cleanly — tree has drifted; inspect by hand"
+    fi
+
+    if patch -p1 -R --dry-run -s -f < "$GFXCLK_PATCH" >/dev/null 2>&1; then
+        echo "GPU clock query patch already applied"
+    elif patch -p1 --dry-run -s -f < "$GFXCLK_PATCH" >/dev/null 2>&1; then
+        patch -p1 -s < "$GFXCLK_PATCH"
+        echo "GPU clock query patch applied"
+    else
+        die "GPU clock query patch neither applies nor reverses cleanly — tree has drifted; inspect by hand"
+    fi
+
+    if patch -p1 --dry-run -s -f < "$CORE_METRICS_PATCH" >/dev/null 2>&1; then
+        patch -p1 -s < "$CORE_METRICS_PATCH"
+        echo "six/eight-core metrics patch applied"
+    else
+        die "six/eight-core metrics patch does not apply cleanly — tree has drifted; inspect by hand"
+    fi
 fi
 
 step "clock-gating patches (BC-250 idle power) — EXPERIMENTAL, opt-in"
