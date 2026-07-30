@@ -77,7 +77,7 @@ install_audio_fix() {
     require_normal_user
     require_script "$AUDIO_FIX_SH"
     confirm_action \
-        "Build and install the matching AMDGPU display/audio clock fix?" \
+        "Build and install the matching AMDGPU display clock and metrics fixes?" \
         bash "$AUDIO_FIX_SH"
 }
 
@@ -258,7 +258,7 @@ Commands:
   storage                Open the Persistent Storage menu
   persistence            Open the SteamOS Update Persistence menu
   wifi                   Confirm and run the AIC8800 installer
-  audio                  Confirm and run the AMDGPU clock-fix builder
+  audio                  Confirm and run the AMDGPU clock/metrics builder
   mesh                   Open per-game mesh-shader setup and toggles
   decky                  Confirm and run the Decky plugin installer
   desktop                Confirm and run the Plasma desktop-control installer

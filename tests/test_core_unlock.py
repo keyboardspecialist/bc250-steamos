@@ -17,6 +17,14 @@ def load_helper():
 
 
 class CoreUnlockTests(unittest.TestCase):
+    def test_shell_status_reports_metrics_compatibility(self):
+        power = (ROOT / "bc250-power.sh").read_text(encoding="utf-8")
+
+        self.assertIn("core_unlock_metrics_state", power)
+        self.assertIn(".bc250-metrics-fix", power)
+        self.assertIn("eight-core GPU metrics", power)
+        self.assertIn("shifted SMU fields", power)
+
     def test_boot_clears_guard_when_eight_cores_are_present(self):
         helper = load_helper()
         with tempfile.TemporaryDirectory() as directory:

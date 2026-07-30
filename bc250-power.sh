@@ -102,6 +102,7 @@ CORE_UNLOCK_LIFECYCLE_LOCK="/run/lock/bc250-core-unlock-lifecycle.lock"
 CORE_UNLOCK_UNIT="/etc/systemd/system/bc250-core-unlock.service"
 CORE_UNLOCK_SVC="bc250-core-unlock.service"
 TOPOLOGY_SH="${TOPOLOGY_SH:-$SCRIPT_DIR/topology.sh}"
+AMDGPU_MODULES_ROOT="${AMDGPU_MODULES_ROOT:-/usr/lib/modules}"
 UPDATE_PERSIST_SH="$SCRIPT_DIR/bc250-update-persistence.sh"
 STORAGE_SH="$SCRIPT_DIR/bc250-storage.sh"
 
@@ -1665,6 +1666,32 @@ core_unlock_topology() {
     bash "$TOPOLOGY_SH"
 }
 
+core_unlock_metrics_state() {
+    local rel module marker expected actual resolved
+    rel=$(uname -r)
+    module="$AMDGPU_MODULES_ROOT/$rel/updates/amdgpu.ko.zst"
+    marker="$AMDGPU_MODULES_ROOT/$rel/updates/.bc250-metrics-fix"
+
+    if [[ -f "$marker" && ! -L "$marker" && -f "$module" && ! -L "$module" ]]; then
+        read -r expected < "$marker" || expected=
+        actual=$(sha256sum "$module" 2>/dev/null | awk '{print $1}')
+        resolved=$(modinfo -k "$rel" -F filename amdgpu 2>/dev/null || true)
+        if [[ "$expected" =~ ^[0-9a-f]{64}$ && "$actual" == "$expected" \
+            && "$resolved" == */updates/amdgpu.ko* ]]; then
+            echo compatible
+            return 0
+        fi
+        echo invalid
+        return 1
+    fi
+    if [[ -f "$module" && ! -L "$module" ]]; then
+        echo legacy-override
+    else
+        echo not-installed
+    fi
+    return 1
+}
+
 install_core_unlock_files() {
     migrate_legacy_data || return $?
     [[ -f "$CORE_UNLOCK_SOURCE" && ! -L "$CORE_UNLOCK_SOURCE" ]] \
@@ -1745,12 +1772,15 @@ core_unlock_enable() {
     core_unlock_lifecycle_unlock
     log "Eight-core unlock enabled at boot (before CPU OC and the GPU governor)."
     log "Persistence enabled only after verifying this boot already has eight cores."
+    if [[ "$(core_unlock_metrics_state)" != compatible ]]; then
+        warn "Install the toolkit AMDGPU fixes to correct eight-core GPU metrics: ./bc250-toolkit.sh audio"
+    fi
     warn "After later cold boots, the service automatically requests one guarded warm reboot."
 }
 
 core_unlock_status() {
     echo -e "${CB}=== CPU core unlock (rw-r-r-0644) ===${C0}"
-    local en ac
+    local en ac cores metrics_state
     en=$(systemctl is-enabled "$CORE_UNLOCK_SVC" 2>/dev/null) || en=-
     ac=$(systemctl is-active "$CORE_UNLOCK_SVC" 2>/dev/null) || ac=-
     printf '  %-38s %s / %s\n' "$CORE_UNLOCK_SVC" "$(c_state "$en")" "$(c_state "$ac")"
@@ -1758,9 +1788,15 @@ core_unlock_status() {
         BC250_CORE_UNLOCK_STATE_DIR="$CORE_UNLOCK_STATE_DIR" \
             python3 -I "$CORE_UNLOCK_BIN" status
     else
-        local cores
         cores=$(awk -F: '/^core id/ { seen[$2]=1 } END { print length(seen) }' /proc/cpuinfo)
         echo "  detected physical cores: ${cores:-unknown}; helper not installed"
+    fi
+    cores=${cores:-$(awk -F: '/^core id/ { seen[$2]=1 } END { print length(seen) }' /proc/cpuinfo)}
+    metrics_state=$(core_unlock_metrics_state) || true
+    echo "  eight-core GPU metrics: $metrics_state"
+    if [[ "$cores" == 8 && "$metrics_state" != compatible ]]; then
+        warn "AMDGPU is not metrics-aware; SteamOS GPU statistics can use shifted SMU fields."
+        warn "Run './bc250-toolkit.sh audio' as the logged-in user, then reboot."
     fi
 }
 

@@ -76,7 +76,7 @@ sudo ./bc250-power.sh status
 | `bc250-maintenance.sh` | Installed-component inventory, uninstall orchestration, and optional data purge |
 | [`decky-plugin/`](#big-picture-plugin) | Quick Access interface for daily controls |
 | [`desktop-control/`](#plasma-desktop-control) | Plasma system-tray and windowed controls |
-| [`bc250-audio-fix/`](#display-clock) | DisplayPort video and audio clock correction |
+| [`bc250-audio-fix/`](#amdgpu-driver) | DisplayPort clock and six/eight-core GPU metrics corrections |
 | [`bc250-mesh-shader.sh`](#mesh-shaders-optional) | Separate RADV ICD with per-game mesh-shader opt-in |
 | [`aic8800/`](#wifi-and-bluetooth) | AIC8800D80 USB WiFi and Bluetooth driver |
 
@@ -254,6 +254,7 @@ discovered the SMU command that changes the BC-250 core-presence mask from
 `0x77` to `0xff`, allowing AGESA to enumerate 8 cores and 16 threads.
 
 ```bash
+./bc250-toolkit.sh audio
 sudo ./bc250-power.sh cpu-unlock test
 sudo reboot
 sudo ./bc250-power.sh cpu-unlock status
@@ -266,6 +267,12 @@ it before Linux starts, so initramfs cannot apply it early enough. On a later
 cold boot, the enabled service safely writes the mask and requests one warm
 reboot. A persistent pending marker prevents a failed unlock from creating a
 reboot loop.
+
+The AMDGPU workflow installs a runtime six/eight-core SMU metrics parser.
+Without it, the unlocked firmware's larger per-core arrays shift GPU clock,
+temperature, power, and voltage fields consumed by the SteamOS performance
+overlay. `cpu-unlock status` reports metrics compatibility for the running
+kernel.
 
 | Command | Action |
 |---|---|
@@ -345,7 +352,11 @@ cd bc250-audio-fix
 ./patch-driver.sh
 ```
 
-The patch restores the DisplayPort pixel and audio reference clock. Builds are matched to the running kernel and checked for vermagic and ABI compatibility before installation. If Valve omitted the matching headers, the toolkit can generate the required symbols with a complete exact-source kernel build.
+The patches restore the DisplayPort pixel/audio reference clock and select the
+correct six-core or eight-core Cyan Skillfish SMU metrics layout. Builds are
+matched to the running kernel and checked for vermagic and ABI compatibility
+before installation. If Valve omitted the matching headers, the toolkit can
+generate the required symbols with a complete exact-source kernel build.
 
 Rollback:
 

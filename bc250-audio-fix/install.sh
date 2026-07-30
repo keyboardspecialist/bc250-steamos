@@ -1,5 +1,5 @@
 #!/bin/bash
-# Install the patched amdgpu.ko (BC-250 DP audio clock fix) via the
+# Install the patched amdgpu.ko (BC-250 display clock and metrics fixes) via the
 # modules updates/ override. Run as: sudo ./install.sh
 set -euo pipefail
 
@@ -8,6 +8,7 @@ HERE=$(cd "$(dirname "$0")" && pwd)
 SRC=$HERE/amdgpu.ko.zst
 DST=/usr/lib/modules/$REL/updates/amdgpu.ko.zst
 MARKER=/usr/lib/modules/$REL/updates/.bc250-audio-fix
+METRICS_MARKER=/usr/lib/modules/$REL/updates/.bc250-metrics-fix
 
 [ -f "$SRC" ] || { echo "missing $SRC — the module is not shipped in the repo; build it against your running kernel first: ./fetch-sources.sh && ./build.sh"; exit 1; }
 [ "$(id -u)" = 0 ] || { echo "run with sudo"; exit 1; }
@@ -48,6 +49,11 @@ cleanup() {
         else
             rm -f "$MARKER"
         fi
+        if [ -f "$TMPD/original-metrics-marker" ]; then
+            install -D -m644 "$TMPD/original-metrics-marker" "$METRICS_MARKER"
+        else
+            rm -f "$METRICS_MARKER"
+        fi
         if [ -f "$TMPD/original-priority.conf" ]; then
             install -D -m644 "$TMPD/original-priority.conf" "$PRIORITY_FILE"
         else
@@ -62,6 +68,7 @@ cleanup() {
 trap cleanup EXIT
 if [ -f "$DST" ]; then cp -a "$DST" "$TMPD/original.ko.zst"; fi
 if [ -f "$MARKER" ]; then cp -a "$MARKER" "$TMPD/original-marker"; fi
+if [ -f "$METRICS_MARKER" ]; then cp -a "$METRICS_MARKER" "$TMPD/original-metrics-marker"; fi
 if [ -f "$PRIORITY_FILE" ]; then cp -a "$PRIORITY_FILE" "$TMPD/original-priority.conf"; fi
 if steamos-readonly status 2>/dev/null | grep -qi enabled; then
     steamos-readonly disable
@@ -72,6 +79,7 @@ INSTALL_STARTED=1
 install -D -m644 "$SRC" "$DST"
 sha256sum "$DST" | awk '{print $1}' > "$MARKER"
 chmod 644 "$MARKER"
+install -m644 "$MARKER" "$METRICS_MARKER"
 depmod "$REL"
 
 RESOLVED=$(modinfo -k "$REL" -F filename amdgpu)
@@ -91,4 +99,4 @@ fi
 
 mkinitcpio -p "$PRESET"
 INSTALL_OK=1
-echo "OK — patched amdgpu installed. Reboot to activate."
+echo "OK — display clock and 6/8-core metrics-aware amdgpu installed. Reboot to activate."

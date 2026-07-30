@@ -78,7 +78,8 @@ if [ "${1:-}" = --all ]; then
     elif [ "$#" = 2 ]; then echo "Usage: $0 --all [--adopt-legacy]" >&2; exit 2
     fi
     for candidate in /usr/lib/modules/*/updates/amdgpu.ko.zst \
-                     /usr/lib/modules/*/updates/.bc250-audio-fix; do
+                     /usr/lib/modules/*/updates/.bc250-audio-fix \
+                     /usr/lib/modules/*/updates/.bc250-metrics-fix; do
         [ -e "$candidate" ] || [ -L "$candidate" ] || continue
         rel=${candidate#/usr/lib/modules/}
         rel=${rel%%/*}
@@ -116,25 +117,37 @@ fi
 for rel in "${TARGETS[@]}"; do
     module="/usr/lib/modules/$rel/updates/amdgpu.ko.zst"
     marker="/usr/lib/modules/$rel/updates/.bc250-audio-fix"
+    metrics_marker="/usr/lib/modules/$rel/updates/.bc250-metrics-fix"
     if [ ! -e "$module" ] && [ ! -L "$module" ] \
-       && [ ! -e "$marker" ] && [ ! -L "$marker" ]; then
+       && [ ! -e "$marker" ] && [ ! -L "$marker" ] \
+       && [ ! -e "$metrics_marker" ] && [ ! -L "$metrics_marker" ]; then
         echo "amdgpu override is not installed for $rel"
         continue
     fi
     if [ -e "$module" ] || [ -L "$module" ]; then
         [ -f "$module" ] && [ ! -L "$module" ] \
             || { echo "ERROR: refusing unsafe module path: $module" >&2; exit 1; }
-        module_owned "$module" "$marker" || {
+        ownership_marker=$marker
+        [ -e "$ownership_marker" ] || [ -L "$ownership_marker" ] \
+            || ownership_marker=$metrics_marker
+        module_owned "$module" "$ownership_marker" || {
             echo "ERROR: refusing unrecognized AMDGPU override: $module" >&2
             echo "Re-run with --adopt-legacy only after confirming this is an older BC-250 patch." >&2
             exit 3
         }
+        if [ "$ownership_marker" != "$metrics_marker" ] \
+           && { [ -e "$metrics_marker" ] || [ -L "$metrics_marker" ]; }; then
+            module_owned "$module" "$metrics_marker" \
+                || { echo "ERROR: invalid metrics marker: $metrics_marker" >&2; exit 1; }
+        fi
     else
-        [ -f "$marker" ] && [ ! -L "$marker" ] \
-            || { echo "ERROR: refusing unsafe rollback marker: $marker" >&2; exit 1; }
-        read -r expected < "$marker" || { echo "ERROR: unreadable rollback marker: $marker" >&2; exit 1; }
+        rollback_marker=$marker
+        [ -e "$rollback_marker" ] || rollback_marker=$metrics_marker
+        [ -f "$rollback_marker" ] && [ ! -L "$rollback_marker" ] \
+            || { echo "ERROR: refusing unsafe rollback marker: $rollback_marker" >&2; exit 1; }
+        read -r expected < "$rollback_marker" || { echo "ERROR: unreadable rollback marker: $rollback_marker" >&2; exit 1; }
         [[ "$expected" =~ ^[0-9a-f]{64}$ ]] \
-            || { echo "ERROR: invalid rollback marker: $marker" >&2; exit 1; }
+            || { echo "ERROR: invalid rollback marker: $rollback_marker" >&2; exit 1; }
         echo "$rel: resuming an interrupted rollback"
     fi
     stock="/usr/lib/modules/$rel/kernel/drivers/gpu/drm/amd/amdgpu/amdgpu.ko.zst"
@@ -221,7 +234,8 @@ for index in "${!PRESENT[@]}"; do
     [[ "$resolved" != */updates/* ]] \
         || { echo "ERROR: override still selected for '$rel'" >&2; exit 1; }
     mkinitcpio -p "$preset"
-    rm -f "/usr/lib/modules/$rel/updates/.bc250-audio-fix"
+    rm -f "/usr/lib/modules/$rel/updates/.bc250-audio-fix" \
+        "/usr/lib/modules/$rel/updates/.bc250-metrics-fix"
     rmdir "/usr/lib/modules/$rel/updates" 2>/dev/null || true
 done
 

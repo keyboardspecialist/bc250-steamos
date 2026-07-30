@@ -10,6 +10,7 @@ AIC_INSTALLER = ROOT / "aic8800/steamdeck-setup.sh"
 AUDIO_INSTALLER = ROOT / "bc250-audio-fix/patch-driver.sh"
 AUDIO_ROLLBACK = ROOT / "bc250-audio-fix/rollback.sh"
 AUDIO_PREREQS = ROOT / "bc250-audio-fix/ensure-build-prereqs.sh"
+METRICS_PATCH = ROOT / "bc250-audio-fix/bc250-cyan-skillfish-8core-metrics.patch"
 
 
 class DriverLifecycleTests(unittest.TestCase):
@@ -91,6 +92,7 @@ class DriverLifecycleTests(unittest.TestCase):
                 str(AIC_INSTALLER),
                 str(AUDIO_INSTALLER),
                 str(ROOT / "bc250-audio-fix/install.sh"),
+                str(ROOT / "bc250-audio-fix/build.sh"),
                 str(AUDIO_ROLLBACK),
                 str(AUDIO_PREREQS),
             ],
@@ -116,6 +118,24 @@ class DriverLifecycleTests(unittest.TestCase):
         self.assertIn("base-devel", prerequisites)
         for tool in ("make", "gcc", "ld", "patch", "pahole", "bc", "zstd"):
             self.assertIn(tool, environment)
+
+    def test_amdgpu_build_includes_dynamic_eight_core_metrics_layout(self):
+        builder = (ROOT / "bc250-audio-fix/build.sh").read_text(encoding="utf-8")
+        installer = (ROOT / "bc250-audio-fix/install.sh").read_text(encoding="utf-8")
+        rollback = AUDIO_ROLLBACK.read_text(encoding="utf-8")
+        patch = METRICS_PATCH.read_text(encoding="utf-8")
+
+        self.assertIn("bc250-cyan-skillfish-8core-metrics.patch", builder)
+        self.assertIn("CoreFrequency[8]", patch)
+        self.assertIn("CorePower[8]", patch)
+        self.assertIn("CoreTemperature[8]", patch)
+        self.assertIn("C0Residency[8]", patch)
+        self.assertIn("topology_is_primary_thread", patch)
+        self.assertIn("union cyan_skillfish_raw_metrics", patch)
+        self.assertIn("cyan_skillfish_has_eight_core_metrics", patch)
+        self.assertNotIn("smu->cpu_core_num", patch)
+        self.assertIn(".bc250-metrics-fix", installer)
+        self.assertIn(".bc250-metrics-fix", rollback)
 
 
 if __name__ == "__main__":

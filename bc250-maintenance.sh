@@ -43,7 +43,7 @@ component_label() {
         ram) echo "RAM / VRAM split" ;;
         compute) echo "Compute-unit manager" ;;
         mesh) echo "Per-game mesh shaders" ;;
-        audio) echo "AMDGPU audio fix" ;;
+        audio) echo "AMDGPU fixes" ;;
         aic) echo "AIC8800 WiFi / Bluetooth" ;;
         storage) echo "Persistent infrastructure" ;;
         *) die "Unknown component: $1" ;;
@@ -122,6 +122,7 @@ component_has_artifacts() {
         audio)
             compgen -G '/usr/lib/modules/*/updates/amdgpu.ko.zst' >/dev/null \
                 || compgen -G '/usr/lib/modules/*/updates/.bc250-audio-fix' >/dev/null \
+                || compgen -G '/usr/lib/modules/*/updates/.bc250-metrics-fix' >/dev/null \
                 || [[ -e /usr/lib/depmod.d/10-bc250-audio-fix.conf \
                     || -e /usr/lib/depmod.d/10-updates.conf ]]
             ;;

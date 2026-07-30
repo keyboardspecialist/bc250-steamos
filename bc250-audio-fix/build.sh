@@ -256,6 +256,17 @@ else
     die "patch neither applies nor reverses cleanly — tree has drifted; inspect by hand"
 fi
 
+step "apply Cyan Skillfish 6/8-core metrics patch"
+METRICS_PATCH=$HERE/bc250-cyan-skillfish-8core-metrics.patch
+if patch -p1 -R --dry-run -s -f < "$METRICS_PATCH" >/dev/null 2>&1; then
+    echo "metrics patch already applied"
+elif patch -p1 --dry-run -s -f < "$METRICS_PATCH" >/dev/null 2>&1; then
+    patch -p1 -s < "$METRICS_PATCH"
+    echo "metrics patch applied"
+else
+    die "metrics patch neither applies nor reverses cleanly — tree has drifted; inspect by hand"
+fi
+
 step "clock-gating patches (BC-250 idle power) — EXPERIMENTAL, opt-in"
 # Two layers, both off by default (a leftover copy from a previous build is
 # actively reversed, not tolerated):
