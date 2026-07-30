@@ -1,0 +1,41 @@
+name: Cracktro macOS checks
+
+on:
+  pull_request:
+    paths:
+      - "cracktro/**"
+      - "backend/**"
+      - "desktop-control/**"
+      - "core-unlock/**"
+      - "scripts/**"
+      - "tests/**"
+      - "acpi-tables/**"
+      - "aic8800/*.sh"
+      - "bc250-*.sh"
+      - "topology.sh"
+      - ".github/workflows/cracktro-checks.yml"
+      - ".github/workflows/cracktro-release.yml"
+      - ".github/workflows/release-artifacts.yml"
+  push:
+    branches:
+      - cracktro
+
+permissions:
+  contents: read
+
+jobs:
+  macos:
+    name: Native macOS build and tests
+    runs-on: macos-latest
+    env:
+      HOMEBREW_NO_AUTO_UPDATE: "1"
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Install native dependencies
+        run: brew install cmake ninja qt bash coreutils
+
+      - name: Build and verify Cracktro
+        run: "$(brew --prefix bash)/bin/bash" cracktro/build-macos.sh

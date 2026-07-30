@@ -65,6 +65,12 @@ class CracktroReleaseTests(unittest.TestCase):
                 for expected in (
                     "cracktro/bc250-cracktro",
                     "cracktro/install.sh",
+                    "cracktro/ASSET-LICENSE",
+                    "cracktro/tracks/Neon Bootloader.mp3",
+                    "cracktro/tracks/Neon Mirage.mp3",
+                    "cracktro/tracks/Neon Void.mp3",
+                    "cracktro/tracks/Static Horizon.mp3",
+                    "cracktro/tracks/System Override.mp3",
                     "cracktro/packaging/io.github.keyboardspecialist.bc250cracktro.desktop.in",
                     "desktop-control/shared-service-install.sh",
                     "desktop-control/service/bc250-control-service",
@@ -78,6 +84,7 @@ class CracktroReleaseTests(unittest.TestCase):
                 ):
                     self.assertIn(prefix + expected, names)
                 self.assertFalse(any("__pycache__" in name for name in names))
+                self.assertFalse(any(name.endswith(".DS_Store") for name in names))
                 mode = archive.getinfo(prefix + "cracktro/bc250-cracktro").external_attr >> 16
                 self.assertEqual(mode & 0o777, 0o755)
 
@@ -232,8 +239,34 @@ class CracktroReleaseTests(unittest.TestCase):
             "CRACKTRO_ARTIFACT_BASENAME",
             "cracktro core-unlock backend scripts topology.sh",
             "Cracktro asset redistribution is not yet cleared",
+            "Main release tags must point to commits on master",
         ):
             self.assertIn(expected, workflow)
+
+    def test_cracktro_release_has_isolated_branch_and_tag_namespace(self):
+        workflow = (ROOT / ".github/workflows/cracktro-release.yml").read_text(
+            encoding="utf-8"
+        )
+        for expected in (
+            '"cracktro-v*"',
+            "Cracktro release tags must point to commits on the cracktro branch",
+            "CRACKTRO_PROJECT_VERSION",
+            "scripts/stage-cracktro-runtime.py",
+            "Cracktro asset redistribution is not yet cleared",
+            "must be an annotated tag",
+            "--prerelease",
+        ):
+            self.assertIn(expected, workflow)
+        self.assertNotIn('tags:\n      - "v*"', workflow)
+        self.assertNotIn("workflow_dispatch", workflow)
+
+        cmake = (ROOT / "cracktro/CMakeLists.txt").read_text(encoding="utf-8")
+        self.assertIn("CRACKTRO_PROJECT_VERSION", cmake)
+
+        assets = (ROOT / "cracktro/ASSETS.md").read_text(encoding="utf-8")
+        self.assertIn("ASSET-LICENSE", assets)
+        self.assertIn("Cleared for inclusion", assets)
+        self.assertNotIn("Do not publish either asset in a release", assets)
 
 
 if __name__ == "__main__":

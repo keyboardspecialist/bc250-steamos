@@ -4,8 +4,9 @@
 
 Build a classic trainer/keygen-style desktop frontend for the BC-250 toolkit.
 The application will use the supplied artwork as a frameless window background,
-loop the supplied OGA soundtrack, and expose the core hardware controls through
-the existing privileged service boundary.
+play a bundled or user-selected music directory, and
+expose the core hardware controls through the existing privileged service
+boundary.
 
 Version one will include:
 
@@ -14,7 +15,7 @@ Version one will include:
 - CPU core-unlock status and actions
 - GPU frequency, load-target, and ramp controls
 - CPU overclock detection, application, and boot enablement
-- Music volume, mute, and application settings
+- Collapsible music library, waveform, transport, volume, and mute controls
 
 CEC, RAM split, drivers, mesh shaders, and maintenance operations are deferred,
 but the application structure should allow those pages to be added later.
@@ -34,13 +35,13 @@ host has the necessary Qt runtime, but its development headers are currently
 stripped. Building against an older Qt 6 release also gives the resulting
 binary a suitable compatibility baseline for the newer SteamOS Qt runtime.
 
-Produce one `bc250-cracktro` executable. Embed the QML, background image, and
-soundtrack as Qt resources with stable aliases:
+Produce one `bc250-cracktro` executable. Embed the QML and background image as
+Qt resources with stable aliases, and package the default MP3 library beside
+the executable under `tracks/`:
 
 ```text
 qrc:/qml/Main.qml
 qrc:/assets/background.png
-qrc:/assets/soundtrack.oga
 ```
 
 The application must remain an unprivileged D-Bus client. It must never run
@@ -68,7 +69,7 @@ cracktro/
 |   `-- io.github.keyboardspecialist.bc250cracktro.svg
 |-- tests/
 |-- ChatGPT Image Jul 29, 2026, 08_44_21 PM.png
-`-- bc250_unlocked_silicon_og_tweak_v12.oga
+`-- tracks/
 ```
 
 ## Window And Visual Design
@@ -80,24 +81,29 @@ cracktro/
 - Do not expose normal resize handles in version one.
 - Use `startSystemMove()` from noninteractive background regions so dragging
   works correctly under Wayland.
-- Provide custom minimize, close, mute, and refresh controls.
-- Keep the artwork on the left unobstructed and place the main controls in the
-  darker right side of the image.
+- Provide custom minimize, close, and refresh controls.
+- Keep the primary hardware controls in the darker right side of the image and
+  reserve the lower-left artwork for a collapsible translucent media deck.
 - Use cyan and magenta neon borders, restrained glow, scanlines, fixed-pitch
   typography, compact status lights, and a scrolling status ticker.
 - Use the system fixed-pitch font initially rather than adding an unverified
   third-party font dependency.
 - Include keyboard shortcuts: `F1` through `F4` for primary pages, `M` for
-  mute, `R` for refresh, and `Escape` for close.
+  mute, `P` for play/pause, `R` for refresh, and `Escape` for close.
 
 ## Soundtrack
 
-Use the supplied 55.65-second stereo Vorbis OGA through QtMultimedia:
+Use a dedicated native QtMultimedia controller:
 
 - Start playback when the application opens.
-- Loop with `MediaPlayer.Infinite`.
-- Provide visible mute and volume controls.
+- Scan a selected directory non-recursively for supported audio files.
+- Advance and wrap through the naturally sorted track list.
+- Default to the packaged `tracks/` directory and show an empty state when a
+  selected directory has no playable files.
+- Provide transport, track list, synchronized waveform, dedicated beat-energy
+  visualizer, mute, and volume controls in the lower-left media deck.
 - Persist volume and mute state with `QSettings`.
+- Persist the selected directory and current track.
 - Display a nonfatal status message if audio playback fails.
 
 Direct XM/MOD playback is deferred. The installed multimedia stack supports
@@ -149,7 +155,6 @@ until it can receive equivalent validation and rollback coverage.
 
 ### Setup
 
-- Soundtrack volume and mute
 - Manual refresh
 - Service availability and version
 - Toolkit path and capability diagnostics
@@ -364,7 +369,8 @@ an offscreen startup test before installation.
 - Correct compositor-managed window dragging
 - Scaling on 1280x800 and larger displays
 - Keyboard shortcuts and focus behavior
-- OGA playback, looping, volume, and mute persistence
+- Bundled and external directory playback, navigation, waveform, visualizer,
+  volume, and mute persistence
 - Polkit prompts associated with the application D-Bus sender
 - Read-only status before any hardware mutation
 - Conservative GPU control verification

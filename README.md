@@ -355,7 +355,8 @@ in [`desktop-control/README.md`](desktop-control/README.md).
 ## Cracktro Desktop Control
 
 [`cracktro/`](cracktro/) provides a standalone native Qt 6 frontend for status,
-GPU tuning, compute-unit routing, CPU controls, and the experimental core unlock.
+GPU tuning, compute-unit routing, CPU controls, the experimental core unlock,
+and a folder-backed music deck with synchronized waveform and beat visualizer.
 Install the prebuilt release artifact as the logged-in desktop user:
 
 ```bash
@@ -368,8 +369,8 @@ The artifact is self-contained: it includes the executable, installer, backend,
 shared service, persistence helpers, CPU core-unlock bundle, and topology helper.
 `status` and `uninstall` use the same path. User files are installed below
 `~/.local`; sudo is requested only for shared service registration.
-Release publication remains blocked while the publishing gate in
-[`cracktro/ASSETS.md`](cracktro/ASSETS.md) reports missing redistribution rights.
+The embedded artwork and soundtrack are released under the Unlicense; provenance
+and trademark notes are recorded in [`cracktro/ASSETS.md`](cracktro/ASSETS.md).
 
 The Plasma and Cracktro frontends share one root-owned service payload. Each
 installation records a root-owned `plasma.<uid>` or `cracktro.<uid>` marker.

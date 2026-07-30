@@ -1,0 +1,170 @@
+name: Build Cracktro prerelease
+
+on:
+  push:
+    tags:
+      - "cracktro-v*"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: cracktro-release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  release:
+    name: Build and publish Cracktro
+    runs-on: ubuntu-latest
+    env:
+      TAG_NAME: ${{ github.ref_name }}
+      ARTIFACT_BASENAME: bc250-${{ github.ref_name }}
+
+    steps:
+      - name: Check out Cracktro tag
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Validate release request
+        shell: bash
+        run: |
+          set -euo pipefail
+          VERSION=${TAG_NAME#cracktro-v}
+          if [[ ! "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "Tag must use cracktro-vMAJOR.MINOR.PATCH format." >&2
+            exit 1
+          fi
+          if [[ "$(git cat-file -t "refs/tags/$TAG_NAME")" != "tag" ]]; then
+            echo "$TAG_NAME must be an annotated tag." >&2
+            exit 1
+          fi
+          git fetch --force --tags origin
+          git fetch origin \
+            '+refs/heads/master:refs/remotes/origin/master' \
+            '+refs/heads/cracktro:refs/remotes/origin/cracktro'
+          if ! git merge-base --is-ancestor "$GITHUB_SHA" origin/cracktro; then
+            echo "Cracktro release tags must point to commits on the cracktro branch." >&2
+            exit 1
+          fi
+          if grep -q '^Do not publish either asset in a release' cracktro/ASSETS.md; then
+            echo "Cracktro asset redistribution is not yet cleared; see cracktro/ASSETS.md." >&2
+            exit 1
+          fi
+          echo "VERSION=$VERSION" >> "$GITHUB_ENV"
+
+      - name: Set reproducible source timestamp
+        run: echo "SOURCE_DATE_EPOCH=$(git log -1 --format=%ct)" >> "$GITHUB_ENV"
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.8"
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            acpica-tools cpio cmake ninja-build g++ \
+            qt6-base-dev qt6-base-dev-tools \
+            qt6-declarative-dev qt6-declarative-dev-tools \
+            qt6-multimedia-dev qt6-tools-dev-tools \
+            qml6-module-qt-labs-settings qml6-module-qtmultimedia \
+            qml6-module-qtqml-workerscript \
+            qml6-module-qtquick qml6-module-qtquick-controls \
+            qml6-module-qtquick-dialogs \
+            qml6-module-qtquick-templates \
+            qml6-module-qtquick-layouts qml6-module-qtquick-window \
+            qml6-module-qttest
+
+      - name: Configure Cracktro
+        run: |
+          cmake -S cracktro -B build/cracktro -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DBUILD_TESTING=ON \
+            -DCRACKTRO_PROJECT_VERSION="$VERSION"
+
+      - name: Build Cracktro
+        run: cmake --build build/cracktro --parallel
+
+      - name: Run Cracktro tests
+        env:
+          QT_QPA_PLATFORM: offscreen
+          QT_QUICK_BACKEND: software
+        run: |
+          ctest --test-dir build/cracktro --output-on-failure
+          cmake --build build/cracktro --target qml-lint
+          QT_MEDIA_BACKEND=mock build/cracktro/bc250-cracktro --mock --smoke-test
+
+      - name: Run service and release tests
+        run: |
+          PYTHONPATH=backend:backend/vendor \
+            python3 -m unittest discover -s backend/tests
+          PYTHONPATH=desktop-control/service:desktop-control/vendor:backend:backend/vendor \
+            python3 -m unittest discover -s desktop-control/service/tests
+          python3 -m unittest discover -s tests -p 'test_*.py'
+          node tests/test_qml_utils.cjs
+
+      - name: Package standalone Cracktro
+        run: |
+          python3 scripts/stage-cracktro-runtime.py \
+            --binary build/cracktro/bc250-cracktro \
+            --output release/bc250-cracktro \
+            --archive "${ARTIFACT_BASENAME}.zip" \
+            --sha256 "${ARTIFACT_BASENAME}.zip.sha256"
+
+      - name: Upload workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.ARTIFACT_BASENAME }}
+          path: |
+            ${{ env.ARTIFACT_BASENAME }}.zip
+            ${{ env.ARTIFACT_BASENAME }}.zip.sha256
+          if-no-files-found: error
+          retention-days: 90
+
+      - name: Prepare Cracktro release notes
+        shell: bash
+        run: |
+          set -euo pipefail
+          previous=$(git tag --list 'cracktro-v*' --merged "$GITHUB_SHA" \
+            --sort=-version:refname \
+            | awk -v current="$TAG_NAME" '$0 != current { print; exit }')
+          if [[ -n "$previous" ]]; then
+            range="$previous..$GITHUB_SHA"
+          else
+            base=$(git merge-base origin/master "$GITHUB_SHA")
+            range="$base..$GITHUB_SHA"
+          fi
+          {
+            echo "Cracktro branch prerelease built from \`$GITHUB_SHA\`."
+            echo
+            git log --no-merges --pretty='- %s (`%h`)' "$range"
+          } > cracktro-release-notes.md
+
+      - name: Publish GitHub prerelease
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if gh release view "$TAG_NAME" >/dev/null 2>&1; then
+            gh release upload "$TAG_NAME" \
+              "${ARTIFACT_BASENAME}.zip" \
+              "${ARTIFACT_BASENAME}.zip.sha256" \
+              --clobber
+          else
+            gh release create "$TAG_NAME" \
+              "${ARTIFACT_BASENAME}.zip" \
+              "${ARTIFACT_BASENAME}.zip.sha256" \
+              --verify-tag \
+              --prerelease \
+              --title "BC-250 Cracktro v$VERSION" \
+              --notes-file cracktro-release-notes.md
+          fi

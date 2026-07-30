@@ -1,7 +1,7 @@
 import QtQuick 2.15
 import QtQuick.Controls 2.15
 import QtQuick.Layouts 1.15
-import QtMultimedia 6.4
+import QtQuick.Dialogs 6.3
 import "components" as C
 import "pages" as Pages
 
@@ -30,8 +30,8 @@ ApplicationWindow {
     palette.highlight: "#22e7f2"
 
     function fitToScreen() {
-        var availableWidth = Screen.availableWidth > 0 ? Screen.availableWidth - 32 : 1200
-        var availableHeight = Screen.availableHeight > 0 ? Screen.availableHeight - 32 : 676
+        var availableWidth = Screen.desktopAvailableWidth > 0 ? Screen.desktopAvailableWidth - 32 : 1200
+        var availableHeight = Screen.desktopAvailableHeight > 0 ? Screen.desktopAvailableHeight - 32 : 676
         var nextWidth = Math.min(1200, availableWidth)
         var nextHeight = Math.round(nextWidth / designRatio)
         if (nextHeight > availableHeight) {
@@ -43,7 +43,9 @@ ApplicationWindow {
     }
 
     Component.onCompleted: fitToScreen()
-    onVisibilityChanged: bridge.visible = visibility !== Window.Hidden && visibility !== Window.Minimized
+    onVisibilityChanged: function(visibility) {
+        bridge.visible = visibility !== Window.Hidden && visibility !== Window.Minimized
+    }
     onCurrentPageChanged: bridge.statusPageActive = currentPage === 0
 
     Image {
@@ -58,7 +60,7 @@ ApplicationWindow {
         id: moveArea
         x: 0; y: 0
         width: root.width * 0.47
-        height: root.height
+        height: mediaPane.y
         acceptedButtons: Qt.LeftButton
         cursorShape: pressed ? Qt.ClosedHandCursor : Qt.OpenHandCursor
         onPressed: root.startSystemMove()
@@ -81,7 +83,7 @@ ApplicationWindow {
         width: root.width * 0.51
         height: root.height - 42
 
-        C.NeonPanel { anchors.fill: parent; accent: bridge.error ? "#ff4d8d" : "#22e7f2" }
+        C.NeonPanel { anchors.fill: parent; accent: bridge.error || mediaController.error ? "#ff4d8d" : "#22e7f2" }
 
         RowLayout {
             id: titleBar
@@ -92,7 +94,6 @@ ApplicationWindow {
                 Text { text: "BC-250 // UNLOCKED SILICON"; color: "#22e7f2"; font.family: "monospace"; font.pixelSize: 14; font.bold: true; font.letterSpacing: 1 }
                 Text { text: bridge.mockMode ? "ISOLATED MOCK LINK" : bridge.serviceAvailable ? "SYSTEM BUS LINKED" : "SYSTEM BUS OFFLINE"; color: bridge.serviceAvailable ? "#49ff9a" : "#ff4d8d"; font.family: "monospace"; font.pixelSize: 8 }
             }
-            C.NeonButton { text: bridge.muted ? "SND OFF" : "SND ON"; implicitWidth: 66; onClicked: bridge.muted = !bridge.muted; hint: "Mute soundtrack [M]" }
             C.NeonButton { text: "_"; implicitWidth: 32; onClicked: root.showMinimized(); hint: "Minimize" }
             C.NeonButton { text: "X"; implicitWidth: 32; accent: "#ef48bb"; onClicked: root.close(); hint: "Close [Esc]" }
         }
@@ -118,12 +119,12 @@ ApplicationWindow {
         Rectangle {
             id: messageBar
             x: 14; y: 87; width: parent.width - 28; height: 27
-            color: bridge.error ? "#481126dd" : bridge.notice ? "#102f32dd" : "#0c131bdd"
-            border.color: bridge.error ? "#ff4d8d" : bridge.busy ? "#ef48bb" : "#244f5a"
+            color: bridge.error || mediaController.error ? "#481126dd" : bridge.notice ? "#102f32dd" : "#0c131bdd"
+            border.color: bridge.error || mediaController.error ? "#ff4d8d" : bridge.busy ? "#ef48bb" : "#244f5a"
             clip: true
             Text {
                 anchors.fill: parent; anchors.margins: 6
-                text: bridge.busy ? "WORKING: " + bridge.busyLabel : bridge.error ? "ERROR: " + bridge.error : bridge.notice ? bridge.notice : "READY // read-only polling active"
+                text: bridge.busy ? "WORKING: " + bridge.busyLabel : bridge.error ? "ERROR: " + bridge.error : mediaController.error ? "AUDIO: " + mediaController.error : bridge.notice ? bridge.notice : "READY // read-only polling active"
                 textFormat: Text.PlainText
                 color: bridge.error ? "#ff8ab4" : bridge.busy ? "#ef80ce" : "#9cdbe0"
                 font.family: "monospace"; font.pixelSize: 9
@@ -167,20 +168,26 @@ ApplicationWindow {
         }
     }
 
-    MediaPlayer {
-        id: soundtrack
-        source: "qrc:/assets/soundtrack.oga"
-        loops: MediaPlayer.Infinite
-        audioOutput: AudioOutput { volume: bridge.muted ? 0 : bridge.volume }
-        onErrorOccurred: function(error, errorString) { bridge.reportAudioError(errorString) }
-        Component.onCompleted: play()
+    C.MediaPane {
+        id: mediaPane
+        z: 2
+        controller: mediaController
+        width: Math.min(root.width * 0.47, 440)
+        onDirectorySelectionRequested: folderDialog.open()
+    }
+
+    FolderDialog {
+        id: folderDialog
+        title: "Select a music folder"
+        onAccepted: mediaController.setDirectory(selectedFolder)
     }
 
     Shortcut { sequence: "F1"; onActivated: root.currentPage = 0 }
     Shortcut { sequence: "F2"; onActivated: root.currentPage = 1 }
     Shortcut { sequence: "F3"; onActivated: root.currentPage = 2 }
     Shortcut { sequence: "F4"; onActivated: root.currentPage = 3 }
-    Shortcut { sequence: "M"; onActivated: bridge.muted = !bridge.muted }
+    Shortcut { sequence: "M"; onActivated: mediaController.muted = !mediaController.muted }
+    Shortcut { sequence: "P"; onActivated: mediaController.togglePlayback() }
     Shortcut { sequence: "R"; onActivated: if (!bridge.busy) bridge.refresh() }
     Shortcut { sequence: "Escape"; onActivated: root.close() }
 

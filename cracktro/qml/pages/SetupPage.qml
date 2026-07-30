@@ -1,5 +1,4 @@
 import QtQuick 2.15
-import QtQuick.Controls 2.15
 import QtQuick.Layouts 1.15
 import "../components" as C
 
@@ -10,15 +9,6 @@ ColumnLayout {
     readonly property var snap: backend.snapshot || ({})
     readonly property var toolkit: snap.toolkit || ({})
     readonly property var unlock: backend.cpuUnlockStatus || ({})
-
-    C.SectionHeader { text: "Soundtrack" }
-    RowLayout {
-        Layout.fillWidth: true
-        C.NeonButton { text: backend.muted ? "UNMUTE" : "MUTE"; accent: backend.muted ? "#ff6aa2" : "#22e7f2"; onClicked: backend.muted = !backend.muted }
-        Slider { from: 0; to: 1; value: backend.volume; enabled: !backend.muted; Layout.fillWidth: true; onMoved: backend.volume = value }
-        Text { text: Math.round(backend.volume * 100) + "%"; color: "#d7e7ee"; font.family: "monospace"; font.pixelSize: 10; Layout.preferredWidth: 36 }
-    }
-    Text { text: "Volume and mute are stored in per-user QSettings."; color: "#718896"; font.family: "monospace"; font.pixelSize: 9 }
 
     C.SectionHeader { text: "Service diagnostics" }
     C.StatusRow { label: "Connection"; value: backend.serviceAvailable ? "Available" : "Unavailable"; health: backend.serviceAvailable ? 1 : -1 }

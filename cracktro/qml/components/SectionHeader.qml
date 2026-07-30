@@ -16,5 +16,5 @@ ColumnLayout {
         font.capitalization: Font.AllUppercase
         font.letterSpacing: 1.3
     }
-    Rectangle { color: "#ef48bb"; opacity: 0.65; height: 1; Layout.fillWidth: true }
+    Rectangle { color: "#ef48bb"; opacity: 0.65; implicitHeight: 1; Layout.fillWidth: true }
 }

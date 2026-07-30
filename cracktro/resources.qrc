@@ -3,6 +3,9 @@
         <file alias="qml/Main.qml">qml/Main.qml</file>
         <file alias="qml/components/ConfirmDialog.qml">qml/components/ConfirmDialog.qml</file>
         <file alias="qml/components/MetricTile.qml">qml/components/MetricTile.qml</file>
+        <file alias="qml/components/AudioWaveform.qml">qml/components/AudioWaveform.qml</file>
+        <file alias="qml/components/AudioVisualizer.qml">qml/components/AudioVisualizer.qml</file>
+        <file alias="qml/components/MediaPane.qml">qml/components/MediaPane.qml</file>
         <file alias="qml/components/NeonButton.qml">qml/components/NeonButton.qml</file>
         <file alias="qml/components/NeonPanel.qml">qml/components/NeonPanel.qml</file>
         <file alias="qml/components/SectionHeader.qml">qml/components/SectionHeader.qml</file>
@@ -13,6 +16,5 @@
         <file alias="qml/pages/CpuPage.qml">qml/pages/CpuPage.qml</file>
         <file alias="qml/pages/SetupPage.qml">qml/pages/SetupPage.qml</file>
         <file alias="assets/background.png">ChatGPT Image Jul 29, 2026, 08_44_21 PM.png</file>
-        <file alias="assets/soundtrack.oga">bc250_unlocked_silicon_og_tweak_v12.oga</file>
     </qresource>
 </RCC>

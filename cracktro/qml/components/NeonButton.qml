@@ -8,7 +8,7 @@ Button {
     implicitHeight: 32
     leftPadding: 10
     rightPadding: 10
-    font.family: Qt.application.font.family
+    font.family: "monospace"
     font.pixelSize: 11
     font.bold: true
 

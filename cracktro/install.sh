@@ -13,6 +13,8 @@ DESKTOP_FILE="$HOME/.local/share/applications/$APP_ID.desktop"
 ICON_FILE="$HOME/.local/share/icons/hicolor/scalable/apps/$APP_ID.svg"
 DESKTOP_TEMPLATE="$SOURCE_DIR/packaging/$APP_ID.desktop.in"
 ICON_SOURCE="$SOURCE_DIR/packaging/$APP_ID.svg"
+TRACKS_SOURCE="$SOURCE_DIR/tracks"
+APP_TRACKS="$APP_DIR/tracks"
 OWNER_VALUE="schema=1;owner=$APP_ID"
 
 log() { echo "[bc250-cracktro] $*"; }
@@ -62,8 +64,9 @@ user_install_owned() {
     [[ -d "$APP_DIR" && ! -L "$APP_DIR" \
         && -f "$OWNER_FILE" && ! -L "$OWNER_FILE" \
         && -f "$APP_BIN" && ! -L "$APP_BIN" \
+        && -d "$APP_TRACKS" && ! -L "$APP_TRACKS" \
         && -f "$ICON_FILE" && ! -L "$ICON_FILE" ]] || return 1
-    for path in "$APP_DIR" "$OWNER_FILE" "$APP_BIN" "$DESKTOP_FILE" "$ICON_FILE"; do
+    for path in "$APP_DIR" "$OWNER_FILE" "$APP_BIN" "$APP_TRACKS" "$DESKTOP_FILE" "$ICON_FILE"; do
         [[ "$(stat -Lc '%u' "$path")" == "$uid" ]] || return 1
     done
     [[ "$(cat "$OWNER_FILE")" == "$OWNER_VALUE" ]] && desktop_owned
@@ -99,7 +102,7 @@ legacy_client() {
 }
 
 install_user_files() {
-    local binary="$1" stage old_app="" desktop_tmp icon_tmp
+    local binary="$1" stage old_app="" desktop_tmp icon_tmp track track_count=0
     install -d -m 0755 "${APP_DIR%/*}" "${DESKTOP_FILE%/*}" "${ICON_FILE%/*}"
     [[ ! -L "${APP_DIR%/*}" && ! -L "${DESKTOP_FILE%/*}" \
         && ! -L "${ICON_FILE%/*}" ]] || die "Refusing symlinked user installation directories."
@@ -108,6 +111,15 @@ install_user_files() {
     icon_tmp=$(mktemp "${ICON_FILE%/*}/.bc250-cracktro.XXXXXX")
     trap 'rm -rf "$stage"; rm -f "$desktop_tmp" "$icon_tmp"' RETURN
     install -m 0755 "$binary" "$stage/bc250-cracktro"
+    [[ -d "$TRACKS_SOURCE" && ! -L "$TRACKS_SOURCE" ]] \
+        || die "Bundled tracks directory is missing or unsafe: $TRACKS_SOURCE"
+    install -d -m 0755 "$stage/tracks"
+    for track in "$TRACKS_SOURCE"/*.mp3; do
+        [[ -f "$track" && ! -L "$track" ]] || continue
+        install -m 0644 "$track" "$stage/tracks/${track##*/}"
+        track_count=$((track_count + 1))
+    done
+    [[ $track_count -gt 0 ]] || die "Bundled tracks directory contains no MP3 files."
     printf '%s\n' "$OWNER_VALUE" > "$stage/.bc250-cracktro-owner"
     chmod 0644 "$stage/.bc250-cracktro-owner"
     chmod 0755 "$stage"

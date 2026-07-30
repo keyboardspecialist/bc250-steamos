@@ -1,4 +1,5 @@
 #include "Bc250Bridge.h"
+#include "MediaController.h"
 
 #include <QGuiApplication>
 #include <QQmlApplicationEngine>
@@ -22,8 +23,10 @@ int main(int argc, char *argv[])
     const bool smokeTest = arguments.contains(QStringLiteral("--smoke-test"));
 
     Bc250Bridge bridge(mockMode);
+    MediaController mediaController;
     QQmlApplicationEngine engine;
     engine.rootContext()->setContextProperty(QStringLiteral("bridge"), &bridge);
+    engine.rootContext()->setContextProperty(QStringLiteral("mediaController"), &mediaController);
     engine.rootContext()->setContextProperty(QStringLiteral("applicationVersion"),
                                               application.applicationVersion());
     QObject::connect(&engine, &QQmlApplicationEngine::objectCreationFailed,

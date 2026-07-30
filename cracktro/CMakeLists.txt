@@ -1,6 +1,10 @@
 cmake_minimum_required(VERSION 3.22)
 
-project(bc250-cracktro VERSION 1.0.0 LANGUAGES CXX)
+set(CRACKTRO_PROJECT_VERSION "1.0.0" CACHE STRING "BC-250 Cracktro semantic version")
+if(NOT CRACKTRO_PROJECT_VERSION MATCHES "^[0-9]+\\.[0-9]+\\.[0-9]+$")
+    message(FATAL_ERROR "CRACKTRO_PROJECT_VERSION must use MAJOR.MINOR.PATCH format")
+endif()
+project(bc250-cracktro VERSION "${CRACKTRO_PROJECT_VERSION}" LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -14,6 +18,8 @@ add_executable(bc250-cracktro
     src/main.cpp
     src/Bc250Bridge.cpp
     src/Bc250Bridge.h
+    src/MediaController.cpp
+    src/MediaController.h
     resources.qrc
 )
 
@@ -42,6 +48,19 @@ if(BUILD_TESTING)
         target_include_directories(bc250-bridge-tests PRIVATE src)
         target_link_libraries(bc250-bridge-tests PRIVATE Qt6::Core Qt6::DBus Qt6::Test)
         add_test(NAME bridge-native COMMAND bc250-bridge-tests)
+
+        add_executable(media-controller-tests
+            tests/tst_MediaController.cpp
+            src/MediaController.cpp
+            src/MediaController.h
+        )
+        target_include_directories(media-controller-tests PRIVATE src)
+        target_link_libraries(media-controller-tests PRIVATE
+            Qt6::Core
+            Qt6::Multimedia
+            Qt6::Test
+        )
+        add_test(NAME media-native COMMAND media-controller-tests)
     endif()
 endif()
 
@@ -61,11 +80,7 @@ file(GLOB_RECURSE CRACKTRO_QML_FILES CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_D
 if(QMLLINT_EXECUTABLE)
     add_custom_target(qml-lint
         COMMAND "${QMLLINT_EXECUTABLE}"
-            --property disable
-            --type disable
             --unqualified disable
-            --deferred-property-id disable
-            --plugin disable
             ${CRACKTRO_QML_FILES}
         WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
         COMMENT "Linting cracktro QML"
@@ -86,7 +101,7 @@ if(BUILD_TESTING AND QMLTESTRUNNER_EXECUTABLE)
             -platform offscreen
     )
     set_tests_properties(qml-components PROPERTIES
-        ENVIRONMENT "QT_QUICK_BACKEND=software"
+        ENVIRONMENT "QT_QUICK_BACKEND=software;QT_QUICK_CONTROLS_STYLE=Fusion"
     )
     add_custom_target(qml-tests
         COMMAND "${CMAKE_CTEST_COMMAND}" --output-on-failure -R "^qml-components$"

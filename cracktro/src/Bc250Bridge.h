@@ -2,7 +2,6 @@
 
 #include <QDBusConnection>
 #include <QObject>
-#include <QSettings>
 #include <QTimer>
 #include <QVariantList>
 #include <QVariantMap>
@@ -30,8 +29,6 @@ class Bc250Bridge final : public QObject
     Q_PROPERTY(QVariantMap cpuUnlockStatus READ cpuUnlockStatus NOTIFY cpuUnlockStatusChanged)
     Q_PROPERTY(QString error READ error NOTIFY errorChanged)
     Q_PROPERTY(QString notice READ notice NOTIFY noticeChanged)
-    Q_PROPERTY(double volume READ volume WRITE setVolume NOTIFY volumeChanged)
-    Q_PROPERTY(bool muted READ muted WRITE setMuted NOTIFY mutedChanged)
 
 public:
     explicit Bc250Bridge(bool mockMode = false, QObject *parent = nullptr);
@@ -53,13 +50,9 @@ public:
     QVariantMap cpuUnlockStatus() const { return m_cpuUnlockStatus; }
     QString error() const { return m_error; }
     QString notice() const { return m_notice; }
-    double volume() const { return m_volume; }
-    bool muted() const { return m_muted; }
 
     void setVisible(bool visible);
     void setStatusPageActive(bool active);
-    void setVolume(double volume);
-    void setMuted(bool muted);
 
     Q_INVOKABLE void refresh();
     Q_INVOKABLE void sampleTelemetry();
@@ -72,7 +65,6 @@ public:
     Q_INVOKABLE void cpuUnlockAction(const QString &action);
     Q_INVOKABLE void cancelOperation();
     Q_INVOKABLE void clearMessage();
-    Q_INVOKABLE void reportAudioError(const QString &message);
 
     static QVariantMap parseJsonObject(const QByteArray &json, QString *error = nullptr);
     static QString sanitizeError(const QString &message);
@@ -90,8 +82,6 @@ signals:
     void cpuUnlockStatusChanged();
     void errorChanged();
     void noticeChanged();
-    void volumeChanged();
-    void mutedChanged();
     void operationFinished(bool success, const QString &message);
 
 private:
@@ -118,7 +108,6 @@ private:
     QDBusConnection m_bus;
     QDBusInterface *m_interface = nullptr;
     QDBusServiceWatcher *m_serviceWatcher = nullptr;
-    QSettings m_settings;
     QTimer m_snapshotTimer;
     QTimer m_telemetryTimer;
     QTimer m_operationTimer;
@@ -146,6 +135,4 @@ private:
     QVariantMap m_cpuUnlockStatus;
     QString m_error;
     QString m_notice;
-    double m_volume = 0.55;
-    bool m_muted = false;
 };

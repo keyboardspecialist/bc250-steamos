@@ -10,7 +10,7 @@ RowLayout {
     spacing: 7
 
     Rectangle {
-        width: 6; height: 6; radius: 3
+        implicitWidth: 6; implicitHeight: 6; radius: 3
         color: root.health > 0 ? "#49ff9a" : root.health < 0 ? "#ff4d8d" : "#22e7f2"
         opacity: root.health === 0 ? 0.55 : 1
     }
@@ -31,7 +31,7 @@ RowLayout {
         font.pixelSize: 10
         font.bold: true
         horizontalAlignment: Text.AlignRight
-        Layout.maximumWidth: root.width * 0.58
+        Layout.fillWidth: true
         elide: Text.ElideRight
     }
 }

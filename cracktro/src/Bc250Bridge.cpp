@@ -12,8 +12,6 @@
 #include <QRegularExpression>
 #include <QUuid>
 
-#include <algorithm>
-
 namespace {
 constexpr auto Service = "io.github.keyboardspecialist.BC250Control1";
 constexpr auto ObjectPath = "/io/github/keyboardspecialist/BC250Control1";
@@ -29,11 +27,7 @@ Bc250Bridge::Bc250Bridge(bool mockMode, QObject *parent)
     : QObject(parent)
     , m_mockMode(mockMode)
     , m_bus(QDBusConnection::systemBus())
-    , m_settings(QStringLiteral("keyboardspecialist"), QStringLiteral("bc250-cracktro"))
 {
-    m_volume = std::clamp(m_settings.value(QStringLiteral("audio/volume"), 0.55).toDouble(), 0.0, 1.0);
-    m_muted = m_settings.value(QStringLiteral("audio/muted"), false).toBool();
-
     m_snapshotTimer.setInterval(10000);
     m_telemetryTimer.setInterval(1000);
     m_operationTimer.setInterval(750);
@@ -124,25 +118,6 @@ void Bc250Bridge::setStatusPageActive(bool active)
     emit statusPageActiveChanged();
     if (active && m_visible)
         sampleTelemetry();
-}
-
-void Bc250Bridge::setVolume(double volume)
-{
-    volume = std::clamp(volume, 0.0, 1.0);
-    if (qFuzzyCompare(m_volume, volume))
-        return;
-    m_volume = volume;
-    m_settings.setValue(QStringLiteral("audio/volume"), m_volume);
-    emit volumeChanged();
-}
-
-void Bc250Bridge::setMuted(bool muted)
-{
-    if (m_muted == muted)
-        return;
-    m_muted = muted;
-    m_settings.setValue(QStringLiteral("audio/muted"), m_muted);
-    emit mutedChanged();
 }
 
 void Bc250Bridge::refresh()
@@ -518,13 +493,6 @@ void Bc250Bridge::clearMessage()
 {
     setError({});
     setNotice({});
-}
-
-void Bc250Bridge::reportAudioError(const QString &message)
-{
-    const QString detail = sanitizeError(message);
-    setNotice(detail.isEmpty() ? QStringLiteral("Soundtrack playback is unavailable.")
-                               : QStringLiteral("Soundtrack: ") + detail);
 }
 
 void Bc250Bridge::setServiceAvailable(bool available)

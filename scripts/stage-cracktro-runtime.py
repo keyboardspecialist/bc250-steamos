@@ -55,7 +55,7 @@ def copy_tree(source: Path, destination: Path) -> None:
         raise SystemExit("required runtime directory is missing or unsafe: {}".format(source))
     destination.mkdir(parents=True, exist_ok=True)
     for child in sorted(source.iterdir(), key=lambda path: path.name):
-        if child.name in {"__pycache__", "out"} or child.suffix in {".pyc", ".pyo"}:
+        if child.name in {".DS_Store", "__pycache__", "out"} or child.suffix in {".pyc", ".pyo"}:
             continue
         target = destination / child.name
         if child.is_symlink():
@@ -93,7 +93,8 @@ def stage(binary: Path, output: Path, epoch: int) -> None:
         copy_file(CRACKTRO_SOURCE / "install.sh", temporary / "cracktro/install.sh")
         copy_file(binary, temporary / "cracktro/bc250-cracktro")
         copy_tree(CRACKTRO_SOURCE / "packaging", temporary / "cracktro/packaging")
-        for optional in ("README.md", "ASSETS.md"):
+        copy_tree(CRACKTRO_SOURCE / "tracks", temporary / "cracktro/tracks")
+        for optional in ("README.md", "ASSETS.md", "ASSET-LICENSE"):
             source = CRACKTRO_SOURCE / optional
             if source.is_file() and not source.is_symlink():
                 copy_file(source, temporary / "cracktro" / optional)

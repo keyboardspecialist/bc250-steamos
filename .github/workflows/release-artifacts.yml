@@ -25,6 +25,18 @@ jobs:
     steps:
       - name: Check out tag
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Verify main release ancestry
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch origin '+refs/heads/master:refs/remotes/origin/master'
+          if ! git merge-base --is-ancestor "$GITHUB_SHA" origin/master; then
+            echo "Main release tags must point to commits on master." >&2
+            exit 1
+          fi
 
       - name: Set reproducible source timestamp
         run: echo "SOURCE_DATE_EPOCH=$(git log -1 --format=%ct)" >> "$GITHUB_ENV"
@@ -45,6 +57,7 @@ jobs:
             qml6-module-qt-labs-settings qml6-module-qtmultimedia \
             qml6-module-qtqml-workerscript \
             qml6-module-qtquick qml6-module-qtquick-controls \
+            qml6-module-qtquick-dialogs \
             qml6-module-qtquick-templates \
             qml6-module-qtquick-layouts qml6-module-qtquick-window \
             qml6-module-qttest

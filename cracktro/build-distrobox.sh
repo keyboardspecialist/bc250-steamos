@@ -19,7 +19,7 @@ check='command -v cmake >/dev/null && command -v ninja >/dev/null && command -v 
 if ! distrobox enter "${container}" -- bash -lc "${check}"; then
     printf '%s\n' "The build container is missing required tools. Run:" >&2
     printf '  distrobox enter %q -- sudo apt update\n' "${container}" >&2
-    printf '  distrobox enter %q -- sudo apt install cmake ninja-build g++ pkg-config qt6-base-dev qt6-declarative-dev qt6-multimedia-dev qt6-tools-dev qt6-tools-dev-tools qml6-module-qtqml-workerscript qml6-module-qtquick-controls qml6-module-qtquick-templates qml6-module-qtmultimedia qml6-module-qttest\n' "${container}" >&2
+    printf '  distrobox enter %q -- sudo apt install cmake ninja-build g++ pkg-config qt6-base-dev qt6-declarative-dev qt6-multimedia-dev qt6-tools-dev qt6-tools-dev-tools qml6-module-qtqml-workerscript qml6-module-qtquick-controls qml6-module-qtquick-dialogs qml6-module-qtquick-templates qml6-module-qtmultimedia qml6-module-qttest\n' "${container}" >&2
     printf '%s\n' "Then rerun this helper. It never modifies the SteamOS root." >&2
     exit 2
 fi
