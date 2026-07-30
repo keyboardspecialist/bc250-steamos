@@ -175,12 +175,30 @@ python3 "$SRC_DIR/../scripts/stage-decky-runtime.py"
 # Only the runtime files ship; node_modules/src/tests stay in the checkout.
 
 log "Installing root-owned CPU tuning helper (sudo)"
+for required in "$SRC_DIR/../bc250-power.sh" \
+    "$SRC_DIR/../bc250-storage.sh" \
+    "$SRC_DIR/../bc250-update-persistence.sh" \
+    "$SRC_DIR/../acpi-tables/SSDT-CST.dsl" \
+    "$SRC_DIR/../acpi-tables/SSDT-PST.dsl"; do
+    [[ -f "$required" && ! -L "$required" ]] \
+        || die "required root-helper source is missing or unsafe: $required"
+done
 sudo bash "$SRC_DIR/../bc250-storage.sh" install
-sudo install -d -m 0755 "$ROOT_HELPER_DIR/smu-oc-patches" "$ROOT_STATE_DIR" \
+sudo install -d -m 0755 "$ROOT_HELPER_DIR/acpi-tables" \
+    "$ROOT_HELPER_DIR/smu-oc-patches" "$ROOT_STATE_DIR" \
     /var/lib/bc250-control/governor
 sudo install -m 0755 "$SRC_DIR/../bc250-power.sh" "$ROOT_HELPER_DIR/bc250-power.sh"
+sudo install -m 0755 "$SRC_DIR/../bc250-storage.sh" "$ROOT_HELPER_DIR/bc250-storage.sh"
 sudo install -m 0755 "$SRC_DIR/../bc250-update-persistence.sh" "$ROOT_HELPER_DIR/bc250-update-persistence.sh"
+sudo install -m 0644 "$SRC_DIR/../acpi-tables/SSDT-CST.dsl" \
+    "$ROOT_HELPER_DIR/acpi-tables/SSDT-CST.dsl"
+sudo install -m 0644 "$SRC_DIR/../acpi-tables/SSDT-PST.dsl" \
+    "$ROOT_HELPER_DIR/acpi-tables/SSDT-PST.dsl"
 sudo install -m 0644 "$SRC_DIR"/../smu-oc-patches/* "$ROOT_HELPER_DIR/smu-oc-patches/"
+if sudo systemctl is-enabled bc250-acpi-heal.service >/dev/null 2>&1; then
+    log "Refreshing universal ACPI tables (sudo; reboot required)"
+    sudo bash "$ROOT_HELPER_DIR/bc250-power.sh" acpi
+fi
 if sudo systemctl is-enabled cyan-skillfish-governor-smu.service >/dev/null 2>&1; then
     log "Refreshing GPU governor boot integration (sudo)"
     sudo bash "$ROOT_HELPER_DIR/bc250-power.sh" enable

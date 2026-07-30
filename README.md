@@ -206,6 +206,10 @@ sudo ./bc250-power.sh
 | `sudo ./bc250-power.sh status` | Show clocks, power states, temperatures, and services |
 
 Reboot after installing the ACPI tables.
+The packaged universal tables cover every logical CPU in both the factory
+6-core/12-thread and unlocked 8-core/16-thread topologies.
+Run the `acpi` command once after upgrading an older toolkit installation; its
+versioned payload cache will rebuild and request a reboot.
 
 ### GPU Tuning
 
@@ -523,7 +527,7 @@ Run the normal component setup commands afterward to regenerate services for the
 | BC-250 40 CU Unlock | [Repository](https://github.com/duggasco/bc250-40cu-unlock) | Original Arch implementation for `bc250-40cu.sh` |
 | BC-250 CU Live Manager | [Repository](https://github.com/WinnieLV/bc250-cu-live-manager) · [Script](https://github.com/WinnieLV/bc250-cu-live-manager/blob/main/bc250-cu-live-manager.sh) | `bc250-40cu.sh` |
 | UMR | [Repository](https://gitlab.freedesktop.org/tomstdenis/umr) | `bc250-40cu.sh`, `bc250-cu-status.sh` |
-| BC-250 ACPI Fix | [Repository](https://github.com/bc250-collective/bc250-acpi-fix) · [SSDT-CST](https://github.com/bc250-collective/bc250-acpi-fix/blob/main/SSDT-CST.aml) · [SSDT-PST](https://github.com/bc250-collective/bc250-acpi-fix/blob/main/SSDT-PST.aml) | `bc250-power.sh` |
+| BC-250 ACPI Fix | [Original tables](https://github.com/bc250-collective/bc250-acpi-fix) · [8-core update](https://github.com/mendesrr/bc250-acpi-fix-updated-8c) · [guarded universal sources](acpi-tables/) | `bc250-power.sh` |
 | Cyan Skillfish Governor | [Repository](https://github.com/filippor/cyan-skillfish-governor/tree/smu) · [Performance-mode script](https://github.com/filippor/cyan-skillfish-governor/blob/smu/scripts/cyan-skillfish-performance-mode) | `bc250-power.sh` |
 | BC-250 SMU OC | [Repository](https://github.com/bc250-collective/bc250_smu_oc) | `bc250-power.sh` |
 | BC-250 CPU Core Unlock | [Repository](https://github.com/rw-r-r-0644/bc250-core-unlock) | Original SMU method and helper adapted by `bc250-power.sh` |

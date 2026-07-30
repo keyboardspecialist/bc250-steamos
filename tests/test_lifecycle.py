@@ -98,6 +98,8 @@ source "$script" >/dev/null
 require_root() { :; }
 reset_cpu_stock_live() { return 0; }
 remove_acpi_boot_override() { return 0; }
+acpi_lifecycle_lock() { :; }
+acpi_lifecycle_unlock() { :; }
 remove_update_persistence() { rm -f "$POWER_KEEP_FILE"; }
 core_unlock_lifecycle_lock() { :; }
 core_unlock_operation_lock() { :; }

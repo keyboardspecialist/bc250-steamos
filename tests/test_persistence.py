@@ -401,10 +401,11 @@ grep -Fxq "daemon-reload" "$SYSTEMCTL_LOG"
             "pacman-key --populate",
         ):
             self.assertIn(expected, source)
-        acpi = source.index("cmd_acpi()")
+        acpi = source.index("ensure_acpi_build_tools()")
         populate = source.index("prepare_pacman_keyring", acpi)
-        install = source.index("pacman -Sy --noconfirm --needed cpio", acpi)
+        install = source.index('pacman -Sy --noconfirm --needed "${packages[@]}"', acpi)
         self.assertLess(populate, install)
+        self.assertIn("packages+=(acpica)", source)
         self.assertNotIn("pacman-key --refresh-keys", source)
         self.assertNotIn("SigLevel = Never", source)
 

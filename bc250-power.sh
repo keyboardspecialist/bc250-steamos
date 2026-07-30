@@ -3,7 +3,7 @@
 #
 # Complete power-management setup for the BC-250 on SteamOS 3.8.x:
 #
-#   ACPI fix (bc250-collective/bc250-acpi-fix):
+#   ACPI fix (bc250-collective + mendesrr, guarded universal tables):
 #     SSDT-CST -> CPU C-states (C1/C2/C3 idle sleep)
 #     SSDT-PST -> CPU P-states (800-3200 MHz cpufreq scaling)
 #     Loaded as an early-initrd ACPI override via GRUB. The BC-250 BIOS
@@ -53,9 +53,13 @@ ACPI_DIR="$ROOT_DATA_DIR/acpi"
 CPIO_MASTER="$ACPI_DIR/acpi_override.cpio"
 CPIO_BOOT="/boot/acpi_override.cpio"
 ACPI_READY="$ACPI_DIR/boot-ready"
+ACPI_PAYLOAD_MARKER="$ACPI_DIR/payload-version"
+ACPI_PAYLOAD_VERSION="universal-6c8c-v1"
+ACPI_TABLE_DIR="${BC250_ACPI_TABLE_DIR:-$SCRIPT_DIR/acpi-tables}"
+ACPI_LIFECYCLE_LOCK="/run/lock/bc250-acpi.lock"
+PCI_DEVICES_ROOT="${BC250_PCI_DEVICES_ROOT:-/sys/bus/pci/devices}"
 GRUB_CFG="/efi/EFI/steamos/grub.cfg"
 GRUB_ACPI_DEFAULT="/etc/default/grub.d/bc250-acpi.cfg"
-ACPI_RAW_BASE="https://raw.githubusercontent.com/bc250-collective/bc250-acpi-fix/main"
 
 GOV_BIN="$BIN_DIR/cyan-skillfish-governor-smu"
 PERF_BIN="$BIN_DIR/cyan-skillfish-performance-mode"
@@ -228,12 +232,16 @@ resume_governor() {
 }
 
 TEMP_DIRS=()
+TEMP_FILES=()
 cleanup() {
-    local temp_dir
+    local temp_dir temp_file
     tui_show_cursor
     resume_governor || true
     for temp_dir in "${TEMP_DIRS[@]-}"; do
         [[ -z "$temp_dir" ]] || rm -rf "$temp_dir"
+    done
+    for temp_file in "${TEMP_FILES[@]-}"; do
+        [[ -z "$temp_file" ]] || rm -f "$temp_file"
     done
     relock_rootfs || true
 }
@@ -349,6 +357,7 @@ current_os_build() {
 
 acpi_boot_ready() {
     local ready=""
+    acpi_payload_current || return 1
     [[ -f "$CPIO_MASTER" && -f "$CPIO_BOOT" && -f "$ACPI_READY" ]] || return 1
     cmp -s "$CPIO_MASTER" "$CPIO_BOOT" || return 1
     IFS= read -r ready < "$ACPI_READY" || return 1
@@ -430,40 +439,141 @@ badge_oc_live() {   # live CPU voltage, for the status row
 }
 
 # ============================== ACPI fix ==================================
+bc250_platform_present() {
+    local path vendor device
+    for path in "$PCI_DEVICES_ROOT"/*; do
+        [[ -r "$path/vendor" && -r "$path/device" ]] || continue
+        IFS= read -r vendor < "$path/vendor" || continue
+        IFS= read -r device < "$path/device" || continue
+        [[ "${vendor,,}" == 0x1002 && "${device,,}" == 0x13fe ]] && return 0
+    done
+    return 1
+}
+
+acpi_source_digest() {
+    local table_dir="${1:-$ACPI_TABLE_DIR}" cst pst
+    [[ -f "$table_dir/SSDT-CST.dsl" && ! -L "$table_dir/SSDT-CST.dsl" \
+        && -f "$table_dir/SSDT-PST.dsl" && ! -L "$table_dir/SSDT-PST.dsl" ]] \
+        || return 1
+    cst=$(sha256sum "$table_dir/SSDT-CST.dsl" | awk '{print $1}')
+    pst=$(sha256sum "$table_dir/SSDT-PST.dsl" | awk '{print $1}')
+    printf '%s\n%s\n' "$cst" "$pst" | sha256sum | awk '{print $1}'
+}
+
+acpi_lifecycle_lock() {
+    command -v flock >/dev/null 2>&1 \
+        || { warn "flock is required for safe ACPI lifecycle changes."; return 1; }
+    exec 7> "$ACPI_LIFECYCLE_LOCK" \
+        || { warn "Could not open $ACPI_LIFECYCLE_LOCK"; return 1; }
+    flock 7 \
+        || { exec 7>&-; warn "Could not lock $ACPI_LIFECYCLE_LOCK"; return 1; }
+}
+
+acpi_lifecycle_unlock() {
+    flock -u 7 2>/dev/null || true
+    exec 7>&-
+}
+
+acpi_payload_current() {
+    local installed="" source_expected="" archive_expected="" extra=""
+    local source_actual archive_actual
+    [[ -f "$CPIO_MASTER" && ! -L "$CPIO_MASTER" \
+        && -f "$ACPI_PAYLOAD_MARKER" && ! -L "$ACPI_PAYLOAD_MARKER" ]] \
+        || return 1
+    read -r installed source_expected archive_expected extra \
+        < "$ACPI_PAYLOAD_MARKER" || return 1
+    [[ "$installed" == "$ACPI_PAYLOAD_VERSION" && -z "$extra" \
+        && "$source_expected" =~ ^[0-9a-f]{64}$ \
+        && "$archive_expected" =~ ^[0-9a-f]{64}$ ]] || return 1
+    source_actual=$(acpi_source_digest) || return 1
+    archive_actual=$(sha256sum "$CPIO_MASTER" | awk '{print $1}')
+    [[ "$source_actual" == "$source_expected" \
+        && "$archive_actual" == "$archive_expected" ]]
+}
+
+ensure_acpi_build_tools() {
+    local packages=()
+    command -v cpio >/dev/null 2>&1 || packages+=(cpio)
+    command -v iasl >/dev/null 2>&1 || packages+=(acpica)
+    [[ ${#packages[@]} -gt 0 ]] || return 0
+
+    unlock_rootfs
+    prepare_pacman_keyring
+    pacman -Sy --noconfirm --needed "${packages[@]}" \
+        || die "ACPI build tools unavailable and pacman install failed."
+}
+
+build_acpi_payload() {
+    local work archive_tmp marker_tmp table output source_hash archive_hash
+    for table in SSDT-CST.dsl SSDT-PST.dsl; do
+        [[ -f "$ACPI_TABLE_DIR/$table" && ! -L "$ACPI_TABLE_DIR/$table" ]] \
+            || die "Universal ACPI table source missing or unsafe: $ACPI_TABLE_DIR/$table"
+    done
+
+    ensure_acpi_build_tools
+    work=$(mktemp -d /tmp/bc250-acpi.XXXXXX)
+    TEMP_DIRS+=("$work")
+    mkdir -p "$work/kernel/firmware/acpi"
+    install -m 0644 "$ACPI_TABLE_DIR/SSDT-CST.dsl" "$work/SSDT-CST.dsl"
+    install -m 0644 "$ACPI_TABLE_DIR/SSDT-PST.dsl" "$work/SSDT-PST.dsl"
+    source_hash=$(acpi_source_digest "$work") \
+        || die "Could not hash staged ACPI table sources."
+
+    log "Compiling universal 6/8-core ACPI tables..."
+    for table in SSDT-CST SSDT-PST; do
+        output="$work/kernel/firmware/acpi/$table"
+        iasl -vs -we -p "$output" "$work/$table.dsl"
+        [[ -s "$output.aml" ]] || die "iasl produced no $table.aml"
+    done
+
+    ( cd "$work" && find kernel -print | cpio -o -H newc > acpi_override.cpio )
+    [[ -s "$work/acpi_override.cpio" ]] || die "ACPI override archive is empty."
+    archive_hash=$(sha256sum "$work/acpi_override.cpio" | awk '{print $1}')
+
+    archive_tmp="$ACPI_DIR/.acpi_override.cpio.$$"
+    marker_tmp="$ACPI_DIR/.payload-version.$$"
+    TEMP_FILES+=("$archive_tmp" "$marker_tmp")
+    install -o root -g root -m 0644 \
+        "$work/kernel/firmware/acpi/SSDT-CST.aml" "$ACPI_DIR/SSDT-CST.aml"
+    install -o root -g root -m 0644 \
+        "$work/kernel/firmware/acpi/SSDT-PST.aml" "$ACPI_DIR/SSDT-PST.aml"
+    install -o root -g root -m 0644 "$work/acpi_override.cpio" "$archive_tmp"
+    mv -f "$archive_tmp" "$CPIO_MASTER"
+    printf '%s %s %s\n' \
+        "$ACPI_PAYLOAD_VERSION" "$source_hash" "$archive_hash" > "$marker_tmp"
+    chmod 0644 "$marker_tmp"
+    mv -f "$marker_tmp" "$ACPI_PAYLOAD_MARKER"
+    log "Master cpio -> $CPIO_MASTER ($ACPI_PAYLOAD_VERSION)"
+}
+
+install_acpi_boot_archive() {
+    local boot_tmp="${CPIO_BOOT}.tmp.$$"
+    TEMP_FILES+=("$boot_tmp")
+    install -o root -g root -m 0644 "$CPIO_MASTER" "$boot_tmp"
+    sync "$boot_tmp"
+    mv -f "$boot_tmp" "$CPIO_BOOT"
+    sync "${CPIO_BOOT%/*}"
+}
+
 cmd_acpi() {
     require_root
+    bc250_platform_present \
+        || die "BC-250 GPU PCI ID 1002:13fe was not detected; refusing the ACPI override."
+    acpi_lifecycle_lock || return $?
     install_update_persistence
     migrate_legacy_data
     mkdir -p "$ACPI_DIR"
 
-    # --- fetch SSDTs and build the persistent override cpio ---------------
-    if [[ ! -f "$CPIO_MASTER" ]]; then
-        log "Fetching SSDT tables (bc250-collective/bc250-acpi-fix)..."
-        local work
-        work=$(mktemp -d /tmp/bc250-acpi.XXXXXX)
-        TEMP_DIRS+=("$work")
-        mkdir -p "$work/kernel/firmware/acpi"
-        curl -fL -o "$work/kernel/firmware/acpi/SSDT-CST.aml" "$ACPI_RAW_BASE/SSDT-CST.aml"
-        curl -fL -o "$work/kernel/firmware/acpi/SSDT-PST.aml" "$ACPI_RAW_BASE/SSDT-PST.aml"
-        # keep master copies of the raw tables too
-        cp "$work"/kernel/firmware/acpi/*.aml "$ACPI_DIR/"
-
-        command -v cpio >/dev/null 2>&1 || {
-            unlock_rootfs
-            prepare_pacman_keyring
-            pacman -Sy --noconfirm --needed cpio \
-                || die "cpio unavailable and pacman install failed."
-        }
-        log "Building early-initrd ACPI override cpio..."
-        ( cd "$work" && find kernel | cpio -o -H newc > "$CPIO_MASTER" )
-        log "Master cpio -> $CPIO_MASTER"
+    # --- compile SSDTs and build the persistent override cpio -------------
+    if ! acpi_payload_current; then
+        build_acpi_payload
     else
-        log "Master cpio already built at $CPIO_MASTER"
+        log "Master cpio is current at $CPIO_MASTER ($ACPI_PAYLOAD_VERSION)"
     fi
 
     # --- install into /boot and wire up GRUB ------------------------------
     unlock_rootfs
-    cp -f "$CPIO_MASTER" "$CPIO_BOOT"
+    install_acpi_boot_archive
     log "Installed -> $CPIO_BOOT"
 
     # The dedicated drop-in survives updates without retaining Valve's full
@@ -497,9 +607,13 @@ cmd_acpi() {
 #!/usr/bin/env bash
 set -euo pipefail
 ROOTFS_WAS_READONLY=0
+BOOT_TMP=""
 READY_MARKER="$ACPI_READY"
 GRUB_CFG="$GRUB_CFG"
 GRUB_ACPI_DEFAULT="$GRUB_ACPI_DEFAULT"
+PAYLOAD_MARKER="$ACPI_PAYLOAD_MARKER"
+MASTER_CPIO="$CPIO_MASTER"
+LIFECYCLE_LOCK="$ACPI_LIFECYCLE_LOCK"
 current_os_build() {
     if [[ -r /etc/os-release ]]; then
         ( . /etc/os-release; printf '%s\n' "\${BUILD_ID:-\${VERSION_ID:-unknown}}" )
@@ -508,12 +622,31 @@ current_os_build() {
     fi
 }
 relock() {
+    local rc=\$?
+    trap - EXIT
+    [[ -z "\$BOOT_TMP" ]] || rm -f "\$BOOT_TMP"
     if [[ \$ROOTFS_WAS_READONLY -eq 1 ]]; then
-        steamos-readonly enable || true
+        steamos-readonly enable || rc=1
     fi
+    exit "\$rc"
 }
 trap relock EXIT
+if [[ "\${BC250_ACPI_LOCK_HELD:-0}" != 1 ]]; then
+    command -v flock >/dev/null 2>&1 \
+        || { echo "bc250: flock is required for ACPI self-healing" | systemd-cat -p err; exit 1; }
+    exec 7> "\$LIFECYCLE_LOCK"
+    flock 7
+fi
 rm -f "\$READY_MARKER"
+
+read -r _ _ expected_archive_hash extra < "\$PAYLOAD_MARKER" \
+    || { echo "bc250: ACPI payload marker is unreadable" | systemd-cat -p err; exit 1; }
+actual_archive_hash=\$(sha256sum "\$MASTER_CPIO" | awk '{print \$1}')
+if [[ -n "\$extra" || ! "\$expected_archive_hash" =~ ^[0-9a-f]{64}$ \
+   || "\$actual_archive_hash" != "\$expected_archive_hash" ]]; then
+    echo "bc250: persistent ACPI payload failed checksum validation" | systemd-cat -p err
+    exit 1
+fi
 
 if [[ ! -f $CPIO_BOOT ]] || ! cmp -s "$CPIO_MASTER" "$CPIO_BOOT" \
    || ! grep -q '^GRUB_EARLY_INITRD_LINUX_CUSTOM="acpi_override.cpio"' "\$GRUB_ACPI_DEFAULT" 2>/dev/null \
@@ -522,7 +655,12 @@ if [[ ! -f $CPIO_BOOT ]] || ! cmp -s "$CPIO_MASTER" "$CPIO_BOOT" \
         steamos-readonly disable
         ROOTFS_WAS_READONLY=1
     fi
-    cp -f "$CPIO_MASTER" "$CPIO_BOOT"
+    BOOT_TMP="${CPIO_BOOT}.tmp.\$\$"
+    install -o root -g root -m 0644 "\$MASTER_CPIO" "\$BOOT_TMP"
+    sync "\$BOOT_TMP"
+    mv -f "\$BOOT_TMP" "$CPIO_BOOT"
+    BOOT_TMP=""
+    sync "${CPIO_BOOT%/*}"
     mkdir -p "\${GRUB_ACPI_DEFAULT%/*}"
     printf '%s\n' 'GRUB_EARLY_INITRD_LINUX_CUSTOM="acpi_override.cpio"' \
         > "\$GRUB_ACPI_DEFAULT"
@@ -589,9 +727,10 @@ EOF
 
     systemctl daemon-reload
     systemctl enable bc250-acpi-heal.service bc250-cpufreq.service
-    "$HEAL_HELPER"
+    BC250_ACPI_LOCK_HELD=1 "$HEAL_HELPER"
     cleanup_legacy_data
     relock_rootfs
+    acpi_lifecycle_unlock
 
     log "ACPI fix installed. REBOOT required, then verify:"
     log "  ls /sys/devices/system/cpu/cpu0/cpuidle/          # state0..state3"
@@ -1604,6 +1743,7 @@ cmd_uninstall() {
 
     unlock_rootfs
     trap relock_rootfs EXIT
+    acpi_lifecycle_lock || return $?
     remove_acpi_boot_override && acpi_reverted=1 || true
 
     if [[ $acpi_reverted -eq 1 ]]; then
@@ -1635,6 +1775,7 @@ cmd_uninstall() {
     relock_rootfs
     trap - EXIT
     [[ $acpi_reverted -eq 0 ]] || remove_update_persistence
+    acpi_lifecycle_unlock
 
     log "Power governor/OC/core-unlock services, executables, and D-Bus policy removed."
     if [[ $acpi_reverted -eq 1 ]]; then

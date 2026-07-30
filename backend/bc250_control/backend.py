@@ -772,10 +772,22 @@ class ToolkitBackend:
             self._service("bc250-cpufreq.service"),
             self._service("bc250-gpu-freq-restore.service"),
         )
-        cpu_root = Path("/sys/devices/system/cpu/cpu0")
+        cpu_roots = sorted(
+            path
+            for path in Path("/sys/devices/system/cpu").glob("cpu[0-9]*")
+            if path.name[3:].isdigit()
+            and (
+                not (path / "online").is_file()
+                or self._read(path / "online") != "0"
+            )
+        )
+        c_state_counts = [
+            len(list((path / "cpuidle").glob("state*"))) for path in cpu_roots
+        ]
         return {
-            "acpiActive": (cpu_root / "cpufreq").is_dir(),
-            "cStates": len(list((cpu_root / "cpuidle").glob("state*"))),
+            "acpiActive": bool(cpu_roots)
+            and all((path / "cpufreq").is_dir() for path in cpu_roots),
+            "cStates": min(c_state_counts, default=0),
             "cpuGovernor": self._cpu_governor(),
             "cpuCurrentMhz": self._cpu_current_mhz(),
             "governor": governor,
