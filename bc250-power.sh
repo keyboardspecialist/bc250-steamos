@@ -1934,9 +1934,9 @@ core_unlock_status() {
     fi
     cores=${cores:-$(awk -F: '/^core id/ { seen[$2]=1 } END { print length(seen) }' /proc/cpuinfo)}
     metrics_state=$(core_unlock_metrics_state) || true
-    echo "  eight-core GPU metrics: $metrics_state"
+    echo "  AMDGPU telemetry patch: $metrics_state"
     if [[ "$cores" == 8 && "$metrics_state" != compatible ]]; then
-        warn "AMDGPU is not metrics-aware; SteamOS GPU statistics can use shifted SMU fields."
+        warn "AMDGPU GPU-utilization correction is not installed for this kernel."
         warn "Run './bc250-toolkit.sh audio' as the logged-in user, then reboot."
     fi
 }

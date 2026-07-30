@@ -10,11 +10,8 @@ AIC_INSTALLER = ROOT / "aic8800/steamdeck-setup.sh"
 AUDIO_INSTALLER = ROOT / "bc250-audio-fix/patch-driver.sh"
 AUDIO_ROLLBACK = ROOT / "bc250-audio-fix/rollback.sh"
 AUDIO_PREREQS = ROOT / "bc250-audio-fix/ensure-build-prereqs.sh"
-METRICS_PATCH = ROOT / "bc250-audio-fix/bc250-cyan-skillfish-8core-metrics.patch"
-METRICS_MODULE_PATCH = ROOT / (
-    "bc250-audio-fix/bc250-cyan-skillfish-module-link.patch"
-)
-METRICS_GPU_PATCH = ROOT / "bc250-audio-fix/bc250-cyan-skillfish-gpu-metrics.patch"
+METRICS_PATCH = ROOT / "bc250-audio-fix/bc250-cyan-skillfish-gpu-telemetry.patch"
+GFXCLK_PATCH = ROOT / "bc250-audio-fix/bc250-cyan-skillfish-gfxclk.patch"
 
 
 class DriverLifecycleTests(unittest.TestCase):
@@ -123,33 +120,26 @@ class DriverLifecycleTests(unittest.TestCase):
         for tool in ("make", "gcc", "ld", "patch", "pahole", "bc", "zstd"):
             self.assertIn(tool, environment)
 
-    def test_amdgpu_build_includes_dynamic_eight_core_metrics_layout(self):
+    def test_amdgpu_build_preserves_firmware_metrics_layout(self):
         builder = (ROOT / "bc250-audio-fix/build.sh").read_text(encoding="utf-8")
         installer = (ROOT / "bc250-audio-fix/install.sh").read_text(encoding="utf-8")
         rollback = AUDIO_ROLLBACK.read_text(encoding="utf-8")
         patch = METRICS_PATCH.read_text(encoding="utf-8")
-        module_patch = METRICS_MODULE_PATCH.read_text(encoding="utf-8")
-        gpu_patch = METRICS_GPU_PATCH.read_text(encoding="utf-8")
-
+        gfxclk_patch = GFXCLK_PATCH.read_text(encoding="utf-8")
+        self.assertIn("bc250-cyan-skillfish-gpu-telemetry.patch", builder)
+        self.assertIn("bc250-cyan-skillfish-gfxclk.patch", builder)
+        self.assertIn("reversed legacy metrics patch", builder)
         self.assertIn("bc250-cyan-skillfish-8core-metrics.patch", builder)
         self.assertIn("bc250-cyan-skillfish-module-link.patch", builder)
         self.assertIn("bc250-cyan-skillfish-gpu-metrics.patch", builder)
-        self.assertIn("CoreFrequency[8]", patch)
-        self.assertIn("CorePower[8]", patch)
-        self.assertIn("CoreTemperature[8]", patch)
-        self.assertIn("C0Residency[8]", patch)
-        self.assertIn("topology_is_primary_thread", patch)
-        self.assertIn("num_present_cpus() / 2", module_patch)
-        self.assertIn("-#include <linux/topology.h>", module_patch)
-        self.assertIn("-\t\tif (topology_is_primary_thread(cpu))", module_patch)
-        self.assertIn("-\tuint16_t C0Residency[8];", gpu_patch)
-        self.assertIn("+\tuint16_t C0Residency[6];", gpu_patch)
-        self.assertIn("GRBM_STATUS__GUI_ACTIVE_MASK", gpu_patch)
-        self.assertIn("AMDGPU_PP_SENSOR_GPU_LOAD", gpu_patch)
-        self.assertIn("average_gfx_activity", gpu_patch)
-        self.assertIn("union cyan_skillfish_raw_metrics", patch)
-        self.assertIn("cyan_skillfish_has_eight_core_metrics", patch)
-        self.assertNotIn("smu->cpu_core_num", patch)
+        self.assertIn("GRBM_STATUS__GUI_ACTIVE_MASK", patch)
+        self.assertIn("AMDGPU_PP_SENSOR_GPU_LOAD", patch)
+        self.assertIn("average_gfx_activity", patch)
+        self.assertNotIn("SmuMetricsTable8_t", patch)
+        self.assertNotIn("cyan_skillfish_core_count", patch)
+        self.assertIn("PPSMC_MSG_GetGfxFrequency", gfxclk_patch)
+        self.assertIn("SMU_MSG_GetGfxclkFrequency", gfxclk_patch)
+        self.assertIn("gpu_metrics->current_gfxclk = gfxclk", gfxclk_patch)
         self.assertIn(".bc250-metrics-fix", installer)
         self.assertIn(".bc250-metrics-fix", rollback)
 

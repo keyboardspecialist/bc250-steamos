@@ -22,8 +22,8 @@ class CoreUnlockTests(unittest.TestCase):
 
         self.assertIn("core_unlock_metrics_state", power)
         self.assertIn(".bc250-metrics-fix", power)
-        self.assertIn("eight-core GPU metrics", power)
-        self.assertIn("shifted SMU fields", power)
+        self.assertIn("AMDGPU telemetry patch", power)
+        self.assertIn("GPU-utilization correction", power)
 
     def test_boot_clears_guard_when_eight_cores_are_present(self):
         helper = load_helper()

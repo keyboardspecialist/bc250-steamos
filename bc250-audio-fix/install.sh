@@ -99,4 +99,4 @@ fi
 
 mkinitcpio -p "$PRESET"
 INSTALL_OK=1
-echo "OK — display clock and 6/8-core metrics-aware amdgpu installed. Reboot to activate."
+echo "OK — display clock and GPU telemetry corrections installed. Reboot to activate."
