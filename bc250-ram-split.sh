@@ -151,7 +151,7 @@ if not isinstance(digest, str) or not re.fullmatch(r"sha256:[0-9a-f]{64}", diges
     raise SystemExit("release asset has no valid SHA-256 digest")
 if not isinstance(size, int) or size <= 0 or size > 1024 * 1024:
     raise SystemExit("release asset size is invalid or exceeds 1 MiB")
-print(tag, asset_id, digest.removeprefix("sha256:"), size, url)
+print(tag, asset_id, digest.split(":", 1)[1], size, url)
 PY
 }
 
