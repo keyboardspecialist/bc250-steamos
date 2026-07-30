@@ -653,7 +653,8 @@ atomic_copy_file() {
 }
 
 replace_directory() {
-    local staged=$1 target=$2 backup=${target}.old.$$
+    local staged=$1 target=$2 backup
+    backup=${target}.old.$$
     [[ ! -e $backup && ! -L $backup ]] || die "stale replacement path: $backup"
     if [[ -e $target || -L $target ]]; then
         [[ -d $target && ! -L $target ]] || die "unsafe directory destination: $target"

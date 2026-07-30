@@ -1,5 +1,6 @@
 import hashlib
 import subprocess
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -134,6 +135,32 @@ class Rtw89Tests(unittest.TestCase):
         )
         self.assertIn("secure_kbuild_tree", combined)
         self.assertIn('case "$target" in "$path"/*)', combined)
+
+    def test_directory_replacement_is_safe_with_nounset(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            staged = root / "staged"
+            target = root / "target"
+            staged.mkdir()
+            target.mkdir()
+            (staged / "new").write_text("new\n", encoding="utf-8")
+            (target / "old").write_text("old\n", encoding="utf-8")
+            subprocess.run(
+                [
+                    "bash",
+                    "-c",
+                    'script=$1; src_path=$2; dst_path=$3; set -- help; '
+                    'source "$script" >/dev/null; '
+                    'replace_directory "$src_path" "$dst_path"',
+                    "_",
+                    str(RTW89 / "steamdeck-setup.sh"),
+                    str(staged),
+                    str(target),
+                ],
+                check=True,
+            )
+            self.assertTrue((target / "new").is_file())
+            self.assertFalse((target / "old").exists())
 
 
 if __name__ == "__main__":
