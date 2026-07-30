@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
-"""Build a self-contained, deterministic Plasma desktop-control archive."""
+"""Build a self-contained, deterministic BC-250 Cracktro archive."""
 
 import argparse
+import hashlib
 import os
 import shutil
 import stat
@@ -13,18 +14,20 @@ from typing import Iterable
 
 
 REPOSITORY = Path(__file__).resolve().parent.parent
+CRACKTRO_SOURCE = REPOSITORY / "cracktro"
 DESKTOP_SOURCE = REPOSITORY / "desktop-control"
 BACKEND_SOURCE = REPOSITORY / "backend"
-DEFAULT_OUTPUT = DESKTOP_SOURCE / "out"
-DEFAULT_EPOCH = 315532800  # 1980-01-01, the earliest timestamp supported by ZIP.
-ARCHIVE_ROOT = "bc250-desktop-control"
+DEFAULT_OUTPUT = CRACKTRO_SOURCE / "out"
+DEFAULT_EPOCH = 315532800
+ARCHIVE_ROOT = "bc250-cracktro"
 EXECUTABLES = {
-    Path("bc250-power.sh"),
     Path("bc250-storage.sh"),
-    Path("topology.sh"),
     Path("bc250-update-persistence.sh"),
+    Path("bc250-power.sh"),
+    Path("topology.sh"),
     Path("core-unlock/bc250-unlock-cores.py"),
-    Path("desktop-control/install.sh"),
+    Path("cracktro/install.sh"),
+    Path("cracktro/bc250-cracktro"),
     Path("desktop-control/shared-service-install.sh"),
     Path("desktop-control/bc250-desktop-control-repair"),
     Path("desktop-control/service/bc250-control-service"),
@@ -66,49 +69,43 @@ def copy_tree(source: Path, destination: Path) -> None:
 
 
 def normalize_tree(root: Path, epoch: int) -> None:
-    paths = sorted(root.rglob("*"), key=lambda path: str(path), reverse=True)
-    for path in paths:
+    for path in sorted(root.rglob("*"), key=lambda item: str(item), reverse=True):
         relative = path.relative_to(root)
-        mode = 0o755 if path.is_dir() or relative in EXECUTABLES else 0o644
-        path.chmod(mode)
+        path.chmod(0o755 if path.is_dir() or relative in EXECUTABLES else 0o644)
         os.utime(str(path), (epoch, epoch), follow_symlinks=False)
     root.chmod(0o755)
     os.utime(str(root), (epoch, epoch), follow_symlinks=False)
 
 
-def stage(output: Path, epoch: int) -> None:
+def stage(binary: Path, output: Path, epoch: int) -> None:
+    if binary.is_symlink():
+        raise SystemExit("Cracktro binary is missing, unsafe, or not executable: {}".format(binary))
+    binary = binary.resolve()
+    if not binary.is_file() or not os.access(str(binary), os.X_OK):
+        raise SystemExit("Cracktro binary is missing, unsafe, or not executable: {}".format(binary))
     output = output.resolve()
     output.parent.mkdir(parents=True, exist_ok=True)
-    temporary = Path(tempfile.mkdtemp(prefix=".desktop-runtime-", dir=str(output.parent)))
+    temporary = Path(tempfile.mkdtemp(prefix=".cracktro-runtime-", dir=str(output.parent)))
     try:
-        for name in (
-            "bc250-power.sh",
-            "bc250-storage.sh",
-            "bc250-update-persistence.sh",
-            "topology.sh",
-        ):
+        for name in ("bc250-storage.sh", "bc250-update-persistence.sh", "bc250-power.sh", "topology.sh"):
             copy_file(REPOSITORY / name, temporary / name)
         copy_tree(REPOSITORY / "core-unlock", temporary / "core-unlock")
+        copy_file(CRACKTRO_SOURCE / "install.sh", temporary / "cracktro/install.sh")
+        copy_file(binary, temporary / "cracktro/bc250-cracktro")
+        copy_tree(CRACKTRO_SOURCE / "packaging", temporary / "cracktro/packaging")
+        for optional in ("README.md", "ASSETS.md"):
+            source = CRACKTRO_SOURCE / optional
+            if source.is_file() and not source.is_symlink():
+                copy_file(source, temporary / "cracktro" / optional)
 
-        for name in (
-            "LICENSE",
-            "README.md",
-            "install.sh",
-            "shared-service-install.sh",
-            "bc250-desktop-control-repair",
-        ):
+        for name in ("shared-service-install.sh", "bc250-desktop-control-repair"):
             copy_file(DESKTOP_SOURCE / name, temporary / "desktop-control" / name)
-        for name in ("templates", "plasmoid", "vendor"):
-            copy_tree(DESKTOP_SOURCE / name, temporary / "desktop-control" / name)
-
-        service_source = DESKTOP_SOURCE / "service"
+        copy_tree(DESKTOP_SOURCE / "templates", temporary / "desktop-control/templates")
+        copy_tree(DESKTOP_SOURCE / "vendor", temporary / "desktop-control/vendor")
+        service = DESKTOP_SOURCE / "service"
         for name in ("bc250-control-service", "io.github.keyboardspecialist.bc250-control.policy"):
-            copy_file(service_source / name, temporary / "desktop-control/service" / name)
-        copy_tree(
-            service_source / "bc250_control_service",
-            temporary / "desktop-control/service/bc250_control_service",
-        )
-
+            copy_file(service / name, temporary / "desktop-control/service" / name)
+        copy_tree(service / "bc250_control_service", temporary / "desktop-control/service/bc250_control_service")
         copy_tree(BACKEND_SOURCE / "bc250_control", temporary / "backend/bc250_control")
         copy_tree(BACKEND_SOURCE / "vendor", temporary / "backend/vendor")
 
@@ -125,34 +122,25 @@ def stage(output: Path, epoch: int) -> None:
 
 def archive_paths(root: Path) -> Iterable[Path]:
     yield root
-    for path in sorted(root.rglob("*"), key=lambda item: item.as_posix()):
-        yield path
+    yield from sorted(root.rglob("*"), key=lambda item: item.as_posix())
 
 
 def write_archive(runtime: Path, archive: Path, epoch: int) -> None:
     timestamp = time.gmtime(epoch)[:6]
     archive = archive.resolve()
     archive.parent.mkdir(parents=True, exist_ok=True)
-    descriptor, temporary_name = tempfile.mkstemp(
-        prefix=".{}-".format(archive.name), dir=str(archive.parent)
-    )
+    descriptor, temporary_name = tempfile.mkstemp(prefix=".{}-".format(archive.name), dir=str(archive.parent))
     os.close(descriptor)
     try:
-        with zipfile.ZipFile(
-            temporary_name, "w", compression=zipfile.ZIP_DEFLATED, compresslevel=9
-        ) as stream:
+        with zipfile.ZipFile(temporary_name, "w", compression=zipfile.ZIP_DEFLATED, compresslevel=9) as stream:
             for path in archive_paths(runtime):
                 relative = path.relative_to(runtime)
-                name = ARCHIVE_ROOT if relative == Path(".") else "{}/{}".format(
-                    ARCHIVE_ROOT, relative.as_posix()
-                )
+                name = ARCHIVE_ROOT if relative == Path(".") else "{}/{}".format(ARCHIVE_ROOT, relative.as_posix())
                 if path.is_dir():
                     name += "/"
                 info = zipfile.ZipInfo(name, timestamp)
                 info.create_system = 3
-                mode = stat.S_IFDIR | 0o755 if path.is_dir() else stat.S_IFREG | (
-                    path.stat().st_mode & 0o777
-                )
+                mode = stat.S_IFDIR | 0o755 if path.is_dir() else stat.S_IFREG | (path.stat().st_mode & 0o777)
                 info.external_attr = mode << 16
                 info.compress_type = zipfile.ZIP_DEFLATED
                 stream.writestr(info, b"" if path.is_dir() else path.read_bytes())
@@ -162,16 +150,28 @@ def write_archive(runtime: Path, archive: Path, epoch: int) -> None:
             os.unlink(temporary_name)
 
 
+def write_checksum(archive: Path, checksum: Path) -> None:
+    digest = hashlib.sha256(archive.read_bytes()).hexdigest()
+    checksum.parent.mkdir(parents=True, exist_ok=True)
+    checksum.write_text("{}  {}\n".format(digest, archive.name), encoding="ascii")
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--binary", type=Path, required=True)
     parser.add_argument("--output", type=Path, default=DEFAULT_OUTPUT)
     parser.add_argument("--archive", type=Path)
+    parser.add_argument("--sha256", type=Path)
     arguments = parser.parse_args()
+    if arguments.sha256 is not None and arguments.archive is None:
+        parser.error("--sha256 requires --archive")
 
     epoch = source_date_epoch()
-    stage(arguments.output, epoch)
+    stage(arguments.binary, arguments.output, epoch)
     if arguments.archive is not None:
         write_archive(arguments.output.resolve(), arguments.archive, epoch)
+        if arguments.sha256 is not None:
+            write_checksum(arguments.archive.resolve(), arguments.sha256.resolve())
 
 
 if __name__ == "__main__":

@@ -35,6 +35,7 @@ class MaintenanceTests(unittest.TestCase):
             "MESH_SH": "mesh",
             "DECKY_SH": "decky",
             "DESKTOP_SH": "desktop",
+            "CRACKTRO_SH": "cracktro",
         }
         for variable, name in scripts.items():
             script = directory / f"{name}.sh"
@@ -93,7 +94,7 @@ class MaintenanceTests(unittest.TestCase):
                 text=True,
                 env=env,
             )
-            self.assertEqual(status.stdout.count("installed"), 10)
+            self.assertEqual(status.stdout.count("installed"), 11)
             self.assertIn("Saved tuning profiles", plan.stdout)
             self.assertFalse(call_log.exists())
 
@@ -110,8 +111,8 @@ class MaintenanceTests(unittest.TestCase):
             self.assertEqual(
                 call_log.read_text(encoding="utf-8").splitlines(),
                 [
+                    "cracktro:uninstall",
                     "desktop:uninstall",
-                    "persistence:remove desktop",
                     "decky:uninstall",
                     "cec:uninstall",
                     "persistence:remove cec",

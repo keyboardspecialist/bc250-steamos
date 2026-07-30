@@ -39,6 +39,7 @@ The installer configures:
 | D-Bus policy | `/etc/dbus-1/system.d/io.github.keyboardspecialist.BC250Control1.conf` |
 | polkit policy | `/usr/share/polkit-1/actions/io.github.keyboardspecialist.bc250-control.policy` |
 | Atomic-update keep list | `/etc/atomic-update.conf.d/bc250-desktop.conf` |
+| Frontend registration | `/var/lib/bc250-control/service-clients/plasma.<uid>` |
 
 System-tray entry: **System Tray Settings > Entries > BC-250 Control**.
 
@@ -80,12 +81,19 @@ and control styling follow the active Plasma theme.
 | --- | --- |
 | `bash desktop-control/install.sh install` | Install or upgrade the applet and service |
 | `bash desktop-control/install.sh status` | Report applet, service, D-Bus, polkit, storage, and persistence state |
-| `bash desktop-control/install.sh uninstall` | Remove the applet and desktop service integration |
+| `bash desktop-control/install.sh uninstall` | Remove the applet and release its shared-service registration |
 | `./bc250-maintenance.sh uninstall desktop` | Remove the desktop component through the toolkit lifecycle interface |
 | `./bc250-maintenance.sh uninstall all` | Remove all toolkit components in dependency-safe order |
 
 Desktop-component removal preserves shared hardware helpers, UMR, GPU tuning,
 CPU profiles, CEC preferences, and persistent toolkit data.
+
+The privileged service is shared with the standalone Cracktro application.
+Frontend registrations are root-owned and UID-scoped. Uninstalling Plasma does
+not stop or remove the service while any Cracktro registration remains; the
+last frontend removal tears down the service integration. Existing markerless
+desktop installs are claimed during upgrade so adding or removing a second
+frontend cannot accidentally remove their service.
 
 ## Architecture
 
@@ -95,7 +103,8 @@ CPU profiles, CEC preferences, and persistent toolkit data.
 | Service | Root-owned Python service, `io.github.keyboardspecialist.BC250Control1` |
 | Backend | Private `bc250_control` runtime with vendored `tomli` and `dbus_next` |
 | Hardware serialization | `/run/lock/bc250-control/backend.lock` |
-| Persistent payload | `/var/lib/bc250-control/desktop` |
+| Persistent payload | `/var/lib/bc250-control/desktop` (transactionally shared by registered frontends) |
+| Client ownership | Root-owned markers in `/var/lib/bc250-control/service-clients` |
 | Recovery | `bc250-desktop-control-repair.service` |
 | Update retention | SteamOS atomic-update component keep list |
 

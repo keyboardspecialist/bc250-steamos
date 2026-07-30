@@ -16,9 +16,10 @@ AUDIO_CLEAN_SH="${AUDIO_CLEAN_SH:-$SCRIPT_DIR/bc250-audio-fix/clean.sh}"
 MESH_SH="${MESH_SH:-$SCRIPT_DIR/bc250-mesh-shader.sh}"
 DECKY_SH="${DECKY_SH:-$SCRIPT_DIR/decky-plugin/install.sh}"
 DESKTOP_SH="${DESKTOP_SH:-$SCRIPT_DIR/desktop-control/install.sh}"
+CRACKTRO_SH="${CRACKTRO_SH:-$SCRIPT_DIR/cracktro/install.sh}"
 
-COMPONENTS=(desktop decky cec power ram compute mesh audio aic)
-UNINSTALL_ORDER=(desktop decky cec power ram compute mesh audio aic)
+COMPONENTS=(cracktro desktop decky cec power ram compute mesh audio aic)
+UNINSTALL_ORDER=(cracktro desktop decky cec power ram compute mesh audio aic)
 MESH_STATE_DIR="${BC250_MESH_STATE_DIR:-$HOME/.local/share/bc250-mesh-shader}"
 MESH_LOCK_FILE="${BC250_MESH_LOCK_FILE:-$HOME/.cache/bc250-mesh-shader.lock}"
 
@@ -36,6 +37,7 @@ require_script() { [[ -f "$1" && ! -L "$1" ]] || die "Required component script 
 
 component_label() {
     case "$1" in
+        cracktro) echo "Cracktro desktop application" ;;
         desktop) echo "Plasma desktop control" ;;
         decky) echo "Decky plugin" ;;
         cec) echo "CEC integration" ;;
@@ -52,6 +54,7 @@ component_label() {
 
 component_script() {
     case "$1" in
+        cracktro) echo "$CRACKTRO_SH" ;;
         desktop) echo "$DESKTOP_SH" ;;
         decky) echo "$DECKY_SH" ;;
         cec) echo "$CEC_SH" ;;
@@ -72,23 +75,32 @@ component_probe() {
     require_script "$script"
     case "$component" in
         power|ram|compute|cec) bash "$script" installed >/dev/null 2>&1 ;;
-        desktop|decky|mesh|audio|aic) bash "$script" status >/dev/null 2>&1 ;;
+        cracktro|desktop|decky|mesh|audio|aic) bash "$script" status >/dev/null 2>&1 ;;
         storage) bash "$script" installed >/dev/null 2>&1 ;;
     esac
 }
 
 component_has_artifacts() {
     case "$1" in
+        cracktro)
+            [[ -e "$HOME/.local/libexec/bc250-cracktro" \
+                || -e "$HOME/.local/share/applications/io.github.keyboardspecialist.bc250cracktro.desktop" \
+                || -e "$HOME/.local/share/icons/hicolor/scalable/apps/io.github.keyboardspecialist.bc250cracktro.svg" \
+                || -e /var/lib/bc250-control/service-clients/cracktro."$(id -u)" ]]
+            ;;
         desktop)
-            [[ -e /var/lib/bc250-control/desktop \
-                || -e /etc/systemd/system/bc250-control.service \
-                || -e /etc/systemd/system/bc250-desktop-control-repair.service \
-                || -e /etc/dbus-1/system.d/io.github.keyboardspecialist.BC250Control1.conf \
-                || -e /usr/share/polkit-1/actions/io.github.keyboardspecialist.bc250-control.policy \
-                || -e /etc/atomic-update.conf.d/bc250-desktop.conf \
-                || -L /etc/systemd/system/multi-user.target.wants/bc250-control.service \
-                || -L /etc/systemd/system/multi-user.target.wants/bc250-desktop-control-repair.service \
-                || -e "$HOME/.local/share/plasma/plasmoids/io.github.keyboardspecialist.bc250control" ]]
+            [[ -e /var/lib/bc250-control/service-clients/plasma."$(id -u)" \
+                || -e /var/lib/bc250-control/service-clients/legacy.0 \
+                || -e "$HOME/.local/share/plasma/plasmoids/io.github.keyboardspecialist.bc250control" \
+                || ( ! -e /var/lib/bc250-control/service-clients \
+                    && ( -e /var/lib/bc250-control/desktop \
+                        || -e /etc/systemd/system/bc250-control.service \
+                        || -e /etc/systemd/system/bc250-desktop-control-repair.service \
+                        || -e /etc/dbus-1/system.d/io.github.keyboardspecialist.BC250Control1.conf \
+                        || -e /usr/share/polkit-1/actions/io.github.keyboardspecialist.bc250-control.policy \
+                        || -e /etc/atomic-update.conf.d/bc250-desktop.conf \
+                        || -L /etc/systemd/system/multi-user.target.wants/bc250-control.service \
+                        || -L /etc/systemd/system/multi-user.target.wants/bc250-desktop-control-repair.service ) ) ]]
             ;;
         decky) [[ -e "$HOME/homebrew/plugins/BC-250 Control" ]] ;;
         cec)
@@ -181,7 +193,8 @@ plan_component() {
     state=$(component_state "$component")
     printf '%s (%s)\n' "$(component_label "$component")" "$state"
     case "$component" in
-        desktop) echo "  Remove the Plasma applet, D-Bus service, polkit policy, repair service, and desktop payload." ;;
+        cracktro) echo "  Remove only the Cracktro user files and its UID-scoped service registration." ;;
+        desktop) echo "  Remove the Plasma applet and its registration; remove the shared service only if no frontend remains." ;;
         decky) echo "  Remove the Decky plugin and restart plugin_loader; shared hardware helpers remain." ;;
         cec) echo "  Remove CEC boot, shutdown, and sleep integrations; preserve CEC preferences." ;;
         power) echo "  Restore stock CPU state, disable tuning services, and remove the ACPI override on next boot." ;;
@@ -215,7 +228,7 @@ show_plan() {
 remove_persistence_for() {
     local component="$1" persistence=""
     case "$component" in
-        desktop|cec|power|ram|compute|aic) persistence="$component" ;;
+        cec|power|ram|compute|aic) persistence="$component" ;;
         *) return 0 ;;
     esac
     require_script "$PERSISTENCE_SH"
@@ -227,7 +240,7 @@ run_component_uninstall() {
     script=$(component_script "$component")
     require_script "$script"
     case "$component" in
-        desktop|decky|cec|mesh|audio) bash "$script" uninstall || rc=$? ;;
+        cracktro|desktop|decky|cec|mesh|audio) bash "$script" uninstall || rc=$? ;;
         power|ram|compute|aic|storage) sudo bash "$script" uninstall || rc=$? ;;
         *) die "Unknown component: $component" ;;
     esac
@@ -430,7 +443,7 @@ cmd_help() {
     cat << EOF
 Usage: $0 {menu|status|plan [COMPONENT|all]|uninstall COMPONENT|all [--yes]|purge [--yes]|help}
 
-Components: desktop, decky, cec, power, ram, compute, mesh, audio, aic, storage
+Components: cracktro, desktop, decky, cec, power, ram, compute, mesh, audio, aic, storage
 
   status                 Show lifecycle state for every component.
   plan [COMPONENT|all]   Describe removals and preserved data without changing anything.

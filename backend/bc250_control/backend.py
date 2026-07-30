@@ -32,6 +32,30 @@ GPU_CONFIG_PATH = Path("/etc/cyan-skillfish-governor-smu/config.toml")
 GPU_STATE_PATH = Path("/var/lib/bc250-control/governor/freq-state")
 CPU_HELPER_PATH = Path("/var/lib/bc250-control/helper/bc250-power.sh")
 CPU_STATE_DIR = Path("/var/lib/bc250-control/smu-oc")
+CPU_UNLOCK_PAYLOAD_PATH = Path("/var/lib/bc250-control/desktop")
+CPU_UNLOCK_HELPER_PATH = Path(
+    "/var/lib/bc250-control/helper/bc250-unlock-cores"
+)
+CPU_UNLOCK_LICENSE_PATH = Path(
+    "/var/lib/bc250-control/licenses/bc250-core-unlock-LICENSE"
+)
+CPU_UNLOCK_STATE_PATH = Path(
+    "/var/lib/bc250-control/core-unlock/reboot-pending"
+)
+CPU_UNLOCK_UNIT_PATH = Path("/etc/systemd/system/bc250-core-unlock.service")
+CPU_UNLOCK_PERSISTENCE_PATH = Path(
+    "/etc/atomic-update.conf.d/bc250-power.conf"
+)
+CPU_SYSFS_PATH = Path("/sys/devices/system/cpu")
+PCI_SYSFS_PATH = Path("/sys/bus/pci/devices")
+BOOT_ID_PATH = Path("/proc/sys/kernel/random/boot_id")
+CPU_UNLOCK_PAYLOAD_FILES = (
+    Path("bc250-power.sh"),
+    Path("bc250-storage.sh"),
+    Path("bc250-update-persistence.sh"),
+    Path("core-unlock/bc250-unlock-cores.py"),
+    Path("core-unlock/LICENSE"),
+)
 ROOT_UMR_PATH = Path("/var/lib/bc250-control/umr/bin/umr")
 ROOT_UMR_DATABASE_PATH = Path("/var/lib/bc250-control/umr/share/umr/database")
 MIGRATED_UMR_DATABASE_PATH = Path(
@@ -395,6 +419,28 @@ class ToolkitBackend:
             return default
 
     @staticmethod
+    def _read_bounded(path: Path, limit: int) -> Optional[str]:
+        if limit <= 0:
+            return None
+        descriptor = -1
+        try:
+            descriptor = os.open(
+                str(path), os.O_RDONLY | os.O_CLOEXEC | os.O_NOFOLLOW
+            )
+            metadata = os.fstat(descriptor)
+            if not stat.S_ISREG(metadata.st_mode):
+                return None
+            content = os.read(descriptor, limit + 1)
+            if len(content) > limit:
+                return None
+            return content.decode("ascii", "strict").strip()
+        except (OSError, UnicodeError):
+            return None
+        finally:
+            if descriptor >= 0:
+                os.close(descriptor)
+
+    @staticmethod
     def _read_key_values(path: Union[str, Path]) -> dict[str, str]:
         values: dict[str, str] = {}
         text = ToolkitBackend._read(path)
@@ -509,6 +555,218 @@ class ToolkitBackend:
             ):
                 return True
         return False
+
+    def _bc250_present_secure(self) -> bool:
+        try:
+            devices = list(PCI_SYSFS_PATH.iterdir())
+        except OSError:
+            return False
+        for path in devices:
+            vendor = self._read_bounded(path / "vendor", 32)
+            device = self._read_bounded(path / "device", 32)
+            if vendor is not None and device is not None and (
+                vendor.lower(), device.lower()
+            ) == ("0x1002", "0x13fe"):
+                return True
+        return False
+
+    def _cpu_topology(self) -> dict[str, Any]:
+        logical: dict[tuple[int, int], list[int]] = {}
+        ccx_ids: dict[tuple[int, int], Optional[int]] = {}
+        invalid = False
+        try:
+            cpu_paths = sorted(
+                (
+                    path
+                    for path in CPU_SYSFS_PATH.iterdir()
+                    if re.fullmatch(r"cpu[0-9]+", path.name)
+                ),
+                key=lambda path: int(path.name[3:]),
+            )
+        except OSError:
+            cpu_paths = []
+
+        for cpu_path in cpu_paths:
+            cpu = int(cpu_path.name[3:])
+            online_path = cpu_path / "online"
+            if online_path.exists():
+                online = self._read_bounded(online_path, 8)
+                if online not in {"0", "1"}:
+                    invalid = True
+                    continue
+                if online == "0":
+                    continue
+            package_text = self._read_bounded(
+                cpu_path / "topology/physical_package_id", 32
+            )
+            core_text = self._read_bounded(cpu_path / "topology/core_id", 32)
+            if (
+                package_text is None
+                or core_text is None
+                or re.fullmatch(r"-?[0-9]+", package_text) is None
+                or re.fullmatch(r"-?[0-9]+", core_text) is None
+            ):
+                invalid = True
+                continue
+            key = (int(package_text), int(core_text))
+            logical.setdefault(key, []).append(cpu)
+            ccx_text = self._read_bounded(cpu_path / "cache/index3/id", 32)
+            ccx = int(ccx_text) if ccx_text and ccx_text.isdigit() else None
+            if key not in ccx_ids or ccx_ids[key] is None:
+                ccx_ids[key] = ccx
+
+        physical_cores = len(logical)
+        logical_threads = sum(len(cpus) for cpus in logical.values())
+        if invalid or not logical:
+            state = "unavailable"
+        elif physical_cores == 6:
+            state = "locked"
+        elif physical_cores == 8:
+            state = "unlocked"
+        else:
+            state = "unexpected"
+
+        cores = []
+        grouped: dict[int, list[dict[str, Any]]] = {}
+        for package_core in sorted(logical):
+            ccx = ccx_ids.get(package_core)
+            package, core = package_core
+            entry = {
+                "packageId": package,
+                "coreId": core,
+                "logicalCpus": logical[package_core],
+                "ccxId": ccx,
+            }
+            cores.append(entry)
+            if ccx is not None:
+                grouped.setdefault(ccx, []).append(entry)
+        return {
+            "physicalCores": physical_cores,
+            "logicalThreads": logical_threads,
+            "topologyState": state,
+            "cores": cores,
+            "ccxGroups": [
+                {"ccxId": ccx, "cores": grouped[ccx]} for ccx in sorted(grouped)
+            ],
+            "ccxAvailable": bool(grouped),
+        }
+
+    def _cpu_unlock_guard(self) -> dict[str, Any]:
+        try:
+            exists = os.path.lexists(CPU_UNLOCK_STATE_PATH)
+        except OSError:
+            exists = True
+        if not exists:
+            return {"state": "clear", "active": False, "currentBoot": False}
+        if not self._trusted_root_file(CPU_UNLOCK_STATE_PATH):
+            return {"state": "unavailable", "active": True, "currentBoot": False}
+        marker = self._read_bounded(CPU_UNLOCK_STATE_PATH, 128)
+        match = re.fullmatch(
+            r"([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-"
+            r"[0-9a-fA-F]{4}-[0-9a-fA-F]{12}) (manual|automatic)",
+            marker or "",
+        )
+        if match is None:
+            return {"state": "unavailable", "active": True, "currentBoot": False}
+        boot_id = self._read_bounded(BOOT_ID_PATH, 64)
+        current_boot = boot_id is not None and boot_id.lower() == match[1].lower()
+        return {
+            "state": match[2],
+            "active": True,
+            "currentBoot": current_boot,
+        }
+
+    def _cpu_unlock_payload_available(self) -> bool:
+        return self._trusted_root_directory(CPU_UNLOCK_PAYLOAD_PATH) and all(
+            self._trusted_root_file(CPU_UNLOCK_PAYLOAD_PATH / relative)
+            for relative in CPU_UNLOCK_PAYLOAD_FILES
+        )
+
+    def _cpu_unlock_persistent(self) -> bool:
+        if not self._trusted_root_file(CPU_UNLOCK_PERSISTENCE_PATH):
+            return False
+        content = self._read_bounded(CPU_UNLOCK_PERSISTENCE_PATH, 65536)
+        if content is None:
+            return False
+        paths = set(content.splitlines())
+        return {
+            "/etc/systemd/system/bc250-core-unlock.service",
+            "/etc/systemd/system/multi-user.target.wants/bc250-core-unlock.service",
+        }.issubset(paths)
+
+    @staticmethod
+    def _cpu_unlock_action_status(
+        action: str,
+        *,
+        device_present: bool,
+        topology_state: str,
+        payload_available: bool,
+        service_enabled: bool,
+        guard: dict[str, Any],
+    ) -> dict[str, Any]:
+        blockers = []
+        if not payload_available:
+            blockers.append("helper-bundle-unavailable")
+        if not device_present:
+            blockers.append("device-not-detected")
+        if topology_state == "unavailable":
+            blockers.append("topology-unavailable")
+        elif topology_state == "unexpected":
+            blockers.append("topology-unexpected")
+        if guard["state"] == "unavailable":
+            blockers.append("guard-unavailable")
+        elif guard["state"] == "automatic":
+            blockers.append("automatic-reboot-pending")
+        elif action == "test" and guard["currentBoot"] and topology_state == "locked":
+            blockers.append("unlock-already-attempted-this-boot")
+        if action == "test" and service_enabled:
+            blockers.append("persistent-replay-enabled")
+        if action == "enable" and topology_state != "unlocked":
+            blockers.append("eight-cores-required")
+        if action == "enable" and service_enabled:
+            blockers.append("persistent-replay-enabled")
+        if action == "off" and not service_enabled:
+            blockers.append("persistent-replay-disabled")
+        return {"available": not blockers, "blockers": blockers}
+
+    async def get_cpu_unlock_status(self) -> dict[str, Any]:
+        service_task = asyncio.create_task(
+            self._service("bc250-core-unlock.service")
+        )
+        topology = self._cpu_topology()
+        guard = self._cpu_unlock_guard()
+        service = await service_task
+        service_enabled = service["enabled"] == "enabled"
+        device_present = self._bc250_present_secure()
+        payload_available = self._cpu_unlock_payload_available()
+        actions = {
+            action: self._cpu_unlock_action_status(
+                action,
+                device_present=device_present,
+                topology_state=topology["topologyState"],
+                payload_available=payload_available,
+                service_enabled=service_enabled,
+                guard=guard,
+            )
+            for action in ("test", "enable", "off")
+        }
+        return {
+            "schemaVersion": 1,
+            "devicePresent": device_present,
+            **topology,
+            "helperInstalled": self._trusted_root_file(CPU_UNLOCK_HELPER_PATH),
+            "licenseInstalled": self._trusted_root_file(CPU_UNLOCK_LICENSE_PATH),
+            "unitInstalled": self._trusted_root_file(CPU_UNLOCK_UNIT_PATH),
+            "helperBundleAvailable": payload_available,
+            "service": service,
+            "updatePersistence": self._cpu_unlock_persistent(),
+            "guard": guard,
+            "actions": actions,
+            "semantics": {
+                "test": "A six-core test requires a warm reboot before Linux can enumerate eight cores.",
+                "off": "Disabling replay does not relock this boot; eight active cores require a full power-off.",
+            },
+        }
 
     def _umr_instance(self) -> Optional[int]:
         configured = self._read_key_values(CU_CONFIG_PATH).get("UMR_INSTANCE", "")
@@ -1427,10 +1685,10 @@ class ToolkitBackend:
             "games": normalized_games,
         }
 
-    async def _mutate(self, callback: Any) -> None:
+    async def _mutate(self, callback: Any) -> Any:
         async with self._mutation_lock:
             async with self._process_lock():
-                await callback()
+                return await callback()
 
     async def set_mesh_game_enabled(
         self, app_id: int, friendly_name: str, enabled: bool
@@ -1736,6 +1994,43 @@ class ToolkitBackend:
                 *args,
                 timeout=1800 if action_name == "detect" else 180,
             )
+
+        return await self._mutate(action)
+
+    async def cpu_unlock_action(self, action_name: str) -> dict[str, Any]:
+        if type(action_name) is not str or action_name not in {"test", "enable", "off"}:
+            raise CommandError("Unknown CPU core-unlock action.")
+
+        async def action() -> dict[str, Any]:
+            if not self._cpu_unlock_payload_available():
+                raise CommandError(
+                    "CPU core-unlock helper bundle is missing or unsafe; reinstall the service."
+                )
+            topology = self._cpu_topology()
+            physical_cores = topology["physicalCores"]
+            env = {
+                "PATH": "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+                "HOME": "/root",
+                "USER": "root",
+                "LOGNAME": "root",
+            }
+            await self._exec(
+                [
+                    BASH,
+                    str(CPU_UNLOCK_PAYLOAD_PATH / "bc250-power.sh"),
+                    "cpu-unlock",
+                    action_name,
+                ],
+                timeout=180,
+                env=env,
+            )
+            if action_name == "test" and physical_cores == 6:
+                next_step = "warm-reboot"
+            elif action_name == "off" and physical_cores == 8:
+                next_step = "full-power-off"
+            else:
+                next_step = "none"
+            return {"action": action_name, "nextStep": next_step}
 
         return await self._mutate(action)
 

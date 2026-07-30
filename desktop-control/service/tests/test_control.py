@@ -48,6 +48,9 @@ class FakeBackend:
     async def get_telemetry(self):
         return {"cpuClock": 3200}
 
+    async def get_cpu_unlock_status(self):
+        return {"schemaVersion": 1, "topologyState": "locked"}
+
     async def _mutation(self, name, *args):
         self.calls.append((name, args))
         FakeBackend.active += 1
@@ -79,6 +82,10 @@ class FakeBackend:
 
     async def cpu_oc_action(self, *args):
         await self._mutation("cpu_oc_action", *args)
+
+    async def cpu_unlock_action(self, *args):
+        await self._mutation("cpu_unlock_action", *args)
+        return {"action": args[0], "nextStep": "none"}
 
     async def cec_action(self, *args):
         await self._mutation("cec_action", *args)
@@ -120,6 +127,10 @@ class ControlServiceTests(unittest.IsolatedAsyncioTestCase):
     async def test_reads_return_compact_json_without_authorization(self):
         value = await self.service.get_snapshot(":1.1")
         self.assertEqual(value, '{"user":"user1000","ok":true}')
+        unlock = await self.service.get_cpu_unlock_status(":1.1")
+        self.assertEqual(
+            unlock, '{"schemaVersion":1,"topologyState":"locked"}'
+        )
         self.assertEqual(self.authorizer.calls, [])
 
     async def test_privileged_mutation_is_authorized_and_pollable(self):
@@ -156,6 +167,20 @@ class ControlServiceTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(await self.service.cancel_operation(":1.1", operation_id))
         await self.wait_for_status(":1.1", operation_id, "cancelled")
 
+    async def test_cpu_unlock_operation_is_protected_and_returns_next_step(self):
+        operation_id = await self.service.cpu_unlock_action(":1.1", "enable")
+        operation = await self.wait_for_status(":1.1", operation_id, "succeeded")
+
+        self.assertFalse(operation["cancellable"])
+        self.assertFalse(await self.service.cancel_operation(":1.1", operation_id))
+        self.assertEqual(operation["result"], {"action": "enable", "nextStep": "none"})
+        self.assertEqual(
+            self.authorizer.calls, [(":1.1", 1000, "audit:1000", "cpu")]
+        )
+        self.assertEqual(
+            self.backends[0].calls, [("cpu_unlock_action", ("enable",))]
+        )
+
     async def test_operations_are_private_to_uid_but_survive_sender_change(self):
         operation_id = await self.service.cec_action(":1.1", "mute")
         await self.wait_for_status(":9.9", operation_id, "succeeded")
@@ -169,5 +194,8 @@ class ControlServiceTests(unittest.IsolatedAsyncioTestCase):
             await self.service.set_cec_name(":1.1", 'bad"name')
         with self.assertRaises(InvalidArguments):
             await self.service.cpu_oc_action(":1.1", "detect", True, 1200, 90)
+        for action in ("", "uninstall", "test; reboot", 1):
+            with self.subTest(action=action), self.assertRaises(InvalidArguments):
+                await self.service.cpu_unlock_action(":1.1", action)
         self.assertEqual(self.authorizer.calls, [])
         self.assertEqual(self.backends, [])

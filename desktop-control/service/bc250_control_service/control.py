@@ -72,6 +72,10 @@ class ControlService:
         caller = await self._caller(sender)
         return _compact_json(await self._backend(caller).get_telemetry())
 
+    async def get_cpu_unlock_status(self, sender: str) -> str:
+        caller = await self._caller(sender)
+        return _compact_json(await self._backend(caller).get_cpu_unlock_status())
+
     async def get_operation(self, sender: str, operation_id: str) -> str:
         caller = await self._caller(sender)
         return _compact_json(self._operations.get(operation_id, caller.uid))
@@ -81,7 +85,12 @@ class ControlService:
         return self._operations.cancel(operation_id, caller.uid)
 
     async def _submit(
-        self, sender: str, category: str, method: str, callback: Callable[[Any], Any]
+        self,
+        sender: str,
+        category: str,
+        method: str,
+        callback: Callable[[Any], Any],
+        cancellable: bool = True,
     ) -> str:
         caller = await self._caller(sender)
         await self._authorizer.authorize(
@@ -89,7 +98,7 @@ class ControlService:
         )
         backend = self._backend(caller)
         return self._operations.submit(
-            caller.uid, method, lambda: callback(backend)
+            caller.uid, method, lambda: callback(backend), cancellable=cancellable
         )
 
     async def set_cu_wgp(
@@ -202,6 +211,21 @@ class ControlService:
             lambda backend: backend.cpu_oc_action(
                 action, frequency, voltage, temperature
             ),
+        )
+
+    async def cpu_unlock_action(self, sender: str, action: str) -> str:
+        if _text(action, "Unknown CPU core-unlock action.") not in (
+            "test",
+            "enable",
+            "off",
+        ):
+            raise InvalidArguments("Unknown CPU core-unlock action.")
+        return await self._submit(
+            sender,
+            "cpu",
+            "CpuUnlockAction",
+            lambda backend: backend.cpu_unlock_action(action),
+            cancellable=False,
         )
 
     async def cec_action(self, sender: str, action: str) -> str:

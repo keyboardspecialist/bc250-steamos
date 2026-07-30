@@ -158,6 +158,97 @@ class BackendParsingTests(unittest.TestCase):
 
         self.assertFalse(ToolkitBackend._trusted_root_file(path))
 
+    def test_cpu_topology_reports_core_thread_and_ccx_groups(self):
+        backend = object.__new__(ToolkitBackend)
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            for cpu in range(12):
+                topology = root / f"cpu{cpu}" / "topology"
+                cache = root / f"cpu{cpu}" / "cache/index3"
+                topology.mkdir(parents=True)
+                cache.mkdir(parents=True)
+                (topology / "physical_package_id").write_text("0\n", encoding="ascii")
+                (topology / "core_id").write_text(str(cpu // 2), encoding="ascii")
+                (cache / "id").write_text(str((cpu // 2) // 3), encoding="ascii")
+            with patch.object(backend_module, "CPU_SYSFS_PATH", root):
+                result = backend._cpu_topology()
+
+        self.assertEqual(result["topologyState"], "locked")
+        self.assertEqual(result["physicalCores"], 6)
+        self.assertEqual(result["logicalThreads"], 12)
+        self.assertEqual(result["cores"][0]["logicalCpus"], [0, 1])
+        self.assertEqual([group["ccxId"] for group in result["ccxGroups"]], [0, 1])
+        self.assertEqual(result["ccxGroups"][0]["cores"][0]["logicalCpus"], [0, 1])
+
+    def test_cpu_topology_handles_unlocked_unexpected_and_unavailable(self):
+        backend = object.__new__(ToolkitBackend)
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            topology = root / "cpu0/topology"
+            topology.mkdir(parents=True)
+            (topology / "physical_package_id").write_text("bad", encoding="ascii")
+            (topology / "core_id").write_text("0", encoding="ascii")
+            with patch.object(backend_module, "CPU_SYSFS_PATH", root):
+                self.assertEqual(backend._cpu_topology()["topologyState"], "unavailable")
+
+            for cores, expected in ((8, "unlocked"), (7, "unexpected")):
+                case = root / str(cores)
+                for cpu in range(cores):
+                    cpu_topology = case / f"cpu{cpu}/topology"
+                    cpu_topology.mkdir(parents=True)
+                    (cpu_topology / "physical_package_id").write_text("0", encoding="ascii")
+                    (cpu_topology / "core_id").write_text(str(cpu), encoding="ascii")
+                with patch.object(backend_module, "CPU_SYSFS_PATH", case):
+                    result = backend._cpu_topology()
+                self.assertEqual(result["topologyState"], expected)
+                self.assertFalse(result["ccxAvailable"])
+                self.assertEqual(len(result["cores"]), cores)
+
+    def test_cpu_unlock_guard_rejects_malformed_oversized_and_symlink_state(self):
+        backend = object.__new__(ToolkitBackend)
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            marker = root / "reboot-pending"
+            boot_id = root / "boot-id"
+            boot_id.write_text("01234567-89ab-cdef-0123-456789abcdef\n", encoding="ascii")
+            with patch.object(backend_module, "CPU_UNLOCK_STATE_PATH", marker), patch.object(
+                backend_module, "BOOT_ID_PATH", boot_id
+            ), patch.object(ToolkitBackend, "_trusted_root_file", return_value=True):
+                marker.write_text("malformed", encoding="ascii")
+                self.assertEqual(backend._cpu_unlock_guard()["state"], "unavailable")
+                marker.write_text("x" * 129, encoding="ascii")
+                self.assertEqual(backend._cpu_unlock_guard()["state"], "unavailable")
+                marker.unlink()
+                marker.symlink_to(boot_id)
+                self.assertEqual(backend._cpu_unlock_guard()["state"], "unavailable")
+
+            marker.unlink()
+            marker.write_text(
+                "01234567-89ab-cdef-0123-456789abcdef manual\n", encoding="ascii"
+            )
+            marker.chmod(0o666)
+            with patch.object(backend_module, "CPU_UNLOCK_STATE_PATH", marker), patch.object(
+                ToolkitBackend, "_trusted_root_file", return_value=False
+            ):
+                self.assertEqual(backend._cpu_unlock_guard()["state"], "unavailable")
+
+    def test_cpu_unlock_guard_reports_manual_and_automatic_current_boot(self):
+        backend = object.__new__(ToolkitBackend)
+        boot = "01234567-89ab-cdef-0123-456789abcdef"
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            marker = root / "reboot-pending"
+            boot_id = root / "boot-id"
+            boot_id.write_text(boot + "\n", encoding="ascii")
+            with patch.object(backend_module, "CPU_UNLOCK_STATE_PATH", marker), patch.object(
+                backend_module, "BOOT_ID_PATH", boot_id
+            ), patch.object(ToolkitBackend, "_trusted_root_file", return_value=True):
+                for kind in ("manual", "automatic"):
+                    marker.write_text(f"{boot} {kind}\n", encoding="ascii")
+                    guard = backend._cpu_unlock_guard()
+                    self.assertEqual(guard["state"], kind)
+                    self.assertTrue(guard["currentBoot"])
+
     def test_umr_uses_configured_root_owned_path(self):
         backend = object.__new__(ToolkitBackend)
         with tempfile.TemporaryDirectory() as directory:
@@ -665,6 +756,119 @@ class BackendMutationTests(unittest.IsolatedAsyncioTestCase):
         backend._cpu_tool.assert_awaited_once_with(
             "cpu-oc", "off", timeout=180
         )
+
+    async def test_cpu_unlock_rejects_unknown_action_before_lock_or_execution(self):
+        backend = object.__new__(ToolkitBackend)
+        backend._mutate = AsyncMock()
+
+        with self.assertRaisesRegex(CommandError, "Unknown CPU core-unlock"):
+            await backend.cpu_unlock_action("enable; reboot")
+
+        backend._mutate.assert_not_awaited()
+
+    async def test_cpu_unlock_uses_exact_trusted_bundle_command_and_environment(self):
+        backend = object.__new__(ToolkitBackend)
+        prepare_mutation_backend(backend)
+        backend._cpu_unlock_payload_available = MagicMock(return_value=True)
+        backend._cpu_topology = MagicMock(return_value={"physicalCores": 6})
+        backend._exec = AsyncMock(return_value=(0, "ignored human output", ""))
+        bundle = Path("/trusted/helper-bundle")
+
+        with patch.object(backend_module, "CPU_UNLOCK_PAYLOAD_PATH", bundle):
+            result = await backend.cpu_unlock_action("test")
+
+        self.assertEqual(result, {"action": "test", "nextStep": "warm-reboot"})
+        self.assertEqual(
+            backend._exec.await_args.args[0],
+            [
+                backend_module.BASH,
+                "/trusted/helper-bundle/bc250-power.sh",
+                "cpu-unlock",
+                "test",
+            ],
+        )
+        self.assertEqual(
+            backend._exec.await_args.kwargs["env"],
+            {
+                "PATH": "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+                "HOME": "/root",
+                "USER": "root",
+                "LOGNAME": "root",
+            },
+        )
+
+    async def test_cpu_unlock_next_steps_do_not_parse_command_output(self):
+        cases = (
+            ("test", 8, "none"),
+            ("enable", 8, "none"),
+            ("off", 8, "full-power-off"),
+            ("off", 6, "none"),
+        )
+        for action, cores, expected in cases:
+            backend = object.__new__(ToolkitBackend)
+            prepare_mutation_backend(backend)
+            backend._cpu_unlock_payload_available = MagicMock(return_value=True)
+            backend._cpu_topology = MagicMock(return_value={"physicalCores": cores})
+            backend._exec = AsyncMock(return_value=(0, "anything", ""))
+            result = await backend.cpu_unlock_action(action)
+            self.assertEqual(result["nextStep"], expected)
+
+    async def test_cpu_unlock_bundle_requires_all_five_trusted_files(self):
+        backend = object.__new__(ToolkitBackend)
+        bundle = Path("/trusted/helper-bundle")
+        trusted = MagicMock(side_effect=lambda path: path != bundle / "core-unlock/LICENSE")
+        with patch.object(backend_module, "CPU_UNLOCK_PAYLOAD_PATH", bundle), patch.object(
+            ToolkitBackend, "_trusted_root_directory", return_value=True
+        ), patch.object(ToolkitBackend, "_trusted_root_file", trusted):
+            self.assertFalse(backend._cpu_unlock_payload_available())
+        self.assertIn(bundle / "core-unlock/LICENSE", [call.args[0] for call in trusted.call_args_list])
+
+    async def test_cpu_unlock_status_has_installation_state_and_advisory_blockers(self):
+        backend = object.__new__(ToolkitBackend)
+        backend._service = AsyncMock(
+            return_value={"enabled": "disabled", "active": "inactive"}
+        )
+        backend._cpu_topology = MagicMock(
+            return_value={
+                "physicalCores": 8,
+                "logicalThreads": 16,
+                "topologyState": "unlocked",
+                "cores": [],
+                "ccxGroups": [],
+                "ccxAvailable": False,
+            }
+        )
+        backend._cpu_unlock_guard = MagicMock(
+            return_value={"state": "clear", "active": False, "currentBoot": False}
+        )
+        backend._bc250_present_secure = MagicMock(return_value=True)
+        backend._cpu_unlock_payload_available = MagicMock(return_value=True)
+        backend._cpu_unlock_persistent = MagicMock(return_value=False)
+
+        with patch.object(ToolkitBackend, "_trusted_root_file", return_value=True):
+            status = await backend.get_cpu_unlock_status()
+
+        self.assertEqual(status["schemaVersion"], 1)
+        self.assertTrue(status["helperInstalled"])
+        self.assertTrue(status["unitInstalled"])
+        self.assertTrue(status["actions"]["enable"]["available"])
+        self.assertEqual(
+            status["actions"]["off"]["blockers"], ["persistent-replay-disabled"]
+        )
+
+    async def test_cpu_unlock_automatic_guard_blocks_every_action(self):
+        guard = {"state": "automatic", "active": True, "currentBoot": True}
+        for action in ("test", "enable", "off"):
+            result = ToolkitBackend._cpu_unlock_action_status(
+                action,
+                device_present=True,
+                topology_state="unlocked",
+                payload_available=True,
+                service_enabled=True,
+                guard=guard,
+            )
+            self.assertIn("automatic-reboot-pending", result["blockers"])
+            self.assertFalse(result["available"])
 
     async def test_inactive_governor_config_update_does_not_start_service(self):
         backend = object.__new__(ToolkitBackend)

@@ -28,6 +28,7 @@ Open the unified toolkit menu as the logged-in Deck user:
 | AIC8800 | `sudo bash ./aic8800/steamdeck-setup.sh` |
 | Decky plugin | `bash ./decky-plugin/install.sh` |
 | Plasma desktop control | `bash ./desktop-control/install.sh install` |
+| Cracktro native desktop control | `bash ./cracktro/install.sh install` (release artifact or after building from source) |
 | Mesh shaders (optional) | `./bc250-mesh-shader.sh` |
 | Persistent storage and recovery | Automatic with each setup workflow; `./bc250-storage.sh` opens its menu |
 | Verification | `sudo ./bc250-storage.sh status` |
@@ -56,6 +57,7 @@ sudo ./bc250-storage.sh install
 | CEC shutdown integration | `./bc250-cec.sh shutdown-standby install` |
 | AIC8800 | `sudo bash ./aic8800/steamdeck-setup.sh` |
 | Plasma desktop control | `bash ./desktop-control/install.sh install` |
+| Cracktro native desktop control | `bash ./cracktro/install.sh install` |
 
 ```bash
 sudo ./bc250-storage.sh status
@@ -76,6 +78,7 @@ sudo ./bc250-power.sh status
 | `bc250-maintenance.sh` | Installed-component inventory, uninstall orchestration, and optional data purge |
 | [`decky-plugin/`](#big-picture-plugin) | Quick Access interface for daily controls |
 | [`desktop-control/`](#plasma-desktop-control) | Plasma system-tray and windowed controls |
+| [`cracktro/`](#cracktro-desktop-control) | Standalone native Qt control application |
 | [`bc250-audio-fix/`](#amdgpu-driver) | DisplayPort clock and GPU telemetry corrections |
 | [`bc250-mesh-shader.sh`](#mesh-shaders-optional) | Separate RADV ICD with per-game mesh-shader opt-in |
 | [`aic8800/`](#wifi-and-bluetooth) | AIC8800D80 USB WiFi and Bluetooth driver |
@@ -86,7 +89,7 @@ The unified launcher and individual component scripts remain independently usabl
 
 Run `./bc250-toolkit.sh` without `sudo`. It opens Power, RAM / VRAM Split,
 Compute Units, CEC, Storage, Update Persistence, and Mesh Shaders as child menus, then returns to the toolkit
-when they exit. WiFi, display/audio, Decky, and Plasma desktop installation
+when they exit. WiFi, display/audio, Decky, Plasma, and Cracktro installation
 entries require confirmation before starting their longer setup workflows.
 Each child requests administrator access only when needed.
 
@@ -97,6 +100,7 @@ Each child requests administrator access only when needed.
 | `./bc250-toolkit.sh power` | Open a component menu directly |
 | `./bc250-toolkit.sh ram` | Open RAM / VRAM split settings |
 | `./bc250-toolkit.sh mesh` | Open per-game mesh-shader setup and toggles |
+| `./bc250-toolkit.sh cracktro` | Install or upgrade the standalone native desktop control |
 | `./bc250-toolkit.sh manage` | Review and remove installed components |
 | `./bc250-toolkit.sh help` | List launcher commands and components |
 
@@ -109,6 +113,7 @@ script directly:
 ./bc250-maintenance.sh status
 ./bc250-maintenance.sh plan all
 ./bc250-maintenance.sh uninstall desktop
+./bc250-maintenance.sh uninstall cracktro
 ./bc250-maintenance.sh uninstall all
 ```
 
@@ -346,6 +351,31 @@ and optional `plasmawindowed` view with Overview, GPU, CU, CPU, and CEC tabs.
 It runs independently from Decky and requests polkit authorization only for
 privileged hardware changes. Installation and troubleshooting instructions are
 in [`desktop-control/README.md`](desktop-control/README.md).
+
+## Cracktro Desktop Control
+
+[`cracktro/`](cracktro/) provides a standalone native Qt 6 frontend for status,
+GPU tuning, compute-unit routing, CPU controls, and the experimental core unlock.
+Install the prebuilt release artifact as the logged-in desktop user:
+
+```bash
+unzip bc250-cracktro-vX.Y.Z.zip
+cd bc250-cracktro
+bash cracktro/install.sh install
+```
+
+The artifact is self-contained: it includes the executable, installer, backend,
+shared service, persistence helpers, CPU core-unlock bundle, and topology helper.
+`status` and `uninstall` use the same path. User files are installed below
+`~/.local`; sudo is requested only for shared service registration.
+Release publication remains blocked while the publishing gate in
+[`cracktro/ASSETS.md`](cracktro/ASSETS.md) reports missing redistribution rights.
+
+The Plasma and Cracktro frontends share one root-owned service payload. Each
+installation records a root-owned `plasma.<uid>` or `cracktro.<uid>` marker.
+Removing a frontend releases only its marker, and the service is removed only
+after the final registered frontend is gone. Tuning profiles and helper state
+remain preserved.
 
 ## AMDGPU Driver
 
