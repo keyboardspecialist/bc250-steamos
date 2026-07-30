@@ -159,6 +159,24 @@ class RamSplitTests(unittest.TestCase):
             self.assertEqual(config.read_text(encoding="utf-8"), previous_config)
             self.assertEqual(grub.read_text(encoding="utf-8"), "previous generated config\n")
 
+    def test_ttm_validation_accepts_steamos_steamenv_boot_lines(self):
+        with tempfile.TemporaryDirectory() as directory:
+            grub = Path(directory) / "grub.cfg"
+            grub.write_text(
+                "steamenv_boot linux /boot/vmlinuz-linux-neptune-616 "
+                "quiet ttm.pages_limit=3014656\n",
+                encoding="utf-8",
+            )
+            valid = run_sourced(
+                'validate_generated_grub "$1" 3014656', str(grub)
+            )
+            invalid = run_sourced(
+                'validate_generated_grub "$1" 2097152', str(grub)
+            )
+
+        self.assertEqual(valid.returncode, 0, valid.stderr)
+        self.assertNotEqual(invalid.returncode, 0)
+
     def test_release_metadata_requires_expected_asset_and_digest(self):
         with tempfile.TemporaryDirectory() as directory:
             metadata = Path(directory) / "release.json"

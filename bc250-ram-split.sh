@@ -381,7 +381,7 @@ validate_generated_grub() {
     local path="$1" expected="$2"
     [[ -f "$path" && ! -L "$path" ]] || return 1
     awk -v expected="$expected" '
-        $1 ~ /^linux/ {
+        $1 ~ /^linux/ || ($1 == "steamenv_boot" && $2 ~ /^linux/) {
             on_line = 0
             for (i = 1; i <= NF; i++) {
                 if ($i ~ /^ttm\.pages_limit=/) {
