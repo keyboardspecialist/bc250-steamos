@@ -31,6 +31,14 @@ SYSTEMCTL = "/usr/bin/systemctl"
 GPU_CONFIG_PATH = Path("/etc/cyan-skillfish-governor-smu/config.toml")
 GPU_STATE_PATH = Path("/var/lib/bc250-control/governor/freq-state")
 CPU_HELPER_PATH = Path("/var/lib/bc250-control/helper/bc250-power.sh")
+CPU_HELPER_REQUIRED_PATHS = (
+    CPU_HELPER_PATH,
+    CPU_HELPER_PATH.parent / "bc250-storage.sh",
+    CPU_HELPER_PATH.parent / "bc250-update-persistence.sh",
+    CPU_HELPER_PATH.parent / "smu-oc-patches/stress_helper.py",
+    CPU_HELPER_PATH.parent / "smu-oc-patches/transport.py",
+    CPU_HELPER_PATH.parent / ".decky-helper-manifest",
+)
 RAM_HELPER_PATH = Path("/var/lib/bc250-control/desktop/bc250-ram-split.sh")
 CPU_STATE_DIR = Path("/var/lib/bc250-control/smu-oc")
 CPU_UNLOCK_PAYLOAD_PATH = Path("/var/lib/bc250-control/desktop")
@@ -366,8 +374,12 @@ class ToolkitBackend:
     def _trusted_root_directory(cls, path: Path) -> bool:
         return cls._trusted_root_path(path, stat.S_IFDIR)
 
+    @classmethod
+    def _cpu_helper_available(cls) -> bool:
+        return all(cls._trusted_root_file(path) for path in CPU_HELPER_REQUIRED_PATHS)
+
     async def _cpu_tool(self, *args: str, timeout: float = 30) -> str:
-        if not self._trusted_root_file(CPU_HELPER_PATH):
+        if not self._cpu_helper_available():
             raise CommandError(
                 "CPU tuning helper is missing or unsafe; reinstall the plugin."
             )
@@ -379,6 +391,7 @@ class ToolkitBackend:
             "REAL_HOME": str(self.user_home),
             "FIXES_REPO_DIR": str(self.toolkit),
             "BC250_OC_DIR": str(CPU_STATE_DIR),
+            "BC250_STORAGE_SKIP_LEGACY_AIC": "1",
         }
         _, out, _ = await self._exec(
             [BASH, str(CPU_HELPER_PATH), *args], timeout=timeout, env=env
@@ -982,18 +995,33 @@ class ToolkitBackend:
         return temperatures
 
     def _cpu_current_mhz(self) -> Optional[int]:
-        candidates = [Path("/sys/devices/system/cpu/cpu0/cpufreq/scaling_cur_freq")]
-        candidates.extend(
+        effective = [
+            float(match.group(1))
+            for match in re.finditer(
+                r"^cpu MHz\s*:\s*([0-9]+(?:\.[0-9]+)?)\s*$",
+                self._read(Path("/proc/cpuinfo")),
+                re.MULTILINE,
+            )
+        ]
+        if effective:
+            return round(max(effective))
+
+        candidates = [
             Path(path)
             for path in sorted(
                 glob.glob("/sys/devices/system/cpu/cpufreq/policy*/scaling_cur_freq")
             )
-        )
+        ]
+        if not candidates:
+            candidates = [
+                Path("/sys/devices/system/cpu/cpu0/cpufreq/scaling_cur_freq")
+            ]
+        current_values = []
         for path in candidates:
             current = self._read(path)
             if current.isdigit():
-                return round(int(current) / 1000)
-        return None
+                current_values.append(int(current))
+        return round(max(current_values) / 1000) if current_values else None
 
     def _cpu_governor(self) -> str:
         candidates = [Path("/sys/devices/system/cpu/cpu0/cpufreq/scaling_governor")]
@@ -1650,7 +1678,7 @@ class ToolkitBackend:
     async def _get_snapshot(self) -> dict[str, Any]:
         power_available = self._user_script_available("bc250-power.sh")
         cec_available = self._user_script_available("bc250-cec.sh")
-        cpu_control_available = self._trusted_root_file(CPU_HELPER_PATH)
+        cpu_control_available = self._cpu_helper_available()
         toolkit_available = (
             self._user_script_available("bc250-40cu.sh")
             and power_available
@@ -2127,6 +2155,7 @@ class ToolkitBackend:
                 "HOME": "/root",
                 "USER": "root",
                 "LOGNAME": "root",
+                "BC250_STORAGE_SKIP_LEGACY_AIC": "1",
             }
             await self._exec(
                 [

@@ -219,7 +219,7 @@ export function OverviewSummary({
         }}
       >
         <HistoryChart
-          title="CPU clock"
+          title="Peak CPU clock"
           values={history.map((sample) => sample.cpuClock)}
           color="#60a5fa"
           unit="MHz"
@@ -253,7 +253,7 @@ export function OverviewSummary({
       {history.length === 0 && (
         <PanelSection title="Live Values">
           <StatusRow
-            label="CPU clock"
+            label="Peak CPU clock"
             value={latest.cpuClock === null ? "Unavailable" : `${latest.cpuClock} MHz`}
           />
           <StatusRow

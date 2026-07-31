@@ -1,4 +1,5 @@
 import asyncio
+import importlib.util
 import json
 import os
 import pwd
@@ -27,6 +28,46 @@ def prepare_mutation_backend(backend):
 
 
 class BackendParsingTests(unittest.TestCase):
+    def test_cpu_helper_availability_requires_the_complete_runtime_set(self):
+        with patch.object(ToolkitBackend, "_trusted_root_file", return_value=True):
+            self.assertTrue(ToolkitBackend._cpu_helper_available())
+        missing = backend_module.CPU_HELPER_REQUIRED_PATHS[-1]
+        with patch.object(
+            ToolkitBackend,
+            "_trusted_root_file",
+            side_effect=lambda path: path != missing,
+        ):
+            self.assertFalse(ToolkitBackend._cpu_helper_available())
+
+    def test_cpu_clock_uses_fastest_effective_core(self):
+        backend = object.__new__(ToolkitBackend)
+        backend._read = MagicMock(
+            return_value=(
+                "processor : 0\ncpu MHz : 798.432\n"
+                "processor : 15\ncpu MHz : 4012.625\n"
+            )
+        )
+
+        self.assertEqual(backend._cpu_current_mhz(), 4013)
+
+    def test_cpu_clock_uses_fastest_policy_when_cpuinfo_is_unavailable(self):
+        backend = object.__new__(ToolkitBackend)
+        values = {
+            "/proc/cpuinfo": "",
+            "/sys/devices/system/cpu/cpufreq/policy0/scaling_cur_freq": "800000",
+            "/sys/devices/system/cpu/cpufreq/policy15/scaling_cur_freq": "3200000",
+        }
+        backend._read = MagicMock(
+            side_effect=lambda path, default="": values.get(str(path), default)
+        )
+        policies = [
+            "/sys/devices/system/cpu/cpufreq/policy0/scaling_cur_freq",
+            "/sys/devices/system/cpu/cpufreq/policy15/scaling_cur_freq",
+        ]
+
+        with patch("bc250_control.backend.glob.glob", return_value=policies):
+            self.assertEqual(backend._cpu_current_mhz(), 3200)
+
     def test_key_value_reader_ignores_shell_syntax(self):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "state"
@@ -794,6 +835,7 @@ class BackendMutationTests(unittest.IsolatedAsyncioTestCase):
                 "HOME": "/root",
                 "USER": "root",
                 "LOGNAME": "root",
+                "BC250_STORAGE_SKIP_LEGACY_AIC": "1",
             },
         )
 
@@ -1114,6 +1156,140 @@ class RamControlTests(unittest.IsolatedAsyncioTestCase):
         backend._ram_tool.assert_not_awaited()
 
 
+class DeckyHelperBootstrapTests(unittest.TestCase):
+    @staticmethod
+    def load_bootstrap():
+        repository = Path(__file__).resolve().parents[2]
+        source = repository / "decky-plugin/bootstrap.py"
+        specification = importlib.util.spec_from_file_location(
+            "decky_bootstrap_test", source
+        )
+        if specification is None or specification.loader is None:
+            raise RuntimeError("could not load Decky bootstrap module")
+        module = importlib.util.module_from_spec(specification)
+        specification.loader.exec_module(module)
+        return module
+
+    def test_missing_helper_payload_is_installed_and_then_left_unchanged(self):
+        bootstrap = self.load_bootstrap()
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            payload = root / "payload"
+            helper = root / "root/helper"
+            helper.parent.mkdir(parents=True)
+            expected = {}
+            for index, (relative, _) in enumerate(bootstrap.PAYLOAD_FILES):
+                source = payload / relative
+                source.parent.mkdir(parents=True, exist_ok=True)
+                content = f"payload-{index}\n".encode("ascii")
+                source.write_bytes(content)
+                expected[relative] = content
+            installer = MagicMock()
+            with patch.object(bootstrap.os, "geteuid", return_value=0), patch.object(
+                bootstrap.ToolkitBackend,
+                "_trusted_root_directory",
+                return_value=True,
+            ), patch.object(
+                bootstrap.ToolkitBackend, "_trusted_root_file", return_value=True
+            ):
+                self.assertTrue(
+                    bootstrap.install_privileged_helper(
+                        payload, helper, storage_installer=installer
+                    )
+                )
+                self.assertFalse(
+                    bootstrap.install_privileged_helper(
+                        payload, helper, storage_installer=installer
+                    )
+                )
+
+            installer.assert_called_once_with(payload / "bc250-storage.sh")
+            for relative, mode in bootstrap.PAYLOAD_FILES:
+                destination = helper / relative
+                self.assertEqual(destination.read_bytes(), expected[relative])
+                self.assertEqual(destination.stat().st_mode & 0o777, mode)
+            marker = helper / bootstrap.INSTALL_MARKER
+            self.assertEqual(marker.stat().st_mode & 0o777, 0o644)
+
+    def test_payload_symlinks_are_rejected_before_privileged_installation(self):
+        bootstrap = self.load_bootstrap()
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            payload = root / "payload"
+            payload.mkdir()
+            target = root / "target"
+            target.write_text("unsafe", encoding="ascii")
+            for relative, _ in bootstrap.PAYLOAD_FILES:
+                source = payload / relative
+                source.parent.mkdir(parents=True, exist_ok=True)
+                source.write_text("payload", encoding="ascii")
+            (payload / bootstrap.PAYLOAD_FILES[0][0]).unlink()
+            (payload / bootstrap.PAYLOAD_FILES[0][0]).symlink_to(target)
+            with patch.object(bootstrap.os, "geteuid", return_value=0):
+                with self.assertRaisesRegex(RuntimeError, "unsafe payload file"):
+                    bootstrap.install_privileged_helper(
+                        payload,
+                        root / "root/helper",
+                        storage_installer=MagicMock(),
+                    )
+
+    def test_failed_refresh_removes_the_publish_marker(self):
+        bootstrap = self.load_bootstrap()
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            payload = root / "payload"
+            helper = root / "root/helper"
+            helper.parent.mkdir(parents=True)
+            for index, (relative, _) in enumerate(bootstrap.PAYLOAD_FILES):
+                source = payload / relative
+                source.parent.mkdir(parents=True, exist_ok=True)
+                source.write_text(f"payload-{index}\n", encoding="ascii")
+
+            trust = patch.object(
+                bootstrap.ToolkitBackend,
+                "_trusted_root_directory",
+                return_value=True,
+            )
+            trust_file = patch.object(
+                bootstrap.ToolkitBackend, "_trusted_root_file", return_value=True
+            )
+            installer = MagicMock()
+            with patch.object(bootstrap.os, "geteuid", return_value=0), trust, trust_file:
+                self.assertTrue(
+                    bootstrap.install_privileged_helper(
+                        payload, helper, storage_installer=installer
+                    )
+                )
+                (payload / "bc250-power.sh").write_text(
+                    "updated\n", encoding="ascii"
+                )
+                failing_storage = MagicMock(
+                    side_effect=RuntimeError("simulated storage failure")
+                )
+                with self.assertRaisesRegex(RuntimeError, "storage failure"):
+                    bootstrap.install_privileged_helper(
+                        payload, helper, storage_installer=failing_storage
+                    )
+                self.assertFalse((helper / bootstrap.INSTALL_MARKER).exists())
+                original_install = bootstrap._atomic_install
+
+                def fail_during_refresh(destination, content, mode):
+                    if destination.name == "bc250-update-persistence.sh":
+                        raise OSError("simulated refresh failure")
+                    original_install(destination, content, mode)
+
+                with patch.object(
+                    bootstrap,
+                    "_atomic_install",
+                    side_effect=fail_during_refresh,
+                ), self.assertRaisesRegex(OSError, "simulated refresh failure"):
+                    bootstrap.install_privileged_helper(
+                        payload, helper, storage_installer=installer
+                    )
+
+            self.assertFalse((helper / bootstrap.INSTALL_MARKER).exists())
+
+
 class DeckyRuntimeTests(unittest.TestCase):
     def test_staged_runtime_imports_in_isolation_and_is_reproducible(self):
         repository = Path(__file__).resolve().parents[2]
@@ -1150,16 +1326,52 @@ class DeckyRuntimeTests(unittest.TestCase):
                 env=environment,
             )
 
+            payload_sources = {
+                Path("bc250-power.sh"): repository / "bc250-power.sh",
+                Path("bc250-storage.sh"): repository / "bc250-storage.sh",
+                Path("bc250-update-persistence.sh"): repository
+                / "bc250-update-persistence.sh",
+                Path("acpi-tables/SSDT-CST.dsl"): repository
+                / "acpi-tables/SSDT-CST.dsl",
+                Path("acpi-tables/SSDT-PST.dsl"): repository
+                / "acpi-tables/SSDT-PST.dsl",
+                Path("smu-oc-patches/stress_helper.py"): repository
+                / "smu-oc-patches/stress_helper.py",
+                Path("smu-oc-patches/transport.py"): repository
+                / "smu-oc-patches/transport.py",
+                Path("smu-oc-patches/0001-transaction-level-flock.patch"): repository
+                / "smu-oc-patches/0001-transaction-level-flock.patch",
+                Path("smu-oc-patches/0002-steamos-stress-fallback.patch"): repository
+                / "smu-oc-patches/0002-steamos-stress-fallback.patch",
+                Path("smu-oc-patches/README.md"): repository
+                / "smu-oc-patches/README.md",
+                Path("core-unlock/bc250-unlock-cores.py"): repository
+                / "core-unlock/bc250-unlock-cores.py",
+                Path("core-unlock/LICENSE"): repository / "core-unlock/LICENSE",
+                Path("topology.sh"): repository / "topology.sh",
+            }
+            for relative, source in payload_sources.items():
+                staged = first / "privileged-helper" / relative
+                self.assertTrue(staged.is_file(), relative)
+                self.assertEqual(staged.read_bytes(), source.read_bytes())
+
             code = (
                 "import pathlib, sys; sys.path.insert(0, sys.argv[1]); "
-                "import bc250_control, bc250_control.backend, tomli; "
+                "import bootstrap, bc250_control, bc250_control.backend, tomli; "
                 "root=pathlib.Path(sys.argv[1]).resolve(); "
-                "files=(bc250_control.__file__, bc250_control.backend.__file__, tomli.__file__); "
+                "files=(bootstrap.__file__, bc250_control.__file__, "
+                "bc250_control.backend.__file__, tomli.__file__); "
                 "assert all(root in pathlib.Path(item).resolve().parents for item in files); "
                 "assert all(not pathlib.Path(item).is_symlink() for item in files)"
             )
             subprocess.run(
-                [sys.executable, "-I", "-c", code, str(first / "py_modules")],
+                [
+                    sys.executable,
+                    "-I",
+                    "-c",
+                    code,
+                    str(first / "py_modules"),
+                ],
                 check=True,
                 cwd=str(root),
             )

@@ -20,7 +20,7 @@ export function PowerTab({ snapshot }: { snapshot: Snapshot }) {
           good={power.cpuGovernor === "schedutil"}
         />
         <StatusRow
-          label="CPU clock"
+          label="Peak CPU clock"
           value={power.cpuCurrentMhz ? `${power.cpuCurrentMhz} MHz` : "Unavailable"}
         />
         <StatusRow label="Idle states" value={`${power.cStates} states`} good={power.cStates >= 3} />

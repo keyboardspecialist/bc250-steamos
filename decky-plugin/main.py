@@ -1,5 +1,8 @@
+from pathlib import Path
+
 import decky
 
+from bootstrap import install_privileged_helper
 from bc250_control import ToolkitBackend
 
 
@@ -8,6 +11,12 @@ class Plugin:
         self.backend = ToolkitBackend(decky.DECKY_USER, decky.DECKY_USER_HOME)
 
     async def _main(self):
+        try:
+            payload = Path(__file__).resolve().parent / "privileged-helper"
+            if install_privileged_helper(payload):
+                decky.logger.info("BC-250 privileged helper installed")
+        except Exception:
+            decky.logger.exception("BC-250 privileged helper installation failed")
         decky.logger.info("BC-250 Control backend started")
 
     async def get_snapshot(self):

@@ -1,7 +1,9 @@
 import os
 import re
 import shutil
+import stat
 import subprocess
+import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -36,6 +38,89 @@ def synthetic_dsdt(thread_count):
 
 
 class AcpiTableTests(unittest.TestCase):
+    def test_python_fallback_builds_a_valid_newc_archive(self):
+        with tempfile.TemporaryDirectory() as directory:
+            work = Path(directory)
+            payload = work / "payload/kernel/firmware/acpi"
+            payload.mkdir(parents=True)
+            (payload / "SSDT-CST.aml").write_bytes(b"cst")
+            (payload / "SSDT-PST.aml").write_bytes(b"pst")
+            bin_dir = work / "bin"
+            bin_dir.mkdir()
+            fake_cpio = bin_dir / "cpio"
+            fake_cpio.write_text("#!/bin/sh\nexit 1\n", encoding="utf-8")
+            fake_cpio.chmod(0o755)
+            (bin_dir / "python3").symlink_to(sys.executable)
+            archive = work / "fallback.cpio"
+
+            result = subprocess.run(
+                [
+                    "/bin/bash",
+                    "-c",
+                    'set -euo pipefail; script=$1; root=$2; output=$3; '
+                    'set -- help; source "$script" >/dev/null; '
+                    'write_newc_archive "$root" "$output"',
+                    "_",
+                    str(POWER),
+                    str(work / "payload"),
+                    str(archive),
+                ],
+                capture_output=True,
+                text=True,
+                env={
+                    **os.environ,
+                    "PATH": "{}:{}".format(bin_dir, os.environ.get("PATH", "")),
+                    "REAL_USER": "acpi-test",
+                    "REAL_HOME": directory,
+                },
+            )
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+            content = archive.read_bytes()
+            names = []
+            entries = {}
+            trailer_found = False
+            offset = 0
+            while content[offset : offset + 6] == b"070701":
+                fields = [
+                    int(content[offset + 6 + index * 8 : offset + 14 + index * 8], 16)
+                    for index in range(13)
+                ]
+                offset += 110
+                name_size = fields[11]
+                name = content[offset : offset + name_size - 1].decode("ascii")
+                offset = (offset + name_size + 3) & ~3
+                payload_bytes = content[offset : offset + fields[6]]
+                offset = (offset + fields[6] + 3) & ~3
+                if name == "TRAILER!!!":
+                    trailer_found = True
+                    break
+                names.append(name)
+                entries[name] = (fields[1], payload_bytes)
+            self.assertEqual(
+                names,
+                [
+                    "kernel",
+                    "kernel/firmware",
+                    "kernel/firmware/acpi",
+                    "kernel/firmware/acpi/SSDT-CST.aml",
+                    "kernel/firmware/acpi/SSDT-PST.aml",
+                ],
+            )
+            self.assertTrue(trailer_found)
+            self.assertEqual(len(content) % 512, 0)
+            self.assertFalse(content[offset:].strip(b"\0"))
+            self.assertTrue(stat.S_ISDIR(entries["kernel"][0]))
+            self.assertTrue(
+                stat.S_ISREG(entries["kernel/firmware/acpi/SSDT-CST.aml"][0])
+            )
+            self.assertEqual(
+                entries["kernel/firmware/acpi/SSDT-CST.aml"][1], b"cst"
+            )
+            self.assertEqual(
+                entries["kernel/firmware/acpi/SSDT-PST.aml"][1], b"pst"
+            )
+
     def test_optional_processor_scopes_and_aliases_are_guarded(self):
         cst = (TABLES / "SSDT-CST.dsl").read_text(encoding="utf-8")
         pst = (TABLES / "SSDT-PST.dsl").read_text(encoding="utf-8")

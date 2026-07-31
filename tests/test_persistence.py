@@ -416,6 +416,28 @@ grep -Fxq "daemon-reload" "$SYSTEMCTL_LOG"
         self.assertNotIn("pacman-key --refresh-keys", source)
         self.assertNotIn("SigLevel = Never", source)
 
+    def test_cpu_oc_apply_prefers_the_latest_staged_detection(self):
+        source = (ROOT / "bc250-power.sh").read_text(encoding="utf-8")
+        apply_section = source[
+            source.index("oc_apply()") : source.index("oc_enable()")
+        ]
+        staged = apply_section.index('local conf="$OC_STAGE_CONF"')
+        installed = apply_section.index('conf="$OC_CONF"')
+        self.assertLess(staged, installed)
+
+    def test_decky_cpu_actions_do_not_migrate_legacy_wifi_from_minimal_payload(self):
+        storage = (ROOT / "bc250-storage.sh").read_text(encoding="utf-8")
+        backend = (ROOT / "backend/bc250_control/backend.py").read_text(
+            encoding="utf-8"
+        )
+        migration = storage[
+            storage.index("migrate_aic_helper()") : storage.index("install_storage()")
+        ]
+        self.assertIn("BC250_STORAGE_SKIP_LEGACY_AIC", migration)
+        self.assertGreaterEqual(
+            backend.count('"BC250_STORAGE_SKIP_LEGACY_AIC": "1"'), 2
+        )
+
     def test_storage_help_documents_menu_and_sudo_prompt(self):
         result = subprocess.run(
             ["bash", str(STORAGE), "help"],

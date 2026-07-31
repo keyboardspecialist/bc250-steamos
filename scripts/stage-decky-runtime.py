@@ -69,9 +69,35 @@ def stage(output: Path, epoch: int) -> None:
     output.parent.mkdir(parents=True, exist_ok=True)
     temporary = Path(tempfile.mkdtemp(prefix=".decky-runtime-", dir=str(output.parent)))
     try:
-        for name in ("LICENSE", "main.py", "package.json", "plugin.json"):
+        for name in (
+            "LICENSE",
+            "main.py",
+            "package.json",
+            "plugin.json",
+        ):
             copy_file(PLUGIN_SOURCE / name, temporary / name)
         copy_file(PLUGIN_SOURCE / "dist/index.js", temporary / "dist/index.js")
+        for name in (
+            "bc250-power.sh",
+            "bc250-storage.sh",
+            "bc250-update-persistence.sh",
+            "topology.sh",
+        ):
+            copy_file(REPOSITORY / name, temporary / "privileged-helper" / name)
+        for directory in ("acpi-tables", "smu-oc-patches"):
+            copy_tree(
+                REPOSITORY / directory,
+                temporary / "privileged-helper" / directory,
+            )
+        for name in ("bc250-unlock-cores.py", "LICENSE"):
+            copy_file(
+                REPOSITORY / "core-unlock" / name,
+                temporary / "privileged-helper/core-unlock" / name,
+            )
+        copy_file(
+            PLUGIN_SOURCE / "bootstrap.py",
+            temporary / "py_modules/bootstrap.py",
+        )
         copy_tree(
             BACKEND_SOURCE / "bc250_control",
             temporary / "py_modules/bc250_control",

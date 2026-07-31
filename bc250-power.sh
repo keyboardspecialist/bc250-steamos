@@ -493,7 +493,9 @@ acpi_payload_current() {
 
 ensure_acpi_build_tools() {
     local packages=()
-    command -v cpio >/dev/null 2>&1 || packages+=(cpio)
+    command -v cpio >/dev/null 2>&1 \
+        || command -v python3 >/dev/null 2>&1 \
+        || packages+=(cpio)
     command -v iasl >/dev/null 2>&1 || packages+=(acpica)
     [[ ${#packages[@]} -gt 0 ]] || return 0
 
@@ -501,6 +503,51 @@ ensure_acpi_build_tools() {
     prepare_pacman_keyring
     pacman -Sy --noconfirm --needed "${packages[@]}" \
         || die "ACPI build tools unavailable and pacman install failed."
+}
+
+write_newc_archive() {
+    local root="$1" output="$2"
+    if command -v cpio >/dev/null 2>&1; then
+        if ( cd "$root" && find kernel -print | cpio -o -H newc > "$output" ); then
+            return 0
+        fi
+        warn "System cpio failed; retrying with the Python fallback."
+        rm -f "$output"
+    fi
+    command -v python3 >/dev/null 2>&1 \
+        || die "Neither cpio nor python3 is available to build the ACPI archive."
+    python3 - "$root" "$output" <<'PY'
+import stat
+import sys
+from pathlib import Path
+
+root = Path(sys.argv[1])
+output = Path(sys.argv[2])
+paths = sorted(root.joinpath("kernel").rglob("*"), key=lambda path: path.as_posix())
+paths.insert(0, root / "kernel")
+
+with output.open("wb") as stream:
+    def write_entry(name, mode, data, inode):
+        fields = (
+            inode, mode, 0, 0, 1, 0, len(data),
+            0, 0, 0, 0, len(name) + 1, 0,
+        )
+        header = "070701" + "".join(f"{value:08x}" for value in fields)
+        stream.write(header.encode("ascii"))
+        stream.write(name.encode("ascii") + b"\0")
+        stream.write(b"\0" * (-stream.tell() % 4))
+        stream.write(data)
+        stream.write(b"\0" * (-stream.tell() % 4))
+
+    for inode, path in enumerate(paths, 1):
+        if path.is_symlink() or not (path.is_dir() or path.is_file()):
+            raise SystemExit(f"unsafe ACPI archive input: {path}")
+        name = path.relative_to(root).as_posix()
+        mode = (stat.S_IFDIR | 0o755) if path.is_dir() else (stat.S_IFREG | 0o644)
+        write_entry(name, mode, b"" if path.is_dir() else path.read_bytes(), inode)
+    write_entry("TRAILER!!!", 0, b"", len(paths) + 1)
+    stream.write(b"\0" * (-stream.tell() % 512))
+PY
 }
 
 build_acpi_payload() {
@@ -526,7 +573,7 @@ build_acpi_payload() {
         [[ -s "$output.aml" ]] || die "iasl produced no $table.aml"
     done
 
-    ( cd "$work" && find kernel -print | cpio -o -H newc > acpi_override.cpio )
+    write_newc_archive "$work" "$work/acpi_override.cpio"
     [[ -s "$work/acpi_override.cpio" ]] || die "ACPI override archive is empty."
     archive_hash=$(sha256sum "$work/acpi_override.cpio" | awk '{print $1}')
 
@@ -2110,8 +2157,8 @@ NEVER above 1325 mV -- exceeding it has bricked boards."
 oc_apply() {
     require_root
     install_oc_files
-    local conf="$OC_CONF"
-    [[ -f "$conf" ]] || conf="$OC_STAGE_CONF"
+    local conf="$OC_STAGE_CONF"
+    [[ -f "$conf" ]] || conf="$OC_CONF"
     [[ -f "$conf" ]] || die "No overclock config -- run '$0 cpu-oc detect' first."
     pause_governor
     python3 "$OC_DIR/bc250_apply.py" --apply "$conf"

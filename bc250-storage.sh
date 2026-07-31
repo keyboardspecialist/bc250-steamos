@@ -313,6 +313,10 @@ migrate_aic_helper() {
     local unit=/etc/systemd/system/aic8800-modules.service
     local stage repo_line repo source_link firmware_link header_fetcher
     [[ -f "$old" && ! -L "$old" ]] || return 0
+    if [[ "${BC250_STORAGE_SKIP_LEGACY_AIC:-0}" == 1 ]]; then
+        log "Preserving legacy AIC8800 helper in minimal frontend environment."
+        return 0
+    fi
     if [[ ! -f "$source/Makefile" && -f /etc/aic8800-paths.conf \
         && ! -L /etc/aic8800-paths.conf ]]; then
         repo_line=$(grep -m1 '^AIC8800_REPO=' /etc/aic8800-paths.conf || true)
