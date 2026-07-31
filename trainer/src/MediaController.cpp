@@ -9,6 +9,7 @@
 #include <QFileInfo>
 #include <QFileSystemWatcher>
 #include <QLibraryInfo>
+#include <QLocale>
 #include <QSettings>
 #include <QThread>
 #include <QTimer>
@@ -535,7 +536,7 @@ QVector<MediaController::Track> MediaController::scanDirectory() const
                        QUrl::fromLocalFile(entry.absoluteFilePath())});
     }
 
-    QCollator collator;
+    QCollator collator(QLocale::English);
     collator.setCaseSensitivity(Qt::CaseInsensitive);
     collator.setNumericMode(true);
     std::sort(result.begin(), result.end(), [&collator](const Track &left, const Track &right) {
