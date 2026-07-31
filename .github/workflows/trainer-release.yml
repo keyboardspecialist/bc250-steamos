@@ -61,10 +61,17 @@ jobs:
         with:
           python-version: "3.8"
 
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 9
+
       - name: Set up Node.js
         uses: actions/setup-node@v4
         with:
           node-version: 20
+          cache: pnpm
+          cache-dependency-path: decky-plugin/pnpm-lock.yaml
 
       - name: Install build dependencies
         run: |
@@ -83,6 +90,13 @@ jobs:
             qml6-module-qttest \
             gstreamer1.0-plugins-base gstreamer1.0-plugins-good \
             gstreamer1.0-pulseaudio
+
+      - name: Build Decky test fixture
+        working-directory: decky-plugin
+        run: |
+          pnpm install --frozen-lockfile
+          pnpm run typecheck
+          pnpm run build
 
       - name: Configure BC250 Trainer
         run: |
