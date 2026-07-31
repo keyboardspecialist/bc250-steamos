@@ -25,12 +25,17 @@ INTROSPECTION_XML = """<node>
   <interface name="io.github.keyboardspecialist.BC250Control1">
     <method name="GetSnapshot"><arg name="json" type="s" direction="out"/></method>
     <method name="GetTelemetry"><arg name="json" type="s" direction="out"/></method>
+    <method name="GetCpuUnlockStatus"><arg name="json" type="s" direction="out"/></method>
     <method name="SetCuWgp"><arg name="se" type="y" direction="in"/><arg name="sh" type="y" direction="in"/><arg name="wgp" type="y" direction="in"/><arg name="enabled" type="b" direction="in"/><arg name="operation_id" type="s" direction="out"/></method>
     <method name="SetGpuFrequency"><arg name="mode" type="s" direction="in"/><arg name="minimum" type="u" direction="in"/><arg name="maximum" type="u" direction="in"/><arg name="operation_id" type="s" direction="out"/></method>
     <method name="SetLoadTarget"><arg name="preset" type="s" direction="in"/><arg name="operation_id" type="s" direction="out"/></method>
     <method name="SetCustomLoadTarget"><arg name="minimum" type="y" direction="in"/><arg name="maximum" type="y" direction="in"/><arg name="operation_id" type="s" direction="out"/></method>
     <method name="SetRamp"><arg name="climb_ms" type="u" direction="in"/><arg name="operation_id" type="s" direction="out"/></method>
     <method name="CpuOcAction"><arg name="action" type="s" direction="in"/><arg name="frequency" type="u" direction="in"/><arg name="voltage" type="u" direction="in"/><arg name="temperature" type="u" direction="in"/><arg name="operation_id" type="s" direction="out"/></method>
+    <method name="CpuUnlockAction"><arg name="action" type="s" direction="in"/><arg name="operation_id" type="s" direction="out"/></method>
+    <method name="SetUmaSize"><arg name="uma_mib" type="u" direction="in"/><arg name="operation_id" type="s" direction="out"/></method>
+    <method name="SetTtmPages"><arg name="pages" type="u" direction="in"/><arg name="operation_id" type="s" direction="out"/></method>
+    <method name="RemoveTtmOverride"><arg name="operation_id" type="s" direction="out"/></method>
     <method name="CecAction"><arg name="action" type="s" direction="in"/><arg name="operation_id" type="s" direction="out"/></method>
     <method name="SetCecToggle"><arg name="key" type="s" direction="in"/><arg name="enabled" type="b" direction="in"/><arg name="operation_id" type="s" direction="out"/></method>
     <method name="SetCecName"><arg name="name" type="s" direction="in"/><arg name="operation_id" type="s" direction="out"/></method>
@@ -147,12 +152,17 @@ class DbusAdapter:
     _METHODS: Dict[str, Tuple[str, str, str]] = {
         "GetSnapshot": ("", "s", "get_snapshot"),
         "GetTelemetry": ("", "s", "get_telemetry"),
+        "GetCpuUnlockStatus": ("", "s", "get_cpu_unlock_status"),
         "SetCuWgp": ("yyyb", "s", "set_cu_wgp"),
         "SetGpuFrequency": ("suu", "s", "set_gpu_frequency"),
         "SetLoadTarget": ("s", "s", "set_load_target"),
         "SetCustomLoadTarget": ("yy", "s", "set_custom_load_target"),
         "SetRamp": ("u", "s", "set_ramp"),
         "CpuOcAction": ("suuu", "s", "cpu_oc_action"),
+        "CpuUnlockAction": ("s", "s", "cpu_unlock_action"),
+        "SetUmaSize": ("u", "s", "set_uma_size"),
+        "SetTtmPages": ("u", "s", "set_ttm_pages"),
+        "RemoveTtmOverride": ("", "s", "remove_ttm_override"),
         "CecAction": ("s", "s", "cec_action"),
         "SetCecToggle": ("sb", "s", "set_cec_toggle"),
         "SetCecName": ("s", "s", "set_cec_name"),

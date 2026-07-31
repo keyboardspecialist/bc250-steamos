@@ -85,6 +85,9 @@ returns `b` to support cancelling long-running work.
 | `SetCustomLoadTarget` | `yy` | lower and upper percent |
 | `SetRamp` | `u` | climb milliseconds |
 | `CpuOcAction` | `suuu` | action, MHz, mV, temperature Celsius |
+| `SetUmaSize` | `u` | CMOS minimum VRAM in aligned MiB |
+| `SetTtmPages` | `u` | dynamic TTM limit in 4 KiB pages |
+| `RemoveTtmOverride` | none | remove the toolkit-owned TTM GRUB drop-in |
 | `CecAction` | `s` | allowlisted CEC action |
 | `SetCecToggle` | `sb` | allowlisted setting, enabled |
 | `SetCecName` | `s` | printable 1-14 UTF-8 byte name |
@@ -95,11 +98,11 @@ The CPU actions are `detect`, `apply`, `enable`, and `off`. GPU modes are
 CEC toggle keys are `wake-tv`, `suspend-tv`, `allow-standby`, and `uinput`.
 
 The snapshot schema is the same typed object consumed by the Decky interface:
-top-level `toolkit`, `cu`, `power`, `gpu`, `cpu`, and `cec` objects. In
+top-level `toolkit`, `cu`, `power`, `gpu`, `cpu`, `cec`, and `ram` objects. In
 particular, the UI expects service states as `{enabled,active}`, CU `rows` and
 `savedMasks`, GPU live/requested ranges and tuning values, CPU
 `installed`/`staged` profiles, CEC state and behavior booleans, and power
-temperatures. JSON/free-form service output is parsed only as data and is never
+temperatures, plus CMOS/TTM configured and active memory limits. JSON/free-form service output is parsed only as data and is never
 inserted into a command.
 
 ## Safety And Polling

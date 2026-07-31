@@ -1,0 +1,33 @@
+id: io.github.keyboardspecialist.bc250trainer
+runtime: org.kde.Platform
+runtime-version: '6.10'
+sdk: org.kde.Sdk
+command: bc250-trainer
+default-branch: stable
+
+finish-args:
+  - --share=ipc
+  - --socket=fallback-x11
+  - --socket=wayland
+  - --socket=pulseaudio
+  - --device=dri
+  - --system-talk-name=io.github.keyboardspecialist.BC250Control1
+
+build-options:
+  secret-env:
+    - TRAINER_PROJECT_VERSION
+
+modules:
+  - name: bc250-trainer
+    buildsystem: cmake-ninja
+    builddir: true
+    config-opts:
+      - -DCMAKE_BUILD_TYPE=Release
+      - -DBUILD_TESTING=OFF
+    sources:
+      - type: dir
+        path: ..
+        skip:
+          - build
+          - build-*
+          - out

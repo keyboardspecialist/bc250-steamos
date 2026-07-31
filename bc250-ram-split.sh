@@ -571,6 +571,43 @@ cmd_status() {
     fi
 }
 
+cmd_status_json() {
+    local tool_state=not-installed tool_version="" uma="" ttm_state=default
+    local configured="" boot="" module="" reboot_required=false protected=false
+    if verify_installed_tool; then
+        tool_state=verified
+        tool_version=$STORED_TAG
+    elif tool_has_artifacts; then
+        tool_state=invalid
+    fi
+    uma=$(profile_uma_size || true)
+    if configured=$(configured_ttm_pages); then
+        ttm_state=configured
+    elif ttm_config_exists; then
+        ttm_state=foreign
+    fi
+    boot=$(active_boot_ttm_pages || true)
+    module=$(active_module_ttm_pages || true)
+    if [[ "$ttm_state" != foreign && "$configured" != "$boot" ]]; then
+        reboot_required=true
+    fi
+    if [[ -f "$KEEP_FILE" && ! -L "$KEEP_FILE" ]]; then
+        protected=true
+    fi
+
+    printf '{"schemaVersion":1,"available":true,"toolState":"%s","toolVersion":' "$tool_state"
+    if [[ -n "$tool_version" ]]; then printf '"%s"' "$tool_version"; else printf 'null'; fi
+    printf ',"umaLastRequestedMiB":'
+    if [[ -n "$uma" ]]; then printf '%s' "$uma"; else printf 'null'; fi
+    printf ',"ttmState":"%s","ttmConfiguredPages":' "$ttm_state"
+    if [[ -n "$configured" ]]; then printf '%s' "$configured"; else printf 'null'; fi
+    printf ',"ttmBootPages":'
+    if [[ -n "$boot" ]]; then printf '%s' "$boot"; else printf 'null'; fi
+    printf ',"ttmLivePages":'
+    if [[ -n "$module" ]]; then printf '%s' "$module"; else printf 'null'; fi
+    printf ',"rebootRequired":%s,"protected":%s}\n' "$reboot_required" "$protected"
+}
+
 cmd_uninstall() {
     require_root
     preflight_tool_ownership
@@ -805,7 +842,7 @@ cmd_help() {
     cat << EOF
 bc250-ram-split.sh -- BC-250 RAM / VRAM split configuration
 
-Usage: $0 {menu|status|installed|install|show|set UMA_MB --yes|
+Usage: $0 {menu|status|status-json|installed|install|show|set UMA_MB --yes|
            ttm-set PAGES --yes|ttm-remove|uninstall|help}
 
   install              Download the latest fanoush/bc250_memcfg release,
@@ -844,6 +881,7 @@ fi
 case "$1" in
     menu) (($# == 1)) || die "Usage: $0 menu"; cmd_menu ;;
     status) (($# == 1)) || die "Usage: $0 status"; cmd_status ;;
+    status-json) (($# == 1)) || die "Usage: $0 status-json"; cmd_status_json ;;
     installed) (($# == 1)) || die "Usage: $0 installed"; cmd_installed ;;
     install) (($# == 1)) || die "Usage: $0 install"; cmd_install ;;
     show) (($# == 1)) || die "Usage: $0 show"; cmd_show ;;

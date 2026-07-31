@@ -170,6 +170,7 @@ require_root() { :; }
 systemctl() { [[ "${1:-}" != is-active ]]; }
 install_update_persistence() { return 9; }
 remove_update_persistence() { rm -f "$POWER_KEEP_FILE"; }
+other_power_payload_is_installed() { return 1; }
 core_unlock_lifecycle_lock() { :; }
 core_unlock_lifecycle_unlock() { :; }
 core_unlock_operation_lock() { :; }

@@ -16,9 +16,12 @@ AUDIO_CLEAN_SH="${AUDIO_CLEAN_SH:-$SCRIPT_DIR/bc250-audio-fix/clean.sh}"
 MESH_SH="${MESH_SH:-$SCRIPT_DIR/bc250-mesh-shader.sh}"
 DECKY_SH="${DECKY_SH:-$SCRIPT_DIR/decky-plugin/install.sh}"
 DESKTOP_SH="${DESKTOP_SH:-$SCRIPT_DIR/desktop-control/install.sh}"
+TRAINER_SH="${TRAINER_SH:-$SCRIPT_DIR/trainer/install.sh}"
+TRAINER_FLATPAK_SH="${TRAINER_FLATPAK_SH:-$SCRIPT_DIR/trainer/install-flatpak.sh}"
+SERVICE_CLIENT_DIR="${BC250_SERVICE_CLIENT_DIR:-/var/lib/bc250-control/service-clients}"
 
-COMPONENTS=(desktop decky cec power ram compute mesh audio aic)
-UNINSTALL_ORDER=(desktop decky cec power ram compute mesh audio aic)
+COMPONENTS=(trainer desktop decky cec power ram compute mesh audio aic)
+UNINSTALL_ORDER=(trainer desktop decky cec power ram compute mesh audio aic)
 MESH_STATE_DIR="${BC250_MESH_STATE_DIR:-$HOME/.local/share/bc250-mesh-shader}"
 MESH_LOCK_FILE="${BC250_MESH_LOCK_FILE:-$HOME/.cache/bc250-mesh-shader.lock}"
 
@@ -36,6 +39,7 @@ require_script() { [[ -f "$1" && ! -L "$1" ]] || die "Required component script 
 
 component_label() {
     case "$1" in
+        trainer) echo "BC250 Trainer" ;;
         desktop) echo "Plasma desktop control" ;;
         decky) echo "Decky plugin" ;;
         cec) echo "CEC integration" ;;
@@ -52,6 +56,7 @@ component_label() {
 
 component_script() {
     case "$1" in
+        trainer) echo "$TRAINER_SH" ;;
         desktop) echo "$DESKTOP_SH" ;;
         decky) echo "$DECKY_SH" ;;
         cec) echo "$CEC_SH" ;;
@@ -72,6 +77,13 @@ component_probe() {
     require_script "$script"
     case "$component" in
         power|ram|compute|cec) bash "$script" installed >/dev/null 2>&1 ;;
+        trainer)
+            if bash "$script" status >/dev/null 2>&1; then
+                return 0
+            fi
+            require_script "$TRAINER_FLATPAK_SH"
+            bash "$TRAINER_FLATPAK_SH" status >/dev/null 2>&1
+            ;;
         desktop|decky|mesh|audio|aic) bash "$script" status >/dev/null 2>&1 ;;
         storage) bash "$script" installed >/dev/null 2>&1 ;;
     esac
@@ -79,16 +91,32 @@ component_probe() {
 
 component_has_artifacts() {
     case "$1" in
+        trainer)
+            [[ -e "$HOME/.local/libexec/bc250-trainer" \
+                || -e "$HOME/.local/share/applications/io.github.keyboardspecialist.bc250trainer.desktop" \
+                || -e "$HOME/.local/share/icons/hicolor/scalable/apps/io.github.keyboardspecialist.bc250trainer.svg" \
+                || -e "$SERVICE_CLIENT_DIR/trainer.$(id -u)" \
+                || -e "$SERVICE_CLIENT_DIR/trainer-flatpak.$(id -u)" ]] \
+                || [[ -e "$HOME/.local/libexec/bc250-cracktro" \
+                    || -e "$HOME/.local/share/applications/io.github.keyboardspecialist.bc250cracktro.desktop" \
+                    || -e "$HOME/.local/share/icons/hicolor/scalable/apps/io.github.keyboardspecialist.bc250cracktro.svg" \
+                    || -e "$SERVICE_CLIENT_DIR/cracktro.$(id -u)" ]] \
+                || { command -v flatpak >/dev/null 2>&1 \
+                    && flatpak info --user io.github.keyboardspecialist.bc250trainer >/dev/null 2>&1; }
+            ;;
         desktop)
-            [[ -e /var/lib/bc250-control/desktop \
-                || -e /etc/systemd/system/bc250-control.service \
-                || -e /etc/systemd/system/bc250-desktop-control-repair.service \
-                || -e /etc/dbus-1/system.d/io.github.keyboardspecialist.BC250Control1.conf \
-                || -e /usr/share/polkit-1/actions/io.github.keyboardspecialist.bc250-control.policy \
-                || -e /etc/atomic-update.conf.d/bc250-desktop.conf \
-                || -L /etc/systemd/system/multi-user.target.wants/bc250-control.service \
-                || -L /etc/systemd/system/multi-user.target.wants/bc250-desktop-control-repair.service \
-                || -e "$HOME/.local/share/plasma/plasmoids/io.github.keyboardspecialist.bc250control" ]]
+            [[ -e "$SERVICE_CLIENT_DIR/plasma.$(id -u)" \
+                || -e "$SERVICE_CLIENT_DIR/legacy.0" \
+                || -e "$HOME/.local/share/plasma/plasmoids/io.github.keyboardspecialist.bc250control" \
+                || ( ! -e /var/lib/bc250-control/service-clients \
+                    && ( -e /var/lib/bc250-control/desktop \
+                        || -e /etc/systemd/system/bc250-control.service \
+                        || -e /etc/systemd/system/bc250-desktop-control-repair.service \
+                        || -e /etc/dbus-1/system.d/io.github.keyboardspecialist.BC250Control1.conf \
+                        || -e /usr/share/polkit-1/actions/io.github.keyboardspecialist.bc250-control.policy \
+                        || -e /etc/atomic-update.conf.d/bc250-desktop.conf \
+                        || -L /etc/systemd/system/multi-user.target.wants/bc250-control.service \
+                        || -L /etc/systemd/system/multi-user.target.wants/bc250-desktop-control-repair.service ) ) ]]
             ;;
         decky) [[ -e "$HOME/homebrew/plugins/BC-250 Control" ]] ;;
         cec)
@@ -181,7 +209,8 @@ plan_component() {
     state=$(component_state "$component")
     printf '%s (%s)\n' "$(component_label "$component")" "$state"
     case "$component" in
-        desktop) echo "  Remove the Plasma applet, D-Bus service, polkit policy, repair service, and desktop payload." ;;
+        trainer) echo "  Remove only the BC250 Trainer user files and its UID-scoped service registration." ;;
+        desktop) echo "  Remove the Plasma applet and its registration; remove the shared service only if no frontend remains." ;;
         decky) echo "  Remove the Decky plugin and restart plugin_loader; shared hardware helpers remain." ;;
         cec) echo "  Remove CEC boot, shutdown, and sleep integrations; preserve CEC preferences." ;;
         power) echo "  Restore stock CPU state, disable tuning services, and remove the ACPI override on next boot." ;;
@@ -215,7 +244,7 @@ show_plan() {
 remove_persistence_for() {
     local component="$1" persistence=""
     case "$component" in
-        desktop|cec|power|ram|compute|aic) persistence="$component" ;;
+        cec|power|ram|compute|aic) persistence="$component" ;;
         *) return 0 ;;
     esac
     require_script "$PERSISTENCE_SH"
@@ -223,10 +252,43 @@ remove_persistence_for() {
 }
 
 run_component_uninstall() {
-    local component="$1" script rc=0
+    local component="$1" script rc=0 native=0 flatpak_trainer=0 legacy_trainer=0
     script=$(component_script "$component")
     require_script "$script"
     case "$component" in
+        trainer)
+            if bash "$script" status >/dev/null 2>&1 \
+                || [[ -e "$HOME/.local/libexec/bc250-trainer" \
+                    || -e "$HOME/.local/share/applications/io.github.keyboardspecialist.bc250trainer.desktop" \
+                    || -e "$HOME/.local/share/icons/hicolor/scalable/apps/io.github.keyboardspecialist.bc250trainer.svg" \
+                    || -e "$SERVICE_CLIENT_DIR/trainer.$(id -u)" ]]; then
+                native=1
+            fi
+            require_script "$TRAINER_FLATPAK_SH"
+            if bash "$TRAINER_FLATPAK_SH" status >/dev/null 2>&1 \
+                || [[ -e "$SERVICE_CLIENT_DIR/trainer-flatpak.$(id -u)" ]] \
+                || { command -v flatpak >/dev/null 2>&1 \
+                    && flatpak info --user io.github.keyboardspecialist.bc250trainer >/dev/null 2>&1; }; then
+                flatpak_trainer=1
+            fi
+            if [[ -e "$HOME/.local/libexec/bc250-cracktro" \
+                || -e "$HOME/.local/share/applications/io.github.keyboardspecialist.bc250cracktro.desktop" \
+                || -e "$HOME/.local/share/icons/hicolor/scalable/apps/io.github.keyboardspecialist.bc250cracktro.svg" \
+                || -e "$SERVICE_CLIENT_DIR/cracktro.$(id -u)" ]]; then
+                legacy_trainer=1
+            fi
+            if [[ $flatpak_trainer -eq 1 ]]; then
+                bash "$TRAINER_FLATPAK_SH" uninstall || rc=$?
+            fi
+            if [[ $rc -eq 0 && $native -eq 1 ]]; then
+                bash "$script" uninstall || rc=$?
+            fi
+            if [[ $rc -eq 0 && $legacy_trainer -eq 1 ]]; then
+                bash "$script" uninstall-legacy || rc=$?
+            fi
+            [[ $native -eq 1 || $flatpak_trainer -eq 1 || $legacy_trainer -eq 1 ]] \
+                || bash "$script" uninstall || rc=$?
+            ;;
         desktop|decky|cec|mesh|audio) bash "$script" uninstall || rc=$? ;;
         power|ram|compute|aic|storage) sudo bash "$script" uninstall || rc=$? ;;
         *) die "Unknown component: $component" ;;
@@ -430,7 +492,7 @@ cmd_help() {
     cat << EOF
 Usage: $0 {menu|status|plan [COMPONENT|all]|uninstall COMPONENT|all [--yes]|purge [--yes]|help}
 
-Components: desktop, decky, cec, power, ram, compute, mesh, audio, aic, storage
+Components: trainer, desktop, decky, cec, power, ram, compute, mesh, audio, aic, storage
 
   status                 Show lifecycle state for every component.
   plan [COMPONENT|all]   Describe removals and preserved data without changing anything.

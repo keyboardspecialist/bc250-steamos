@@ -35,6 +35,7 @@ class MaintenanceTests(unittest.TestCase):
             "MESH_SH": "mesh",
             "DECKY_SH": "decky",
             "DESKTOP_SH": "desktop",
+            "TRAINER_SH": "trainer",
         }
         for variable, name in scripts.items():
             script = directory / f"{name}.sh"
@@ -44,12 +45,27 @@ class MaintenanceTests(unittest.TestCase):
                 "  status|installed) echo installed; exit 0 ;;\n"
                 f'  uninstall) printf "%s\\n" "{name}:uninstall" >> "$CALL_LOG"; '
                 f'[ "${{FAIL_COMPONENT:-}}" != "{name}" ] || exit 9 ;;\n'
+                f'  uninstall-legacy) printf "%s\\n" "{name}:uninstall-legacy" >> "$CALL_LOG" ;;\n'
                 "  *) exit 2 ;;\n"
                 "esac\n",
                 encoding="utf-8",
             )
             script.chmod(0o755)
             env[variable] = str(script)
+
+        flatpak_trainer = directory / "trainer-flatpak.sh"
+        flatpak_trainer.write_text(
+            "#!/usr/bin/env bash\n"
+            "case \"${1:-}\" in\n"
+            "  status) [ \"${FLATPAK_TRAINER_INSTALLED:-0}\" = 1 ] ;;\n"
+            '  uninstall) printf "%s\\n" "trainer-flatpak:uninstall" >> "$CALL_LOG" ;;\n'
+            "  *) exit 2 ;;\n"
+            "esac\n",
+            encoding="utf-8",
+        )
+        flatpak_trainer.chmod(0o755)
+        env["TRAINER_FLATPAK_SH"] = str(flatpak_trainer)
+        env["BC250_SERVICE_CLIENT_DIR"] = str(directory / "service-clients")
 
         persistence = directory / "persistence.sh"
         persistence.write_text(
@@ -93,7 +109,7 @@ class MaintenanceTests(unittest.TestCase):
                 text=True,
                 env=env,
             )
-            self.assertEqual(status.stdout.count("installed"), 10)
+            self.assertEqual(status.stdout.count("installed"), 11)
             self.assertIn("Saved tuning profiles", plan.stdout)
             self.assertFalse(call_log.exists())
 
@@ -110,8 +126,8 @@ class MaintenanceTests(unittest.TestCase):
             self.assertEqual(
                 call_log.read_text(encoding="utf-8").splitlines(),
                 [
+                    "trainer:uninstall",
                     "desktop:uninstall",
-                    "persistence:remove desktop",
                     "decky:uninstall",
                     "cec:uninstall",
                     "persistence:remove cec",
@@ -142,6 +158,55 @@ class MaintenanceTests(unittest.TestCase):
             self.assertNotEqual(result.returncode, 0)
             self.assertIn("use --yes", result.stderr)
             self.assertFalse(call_log.exists())
+
+    def test_flatpak_only_trainer_is_detected_and_uninstalled(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            env, call_log = self.make_environment(root)
+            native = root / "trainer.sh"
+            native.write_text("#!/bin/sh\nexit 1\n", encoding="utf-8")
+            native.chmod(0o755)
+            env["FLATPAK_TRAINER_INSTALLED"] = "1"
+
+            status = subprocess.run(
+                ["bash", str(MAINTENANCE), "status"],
+                check=True,
+                capture_output=True,
+                text=True,
+                env=env,
+            )
+            self.assertIn("BC250 Trainer", status.stdout)
+            subprocess.run(
+                ["bash", str(MAINTENANCE), "uninstall", "trainer", "--yes"],
+                check=True,
+                capture_output=True,
+                text=True,
+                env=env,
+            )
+            self.assertEqual(
+                call_log.read_text(encoding="utf-8").splitlines(),
+                ["trainer-flatpak:uninstall"],
+            )
+
+    def test_legacy_cracktro_marker_is_detected_and_released(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            env, call_log = self.make_environment(root)
+            clients = Path(env["BC250_SERVICE_CLIENT_DIR"])
+            clients.mkdir()
+            (clients / f"cracktro.{os.getuid()}").touch()
+
+            subprocess.run(
+                ["bash", str(MAINTENANCE), "uninstall", "trainer", "--yes"],
+                check=True,
+                capture_output=True,
+                text=True,
+                env=env,
+            )
+            self.assertEqual(
+                call_log.read_text(encoding="utf-8").splitlines(),
+                ["trainer:uninstall", "trainer:uninstall-legacy"],
+            )
 
     def test_failed_component_keeps_persistence_and_blocks_storage_teardown(self):
         with tempfile.TemporaryDirectory() as temporary:

@@ -19,9 +19,14 @@ DEFAULT_OUTPUT = DESKTOP_SOURCE / "out"
 DEFAULT_EPOCH = 315532800  # 1980-01-01, the earliest timestamp supported by ZIP.
 ARCHIVE_ROOT = "bc250-desktop-control"
 EXECUTABLES = {
+    Path("bc250-power.sh"),
+    Path("bc250-ram-split.sh"),
     Path("bc250-storage.sh"),
+    Path("topology.sh"),
     Path("bc250-update-persistence.sh"),
+    Path("core-unlock/bc250-unlock-cores.py"),
     Path("desktop-control/install.sh"),
+    Path("desktop-control/shared-service-install.sh"),
     Path("desktop-control/bc250-desktop-control-repair"),
     Path("desktop-control/service/bc250-control-service"),
 }
@@ -77,10 +82,23 @@ def stage(output: Path, epoch: int) -> None:
     output.parent.mkdir(parents=True, exist_ok=True)
     temporary = Path(tempfile.mkdtemp(prefix=".desktop-runtime-", dir=str(output.parent)))
     try:
-        for name in ("bc250-storage.sh", "bc250-update-persistence.sh"):
+        for name in (
+            "bc250-power.sh",
+            "bc250-ram-split.sh",
+            "bc250-storage.sh",
+            "bc250-update-persistence.sh",
+            "topology.sh",
+        ):
             copy_file(REPOSITORY / name, temporary / name)
+        copy_tree(REPOSITORY / "core-unlock", temporary / "core-unlock")
 
-        for name in ("LICENSE", "README.md", "install.sh", "bc250-desktop-control-repair"):
+        for name in (
+            "LICENSE",
+            "README.md",
+            "install.sh",
+            "shared-service-install.sh",
+            "bc250-desktop-control-repair",
+        ):
             copy_file(DESKTOP_SOURCE / name, temporary / "desktop-control" / name)
         for name in ("templates", "plasmoid", "vendor"):
             copy_tree(DESKTOP_SOURCE / name, temporary / "desktop-control" / name)

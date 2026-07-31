@@ -72,6 +72,10 @@ class ControlService:
         caller = await self._caller(sender)
         return _compact_json(await self._backend(caller).get_telemetry())
 
+    async def get_cpu_unlock_status(self, sender: str) -> str:
+        caller = await self._caller(sender)
+        return _compact_json(await self._backend(caller).get_cpu_unlock_status())
+
     async def get_operation(self, sender: str, operation_id: str) -> str:
         caller = await self._caller(sender)
         return _compact_json(self._operations.get(operation_id, caller.uid))
@@ -81,7 +85,12 @@ class ControlService:
         return self._operations.cancel(operation_id, caller.uid)
 
     async def _submit(
-        self, sender: str, category: str, method: str, callback: Callable[[Any], Any]
+        self,
+        sender: str,
+        category: str,
+        method: str,
+        callback: Callable[[Any], Any],
+        cancellable: bool = True,
     ) -> str:
         caller = await self._caller(sender)
         await self._authorizer.authorize(
@@ -89,7 +98,7 @@ class ControlService:
         )
         backend = self._backend(caller)
         return self._operations.submit(
-            caller.uid, method, lambda: callback(backend)
+            caller.uid, method, lambda: callback(backend), cancellable=cancellable
         )
 
     async def set_cu_wgp(
@@ -202,6 +211,56 @@ class ControlService:
             lambda backend: backend.cpu_oc_action(
                 action, frequency, voltage, temperature
             ),
+        )
+
+    async def cpu_unlock_action(self, sender: str, action: str) -> str:
+        if _text(action, "Unknown CPU core-unlock action.") not in (
+            "test",
+            "enable",
+            "off",
+        ):
+            raise InvalidArguments("Unknown CPU core-unlock action.")
+        return await self._submit(
+            sender,
+            "cpu",
+            "CpuUnlockAction",
+            lambda backend: backend.cpu_unlock_action(action),
+            cancellable=False,
+        )
+
+    async def set_uma_size(self, sender: str, uma_mib: int) -> str:
+        _whole(uma_mib, "UMA size must be a whole number of MiB.")
+        if not 256 <= uma_mib <= 12288 or uma_mib % 16 != 0 or uma_mib == 2048:
+            raise InvalidArguments(
+                "UMA size must be 256-12288 MiB, aligned to 16 MiB, and not 2048 MiB."
+            )
+        return await self._submit(
+            sender,
+            "ram",
+            "SetUmaSize",
+            lambda backend: backend.set_uma_size(uma_mib),
+            cancellable=False,
+        )
+
+    async def set_ttm_pages(self, sender: str, pages: int) -> str:
+        _whole(pages, "TTM limit must be a whole page count.")
+        if not 65536 <= pages <= 3145728:
+            raise InvalidArguments("TTM limit must be 65536-3145728 pages.")
+        return await self._submit(
+            sender,
+            "ram",
+            "SetTtmPages",
+            lambda backend: backend.set_ttm_pages(pages),
+            cancellable=False,
+        )
+
+    async def remove_ttm_override(self, sender: str) -> str:
+        return await self._submit(
+            sender,
+            "ram",
+            "RemoveTtmOverride",
+            lambda backend: backend.remove_ttm_override(),
+            cancellable=False,
         )
 
     async def cec_action(self, sender: str, action: str) -> str:

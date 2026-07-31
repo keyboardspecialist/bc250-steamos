@@ -12,6 +12,7 @@ STORAGE = ROOT / "bc250-storage.sh"
 PERSISTENCE = ROOT / "bc250-update-persistence.sh"
 DESKTOP_INSTALL = ROOT / "desktop-control" / "install.sh"
 DESKTOP_REPAIR = ROOT / "desktop-control" / "bc250-desktop-control-repair"
+SHARED_INSTALL = ROOT / "desktop-control" / "shared-service-install.sh"
 DESKTOP_TEMPLATES = ROOT / "desktop-control" / "templates"
 
 
@@ -100,8 +101,10 @@ class PersistenceUnitTests(unittest.TestCase):
             root = Path(directory)
             systemd = root / "systemd"
             keep = root / "keep"
+            data = root / "data"
             systemd.mkdir()
             keep.mkdir()
+            data.mkdir()
             (systemd / "bc250-control.service").write_text("unit\n", encoding="utf-8")
             (keep / "bc250-compute.conf").write_text("keep\n", encoding="utf-8")
 
@@ -109,13 +112,15 @@ class PersistenceUnitTests(unittest.TestCase):
                 [
                     "bash",
                     "-c",
-                    'script=$1; systemd=$2; keep=$3; set -- help; '
+                    'script=$1; systemd=$2; keep=$3; data=$4; set -- help; '
                     'source "$script" >/dev/null; SYSTEMD_DIR=$systemd; '
-                    'ATOMIC_KEEP_DIR=$keep; can_uninstall',
+                    'ATOMIC_KEEP_DIR=$keep; ROOT_DIR=$data; '
+                    'systemctl() { return 1; }; can_uninstall',
                     "_",
                     str(STORAGE),
                     str(systemd),
                     str(keep),
+                    str(data),
                 ],
                 capture_output=True,
                 text=True,
@@ -126,13 +131,15 @@ class PersistenceUnitTests(unittest.TestCase):
                 [
                     "bash",
                     "-c",
-                    'script=$1; systemd=$2; keep=$3; set -- help; '
+                    'script=$1; systemd=$2; keep=$3; data=$4; set -- help; '
                     'source "$script" >/dev/null; SYSTEMD_DIR=$systemd; '
-                    'ATOMIC_KEEP_DIR=$keep; can_uninstall',
+                    'ATOMIC_KEEP_DIR=$keep; ROOT_DIR=$data; '
+                    'systemctl() { return 1; }; can_uninstall',
                     "_",
                     str(STORAGE),
                     str(systemd),
                     str(keep),
+                    str(data),
                 ],
                 check=True,
                 capture_output=True,
@@ -161,7 +168,7 @@ class PersistenceUnitTests(unittest.TestCase):
                     "-c",
                     'script=$1; data=$2; systemd=$3; keep=$4; set -- help; '
                     'source "$script" >/dev/null; ROOT_DIR=$data; SYSTEMD_DIR=$systemd; '
-                    'ATOMIC_KEEP_DIR=$keep; can_uninstall',
+                    'ATOMIC_KEEP_DIR=$keep; systemctl() { return 1; }; can_uninstall',
                     "_",
                     str(STORAGE),
                     str(root),
@@ -470,12 +477,13 @@ grep -Fxq "daemon-reload" "$SYSTEMCTL_LOG"
 
     def test_desktop_payload_and_readonly_handling_are_persistent(self):
         installer = DESKTOP_INSTALL.read_text(encoding="utf-8")
+        shared = SHARED_INSTALL.read_text(encoding="utf-8")
         repair = DESKTOP_REPAIR.read_text(encoding="utf-8")
-        self.assertIn("/var/lib/bc250-control/.desktop-stage.", installer)
-        self.assertIn("$STAGE/py_modules/bc250_control_service", installer)
-        self.assertIn("$STAGE/py_modules/bc250_control", installer)
-        self.assertIn("$STAGE/py_modules/tomli", installer)
-        self.assertIn("$STAGE/py_modules/dbus_next", installer)
+        self.assertIn("/var/lib/bc250-control/.desktop-stage.", shared)
+        self.assertIn("$SHARED_STAGE/py_modules/bc250_control_service", shared)
+        self.assertIn("$SHARED_STAGE/py_modules/bc250_control", shared)
+        self.assertIn("$SHARED_STAGE/py_modules/tomli", shared)
+        self.assertIn("$SHARED_STAGE/py_modules/dbus_next", shared)
         self.assertIn("kpackagetool6 --type Plasma/Applet --upgrade", installer)
         self.assertNotIn("--show-info", installer)
         self.assertIn('plugin.get("Id") != sys.argv[2]', installer)
@@ -483,11 +491,11 @@ grep -Fxq "daemon-reload" "$SYSTEMCTL_LOG"
             'metadata.get("X-Plasma-API-Minimum-Version") != "6.0"',
             installer,
         )
-        self.assertIn("PAYLOAD_SWAPPED=1", installer)
-        self.assertIn("trap restore_uninstall_readonly EXIT", installer)
+        self.assertIn("SHARED_PAYLOAD_SWAPPED=1", shared)
+        self.assertIn("trap shared_restore_uninstall_readonly EXIT", shared)
         self.assertIn(
             "state=$(/usr/bin/steamos-readonly status 2>&1) || true",
-            installer,
+            shared,
         )
         self.assertIn("READONLY_CHANGED=1", repair)
         self.assertIn("trap restore_readonly EXIT", repair)
@@ -600,6 +608,8 @@ grep -Fxq "daemon-reload" "$SYSTEMCTL_LOG"
             "bc250-audio-fix/patch-driver.sh",
             "decky-plugin/install.sh",
             "desktop-control/install.sh",
+            "desktop-control/shared-service-install.sh",
+            "trainer/install.sh",
             "desktop-control/bc250-desktop-control-repair",
         ]
         subprocess.run(

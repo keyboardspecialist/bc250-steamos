@@ -16,6 +16,7 @@ AUDIO_FIX_SH="$SCRIPT_DIR/bc250-audio-fix/patch-driver.sh"
 MESH_SHADER_SH="$SCRIPT_DIR/bc250-mesh-shader.sh"
 DECKY_INSTALL_SH="$SCRIPT_DIR/decky-plugin/install.sh"
 DESKTOP_INSTALL_SH="$SCRIPT_DIR/desktop-control/install.sh"
+TRAINER_INSTALL_SH="$SCRIPT_DIR/trainer/install.sh"
 MAINTENANCE_SH="$SCRIPT_DIR/bc250-maintenance.sh"
 
 C0=$'\033[0m'; CB=$'\033[1m'; CD=$'\033[2m'; CI=$'\033[7m'
@@ -95,6 +96,14 @@ install_desktop() {
     confirm_action \
         "Install or upgrade the BC-250 Plasma desktop control?" \
         bash "$DESKTOP_INSTALL_SH" install
+}
+
+install_trainer() {
+    require_normal_user
+    require_script "$TRAINER_INSTALL_SH"
+    confirm_action \
+        "Install or upgrade BC250 Trainer?" \
+        bash "$TRAINER_INSTALL_SH" install
 }
 
 status_section() {
@@ -220,6 +229,7 @@ cmd_menu() {
             "Mesh shaders (per game)|${CY}[optional]${C0}|Build a separate RADV ICD and opt individual games into it."
             "Decky plugin|${CY}[installer]${C0}|Build and install the BC-250 Quick Access plugin."
             "Plasma desktop control|${CY}[installer]${C0}|Install the system service and Plasma system-tray control."
+            "BC250 Trainer|${CY}[installer]${C0}|Install the standalone native Qt control application."
             "Manage installed components|${CR}[maintenance]${C0}|Review uninstall plans, remove components, or purge preserved data."
         )
         menu_select "BC-250 SteamOS toolkit" "${items[@]}" || { echo; break; }
@@ -236,14 +246,15 @@ cmd_menu() {
             9) run_menu_child mesh ;;
             10) run_menu_action decky ;;
             11) run_menu_action desktop ;;
-            12) run_menu_child manage ;;
+            12) run_menu_action trainer ;;
+            13) run_menu_child manage ;;
         esac
     done
 }
 
 cmd_help() {
     cat << EOF
-Usage: $0 [menu|status|power|ram|compute|cec|storage|persistence|wifi|audio|mesh|decky|desktop|manage|help]
+Usage: $0 [menu|status|power|ram|compute|cec|storage|persistence|wifi|audio|mesh|decky|desktop|trainer|manage|help]
 
 Run without arguments in a terminal to open the unified toolkit menu.
 Run the toolkit as the logged-in Deck user, not with sudo; child tools request
@@ -262,6 +273,7 @@ Commands:
   mesh                   Open per-game mesh-shader setup and toggles
   decky                  Confirm and run the Decky plugin installer
   desktop                Confirm and run the Plasma desktop-control installer
+  trainer                Confirm and run the BC250 Trainer installer
   manage                 Open installed-component maintenance and cleanup
 EOF
 }
@@ -291,6 +303,7 @@ case "$command_name" in
     mesh) (($# == 0)) || die "Usage: $0 mesh"; require_normal_user; run_script "$MESH_SHADER_SH" menu ;;
     decky) (($# == 0)) || die "Usage: $0 decky"; install_decky ;;
     desktop) (($# == 0)) || die "Usage: $0 desktop"; install_desktop ;;
+    trainer) (($# == 0)) || die "Usage: $0 trainer"; install_trainer ;;
     manage) (($# == 0)) || die "Usage: $0 manage"; run_script "$MAINTENANCE_SH" menu ;;
     help|-h|--help) (($# == 0)) || die "Usage: $0 help"; cmd_help ;;
     *) cmd_help >&2; exit 1 ;;

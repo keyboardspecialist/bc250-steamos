@@ -17,6 +17,7 @@ from bc250_control_service.dbus_adapter import (
     DbusAdapter,
     DbusIdentityResolver,
     INTERFACE,
+    INTROSPECTION_XML,
     OBJECT_PATH,
 )
 
@@ -57,6 +58,14 @@ class FakeControl:
     async def get_telemetry(self, sender):
         self.senders.append(sender)
         return "{}"
+
+    async def get_cpu_unlock_status(self, sender):
+        self.senders.append(sender)
+        return '{"schemaVersion":1}'
+
+    async def cpu_unlock_action(self, sender, action):
+        self.senders.append((sender, action))
+        return "operation"
 
 
 class IdentityResolverTests(unittest.IsolatedAsyncioTestCase):
@@ -101,6 +110,29 @@ class IdentityResolverTests(unittest.IsolatedAsyncioTestCase):
 
 
 class AdapterHandlerTests(unittest.IsolatedAsyncioTestCase):
+    def test_cpu_unlock_dbus_signatures_are_declared(self):
+        self.assertEqual(
+            DbusAdapter._METHODS["GetCpuUnlockStatus"],
+            ("", "s", "get_cpu_unlock_status"),
+        )
+        self.assertEqual(
+            DbusAdapter._METHODS["CpuUnlockAction"],
+            ("s", "s", "cpu_unlock_action"),
+        )
+        self.assertIn('<method name="GetCpuUnlockStatus">', INTROSPECTION_XML)
+        self.assertIn('<method name="CpuUnlockAction">', INTROSPECTION_XML)
+
+    def test_ram_dbus_signatures_are_declared(self):
+        self.assertEqual(DbusAdapter._METHODS["SetUmaSize"], ("u", "s", "set_uma_size"))
+        self.assertEqual(DbusAdapter._METHODS["SetTtmPages"], ("u", "s", "set_ttm_pages"))
+        self.assertEqual(
+            DbusAdapter._METHODS["RemoveTtmOverride"],
+            ("", "s", "remove_ttm_override"),
+        )
+        self.assertIn('<method name="SetUmaSize">', INTROSPECTION_XML)
+        self.assertIn('<method name="SetTtmPages">', INTROSPECTION_XML)
+        self.assertIn('<method name="RemoveTtmOverride">', INTROSPECTION_XML)
+
     async def test_rejects_calls_above_dispatch_limit(self):
         adapter = DbusAdapter(HandlerBus(), FakeControl(), dispatch_limit=0)
         call = Message(
@@ -139,3 +171,24 @@ class AdapterHandlerTests(unittest.IsolatedAsyncioTestCase):
         self.assertIs(type(bus.sent[0]), Message)
         self.assertEqual(bus.sent[0].message_type, MessageType.METHOD_RETURN)
         self.assertEqual(bus.sent[0].body, ["{}"])
+
+    async def test_cpu_unlock_action_propagates_sender_and_argument(self):
+        bus = HandlerBus()
+        control = FakeControl()
+        adapter = DbusAdapter(bus, control)
+        call = Message(
+            path=OBJECT_PATH,
+            interface=INTERFACE,
+            member="CpuUnlockAction",
+            signature="s",
+            body=["test"],
+            sender=":1.21",
+            serial=43,
+        )
+
+        self.assertTrue(adapter.handle(call))
+        await asyncio.sleep(0)
+        await asyncio.sleep(0)
+
+        self.assertEqual(control.senders, [(":1.21", "test")])
+        self.assertEqual(bus.sent[0].body, ["operation"])

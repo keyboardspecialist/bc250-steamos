@@ -16,6 +16,7 @@ class Operation:
     owner_uid: int
     method: str
     created_at: float
+    cancellable: bool = True
     status: str = "queued"
     started_at: Optional[float] = None
     finished_at: Optional[float] = None
@@ -28,6 +29,7 @@ class Operation:
             "operationId": self.operation_id,
             "method": self.method,
             "status": self.status,
+            "cancellable": self.cancellable,
             "createdAt": self.created_at,
             "startedAt": self.started_at,
             "finishedAt": self.finished_at,
@@ -54,7 +56,9 @@ class OperationManager:
         self._operations: Dict[str, Operation] = {}
         self._mutation_lock = asyncio.Lock()
 
-    def submit(self, owner_uid: int, method: str, job: Job) -> str:
+    def submit(
+        self, owner_uid: int, method: str, job: Job, cancellable: bool = True
+    ) -> str:
         self._prune()
         active = sum(
             operation.task is not None and not operation.task.done()
@@ -71,7 +75,9 @@ class OperationManager:
         if active >= self._active_limit:
             raise ServiceError("Too many hardware operations are already queued.")
         operation_id = uuid.uuid4().hex
-        operation = Operation(operation_id, owner_uid, method, time.time())
+        operation = Operation(
+            operation_id, owner_uid, method, time.time(), cancellable=cancellable
+        )
         self._operations[operation_id] = operation
         operation.task = asyncio.get_running_loop().create_task(
             self._run(operation, job)
@@ -103,8 +109,11 @@ class OperationManager:
         operation = self._lookup(operation_id)
         if operation.owner_uid != owner_uid:
             raise AccessDenied("The operation belongs to another user.")
-        if operation.task is None or operation.task.done():
+        if not operation.cancellable or operation.task is None or operation.task.done():
             return False
+        if operation.status == "queued":
+            operation.status = "cancelled"
+            operation.finished_at = time.time()
         operation.task.cancel()
         return True
 
@@ -131,12 +140,15 @@ class OperationManager:
             del self._operations[operation.operation_id]
 
     async def close(self) -> None:
-        tasks = [
-            operation.task
+        operations = [
+            operation
             for operation in self._operations.values()
             if operation.task is not None and not operation.task.done()
         ]
-        for task in tasks:
-            task.cancel()
-        if tasks:
-            await asyncio.gather(*tasks, return_exceptions=True)
+        for operation in operations:
+            if operation.cancellable:
+                operation.task.cancel()
+        if operations:
+            await asyncio.gather(
+                *(operation.task for operation in operations), return_exceptions=True
+            )

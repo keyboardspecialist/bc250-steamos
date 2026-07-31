@@ -97,7 +97,12 @@ class DesktopReleaseTests(unittest.TestCase):
                 prefix = "bc250-desktop-control/"
                 for expected in (
                     "backend/bc250_control/backend.py",
+                    "bc250-power.sh",
+                    "bc250-ram-split.sh",
+                    "core-unlock/bc250-unlock-cores.py",
+                    "core-unlock/LICENSE",
                     "desktop-control/install.sh",
+                    "desktop-control/shared-service-install.sh",
                     "desktop-control/plasmoid/contents/icons/bc250-control.svg",
                     "desktop-control/plasmoid/metadata.json",
                     "desktop-control/service/bc250-control-service",
