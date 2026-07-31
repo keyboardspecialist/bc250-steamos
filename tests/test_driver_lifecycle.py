@@ -12,9 +12,6 @@ AUDIO_ROLLBACK = ROOT / "bc250-audio-fix/rollback.sh"
 AUDIO_PREREQS = ROOT / "bc250-audio-fix/ensure-build-prereqs.sh"
 METRICS_PATCH = ROOT / "bc250-audio-fix/bc250-cyan-skillfish-gpu-telemetry.patch"
 GFXCLK_PATCH = ROOT / "bc250-audio-fix/bc250-cyan-skillfish-gfxclk.patch"
-CORE_METRICS_PATCH = ROOT / (
-    "bc250-audio-fix/bc250-cyan-skillfish-8core-metrics.patch"
-)
 
 
 class DriverLifecycleTests(unittest.TestCase):
@@ -123,44 +120,34 @@ class DriverLifecycleTests(unittest.TestCase):
         for tool in ("make", "gcc", "ld", "patch", "pahole", "bc", "zstd"):
             self.assertIn(tool, environment)
 
-    def test_amdgpu_build_supports_six_and_eight_core_metrics_layouts(self):
+    def test_amdgpu_build_preserves_firmware_metrics_layout(self):
         builder = (ROOT / "bc250-audio-fix/build.sh").read_text(encoding="utf-8")
         installer = (ROOT / "bc250-audio-fix/install.sh").read_text(encoding="utf-8")
         rollback = AUDIO_ROLLBACK.read_text(encoding="utf-8")
         patch = METRICS_PATCH.read_text(encoding="utf-8")
         gfxclk_patch = GFXCLK_PATCH.read_text(encoding="utf-8")
-        core_metrics_patch = CORE_METRICS_PATCH.read_text(encoding="utf-8")
         self.assertIn("bc250-cyan-skillfish-gpu-telemetry.patch", builder)
         self.assertIn("bc250-cyan-skillfish-gfxclk.patch", builder)
-        self.assertIn("bc250-cyan-skillfish-8core-metrics.patch", builder)
         self.assertLess(
             builder.index(str(METRICS_PATCH.name)),
             builder.index(str(GFXCLK_PATCH.name)),
         )
-        self.assertLess(
-            builder.index(str(GFXCLK_PATCH.name)),
-            builder.index(str(CORE_METRICS_PATCH.name)),
-        )
         self.assertNotIn("LEGACY_", builder)
-        self.assertIn("legacy Cyan Skillfish metrics patch found", builder)
+        self.assertIn("unknown Cyan Skillfish metrics patch found", builder)
+        self.assertIn("METRICS_SOURCE_SHA", builder)
+        self.assertIn("METRICS_HEADER_SHA", builder)
         self.assertIn('git --git-dir="$GITDIR" --work-tree="$TREE"', builder)
         self.assertIn("GRBM_STATUS__GUI_ACTIVE_MASK", patch)
         self.assertIn("AMDGPU_PP_SENSOR_GPU_LOAD", patch)
         self.assertIn("average_gfx_activity", patch)
         self.assertIn("PPSMC_MSG_GetGfxFrequency", gfxclk_patch)
         self.assertIn("SMU_MSG_GetGfxclkFrequency", gfxclk_patch)
+        self.assertIn("cyan_skillfish_get_gfxclk_frequency", gfxclk_patch)
+        self.assertIn("return -ERANGE", gfxclk_patch)
         self.assertIn("gpu_metrics->current_gfxclk = gfxclk", gfxclk_patch)
-        self.assertIn("SmuMetricsTable8_t", core_metrics_patch)
-        self.assertIn("CoreFrequency[8]", core_metrics_patch)
-        self.assertIn("CorePower[8]", core_metrics_patch)
-        self.assertIn("CoreTemperature[8]", core_metrics_patch)
-        self.assertIn("C0Residency[6]", core_metrics_patch)
-        self.assertIn("num_present_cpus() / 2", core_metrics_patch)
-        self.assertIn("union cyan_skillfish_raw_metrics", core_metrics_patch)
-        self.assertIn(
-            "cyan_skillfish_has_eight_core_metrics", core_metrics_patch
+        self.assertFalse(
+            (ROOT / "bc250-audio-fix/bc250-cyan-skillfish-8core-metrics.patch").exists()
         )
-        self.assertNotIn("topology_is_primary_thread", core_metrics_patch)
         self.assertIn(".bc250-metrics-fix", installer)
         self.assertIn(".bc250-metrics-fix", rollback)
 

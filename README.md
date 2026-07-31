@@ -272,12 +272,12 @@ cold boot, the enabled service safely writes the mask and requests one warm
 reboot. A persistent pending marker prevents a failed unlock from creating a
 reboot loop.
 
-The unlocked firmware expands its core frequency, power, and temperature
-arrays to eight entries while retaining six C0-residency entries. Its GFX clock
-slot reports an unrelated `0-100` value. The AMDGPU workflow selects the
-six/eight-core table layout, queries the GFX clock directly, and adds GPU
-utilization reporting independently. `cpu-unlock status` reports whether the
-patched module is installed for the running kernel.
+The unlocked firmware retains its published six-core SMU metrics layout, but
+the GFX clock slot reports an unrelated `0-100` value. The AMDGPU workflow
+queries and validates the GFX clock directly and adds bounded GPU utilization
+reporting independently; telemetry for the two extra CPU cores is unavailable.
+`cpu-unlock status` reports whether the patched module is installed for the
+running kernel.
 
 | Command | Action |
 |---|---|

@@ -1,10 +1,10 @@
 # AMDGPU corrections
 
 Corrects DisplayPort video/audio timing and Cyan Skillfish GPU telemetry
-through one patched `amdgpu` module. The metrics parser selects the firmware's
-six-core or expanded eight-core layout at runtime. GPU activity comes from GC
-status sampling, GFX clock comes from a direct SMU query, and per-core CPU
-metrics cover every active core.
+through one patched `amdgpu` module. Six-core and eight-core CPU topologies use
+the firmware's published `SmuMetrics_t` layout. GPU activity comes from GC
+status sampling, GFX clock comes from a validated direct SMU query, and per-core
+CPU metrics contain the firmware's six entries.
 
 ## Install
 
@@ -25,9 +25,9 @@ sudo reboot
 | 3.8.x | `linux-neptune-616` | [`bc250-dp-audio-clock-6.16.patch`](bc250-dp-audio-clock-6.16.patch) |
 | 3.9.x | `linux-neptune-618` | [`bc250-dp-audio-clock-6.18.patch`](bc250-dp-audio-clock-6.18.patch) |
 
-Both versions also apply the Cyan Skillfish telemetry patches. They select the
-matching six/eight-core metrics transfer size, query the GFX clock through the
-SMU, and sample GPU activity from GC status.
+Both versions also apply the Cyan Skillfish telemetry patches. They preserve
+the firmware's published metrics layout, query and validate the GFX clock
+through the SMU, and sample GPU activity from GC status.
 The build selects the display patch from the running kernel and produces
 `amdgpu.ko.zst` for that exact release.
 
@@ -40,9 +40,8 @@ override.
 
 | Patch | Operation |
 |---|---|
-| `bc250-cyan-skillfish-gpu-telemetry.patch` | Apply GC activity sampling |
-| `bc250-cyan-skillfish-gfxclk.patch` | Apply direct SMU GFX-clock reporting |
-| `bc250-cyan-skillfish-8core-metrics.patch` | Select and normalize six/eight-core SMU metrics layouts |
+| `bc250-cyan-skillfish-gpu-telemetry.patch` | Apply bounded GC activity sampling while retaining `SmuMetrics_t` |
+| `bc250-cyan-skillfish-gfxclk.patch` | Apply range-checked direct SMU GFX-clock reporting |
 
 ### Runtime Data
 
@@ -53,7 +52,7 @@ override.
 | `METRICS_CURR_GFXCLK` | `PPSMC_MSG_GetGfxFrequency` | Point-in-time MHz |
 | `gpu_metrics_v2_2.current_gfxclk` | `PPSMC_MSG_GetGfxFrequency` | Point-in-time MHz |
 | `gpu_metrics_v2_2.average_gfxclk_frequency` | `PPSMC_MSG_GetGfxFrequency` | Point-in-time MHz |
-| CPU core arrays | Firmware metrics table | Six or eight per-core entries |
+| CPU core arrays | Firmware `SmuMetrics_t` | Six per-core entries |
 
 ### Activity Sampling
 
@@ -66,18 +65,16 @@ exports. The `average_gfx_activity` member name follows the
 
 `gfxclk` maps `SMU_MSG_GetGfxclkFrequency` to Cyan Skillfish firmware command
 `PPSMC_MSG_GetGfxFrequency`. One SMU reply populates `METRICS_CURR_GFXCLK`,
-`current_gfxclk`, and `average_gfxclk_frequency`. Query errors propagate to the
-metrics caller.
+`current_gfxclk`, and `average_gfxclk_frequency`. Query errors and replies
+outside the supported 1000-2000 MHz range propagate to the metrics caller.
 
 ### Core Count
 
-The runtime patch counts present SMT threads when the module initializes. It
-uses the published `SmuMetrics_t` transfer for the stock 6-core/12-thread
-topology and the expanded `SmuMetrics8_t` transfer for the unlocked
-8-core/16-thread topology. In the expanded layout, core frequency, power, and
-temperature contain eight entries while C0 residency remains six entries. GPU
-activity and GFX clock reporting continue to use topology-independent register
-and SMU sources.
+The runtime patches use the published `SmuMetrics_t` transfer size for stock
+6-core/12-thread and unlocked 8-core/16-thread topologies. CPU topology does not
+change the firmware metrics ABI, which supplies six CPU rows. GPU activity and
+GFX clock reporting use topology-independent register and SMU sources, so an
+unrelated firmware-table value cannot be exposed as either metric.
 
 ## Commands
 
@@ -188,6 +185,5 @@ The complete fallback remains mandatory for the AMDGPU override. AIC8800 may ins
 | `bc250-dp-audio-clock-6.18.patch` | SteamOS 3.9.x display clock patch |
 | `bc250-cyan-skillfish-gpu-telemetry.patch` | Runtime GPU activity export using the published metrics layout |
 | `bc250-cyan-skillfish-gfxclk.patch` | Runtime GFX clock export using a direct SMU query |
-| `bc250-cyan-skillfish-8core-metrics.patch` | Runtime six/eight-core SMU metrics parser |
 | `bc250-cg-flags.patch` | Experimental GFX clock gating |
 | `bc250-cg-flags-unvalidated.patch` | Experimental expanded clock gating |
