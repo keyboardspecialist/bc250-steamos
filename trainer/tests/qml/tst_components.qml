@@ -3,7 +3,7 @@ import QtTest 1.3
 import "../../qml/components" as Components
 
 TestCase {
-    name: "CracktroComponents"
+    name: "BC250TrainerComponents"
     when: windowShown
     width: 640
     height: 480

@@ -1,4 +1,4 @@
-# Cracktro Media Deck And macOS Test Harness Plan
+# BC250 Trainer Media Deck And macOS Test Harness Plan
 
 ## Status
 
@@ -27,7 +27,7 @@ preserved during implementation.
   and hardware integration.
 - Let the user select a music directory and persist that selection.
 - Scan only the selected directory, not its subdirectories.
-- Default to the packaged `cracktro/tracks` directory; selected empty folders
+- Default to the packaged `trainer/tracks` directory; selected empty folders
   remain empty.
 - Display a synchronized waveform rather than a frequency spectrum or simple
   level meter.
@@ -143,7 +143,7 @@ deck owns them.
 
 ## macOS Local Harness
 
-Add `cracktro/build-macos.sh`.
+Add `trainer/build-macos.sh`.
 
 The script will:
 
@@ -153,7 +153,7 @@ The script will:
 - Use `brew --prefix` so Intel and Apple Silicon paths both work.
 - Resolve Homebrew CMake, Ninja, Qt, Bash, and GNU coreutils explicitly.
 - Put Homebrew Bash and `coreutils/libexec/gnubin` first on `PATH`.
-- Configure `cracktro/build-macos/` with Ninja, Debug mode, and
+- Configure `trainer/build-macos/` with Ninja, Debug mode, and
   `BUILD_TESTING=ON`.
 - Set `CMAKE_PREFIX_PATH` to the Homebrew Qt prefix.
 - Build the frontend and the native tests.
@@ -167,16 +167,16 @@ The script will:
 - Offer an interactive mock run mode only if it does not complicate the default
   full-verification path.
 
-The build directory already matches `cracktro/build-*` in `.gitignore`.
+The build directory already matches `trainer/build-*` in `.gitignore`.
 
 ## macOS CI
 
-Add `.github/workflows/cracktro-checks.yml`.
+Add `.github/workflows/trainer-checks.yml`.
 
 The workflow will:
 
-- Run on pushes to `cracktro` and relevant pull requests.
-- Restrict path triggers to Cracktro, shared service/backend code, staging code,
+- Run on pushes to `trainer` and relevant pull requests.
+- Restrict path triggers to BC250 Trainer, shared service/backend code, staging code,
   relevant tests, and the workflow itself.
 - Use `macos-latest` and `actions/checkout`.
 - Install the Homebrew dependencies required by `build-macos.sh`.
@@ -223,22 +223,22 @@ Coverage will include:
 
 ## Expected File Changes
 
-- Add `cracktro/src/MediaController.h`.
-- Add `cracktro/src/MediaController.cpp`.
-- Add `cracktro/qml/components/MediaPane.qml`.
-- Add `cracktro/qml/components/AudioWaveform.qml`.
-- Add `cracktro/qml/components/AudioVisualizer.qml`.
-- Add native media-controller tests under `cracktro/tests/`.
-- Add QML media-pane tests under `cracktro/tests/qml/`.
-- Add `cracktro/build-macos.sh`.
-- Add `.github/workflows/cracktro-checks.yml`.
-- Update `cracktro/src/main.cpp`.
-- Update `cracktro/qml/Main.qml`.
-- Update `cracktro/qml/pages/SetupPage.qml`.
-- Update `cracktro/CMakeLists.txt`.
-- Update `cracktro/resources.qrc`.
-- Update `cracktro/README.md` and the root `README.md`.
-- Update `cracktro/PLAN.md` where the old unobstructed-left-artwork requirement
+- Add `trainer/src/MediaController.h`.
+- Add `trainer/src/MediaController.cpp`.
+- Add `trainer/qml/components/MediaPane.qml`.
+- Add `trainer/qml/components/AudioWaveform.qml`.
+- Add `trainer/qml/components/AudioVisualizer.qml`.
+- Add native media-controller tests under `trainer/tests/`.
+- Add QML media-pane tests under `trainer/tests/qml/`.
+- Add `trainer/build-macos.sh`.
+- Add `.github/workflows/trainer-checks.yml`.
+- Update `trainer/src/main.cpp`.
+- Update `trainer/qml/Main.qml`.
+- Update `trainer/qml/pages/SetupPage.qml`.
+- Update `trainer/CMakeLists.txt`.
+- Update `trainer/resources.qrc`.
+- Update `trainer/README.md` and the root `README.md`.
+- Update `trainer/PLAN.md` where the old unobstructed-left-artwork requirement
   conflicts with the confirmed media-deck design.
 
 Update the installer and runtime stager to place the bundled MP3 files in a
@@ -261,7 +261,7 @@ user-selected directory.
 ## Acceptance Criteria
 
 - The application builds against Qt 6.4 and newer.
-- Linux release behavior and the independent Cracktro release workflow remain
+- Linux release behavior and the independent BC250 Trainer release workflow remain
   intact.
 - A selected directory is remembered and rescanned without recursion.
 - Supported files appear in deterministic natural order.

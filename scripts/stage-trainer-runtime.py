@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Build a self-contained, deterministic BC-250 Cracktro archive."""
+"""Build a self-contained, deterministic BC250 Trainer archive."""
 
 import argparse
 import hashlib
@@ -14,12 +14,12 @@ from typing import Iterable
 
 
 REPOSITORY = Path(__file__).resolve().parent.parent
-CRACKTRO_SOURCE = REPOSITORY / "cracktro"
+TRAINER_SOURCE = REPOSITORY / "trainer"
 DESKTOP_SOURCE = REPOSITORY / "desktop-control"
 BACKEND_SOURCE = REPOSITORY / "backend"
-DEFAULT_OUTPUT = CRACKTRO_SOURCE / "out"
+DEFAULT_OUTPUT = TRAINER_SOURCE / "out"
 DEFAULT_EPOCH = 315532800
-ARCHIVE_ROOT = "bc250-cracktro"
+ARCHIVE_ROOT = "bc250-trainer"
 EXECUTABLES = {
     Path("bc250-storage.sh"),
     Path("bc250-update-persistence.sh"),
@@ -27,8 +27,9 @@ EXECUTABLES = {
     Path("bc250-ram-split.sh"),
     Path("topology.sh"),
     Path("core-unlock/bc250-unlock-cores.py"),
-    Path("cracktro/install.sh"),
-    Path("cracktro/bc250-cracktro"),
+    Path("trainer/install.sh"),
+    Path("trainer/install-flatpak.sh"),
+    Path("trainer/bc250-trainer"),
     Path("desktop-control/shared-service-install.sh"),
     Path("desktop-control/bc250-desktop-control-repair"),
     Path("desktop-control/service/bc250-control-service"),
@@ -78,45 +79,78 @@ def normalize_tree(root: Path, epoch: int) -> None:
     os.utime(str(root), (epoch, epoch), follow_symlinks=False)
 
 
-def stage(binary: Path, output: Path, epoch: int) -> None:
+def copy_host_runtime(temporary: Path) -> None:
+    for name in ("bc250-storage.sh", "bc250-update-persistence.sh", "bc250-power.sh", "bc250-ram-split.sh", "topology.sh"):
+        copy_file(REPOSITORY / name, temporary / name)
+    copy_tree(REPOSITORY / "core-unlock", temporary / "core-unlock")
+    for name in ("shared-service-install.sh", "bc250-desktop-control-repair"):
+        copy_file(DESKTOP_SOURCE / name, temporary / "desktop-control" / name)
+    copy_tree(DESKTOP_SOURCE / "templates", temporary / "desktop-control/templates")
+    copy_tree(DESKTOP_SOURCE / "vendor", temporary / "desktop-control/vendor")
+    service = DESKTOP_SOURCE / "service"
+    for name in ("bc250-control-service", "io.github.keyboardspecialist.bc250-control.policy"):
+        copy_file(service / name, temporary / "desktop-control/service" / name)
+    copy_tree(service / "bc250_control_service", temporary / "desktop-control/service/bc250_control_service")
+    copy_tree(BACKEND_SOURCE / "bc250_control", temporary / "backend/bc250_control")
+    copy_tree(BACKEND_SOURCE / "vendor", temporary / "backend/vendor")
+
+
+def commit_runtime(temporary: Path, output: Path, epoch: int) -> None:
+    normalize_tree(temporary, epoch)
+    if output.exists():
+        if output.is_symlink() or not output.is_dir():
+            raise SystemExit("refusing to replace unsafe output: {}".format(output))
+        shutil.rmtree(str(output))
+    os.replace(str(temporary), str(output))
+
+
+def stage_native(binary: Path, output: Path, epoch: int) -> None:
     if binary.is_symlink():
-        raise SystemExit("Cracktro binary is missing, unsafe, or not executable: {}".format(binary))
+        raise SystemExit("BC250 Trainer binary is missing, unsafe, or not executable: {}".format(binary))
     binary = binary.resolve()
     if not binary.is_file() or not os.access(str(binary), os.X_OK):
-        raise SystemExit("Cracktro binary is missing, unsafe, or not executable: {}".format(binary))
+        raise SystemExit("BC250 Trainer binary is missing, unsafe, or not executable: {}".format(binary))
     output = output.resolve()
     output.parent.mkdir(parents=True, exist_ok=True)
-    temporary = Path(tempfile.mkdtemp(prefix=".cracktro-runtime-", dir=str(output.parent)))
+    temporary = Path(tempfile.mkdtemp(prefix=".trainer-runtime-", dir=str(output.parent)))
     try:
-        for name in ("bc250-storage.sh", "bc250-update-persistence.sh", "bc250-power.sh", "bc250-ram-split.sh", "topology.sh"):
-            copy_file(REPOSITORY / name, temporary / name)
-        copy_tree(REPOSITORY / "core-unlock", temporary / "core-unlock")
-        copy_file(CRACKTRO_SOURCE / "install.sh", temporary / "cracktro/install.sh")
-        copy_file(binary, temporary / "cracktro/bc250-cracktro")
-        copy_tree(CRACKTRO_SOURCE / "packaging", temporary / "cracktro/packaging")
-        copy_tree(CRACKTRO_SOURCE / "tracks", temporary / "cracktro/tracks")
+        copy_host_runtime(temporary)
+        copy_file(TRAINER_SOURCE / "install.sh", temporary / "trainer/install.sh")
+        copy_file(binary, temporary / "trainer/bc250-trainer")
+        copy_tree(TRAINER_SOURCE / "packaging", temporary / "trainer/packaging")
+        copy_tree(TRAINER_SOURCE / "tracks", temporary / "trainer/tracks")
         for optional in ("README.md", "ASSETS.md", "ASSET-LICENSE"):
-            source = CRACKTRO_SOURCE / optional
+            source = TRAINER_SOURCE / optional
             if source.is_file() and not source.is_symlink():
-                copy_file(source, temporary / "cracktro" / optional)
+                copy_file(source, temporary / "trainer" / optional)
 
-        for name in ("shared-service-install.sh", "bc250-desktop-control-repair"):
-            copy_file(DESKTOP_SOURCE / name, temporary / "desktop-control" / name)
-        copy_tree(DESKTOP_SOURCE / "templates", temporary / "desktop-control/templates")
-        copy_tree(DESKTOP_SOURCE / "vendor", temporary / "desktop-control/vendor")
-        service = DESKTOP_SOURCE / "service"
-        for name in ("bc250-control-service", "io.github.keyboardspecialist.bc250-control.policy"):
-            copy_file(service / name, temporary / "desktop-control/service" / name)
-        copy_tree(service / "bc250_control_service", temporary / "desktop-control/service/bc250_control_service")
-        copy_tree(BACKEND_SOURCE / "bc250_control", temporary / "backend/bc250_control")
-        copy_tree(BACKEND_SOURCE / "vendor", temporary / "backend/vendor")
+        commit_runtime(temporary, output, epoch)
+    finally:
+        if temporary.exists():
+            shutil.rmtree(str(temporary))
 
-        normalize_tree(temporary, epoch)
-        if output.exists():
-            if output.is_symlink() or not output.is_dir():
-                raise SystemExit("refusing to replace unsafe output: {}".format(output))
-            shutil.rmtree(str(output))
-        os.replace(str(temporary), str(output))
+
+def stage_flatpak(bundle: Path, output: Path, epoch: int) -> None:
+    if bundle.is_symlink():
+        raise SystemExit("Flatpak bundle is missing or unsafe: {}".format(bundle))
+    bundle = bundle.resolve()
+    if not bundle.is_file():
+        raise SystemExit("Flatpak bundle is missing or unsafe: {}".format(bundle))
+    output = output.resolve()
+    output.parent.mkdir(parents=True, exist_ok=True)
+    temporary = Path(tempfile.mkdtemp(prefix=".trainer-flatpak-runtime-", dir=str(output.parent)))
+    try:
+        copy_host_runtime(temporary)
+        copy_file(TRAINER_SOURCE / "install-flatpak.sh", temporary / "trainer/install-flatpak.sh")
+        copy_file(
+            bundle,
+            temporary / "trainer/io.github.keyboardspecialist.bc250trainer.flatpak",
+        )
+        for optional in ("README.md", "ASSETS.md", "ASSET-LICENSE"):
+            source = TRAINER_SOURCE / optional
+            if source.is_file() and not source.is_symlink():
+                copy_file(source, temporary / "trainer" / optional)
+        commit_runtime(temporary, output, epoch)
     finally:
         if temporary.exists():
             shutil.rmtree(str(temporary))
@@ -127,7 +161,7 @@ def archive_paths(root: Path) -> Iterable[Path]:
     yield from sorted(root.rglob("*"), key=lambda item: item.as_posix())
 
 
-def write_archive(runtime: Path, archive: Path, epoch: int) -> None:
+def write_archive(runtime: Path, archive: Path, epoch: int, archive_root: str) -> None:
     timestamp = time.gmtime(epoch)[:6]
     archive = archive.resolve()
     archive.parent.mkdir(parents=True, exist_ok=True)
@@ -137,7 +171,7 @@ def write_archive(runtime: Path, archive: Path, epoch: int) -> None:
         with zipfile.ZipFile(temporary_name, "w", compression=zipfile.ZIP_DEFLATED, compresslevel=9) as stream:
             for path in archive_paths(runtime):
                 relative = path.relative_to(runtime)
-                name = ARCHIVE_ROOT if relative == Path(".") else "{}/{}".format(ARCHIVE_ROOT, relative.as_posix())
+                name = archive_root if relative == Path(".") else "{}/{}".format(archive_root, relative.as_posix())
                 if path.is_dir():
                     name += "/"
                 info = zipfile.ZipInfo(name, timestamp)
@@ -160,7 +194,9 @@ def write_checksum(archive: Path, checksum: Path) -> None:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--binary", type=Path, required=True)
+    source = parser.add_mutually_exclusive_group(required=True)
+    source.add_argument("--binary", type=Path)
+    source.add_argument("--flatpak", type=Path)
     parser.add_argument("--output", type=Path, default=DEFAULT_OUTPUT)
     parser.add_argument("--archive", type=Path)
     parser.add_argument("--sha256", type=Path)
@@ -169,9 +205,14 @@ def main() -> None:
         parser.error("--sha256 requires --archive")
 
     epoch = source_date_epoch()
-    stage(arguments.binary, arguments.output, epoch)
+    if arguments.binary is not None:
+        stage_native(arguments.binary, arguments.output, epoch)
+        archive_root = ARCHIVE_ROOT
+    else:
+        stage_flatpak(arguments.flatpak, arguments.output, epoch)
+        archive_root = "bc250-trainer-flatpak-installer"
     if arguments.archive is not None:
-        write_archive(arguments.output.resolve(), arguments.archive, epoch)
+        write_archive(arguments.output.resolve(), arguments.archive, epoch, archive_root)
         if arguments.sha256 is not None:
             write_checksum(arguments.archive.resolve(), arguments.sha256.resolve())
 

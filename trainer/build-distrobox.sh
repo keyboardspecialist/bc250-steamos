@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-container="${BC250_CRACKTRO_CONTAINER:-bc250-cracktro-ubuntu2404}"
+container="${BC250_TRAINER_CONTAINER:-bc250-trainer-ubuntu2404}"
 source_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 build_dir="${source_dir}/build-ubuntu2404"
 
@@ -28,7 +28,7 @@ printf 'Building in %s...\n' "${container}"
 distrobox enter "${container}" -- bash -lc \
     "cmake -S '${source_dir}' -B '${build_dir}' -G Ninja -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=ON && cmake --build '${build_dir}' && ctest --test-dir '${build_dir}' --output-on-failure"
 
-binary="${build_dir}/bc250-cracktro"
+binary="${build_dir}/bc250-trainer"
 if [[ ! -x "${binary}" ]]; then
     printf 'Expected binary was not produced: %s\n' "${binary}" >&2
     exit 3

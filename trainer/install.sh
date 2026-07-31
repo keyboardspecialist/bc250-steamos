@@ -1,14 +1,14 @@
 #!/usr/bin/env bash
-# Install the standalone BC-250 Cracktro and register its shared service use.
+# Install BC250 Trainer and register its shared service use.
 set -euo pipefail
 
 SOURCE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_DIR="$(cd "$SOURCE_DIR/.." && pwd)"
 SHARED_INSTALLER="$REPO_DIR/desktop-control/shared-service-install.sh"
-APP_ID=io.github.keyboardspecialist.bc250cracktro
-APP_DIR="$HOME/.local/libexec/bc250-cracktro"
-APP_BIN="$APP_DIR/bc250-cracktro"
-OWNER_FILE="$APP_DIR/.bc250-cracktro-owner"
+APP_ID=io.github.keyboardspecialist.bc250trainer
+APP_DIR="$HOME/.local/libexec/bc250-trainer"
+APP_BIN="$APP_DIR/bc250-trainer"
+OWNER_FILE="$APP_DIR/.bc250-trainer-owner"
 DESKTOP_FILE="$HOME/.local/share/applications/$APP_ID.desktop"
 ICON_FILE="$HOME/.local/share/icons/hicolor/scalable/apps/$APP_ID.svg"
 DESKTOP_TEMPLATE="$SOURCE_DIR/packaging/$APP_ID.desktop.in"
@@ -16,9 +16,17 @@ ICON_SOURCE="$SOURCE_DIR/packaging/$APP_ID.svg"
 TRACKS_SOURCE="$SOURCE_DIR/tracks"
 APP_TRACKS="$APP_DIR/tracks"
 OWNER_VALUE="schema=1;owner=$APP_ID"
+LEGACY_APP_ID=io.github.keyboardspecialist.bc250cracktro
+LEGACY_APP_DIR="$HOME/.local/libexec/bc250-cracktro"
+LEGACY_APP_BIN="$LEGACY_APP_DIR/bc250-cracktro"
+LEGACY_OWNER_FILE="$LEGACY_APP_DIR/.bc250-cracktro-owner"
+LEGACY_TRACKS="$LEGACY_APP_DIR/tracks"
+LEGACY_DESKTOP_FILE="$HOME/.local/share/applications/$LEGACY_APP_ID.desktop"
+LEGACY_ICON_FILE="$HOME/.local/share/icons/hicolor/scalable/apps/$LEGACY_APP_ID.svg"
+LEGACY_OWNER_VALUE="schema=1;owner=$LEGACY_APP_ID"
 
-log() { echo "[bc250-cracktro] $*"; }
-die() { echo "[bc250-cracktro] $*" >&2; exit 1; }
+log() { echo "[bc250-trainer] $*"; }
+die() { echo "[bc250-trainer] $*" >&2; exit 1; }
 require_normal_user() { [[ $EUID -ne 0 ]] || die "Run as the logged-in desktop user, not with sudo."; }
 
 [[ "$HOME" == /* && "$HOME" != *[[:space:]]* ]] \
@@ -31,25 +39,25 @@ source "$SHARED_INSTALLER"
 
 find_binary() {
     local candidate
-    if [[ -n "${BC250_CRACKTRO_BINARY:-}" ]]; then
-        candidate=$BC250_CRACKTRO_BINARY
-        [[ "$candidate" == /* ]] || die "BC250_CRACKTRO_BINARY must be an absolute path."
+    if [[ -n "${BC250_TRAINER_BINARY:-}" ]]; then
+        candidate=$BC250_TRAINER_BINARY
+        [[ "$candidate" == /* ]] || die "BC250_TRAINER_BINARY must be an absolute path."
         [[ -f "$candidate" && ! -L "$candidate" && -x "$candidate" ]] \
-            || die "BC250_CRACKTRO_BINARY is missing, unsafe, or not executable: $candidate"
+            || die "BC250_TRAINER_BINARY is missing, unsafe, or not executable: $candidate"
         printf '%s\n' "$candidate"
         return
     fi
     for candidate in \
-        "$SOURCE_DIR/bc250-cracktro" \
-        "$SOURCE_DIR/build/bc250-cracktro" \
-        "$SOURCE_DIR/build-ubuntu2404/bc250-cracktro" \
-        "$REPO_DIR/.build/cracktro/bc250-cracktro"; do
+        "$SOURCE_DIR/bc250-trainer" \
+        "$SOURCE_DIR/build/bc250-trainer" \
+        "$SOURCE_DIR/build-ubuntu2404/bc250-trainer" \
+        "$REPO_DIR/.build/trainer/bc250-trainer"; do
         if [[ -f "$candidate" && ! -L "$candidate" && -x "$candidate" ]]; then
             printf '%s\n' "$candidate"
             return
         fi
     done
-    die "No built bc250-cracktro executable was found. Build it first or set BC250_CRACKTRO_BINARY."
+    die "No built bc250-trainer executable was found. Build it first or set BC250_TRAINER_BINARY."
 }
 
 desktop_owned() {
@@ -70,6 +78,24 @@ user_install_owned() {
         [[ "$(stat -Lc '%u' "$path")" == "$uid" ]] || return 1
     done
     [[ "$(cat "$OWNER_FILE")" == "$OWNER_VALUE" ]] && desktop_owned
+}
+
+legacy_install_owned() {
+    local path uid
+    uid=$(id -u)
+    [[ -d "$LEGACY_APP_DIR" && ! -L "$LEGACY_APP_DIR" \
+        && -f "$LEGACY_OWNER_FILE" && ! -L "$LEGACY_OWNER_FILE" \
+        && -f "$LEGACY_APP_BIN" && ! -L "$LEGACY_APP_BIN" \
+        && -d "$LEGACY_TRACKS" && ! -L "$LEGACY_TRACKS" \
+        && -f "$LEGACY_DESKTOP_FILE" && ! -L "$LEGACY_DESKTOP_FILE" \
+        && -f "$LEGACY_ICON_FILE" && ! -L "$LEGACY_ICON_FILE" ]] || return 1
+    for path in "$LEGACY_APP_DIR" "$LEGACY_OWNER_FILE" "$LEGACY_APP_BIN" \
+        "$LEGACY_TRACKS" "$LEGACY_DESKTOP_FILE" "$LEGACY_ICON_FILE"; do
+        [[ "$(stat -Lc '%u' "$path")" == "$uid" ]] || return 1
+    done
+    [[ "$(cat "$LEGACY_OWNER_FILE")" == "$LEGACY_OWNER_VALUE" ]] \
+        && grep -Fxq "X-BC250-Installer-Owner=$LEGACY_APP_ID" "$LEGACY_DESKTOP_FILE" \
+        && grep -Fxq "Exec=$LEGACY_APP_BIN" "$LEGACY_DESKTOP_FILE"
 }
 
 validate_user_targets() {
@@ -106,11 +132,11 @@ install_user_files() {
     install -d -m 0755 "${APP_DIR%/*}" "${DESKTOP_FILE%/*}" "${ICON_FILE%/*}"
     [[ ! -L "${APP_DIR%/*}" && ! -L "${DESKTOP_FILE%/*}" \
         && ! -L "${ICON_FILE%/*}" ]] || die "Refusing symlinked user installation directories."
-    stage=$(mktemp -d "${APP_DIR%/*}/.bc250-cracktro.XXXXXX")
-    desktop_tmp=$(mktemp "${DESKTOP_FILE%/*}/.bc250-cracktro.XXXXXX")
-    icon_tmp=$(mktemp "${ICON_FILE%/*}/.bc250-cracktro.XXXXXX")
+    stage=$(mktemp -d "${APP_DIR%/*}/.bc250-trainer.XXXXXX")
+    desktop_tmp=$(mktemp "${DESKTOP_FILE%/*}/.bc250-trainer.XXXXXX")
+    icon_tmp=$(mktemp "${ICON_FILE%/*}/.bc250-trainer.XXXXXX")
     trap 'rm -rf "$stage"; rm -f "$desktop_tmp" "$icon_tmp"' RETURN
-    install -m 0755 "$binary" "$stage/bc250-cracktro"
+    install -m 0755 "$binary" "$stage/bc250-trainer"
     [[ -d "$TRACKS_SOURCE" && ! -L "$TRACKS_SOURCE" ]] \
         || die "Bundled tracks directory is missing or unsafe: $TRACKS_SOURCE"
     install -d -m 0755 "$stage/tracks"
@@ -120,8 +146,8 @@ install_user_files() {
         track_count=$((track_count + 1))
     done
     [[ $track_count -gt 0 ]] || die "Bundled tracks directory contains no MP3 files."
-    printf '%s\n' "$OWNER_VALUE" > "$stage/.bc250-cracktro-owner"
-    chmod 0644 "$stage/.bc250-cracktro-owner"
+    printf '%s\n' "$OWNER_VALUE" > "$stage/.bc250-trainer-owner"
+    chmod 0644 "$stage/.bc250-trainer-owner"
     chmod 0755 "$stage"
     render_desktop > "$desktop_tmp"
     chmod 0644 "$desktop_tmp"
@@ -152,27 +178,27 @@ install_all() {
     uid=$(id -u)
     [[ -f "$DESKTOP_TEMPLATE" && ! -L "$DESKTOP_TEMPLATE" \
         && -f "$ICON_SOURCE" && ! -L "$ICON_SOURCE" ]] \
-        || die "Cracktro packaging resources are missing or unsafe."
+        || die "BC250 Trainer packaging resources are missing or unsafe."
     user_install_owned && had_user=1
     validate_user_targets
     read -r migration_client migration_uid < <(legacy_client)
     log "Installing persistent storage and shared privileged service (sudo)"
     sudo bash "$REPO_DIR/bc250-storage.sh" install
     sudo bash "$SOURCE_DIR/install.sh" _install-root \
-        cracktro "$uid" "$migration_client" "$migration_uid"
+        trainer "$uid" "$migration_client" "$migration_uid"
     if ! sudo bash "$REPO_DIR/bc250-update-persistence.sh" install desktop; then
         [[ $had_user -eq 1 ]] \
-            || sudo bash "$SOURCE_DIR/install.sh" _uninstall-root cracktro "$uid" || true
+            || sudo bash "$SOURCE_DIR/install.sh" _uninstall-root trainer "$uid" || true
         die "Could not protect the shared service across SteamOS updates."
     fi
     if ! install_user_files "$binary"; then
         [[ $had_user -eq 1 ]] \
-            || sudo bash "$SOURCE_DIR/install.sh" _uninstall-root cracktro "$uid" || true
-        die "Could not install the Cracktro user files."
+            || sudo bash "$SOURCE_DIR/install.sh" _uninstall-root trainer "$uid" || true
+        die "Could not install the BC250 Trainer user files."
     fi
     command -v update-desktop-database >/dev/null 2>&1 \
         && update-desktop-database "${DESKTOP_FILE%/*}" >/dev/null 2>&1 || true
-    log "Cracktro installed at $APP_BIN"
+    log "BC250 Trainer installed at $APP_BIN"
 }
 
 uninstall_all() {
@@ -187,10 +213,28 @@ uninstall_all() {
         rm -rf "$APP_DIR"
         rm -f "$DESKTOP_FILE" "$ICON_FILE"
     fi
-    sudo bash "$SOURCE_DIR/install.sh" _uninstall-root cracktro "$uid"
+    sudo bash "$SOURCE_DIR/install.sh" _uninstall-root trainer "$uid"
     command -v update-desktop-database >/dev/null 2>&1 \
         && update-desktop-database "${DESKTOP_FILE%/*}" >/dev/null 2>&1 || true
-    log "Cracktro uninstalled; shared tuning state and other frontend registrations were preserved."
+    log "BC250 Trainer uninstalled; shared tuning state and other frontend registrations were preserved."
+}
+
+uninstall_legacy() {
+    require_normal_user
+    local uid
+    uid=$(id -u)
+    if [[ -e "$LEGACY_APP_DIR" || -L "$LEGACY_APP_DIR" \
+        || -e "$LEGACY_DESKTOP_FILE" || -L "$LEGACY_DESKTOP_FILE" \
+        || -e "$LEGACY_ICON_FILE" || -L "$LEGACY_ICON_FILE" ]]; then
+        legacy_install_owned \
+            || die "Refusing to remove files not recognized as a $LEGACY_APP_ID installation."
+        rm -rf "$LEGACY_APP_DIR"
+        rm -f "$LEGACY_DESKTOP_FILE" "$LEGACY_ICON_FILE"
+    fi
+    sudo bash "$SOURCE_DIR/install.sh" _uninstall-root cracktro "$uid"
+    command -v update-desktop-database >/dev/null 2>&1 \
+        && update-desktop-database "${LEGACY_DESKTOP_FILE%/*}" >/dev/null 2>&1 || true
+    log "Legacy Cracktro files and service registration were removed."
 }
 
 show_status() {
@@ -201,7 +245,7 @@ show_status() {
     log "user application: $state ($APP_BIN)"
     if desktop_owned; then state="absolute Exec recognized"; else state="missing-or-unrecognized"; failed=1; fi
     log "desktop launcher: $state ($DESKTOP_FILE)"
-    if shared_client_registered cracktro "$uid"; then state=registered; else state=missing; failed=1; fi
+    if shared_client_registered trainer "$uid"; then state=registered; else state=missing; failed=1; fi
     log "shared service client: $state (UID $uid)"
     if [[ -d "$SHARED_PAYLOAD_DIR" && ! -L "$SHARED_PAYLOAD_DIR" ]]; then state=installed; else state=missing; failed=1; fi
     log "shared root payload: $state ($SHARED_PAYLOAD_DIR)"
@@ -212,7 +256,7 @@ show_status() {
 
 usage() {
     cat << EOF
-Usage: $0 {install|status|uninstall|help}
+Usage: $0 {install|status|uninstall|uninstall-legacy|help}
 
 Run as the logged-in desktop user. The installer requests sudo only for the
 shared privileged service and installs the application under ~/.local.
@@ -223,6 +267,7 @@ case "${1:-}" in
     install) (($# == 1)) || die "Usage: $0 install"; install_all ;;
     status) (($# == 1)) || die "Usage: $0 status"; show_status ;;
     uninstall) (($# == 1)) || die "Usage: $0 uninstall"; uninstall_all ;;
+    uninstall-legacy) (($# == 1)) || die "Usage: $0 uninstall-legacy"; uninstall_legacy ;;
     help|-h|--help) (($# == 1)) || die "Usage: $0 help"; usage ;;
     _install-root)
         (($# == 5)) || die "Invalid internal invocation."

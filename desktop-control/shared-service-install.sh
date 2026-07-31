@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Shared privileged-service lifecycle for the Plasma and cracktro frontends.
+# Shared privileged-service lifecycle for the Plasma and BC250 Trainer frontends.
 
 SHARED_SOURCE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SHARED_REPO_DIR="$(cd "$SHARED_SOURCE_DIR/.." && pwd)"
@@ -26,7 +26,8 @@ shared_die() { echo "[bc250-service] $*" >&2; exit 1; }
 shared_require_root() { [[ $EUID -eq 0 ]] || shared_die "Internal service installation requires root."; }
 
 shared_validate_client() {
-    [[ "$1" == plasma || "$1" == cracktro || "$1" == legacy ]] \
+    [[ "$1" == plasma || "$1" == trainer || "$1" == trainer-flatpak \
+        || "$1" == cracktro || "$1" == legacy ]] \
         || shared_die "Unrecognized service client: $1"
     [[ "$2" =~ ^[0-9]+$ ]] || shared_die "Invalid service client UID: $2"
     if [[ "$1" == legacy ]]; then
@@ -169,7 +170,8 @@ shared_marker_path() { printf '%s/%s.%s\n' "$SHARED_CLIENT_DIR" "$1" "$2"; }
 shared_validate_marker() {
     local marker="$1" name client uid metadata owner mode expected
     name=${marker##*/}
-    [[ "$name" =~ ^(plasma|cracktro)\.([1-9][0-9]*)$ || "$name" == legacy.0 ]] \
+    # Accept old Cracktro markers until a Trainer install migrates them.
+    [[ "$name" =~ ^(plasma|trainer|trainer-flatpak|cracktro)\.([1-9][0-9]*)$ || "$name" == legacy.0 ]] \
         || shared_die "Unrecognized shared-service client marker: $marker"
     client=${name%%.*}
     uid=${name##*.}
@@ -358,7 +360,8 @@ shared_service_release() {
     marker=$(shared_marker_path "$client" "$uid")
     if [[ ! -e "$marker" ]]; then
         if [[ $SHARED_CLIENT_COUNT -eq 0 && -d "$SHARED_PAYLOAD_DIR" ]]; then
-            if [[ "$client" == cracktro ]]; then
+            if [[ "$client" == trainer || "$client" == trainer-flatpak \
+                || "$client" == cracktro ]]; then
                 shared_register_client legacy 0
                 shared_log "Preserved markerless service install as legacy.0."
                 shared_log "No service registration exists for ${client}.${uid}."

@@ -1,8 +1,11 @@
-# BC-250 Cracktro
+# BC250 Trainer
 
-Native Qt 6 frontend for the BC-250 control service. It renders the supplied cracktro artwork as a fixed-aspect frameless window, includes a native music library with five bundled MP3 tracks, and communicates with the privileged toolkit exclusively over the system D-Bus.
+Native Qt 6 frontend for the BC-250 control service. It renders the supplied retro artwork as a fixed-aspect frameless window, includes a native music library with six bundled MP3 tracks, and communicates with the privileged toolkit exclusively over the system D-Bus.
 
 The application does not invoke scripts, `sudo`, `busctl`, or any subprocess. Hardware checks and authorization remain in `io.github.keyboardspecialist.BC250Control1`.
+
+The Flatpak packages only this unprivileged frontend. Release installation kits
+pair it with a host-side installer for the required BC-250 control service.
 
 ## Features
 
@@ -29,7 +32,7 @@ Ubuntu 24.04 is the compatibility baseline (Qt 6.4 or newer):
 ./build-distrobox.sh
 ```
 
-The helper creates `bc250-cracktro-ubuntu2404` when needed, but does not install packages automatically. If dependencies are missing, it prints the exact `apt` command to run inside the container. Output is written to `build-ubuntu2404/`.
+The helper creates `bc250-trainer-ubuntu2404` when needed, but does not install packages automatically. If dependencies are missing, it prints the exact `apt` command to run inside the container. Output is written to `build-ubuntu2404/`.
 
 For an already prepared environment:
 
@@ -54,7 +57,7 @@ mock-mode launch after a successful build.
 Set the application version at configure time when preparing a release:
 
 ```sh
-cmake -S . -B build -G Ninja -DCRACKTRO_PROJECT_VERSION=1.0.0
+cmake -S . -B build -G Ninja -DTRAINER_PROJECT_VERSION=1.0.0
 ```
 
 Available convenience targets depend on installed tools:
@@ -65,19 +68,49 @@ cmake --build build --target qml-tests
 cmake --build build --target smoke
 ```
 
+### Flatpak
+
+Build and install a local GUI-only Flatpak with the KDE 6.10 SDK and runtime from
+Flathub:
+
+```sh
+flatpak remote-add --user --if-not-exists flathub \
+  https://flathub.org/repo/flathub.flatpakrepo
+TRAINER_PROJECT_VERSION=1.0.0 \
+  flatpak-builder --user --install-deps-from=flathub --force-clean --install \
+  flatpak-build packaging/io.github.keyboardspecialist.bc250trainer.yml
+flatpak run io.github.keyboardspecialist.bc250trainer
+```
+
+The sandbox can open Wayland or X11 windows, use GPU acceleration and audio,
+and talk only to the BC-250 system D-Bus service. It has no general host
+filesystem or host-command access. Folder selection is handled through the
+desktop portal.
+
+Release users should use the complete `*-flatpak-installer.zip` artifact instead
+of installing the raw bundle. After extracting it:
+
+```sh
+bash trainer/install-flatpak.sh install
+```
+
+That host-side script installs persistent storage and the privileged service,
+then installs the bundled Flatpak for the current user. Its `status` and
+`uninstall` commands manage both halves as one installation.
+
 ## Development
 
 Run without service access or hardware writes:
 
 ```sh
-./build/bc250-cracktro --mock
+./build/bc250-trainer --mock
 ```
 
 Run the executable startup check:
 
 ```sh
 QT_QPA_PLATFORM=offscreen QT_QUICK_BACKEND=software QT_MEDIA_BACKEND=mock \
-  ./build/bc250-cracktro --mock --smoke-test
+  ./build/bc250-trainer --mock --smoke-test
 ```
 
 Controls are `F1` Status, `F2` GPU, `F3` Compute Units, `F4` CPU, `M` mute, `P` play/pause, `R` refresh, and `Escape` close. Drag the noninteractive upper-left artwork to request a compositor-managed system move under Wayland.
@@ -89,22 +122,23 @@ waveform, and visualizer analysis failures do not disable hardware controls.
 
 ## Releases
 
-Cracktro releases use the independent `cracktro-vMAJOR.MINOR.PATCH` tag
+BC250 Trainer releases use the independent `trainer-vMAJOR.MINOR.PATCH` tag
 namespace and are published as GitHub prereleases. Main toolkit releases retain
 the `vMAJOR.MINOR.PATCH` namespace and existing release workflow.
 
-Cut a release from the `cracktro` branch with an annotated tag:
+Cut a release from the `trainer` branch with an annotated tag:
 
 ```sh
-git switch cracktro
+git switch trainer
 git pull --ff-only
-git tag -a cracktro-v1.0.0 -m "BC-250 Cracktro v1.0.0"
-git push origin cracktro cracktro-v1.0.0
+git tag -a trainer-v1.0.0 -m "BC250 Trainer v1.0.0"
+git push origin trainer trainer-v1.0.0
 ```
 
-The **Build Cracktro prerelease** workflow validates branch ancestry, builds and
-tests the native application and shared service, stages the standalone archive,
-and publishes checksums with the prerelease.
+The **Build BC250 Trainer prerelease** workflow validates branch ancestry, builds
+and tests the native application and shared service, stages the standalone ZIP
+and complete Flatpak installation kit, and publishes checksums with the prerelease. Main `v*`
+toolkit releases publish the same Flatpak artifact.
 
 The workflow enforces the publishing decision recorded in `ASSETS.md` before
 building or publishing a release.

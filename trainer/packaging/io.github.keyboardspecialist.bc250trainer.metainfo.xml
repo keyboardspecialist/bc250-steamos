@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+  <id>io.github.keyboardspecialist.bc250trainer</id>
+  <name>BC250 Trainer</name>
+  <summary>Monitor and tune BC-250 hardware</summary>
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>Unlicense</project_license>
+  <description>
+    <p>
+      BC250 Trainer is a native Qt frontend for monitoring and tuning BC-250
+      systems. It provides status, CPU, GPU, memory, and compute-unit controls
+      through the separately installed BC-250 host service.
+    </p>
+    <p>
+      The application also includes a local media deck with bundled music.
+    </p>
+  </description>
+  <launchable type="desktop-id">io.github.keyboardspecialist.bc250trainer.desktop</launchable>
+  <provides>
+    <binary>bc250-trainer</binary>
+  </provides>
+  <developer id="io.github.keyboardspecialist">
+    <name>keyboardspecialist</name>
+  </developer>
+  <url type="homepage">https://github.com/KeyBoard-Specialist/bc250-steamos</url>
+  <url type="bugtracker">https://github.com/KeyBoard-Specialist/bc250-steamos/issues</url>
+  <content_rating type="oars-1.1"/>
+</component>

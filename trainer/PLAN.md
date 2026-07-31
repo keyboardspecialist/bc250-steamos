@@ -1,4 +1,4 @@
-# BC-250 Cracktro Plan
+# BC250 Trainer Plan
 
 ## Goals
 
@@ -22,7 +22,7 @@ but the application structure should allow those pages to be added later.
 
 ## Application Architecture
 
-Create a native Qt 6 application under `cracktro/` using:
+Create a native Qt 6 application under `trainer/` using:
 
 - Qt Quick and QML for the interface
 - Qt Quick Controls 2 for input controls
@@ -35,7 +35,7 @@ host has the necessary Qt runtime, but its development headers are currently
 stripped. Building against an older Qt 6 release also gives the resulting
 binary a suitable compatibility baseline for the newer SteamOS Qt runtime.
 
-Produce one `bc250-cracktro` executable. Embed the QML and background image as
+Produce one `bc250-trainer` executable. Embed the QML and background image as
 Qt resources with stable aliases, and package the default MP3 library beside
 the executable under `tracks/`:
 
@@ -50,7 +50,7 @@ toolkit scripts, `sudo`, or `busctl` from QML.
 ## Proposed Layout
 
 ```text
-cracktro/
+trainer/
 |-- CMakeLists.txt
 |-- README.md
 |-- ASSETS.md
@@ -65,8 +65,8 @@ cracktro/
 |   |-- components/
 |   `-- pages/
 |-- packaging/
-|   |-- io.github.keyboardspecialist.bc250cracktro.desktop.in
-|   `-- io.github.keyboardspecialist.bc250cracktro.svg
+|   |-- io.github.keyboardspecialist.bc250trainer.desktop.in
+|   `-- io.github.keyboardspecialist.bc250trainer.svg
 |-- tests/
 |-- ChatGPT Image Jul 29, 2026, 08_44_21 PM.png
 `-- tracks/
@@ -282,39 +282,39 @@ Operation completion should identify the required next step:
 
 ## Standalone Installation
 
-The cracktro package must work without installing the Plasma applet.
+The Trainer package must work without installing the Plasma applet.
 
 Install user-owned application files under:
 
 ```text
-~/.local/libexec/bc250-cracktro/bc250-cracktro
-~/.local/share/applications/io.github.keyboardspecialist.bc250cracktro.desktop
-~/.local/share/icons/hicolor/scalable/apps/io.github.keyboardspecialist.bc250cracktro.svg
+~/.local/libexec/bc250-trainer/bc250-trainer
+~/.local/share/applications/io.github.keyboardspecialist.bc250trainer.desktop
+~/.local/share/icons/hicolor/scalable/apps/io.github.keyboardspecialist.bc250trainer.svg
 ```
 
 The desktop launcher should use:
 
 ```ini
 Type=Application
-Name=BC-250 Cracktro
-Icon=io.github.keyboardspecialist.bc250cracktro
+Name=BC250 Trainer
+Icon=io.github.keyboardspecialist.bc250trainer
 Categories=Utility;System;
 Terminal=false
 DBusActivatable=false
 ```
 
 Factor the existing privileged service installation so both Plasma and the
-cracktro can install or update the same root service payload. Track frontend
+Trainer can install or update the same root service payload. Track frontend
 clients with root-owned registration markers so uninstalling one frontend does
 not remove a service still required by the other.
 
-The cracktro installer should support:
+The Trainer installer should support:
 
 - `install`
 - `status`
 - `uninstall`
 
-Application uninstall should remove only cracktro-owned user files and release
+Application uninstall should remove only Trainer-owned user files and release
 its service-client registration. Shared tuning state, helpers, profiles, and a
 service still used by another frontend must be preserved.
 
@@ -381,8 +381,8 @@ an offscreen startup test before installation.
 Add a deterministic release staging script and test for a new artifact:
 
 ```text
-bc250-cracktro-<tag>.zip
-bc250-cracktro-<tag>.zip.sha256
+bc250-trainer-<tag>.zip
+bc250-trainer-<tag>.zip.sha256
 ```
 
 Extend the tag-triggered release workflow to:
@@ -395,7 +395,7 @@ Extend the tag-triggered release workflow to:
 - Generate a deterministic ZIP and SHA-256 file
 - Upload both to the GitHub release
 
-Include `cracktro/` in the full toolkit archive if the source project should be
+Include `trainer/` in the full toolkit archive if the source project should be
 distributed there as well.
 
 Document asset provenance and redistribution status in `ASSETS.md`, including
@@ -412,7 +412,7 @@ assets in a release.
 6. Add structured CPU core-unlock status to the backend and service.
 7. Add protected CPU core-unlock operations and operation semantics.
 8. Wire the CPU-unlock page to the new service API.
-9. Factor shared service installation and add the standalone cracktro installer.
+9. Factor shared service installation and add the standalone Trainer installer.
 10. Add automated tests, CI build, deterministic packaging, and documentation.
 11. Perform read-only and conservative hardware verification before testing
     irreversible or crash-prone controls.

@@ -7,7 +7,7 @@ import "pages" as Pages
 
 ApplicationWindow {
     id: root
-    title: "BC-250 Cracktro"
+    title: "BC250 Trainer"
     visible: true
     flags: Qt.Window | Qt.FramelessWindowHint
     color: "black"

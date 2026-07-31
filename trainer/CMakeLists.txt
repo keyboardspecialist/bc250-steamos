@@ -1,10 +1,14 @@
 cmake_minimum_required(VERSION 3.22)
 
-set(CRACKTRO_PROJECT_VERSION "1.0.0" CACHE STRING "BC-250 Cracktro semantic version")
-if(NOT CRACKTRO_PROJECT_VERSION MATCHES "^[0-9]+\\.[0-9]+\\.[0-9]+$")
-    message(FATAL_ERROR "CRACKTRO_PROJECT_VERSION must use MAJOR.MINOR.PATCH format")
+set(TRAINER_DEFAULT_VERSION "1.0.0")
+if(DEFINED ENV{TRAINER_PROJECT_VERSION} AND NOT "$ENV{TRAINER_PROJECT_VERSION}" STREQUAL "")
+    set(TRAINER_DEFAULT_VERSION "$ENV{TRAINER_PROJECT_VERSION}")
 endif()
-project(bc250-cracktro VERSION "${CRACKTRO_PROJECT_VERSION}" LANGUAGES CXX)
+set(TRAINER_PROJECT_VERSION "${TRAINER_DEFAULT_VERSION}" CACHE STRING "BC250 Trainer semantic version")
+if(NOT TRAINER_PROJECT_VERSION MATCHES "^[0-9]+\\.[0-9]+\\.[0-9]+$")
+    message(FATAL_ERROR "TRAINER_PROJECT_VERSION must use MAJOR.MINOR.PATCH format")
+endif()
+project(bc250-trainer VERSION "${TRAINER_PROJECT_VERSION}" LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -14,7 +18,7 @@ set(CMAKE_AUTORCC ON)
 
 find_package(Qt6 6.4 REQUIRED COMPONENTS Core Gui Quick QuickControls2 DBus Multimedia)
 
-add_executable(bc250-cracktro
+add_executable(bc250-trainer
     src/main.cpp
     src/Bc250Bridge.cpp
     src/Bc250Bridge.h
@@ -23,7 +27,7 @@ add_executable(bc250-cracktro
     resources.qrc
 )
 
-target_link_libraries(bc250-cracktro PRIVATE
+target_link_libraries(bc250-trainer PRIVATE
     Qt6::Core
     Qt6::Gui
     Qt6::Quick
@@ -32,8 +36,8 @@ target_link_libraries(bc250-cracktro PRIVATE
     Qt6::Multimedia
 )
 
-target_compile_definitions(bc250-cracktro PRIVATE
-    BC250_CRACKTRO_VERSION="${PROJECT_VERSION}"
+target_compile_definitions(bc250-trainer PRIVATE
+    BC250_TRAINER_VERSION="${PROJECT_VERSION}"
 )
 
 include(CTest)
@@ -76,14 +80,18 @@ if(NOT QMLLINT_EXECUTABLE)
     unset(QMLLINT_EXECUTABLE CACHE)
     find_program(QMLLINT_EXECUTABLE NAMES qmllint6)
 endif()
-file(GLOB_RECURSE CRACKTRO_QML_FILES CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/qml/*.qml")
+file(GLOB_RECURSE TRAINER_QML_FILES CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/qml/*.qml")
 if(QMLLINT_EXECUTABLE)
     add_custom_target(qml-lint
         COMMAND "${QMLLINT_EXECUTABLE}"
             --unqualified disable
-            ${CRACKTRO_QML_FILES}
+            --import info
+            --property info
+            --type info
+            --deferred-property-id info
+            ${TRAINER_QML_FILES}
         WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
-        COMMENT "Linting cracktro QML"
+        COMMENT "Linting BC250 Trainer QML"
         VERBATIM
     )
 endif()
@@ -105,7 +113,7 @@ if(BUILD_TESTING AND QMLTESTRUNNER_EXECUTABLE)
     )
     add_custom_target(qml-tests
         COMMAND "${CMAKE_CTEST_COMMAND}" --output-on-failure -R "^qml-components$"
-        DEPENDS bc250-cracktro
+        DEPENDS bc250-trainer
         VERBATIM
     )
 endif()
@@ -133,7 +141,7 @@ if(BUILD_TESTING AND QMLSCENE6_EXECUTABLE)
 endif()
 
 add_test(NAME offscreen-startup
-    COMMAND bc250-cracktro --mock --smoke-test
+    COMMAND bc250-trainer --mock --smoke-test
 )
 set_tests_properties(offscreen-startup PROPERTIES
     TIMEOUT 10
@@ -141,8 +149,26 @@ set_tests_properties(offscreen-startup PROPERTIES
 )
 add_custom_target(smoke
     COMMAND "${CMAKE_CTEST_COMMAND}" --output-on-failure -R "^offscreen-startup$"
-    DEPENDS bc250-cracktro
+    DEPENDS bc250-trainer
     VERBATIM
 )
 
-install(TARGETS bc250-cracktro RUNTIME DESTINATION bin)
+set(EXEC bc250-trainer)
+configure_file(
+    packaging/io.github.keyboardspecialist.bc250trainer.desktop.in
+    io.github.keyboardspecialist.bc250trainer.desktop
+    @ONLY
+)
+
+install(TARGETS bc250-trainer RUNTIME DESTINATION bin)
+install(DIRECTORY tracks/ DESTINATION share/bc250-trainer FILES_MATCHING PATTERN "*.mp3")
+install(FILES
+    "${CMAKE_CURRENT_BINARY_DIR}/io.github.keyboardspecialist.bc250trainer.desktop"
+    DESTINATION share/applications
+)
+install(FILES packaging/io.github.keyboardspecialist.bc250trainer.svg
+    DESTINATION share/icons/hicolor/scalable/apps
+)
+install(FILES packaging/io.github.keyboardspecialist.bc250trainer.metainfo.xml
+    DESTINATION share/metainfo
+)

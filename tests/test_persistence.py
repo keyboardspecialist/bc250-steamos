@@ -609,7 +609,7 @@ grep -Fxq "daemon-reload" "$SYSTEMCTL_LOG"
             "decky-plugin/install.sh",
             "desktop-control/install.sh",
             "desktop-control/shared-service-install.sh",
-            "cracktro/install.sh",
+            "trainer/install.sh",
             "desktop-control/bc250-desktop-control-repair",
         ]
         subprocess.run(

@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=BC250 Trainer
+Exec=@EXEC@
+Icon=io.github.keyboardspecialist.bc250trainer
+Categories=Utility;System;
+Terminal=false
+DBusActivatable=false
+X-BC250-Installer-Owner=io.github.keyboardspecialist.bc250trainer

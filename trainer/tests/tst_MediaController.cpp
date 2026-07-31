@@ -321,7 +321,7 @@ private:
 
     static QString settingsApplication()
     {
-        return QStringLiteral("bc250-cracktro-tests-%1").arg(QCoreApplication::applicationPid());
+        return QStringLiteral("bc250-trainer-tests-%1").arg(QCoreApplication::applicationPid());
     }
 
     QTemporaryDir m_settingsRoot;

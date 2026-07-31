@@ -137,7 +137,7 @@ verify() {
     QT_QPA_PLATFORM=offscreen \
     QT_QUICK_BACKEND=software \
     QT_MEDIA_BACKEND=mock \
-        "${build_dir}/bc250-cracktro" --mock --smoke-test
+        "${build_dir}/bc250-trainer" --mock --smoke-test
 
     cd -- "${repo_root}"
     run_python_suite \
@@ -160,5 +160,5 @@ configure_and_build
 case "${mode}" in
     all|test) verify ;;
     build) ;;
-    run) exec "${build_dir}/bc250-cracktro" --mock ;;
+    run) exec "${build_dir}/bc250-trainer" --mock ;;
 esac

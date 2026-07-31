@@ -1,9 +1,9 @@
-name: Cracktro macOS checks
+name: BC250 Trainer macOS checks
 
 on:
   pull_request:
     paths:
-      - "cracktro/**"
+      - "trainer/**"
       - "backend/**"
       - "desktop-control/**"
       - "core-unlock/**"
@@ -13,12 +13,12 @@ on:
       - "aic8800/*.sh"
       - "bc250-*.sh"
       - "topology.sh"
-      - ".github/workflows/cracktro-checks.yml"
-      - ".github/workflows/cracktro-release.yml"
+      - ".github/workflows/trainer-checks.yml"
+      - ".github/workflows/trainer-release.yml"
       - ".github/workflows/release-artifacts.yml"
   push:
     branches:
-      - cracktro
+      - trainer
 
 permissions:
   contents: read
@@ -37,5 +37,5 @@ jobs:
       - name: Install native dependencies
         run: brew install cmake ninja qt bash coreutils
 
-      - name: Build and verify Cracktro
-        run: "$(brew --prefix bash)/bin/bash" cracktro/build-macos.sh
+      - name: Build and verify BC250 Trainer
+        run: "$(brew --prefix bash)/bin/bash" trainer/build-macos.sh

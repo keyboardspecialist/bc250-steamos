@@ -37,7 +37,7 @@ class MediaController final : public QObject
 
 public:
     explicit MediaController(QObject *parent = nullptr, bool autoPlay = true,
-                             const QString &settingsApplication = QStringLiteral("bc250-cracktro"),
+                             const QString &settingsApplication = QStringLiteral("bc250-trainer"),
                              bool mediaProcessingEnabled = true);
     ~MediaController() override;
 

@@ -88,9 +88,9 @@ and control styling follow the active Plasma theme.
 Desktop-component removal preserves shared hardware helpers, UMR, GPU tuning,
 CPU profiles, CEC preferences, and persistent toolkit data.
 
-The privileged service is shared with the standalone Cracktro application.
+The privileged service is shared with the standalone BC250 Trainer application.
 Frontend registrations are root-owned and UID-scoped. Uninstalling Plasma does
-not stop or remove the service while any Cracktro registration remains; the
+not stop or remove the service while any BC250 Trainer registration remains; the
 last frontend removal tears down the service integration. Existing markerless
 desktop installs are claimed during upgrade so adding or removing a second
 frontend cannot accidentally remove their service.

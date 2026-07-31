@@ -11,19 +11,19 @@ int main(int argc, char *argv[])
 {
     QGuiApplication::setOrganizationName(QStringLiteral("keyboardspecialist"));
     QGuiApplication::setOrganizationDomain(QStringLiteral("io.github.keyboardspecialist"));
-    QGuiApplication::setApplicationName(QStringLiteral("BC-250 Cracktro"));
-    QGuiApplication::setApplicationVersion(QStringLiteral(BC250_CRACKTRO_VERSION));
+    QGuiApplication::setApplicationName(QStringLiteral("BC250 Trainer"));
+    QGuiApplication::setApplicationVersion(QStringLiteral(BC250_TRAINER_VERSION));
 
     QGuiApplication application(argc, argv);
     QQuickStyle::setStyle(QStringLiteral("Fusion"));
 
     const QStringList arguments = application.arguments();
     const bool mockMode = arguments.contains(QStringLiteral("--mock"))
-        || qEnvironmentVariableIntValue("BC250_CRACKTRO_MOCK") != 0;
+        || qEnvironmentVariableIntValue("BC250_TRAINER_MOCK") != 0;
     const bool smokeTest = arguments.contains(QStringLiteral("--smoke-test"));
 
     Bc250Bridge bridge(mockMode);
-    MediaController mediaController(nullptr, !smokeTest, QStringLiteral("bc250-cracktro"),
+    MediaController mediaController(nullptr, !smokeTest, QStringLiteral("bc250-trainer"),
                                     !smokeTest);
     QQmlApplicationEngine engine;
     engine.rootContext()->setContextProperty(QStringLiteral("bridge"), &bridge);

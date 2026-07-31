@@ -13,9 +13,9 @@ __pycache__/
 /smu-oc/
 /bc250-cu-live-manager
 /bc250-cu-live-manager.sh
-cracktro/build/
-cracktro/build-*/
-cracktro/out/
+trainer/build/
+trainer/build-*/
+trainer/out/
 /.var-lib-migrated
 
 # macOS cruft

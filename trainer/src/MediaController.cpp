@@ -50,7 +50,8 @@ QString defaultTracksDirectory()
     const QStringList candidates = {
         QDir(applicationDirectory).absoluteFilePath(QStringLiteral("tracks")),
         QDir(applicationDirectory).absoluteFilePath(QStringLiteral("../tracks")),
-        QDir::current().absoluteFilePath(QStringLiteral("cracktro/tracks")),
+        QDir(applicationDirectory).absoluteFilePath(QStringLiteral("../share/bc250-trainer")),
+        QDir::current().absoluteFilePath(QStringLiteral("trainer/tracks")),
         QDir::current().absoluteFilePath(QStringLiteral("tracks"))
     };
     for (const QString &candidate : candidates) {
