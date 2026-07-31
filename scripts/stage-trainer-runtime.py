@@ -142,6 +142,7 @@ def stage_flatpak(bundle: Path, output: Path, epoch: int) -> None:
     try:
         copy_host_runtime(temporary)
         copy_file(TRAINER_SOURCE / "install-flatpak.sh", temporary / "trainer/install-flatpak.sh")
+        copy_file(TRAINER_SOURCE / "install.sh", temporary / "trainer/install.sh")
         copy_file(
             bundle,
             temporary / "trainer/io.github.keyboardspecialist.bc250trainer.flatpak",

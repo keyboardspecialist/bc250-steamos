@@ -7,6 +7,39 @@ The application does not invoke scripts, `sudo`, `busctl`, or any subprocess. Ha
 The Flatpak packages only this unprivileged frontend. Release installation kits
 pair it with a host-side installer for the required BC-250 control service.
 
+## Install
+
+Download one of the ZIP files from
+[BC250 Trainer Releases](https://github.com/keyboardspecialist/bc250-steamos/releases?q=trainer-v&expanded=true).
+Run these commands as your normal desktop user, not with `sudo`; the installer
+requests administrator access only for the host service.
+
+### Flatpak
+
+```sh
+unzip bc250-trainer-vX.Y.Z-flatpak-installer.zip
+cd bc250-trainer-flatpak-installer
+bash trainer/install-flatpak.sh install
+```
+
+Manage the installation from the same extracted directory:
+
+```sh
+bash trainer/install-flatpak.sh status
+bash trainer/install-flatpak.sh uninstall
+```
+
+### Native Linux
+
+```sh
+unzip bc250-trainer-vX.Y.Z.zip
+cd bc250-trainer
+bash trainer/install.sh install
+```
+
+The native package uses `bash trainer/install.sh status` and
+`bash trainer/install.sh uninstall` for management.
+
 ## Features
 
 - Status dashboard with one-second telemetry while the page is active
@@ -42,8 +75,8 @@ cmake --build build
 ctest --test-dir build --output-on-failure
 ```
 
-On macOS, install the required formulae and run the same build and verification
-path used by CI:
+On macOS, install the required formulae and run the internal manual build and
+verification harness:
 
 ```sh
 brew install cmake ninja qt bash coreutils

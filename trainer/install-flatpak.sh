@@ -5,6 +5,7 @@ set -euo pipefail
 SOURCE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_DIR="$(cd "$SOURCE_DIR/.." && pwd)"
 SHARED_INSTALLER="$REPO_DIR/desktop-control/shared-service-install.sh"
+LEGACY_INSTALLER="$SOURCE_DIR/install.sh"
 APP_ID=io.github.keyboardspecialist.bc250trainer
 CLIENT=trainer-flatpak
 BUNDLE="${BC250_TRAINER_FLATPAK_BUNDLE:-$SOURCE_DIR/$APP_ID.flatpak}"
@@ -19,6 +20,16 @@ require_normal_user() { [[ $EUID -ne 0 ]] || die "Run as the logged-in desktop u
     || die "Shared service installer is missing or unsafe: $SHARED_INSTALLER"
 # shellcheck source=../desktop-control/shared-service-install.sh
 source "$SHARED_INSTALLER"
+
+legacy_present() {
+    [[ -e "$HOME/.local/libexec/bc250-cracktro" \
+        || -L "$HOME/.local/libexec/bc250-cracktro" \
+        || -e "$HOME/.local/share/applications/io.github.keyboardspecialist.bc250cracktro.desktop" \
+        || -L "$HOME/.local/share/applications/io.github.keyboardspecialist.bc250cracktro.desktop" \
+        || -e "$HOME/.local/share/icons/hicolor/scalable/apps/io.github.keyboardspecialist.bc250cracktro.svg" \
+        || -L "$HOME/.local/share/icons/hicolor/scalable/apps/io.github.keyboardspecialist.bc250cracktro.svg" \
+        || -e "$SHARED_CLIENT_DIR/cracktro.$(id -u)" ]]
+}
 
 legacy_client() {
     if [[ -d "$HOME/.local/share/plasma/plasmoids/io.github.keyboardspecialist.bc250control" ]] \
@@ -56,6 +67,13 @@ install_all() {
         [[ $had_service -eq 1 ]] \
             || sudo bash "$SOURCE_DIR/install-flatpak.sh" _uninstall-root "$CLIENT" "$uid" || true
         die "Could not install the BC250 Trainer Flatpak."
+    fi
+    if legacy_present; then
+        [[ -f "$LEGACY_INSTALLER" && ! -L "$LEGACY_INSTALLER" ]] \
+            || die "BC250 Trainer installed, but the legacy cleanup helper is missing or unsafe."
+        log "Removing the ownership-verified legacy Cracktro installation"
+        bash "$LEGACY_INSTALLER" uninstall-legacy \
+            || die "BC250 Trainer installed, but the legacy Cracktro installation could not be removed."
     fi
     log "BC250 Trainer installed as $APP_ID"
 }
