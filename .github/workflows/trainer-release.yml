@@ -35,11 +35,11 @@ jobs:
             echo "Tag must use trainer-vMAJOR.MINOR.PATCH format." >&2
             exit 1
           fi
+          git fetch --force --tags origin
           if [[ "$(git cat-file -t "refs/tags/$TAG_NAME")" != "tag" ]]; then
             echo "$TAG_NAME must be an annotated tag." >&2
             exit 1
           fi
-          git fetch --force --tags origin
           git fetch origin \
             '+refs/heads/master:refs/remotes/origin/master' \
             '+refs/heads/trainer:refs/remotes/origin/trainer'
