@@ -49,6 +49,65 @@ function errorMessage(error: unknown): string {
 
 const ROUTE_PATH = "/bc250-control";
 
+function BackendBanner({
+  snapshot,
+  compact = false,
+}: {
+  snapshot: Snapshot;
+  compact?: boolean;
+}) {
+  const { toolkit } = snapshot;
+  if (toolkit.available && toolkit.privileged && toolkit.cpuControlAvailable) {
+    return null;
+  }
+
+  const privilegedFailure = !toolkit.privileged;
+  const helperFailure = toolkit.privileged && !toolkit.cpuControlAvailable;
+  const title = privilegedFailure
+    ? "Privileged backend unavailable"
+    : helperFailure
+      ? "Privileged helper unavailable"
+      : "Full toolkit not installed";
+  const message = privilegedFailure
+    ? "Decky did not start this plugin as root. Reinstall the latest plugin release and restart Decky."
+    : helperFailure
+      ? "The bundled root helper could not be installed. Reinstall the latest plugin release or install the full toolkit."
+      : "Install the BC-250 SteamOS toolkit to enable CU management, GPU power setup, CEC, RAM controls, and all system integrations.";
+
+  return (
+    <div
+      style={{
+        margin: compact ? "4px 8px 12px" : "10px 16px",
+        padding: compact ? "11px 12px" : "13px 15px",
+        border: `1px solid ${privilegedFailure ? "rgba(231,120,120,.55)" : "rgba(230,173,85,.45)"}`,
+        borderLeft: `4px solid ${privilegedFailure ? "#e77878" : "#e6ad55"}`,
+        borderRadius: 7,
+        background: privilegedFailure
+          ? "rgba(126,45,45,.20)"
+          : "rgba(126,89,35,.18)",
+      }}
+    >
+      <div style={{ color: "#fff", fontSize: 14, fontWeight: 700 }}>{title}</div>
+      <div style={{ color: "#d7d9dc", fontSize: 12, lineHeight: 1.45, marginTop: 4 }}>
+        {message}
+      </div>
+      {!privilegedFailure && !helperFailure && (
+        <div
+          style={{
+            color: "#aeb3b8",
+            fontFamily: "monospace",
+            fontSize: 10,
+            marginTop: 5,
+            overflowWrap: "anywhere",
+          }}
+        >
+          Expected at {toolkit.path}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function useTelemetryHistory(): HistorySample[] {
   const [history, setHistory] = useState<HistorySample[]>([]);
   const telemetryRunning = useRef(false);
@@ -283,24 +342,6 @@ function FullControl() {
           <div style={{ fontSize: 12, color: "#aeb3b8", marginTop: 2 }}>
             {busyLabel || `${snapshot.cu.available ? `${snapshot.cu.total}/${snapshot.cu.maximum} CU` : "CU unavailable"} · ${snapshot.gpu.activeMhz ?? "–"} MHz GPU`}
           </div>
-          {!snapshot.toolkit.available && (
-            <div
-              style={{
-                color: "#e6ad55",
-                fontSize: 11,
-                overflow: "hidden",
-                textOverflow: "ellipsis",
-                whiteSpace: "nowrap",
-              }}
-            >
-              Toolkit incomplete: {snapshot.toolkit.path}
-            </div>
-          )}
-          {!snapshot.toolkit.privileged && (
-            <div style={{ color: "#e77878", fontSize: 11 }}>
-              Backend is not running as root; reinstall the plugin.
-            </div>
-          )}
           {error && <div style={{ color: "#e77878", fontSize: 11 }}>{error}</div>}
         </div>
         <ButtonItem
@@ -311,6 +352,7 @@ function FullControl() {
           <FaSyncAlt />
         </ButtonItem>
       </div>
+      <BackendBanner snapshot={snapshot} />
       <div style={{ flex: 1, minHeight: 0 }}>
         <VerticalTabs tabs={tabs} active={activeTab} onChange={setActiveTab} />
       </div>
@@ -463,6 +505,7 @@ function QuickPanel() {
               </Focusable>
             ))}
           </Focusable>
+          {snapshot && <BackendBanner snapshot={snapshot} compact />}
           <PanelSection>
             <PanelSectionRow>
               <ButtonItem layout="below" onClick={openControls}>
