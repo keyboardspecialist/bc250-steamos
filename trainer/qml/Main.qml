@@ -16,6 +16,8 @@ ApplicationWindow {
     property int currentPage: 0
     readonly property real designRatio: 1200 / 676
     readonly property var pageNames: ["STATUS", "GPU", "CUs", "CPU", "MEMORY", "SETUP"]
+    readonly property bool ambientEffectsActive: visibility !== Window.Hidden
+        && visibility !== Window.Minimized
     width: fittedWidth
     height: fittedHeight
     minimumWidth: fittedWidth
@@ -171,6 +173,156 @@ ApplicationWindow {
                     }
                 }
             }
+        }
+    }
+
+    Item {
+        id: vhsTracking
+        anchors.fill: parent
+        enabled: false
+        clip: true
+        property int staticTick: 0
+
+        Timer {
+            interval: 72
+            repeat: true
+            running: root.ambientEffectsActive
+            onTriggered: vhsTracking.staticTick = (vhsTracking.staticTick + 1) % 10000
+        }
+
+        Item {
+            id: syncRoll
+            x: 0
+            y: -height
+            width: parent.width
+            height: Math.max(92, root.height * 0.19)
+            clip: true
+            readonly property int cycle: vhsTracking.staticTick
+
+            Image {
+                x: syncRoll.cycle % 3 === 0 ? -14 : 10
+                y: -syncRoll.y - 18 + ((syncRoll.cycle * 7) % 27)
+                width: root.width
+                height: root.height
+                source: backgroundImage.source
+                fillMode: Image.PreserveAspectFit
+                smooth: false
+                cache: true
+                opacity: 0.58
+            }
+
+            Repeater {
+                model: 11
+                Item {
+                    required property int index
+                    readonly property int cycle: syncRoll.cycle + index * 23
+                    readonly property real tear: ((cycle * (13 + index * 4)) % 73) - 36
+                    x: 0
+                    y: index * syncRoll.height / 11
+                    width: syncRoll.width
+                    height: syncRoll.height / 11 + 1
+                    clip: true
+
+                    Image {
+                        x: parent.tear
+                        y: -syncRoll.y - parent.y + ((parent.cycle * 5) % 17) - 8
+                        width: root.width
+                        height: root.height
+                        source: backgroundImage.source
+                        fillMode: Image.PreserveAspectFit
+                        smooth: false
+                        cache: true
+                        opacity: 0.72
+                    }
+                }
+            }
+
+            Rectangle {
+                anchors.fill: parent
+                opacity: 0.34
+                gradient: Gradient {
+                    GradientStop { position: 0.0; color: "#05050aee" }
+                    GradientStop { position: 0.08; color: "#4022e7f2" }
+                    GradientStop { position: 0.18; color: "#11030812" }
+                    GradientStop { position: 0.72; color: "#24101824" }
+                    GradientStop { position: 0.92; color: "#4aef48bb" }
+                    GradientStop { position: 1.0; color: "#06050aee" }
+                }
+            }
+
+            Repeater {
+                model: 26
+                Rectangle {
+                    required property int index
+                    readonly property int cycle: syncRoll.cycle + index * 31
+                    x: ((cycle * (19 + index * 2)) % Math.max(1, syncRoll.width))
+                        - width * 0.5
+                    y: (index * 17 + cycle * (7 + index % 5))
+                        % Math.max(1, syncRoll.height)
+                    width: 30 + ((cycle * (37 + index)) % 210)
+                    height: index % 5 === 0 ? 4 : index % 2 === 0 ? 2 : 1
+                    color: index % 4 === 0 ? "#f4fdff"
+                        : index % 4 === 1 ? "#ef48bb" : "#55edf7"
+                    opacity: 0.14 + (index % 4) * 0.035
+                    visible: cycle % 7 < 5
+                }
+            }
+
+            Rectangle {
+                x: 0
+                y: 2
+                width: parent.width
+                height: 4
+                color: "#b8f7ff"
+                opacity: 0.48
+            }
+
+            Rectangle {
+                x: syncRoll.cycle % 2 === 0 ? -18 : 12
+                y: parent.height - 7
+                width: parent.width
+                height: 6
+                color: "#ef48bb"
+                opacity: 0.38
+            }
+
+            NumberAnimation on y {
+                from: -syncRoll.height
+                to: root.height + syncRoll.height
+                duration: 7500
+                loops: Animation.Infinite
+                easing.type: Easing.Linear
+                running: root.ambientEffectsActive
+            }
+        }
+
+        Repeater {
+            model: 18
+            Rectangle {
+                required property int index
+                readonly property int cycle: vhsTracking.staticTick + index * 17
+                readonly property real trackWidth: vhsTracking.width
+                    * (0.34 + ((cycle * 17) % 61) / 100)
+                x: (cycle * (29 + index * 7))
+                    % Math.max(1, vhsTracking.width - trackWidth)
+                y: (index * 89 + cycle * (13 + index * 3)) % Math.max(1, vhsTracking.height)
+                width: trackWidth
+                height: index % 5 === 0 ? 4 : index % 3 === 0 ? 2 : 1
+                color: index % 3 === 0 ? "#b8f7ff"
+                    : index % 3 === 1 ? "#ef48bb" : "#6ae8f2"
+                opacity: 0.055 + (index % 4) * 0.028
+                visible: cycle % 9 < 6
+            }
+        }
+
+        Rectangle {
+            readonly property int cycle: vhsTracking.staticTick
+            x: cycle % 5 < 2 ? -18 : 12
+            y: (cycle * 47) % Math.max(1, vhsTracking.height)
+            width: parent.width
+            height: cycle % 11 === 0 ? 12 : 4
+            color: "#d8fbff"
+            opacity: cycle % 7 < 3 ? 0.18 : 0
         }
     }
 
