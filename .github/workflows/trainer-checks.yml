@@ -38,4 +38,5 @@ jobs:
         run: brew install cmake ninja qt bash coreutils
 
       - name: Build and verify BC250 Trainer
-        run: "$(brew --prefix bash)/bin/bash" trainer/build-macos.sh
+        run: |
+          "$(brew --prefix bash)/bin/bash" trainer/build-macos.sh
