@@ -86,13 +86,16 @@ legacy_install_owned() {
     [[ -d "$LEGACY_APP_DIR" && ! -L "$LEGACY_APP_DIR" \
         && -f "$LEGACY_OWNER_FILE" && ! -L "$LEGACY_OWNER_FILE" \
         && -f "$LEGACY_APP_BIN" && ! -L "$LEGACY_APP_BIN" \
-        && -d "$LEGACY_TRACKS" && ! -L "$LEGACY_TRACKS" \
         && -f "$LEGACY_DESKTOP_FILE" && ! -L "$LEGACY_DESKTOP_FILE" \
         && -f "$LEGACY_ICON_FILE" && ! -L "$LEGACY_ICON_FILE" ]] || return 1
     for path in "$LEGACY_APP_DIR" "$LEGACY_OWNER_FILE" "$LEGACY_APP_BIN" \
-        "$LEGACY_TRACKS" "$LEGACY_DESKTOP_FILE" "$LEGACY_ICON_FILE"; do
+        "$LEGACY_DESKTOP_FILE" "$LEGACY_ICON_FILE"; do
         [[ "$(stat -Lc '%u' "$path")" == "$uid" ]] || return 1
     done
+    if [[ -e "$LEGACY_TRACKS" || -L "$LEGACY_TRACKS" ]]; then
+        [[ -d "$LEGACY_TRACKS" && ! -L "$LEGACY_TRACKS" \
+            && "$(stat -Lc '%u' "$LEGACY_TRACKS")" == "$uid" ]] || return 1
+    fi
     [[ "$(cat "$LEGACY_OWNER_FILE")" == "$LEGACY_OWNER_VALUE" ]] \
         && grep -Fxq "X-BC250-Installer-Owner=$LEGACY_APP_ID" "$LEGACY_DESKTOP_FILE" \
         && grep -Fxq "Exec=$LEGACY_APP_BIN" "$LEGACY_DESKTOP_FILE"

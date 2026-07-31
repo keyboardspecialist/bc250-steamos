@@ -128,6 +128,47 @@ class TrainerReleaseTests(unittest.TestCase):
         )
         self.assertIn("{install|status|uninstall|uninstall-legacy|help}", result.stdout)
 
+    def test_legacy_uninstall_accepts_pre_media_owned_install(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            home = Path(temporary) / "home"
+            app = home / ".local/libexec/bc250-cracktro"
+            desktop = home / ".local/share/applications/io.github.keyboardspecialist.bc250cracktro.desktop"
+            icon = home / ".local/share/icons/hicolor/scalable/apps/io.github.keyboardspecialist.bc250cracktro.svg"
+            app.mkdir(parents=True)
+            desktop.parent.mkdir(parents=True)
+            icon.parent.mkdir(parents=True)
+            (app / ".bc250-cracktro-owner").write_text(
+                "schema=1;owner=io.github.keyboardspecialist.bc250cracktro\n",
+                encoding="ascii",
+            )
+            (app / "bc250-cracktro").write_bytes(b"legacy executable")
+            desktop.write_text(
+                "[Desktop Entry]\n"
+                "X-BC250-Installer-Owner=io.github.keyboardspecialist.bc250cracktro\n"
+                f"Exec={app}/bc250-cracktro\n",
+                encoding="utf-8",
+            )
+            icon.write_text("legacy icon\n", encoding="ascii")
+            bindir = Path(temporary) / "bin"
+            bindir.mkdir()
+            sudo = bindir / "sudo"
+            sudo.write_text("#!/bin/sh\nexit 0\n", encoding="ascii")
+            sudo.chmod(0o755)
+            environment = os.environ.copy()
+            environment["HOME"] = str(home)
+            environment["PATH"] = f"{bindir}:{environment['PATH']}"
+
+            subprocess.run(
+                ["bash", str(INSTALLER), "uninstall-legacy"],
+                check=True,
+                capture_output=True,
+                text=True,
+                env=environment,
+            )
+            self.assertFalse(app.exists())
+            self.assertFalse(desktop.exists())
+            self.assertFalse(icon.exists())
+
     def test_flatpak_installation_kit_contains_gui_and_host_service(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
@@ -155,6 +196,7 @@ class TrainerReleaseTests(unittest.TestCase):
                 names = set(archive.namelist())
                 for expected in (
                     "trainer/install-flatpak.sh",
+                    "trainer/install.sh",
                     "trainer/io.github.keyboardspecialist.bc250trainer.flatpak",
                     "desktop-control/shared-service-install.sh",
                     "desktop-control/service/bc250-control-service",
@@ -171,6 +213,7 @@ class TrainerReleaseTests(unittest.TestCase):
         self.assertIn("CLIENT=trainer-flatpak", installer)
         self.assertIn("flatpak install --user --noninteractive --or-update", installer)
         self.assertIn('sudo bash "$SOURCE_DIR/install-flatpak.sh" _install-root', installer)
+        self.assertIn('bash "$LEGACY_INSTALLER" uninstall-legacy', installer)
         result = subprocess.run(
             ["bash", str(FLATPAK_INSTALLER), "help"],
             check=True,
