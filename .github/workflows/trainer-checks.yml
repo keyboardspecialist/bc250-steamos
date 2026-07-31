@@ -18,7 +18,7 @@ on:
       - ".github/workflows/release-artifacts.yml"
   push:
     branches:
-      - trainer
+      - master
 
 permissions:
   contents: read
