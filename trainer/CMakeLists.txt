@@ -82,13 +82,18 @@ if(NOT QMLLINT_EXECUTABLE)
 endif()
 file(GLOB_RECURSE TRAINER_QML_FILES CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/qml/*.qml")
 if(QMLLINT_EXECUTABLE)
-    add_custom_target(qml-lint
-        COMMAND "${QMLLINT_EXECUTABLE}"
-            --unqualified disable
+    set(QMLLINT_ARGUMENTS --unqualified disable)
+    if(NOT APPLE)
+        list(APPEND QMLLINT_ARGUMENTS
             --import info
             --property info
             --type info
             --deferred-property-id info
+        )
+    endif()
+    add_custom_target(qml-lint
+        COMMAND "${QMLLINT_EXECUTABLE}"
+            ${QMLLINT_ARGUMENTS}
             ${TRAINER_QML_FILES}
         WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
         COMMENT "Linting BC250 Trainer QML"
