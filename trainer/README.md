@@ -159,16 +159,16 @@ BC250 Trainer releases use the independent `trainer-vMAJOR.MINOR.PATCH` tag
 namespace and are published as GitHub prereleases. Main toolkit releases retain
 the `vMAJOR.MINOR.PATCH` namespace and existing release workflow.
 
-Cut a release from the `trainer` branch with an annotated tag:
+Cut a release from `master` with an annotated Trainer tag:
 
 ```sh
-git switch trainer
+git switch master
 git pull --ff-only
 git tag -a trainer-v1.0.0 -m "BC250 Trainer v1.0.0"
-git push origin trainer trainer-v1.0.0
+git push origin trainer-v1.0.0
 ```
 
-The **Build BC250 Trainer prerelease** workflow validates branch ancestry, builds
+The **Build BC250 Trainer prerelease** workflow validates master ancestry, builds
 and tests the native application and shared service, stages the standalone ZIP
 and complete Flatpak installation kit, and publishes checksums with the prerelease. Main `v*`
 toolkit releases publish the same Flatpak artifact.

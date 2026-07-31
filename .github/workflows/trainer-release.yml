@@ -41,10 +41,9 @@ jobs:
             exit 1
           fi
           git fetch origin \
-            '+refs/heads/master:refs/remotes/origin/master' \
-            '+refs/heads/trainer:refs/remotes/origin/trainer'
-          if ! git merge-base --is-ancestor "$GITHUB_SHA" origin/trainer; then
-            echo "BC250 Trainer release tags must point to commits on the trainer branch." >&2
+            '+refs/heads/master:refs/remotes/origin/master'
+          if ! git merge-base --is-ancestor "$GITHUB_SHA" origin/master; then
+            echo "BC250 Trainer release tags must point to commits on master." >&2
             exit 1
           fi
           if grep -q '^Do not publish either asset in a release' trainer/ASSETS.md; then

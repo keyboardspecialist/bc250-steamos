@@ -420,13 +420,13 @@ class TrainerReleaseTests(unittest.TestCase):
         ):
             self.assertIn(expected, workflow)
 
-    def test_trainer_release_has_isolated_branch_and_tag_namespace(self):
+    def test_trainer_release_has_isolated_tag_namespace(self):
         workflow = (ROOT / ".github/workflows/trainer-release.yml").read_text(
             encoding="utf-8"
         )
         for expected in (
             '"trainer-v*"',
-            "BC250 Trainer release tags must point to commits on the trainer branch",
+            "BC250 Trainer release tags must point to commits on master",
             "TRAINER_PROJECT_VERSION",
             "scripts/stage-trainer-runtime.py",
             "BC250 Trainer asset redistribution is not yet cleared",
@@ -439,6 +439,7 @@ class TrainerReleaseTests(unittest.TestCase):
             self.assertIn(expected, workflow)
         self.assertNotIn('tags:\n      - "v*"', workflow)
         self.assertNotIn("workflow_dispatch", workflow)
+        self.assertNotIn("origin/trainer", workflow)
 
         cmake = (ROOT / "trainer/CMakeLists.txt").read_text(encoding="utf-8")
         self.assertIn("TRAINER_PROJECT_VERSION", cmake)
