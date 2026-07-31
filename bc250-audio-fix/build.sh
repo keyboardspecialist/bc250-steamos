@@ -256,21 +256,24 @@ else
     die "patch neither applies nor reverses cleanly — tree has drifted; inspect by hand"
 fi
 
-step "apply Cyan Skillfish GPU telemetry patch"
+step "apply Cyan Skillfish GPU metrics patches"
 METRICS_PATCH=$HERE/bc250-cyan-skillfish-gpu-telemetry.patch
-LEGACY_METRICS_PATCH=$HERE/bc250-cyan-skillfish-8core-metrics.patch
-LEGACY_MODULE_PATCH=$HERE/bc250-cyan-skillfish-module-link.patch
-LEGACY_GPU_PATCH=$HERE/bc250-cyan-skillfish-gpu-metrics.patch
+GFXCLK_PATCH=$HERE/bc250-cyan-skillfish-gfxclk.patch
 
-# Early core-unlock builds incorrectly expanded the firmware metrics table.
-# Reverse every applied layer before installing the corrected stock-layout
-# parser; keep this migration because build trees survive toolkit updates.
-for legacy_patch in "$LEGACY_GPU_PATCH" "$LEGACY_MODULE_PATCH" "$LEGACY_METRICS_PATCH"; do
-    if patch -p1 -R --dry-run -s -f < "$legacy_patch" >/dev/null 2>&1; then
-        patch -p1 -R -s < "$legacy_patch"
-        echo "reversed legacy metrics patch: $(basename "$legacy_patch")"
+METRICS_SOURCE=drivers/gpu/drm/amd/pm/swsmu/smu11/cyan_skillfish_ppt.c
+METRICS_HEADER=drivers/gpu/drm/amd/pm/swsmu/inc/pmfw_if/smu11_driver_if_cyan_skillfish.h
+if grep -q 'SmuMetricsTable8_t' "$METRICS_HEADER"; then
+    METRICS_SOURCE_SHA=$(sha256sum "$METRICS_SOURCE" | cut -d' ' -f1)
+    METRICS_HEADER_SHA=$(sha256sum "$METRICS_HEADER" | cut -d' ' -f1)
+    if [ ! -f "$TREE/.bc250-managed-tree" ] \
+       && { [ "$METRICS_SOURCE_SHA" != 38dd736a516a6d70276208d6424b824b63f60dd930af5a05d0f14b1d58d6546d ] \
+            || [ "$METRICS_HEADER_SHA" != 6d1f5373dea43af76aeb25e260ce10c0130a743cb171a5b6149461e62c0a1c4c ]; }; then
+        die "unknown Cyan Skillfish metrics patch found in a custom tree; restore its stock metrics source and header first"
     fi
-done
+    git --git-dir="$GITDIR" --work-tree="$TREE" checkout -qf "$FULLSHA" -- \
+        "$METRICS_SOURCE" "$METRICS_HEADER"
+    echo "restored invalid topology-sized Cyan Skillfish metrics files from $SHA"
+fi
 
 if patch -p1 -R --dry-run -s -f < "$METRICS_PATCH" >/dev/null 2>&1; then
     echo "GPU telemetry patch already applied"
@@ -281,7 +284,6 @@ else
     die "GPU telemetry patch neither applies nor reverses cleanly — tree has drifted; inspect by hand"
 fi
 
-GFXCLK_PATCH=$HERE/bc250-cyan-skillfish-gfxclk.patch
 if patch -p1 -R --dry-run -s -f < "$GFXCLK_PATCH" >/dev/null 2>&1; then
     echo "GPU clock query patch already applied"
 elif patch -p1 --dry-run -s -f < "$GFXCLK_PATCH" >/dev/null 2>&1; then

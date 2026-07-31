@@ -279,9 +279,10 @@ reboot loop.
 
 The unlocked firmware retains its published six-core SMU metrics layout, but
 the GFX clock slot reports an unrelated `0-100` value. The AMDGPU workflow
-queries the GFX clock directly and adds GPU utilization reporting independently;
-telemetry for the two extra CPU cores is unavailable. `cpu-unlock status`
-reports whether the patched module is installed for the running kernel.
+queries and validates the GFX clock directly and adds bounded GPU utilization
+reporting independently; telemetry for the two extra CPU cores is unavailable.
+`cpu-unlock status` reports whether the patched module is installed for the
+running kernel.
 
 | Command | Action |
 |---|---|

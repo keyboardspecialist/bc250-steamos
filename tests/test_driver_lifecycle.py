@@ -128,18 +128,26 @@ class DriverLifecycleTests(unittest.TestCase):
         gfxclk_patch = GFXCLK_PATCH.read_text(encoding="utf-8")
         self.assertIn("bc250-cyan-skillfish-gpu-telemetry.patch", builder)
         self.assertIn("bc250-cyan-skillfish-gfxclk.patch", builder)
-        self.assertIn("reversed legacy metrics patch", builder)
-        self.assertIn("bc250-cyan-skillfish-8core-metrics.patch", builder)
-        self.assertIn("bc250-cyan-skillfish-module-link.patch", builder)
-        self.assertIn("bc250-cyan-skillfish-gpu-metrics.patch", builder)
+        self.assertLess(
+            builder.index(str(METRICS_PATCH.name)),
+            builder.index(str(GFXCLK_PATCH.name)),
+        )
+        self.assertNotIn("LEGACY_", builder)
+        self.assertIn("unknown Cyan Skillfish metrics patch found", builder)
+        self.assertIn("METRICS_SOURCE_SHA", builder)
+        self.assertIn("METRICS_HEADER_SHA", builder)
+        self.assertIn('git --git-dir="$GITDIR" --work-tree="$TREE"', builder)
         self.assertIn("GRBM_STATUS__GUI_ACTIVE_MASK", patch)
         self.assertIn("AMDGPU_PP_SENSOR_GPU_LOAD", patch)
         self.assertIn("average_gfx_activity", patch)
-        self.assertNotIn("SmuMetricsTable8_t", patch)
-        self.assertNotIn("cyan_skillfish_core_count", patch)
         self.assertIn("PPSMC_MSG_GetGfxFrequency", gfxclk_patch)
         self.assertIn("SMU_MSG_GetGfxclkFrequency", gfxclk_patch)
+        self.assertIn("cyan_skillfish_get_gfxclk_frequency", gfxclk_patch)
+        self.assertIn("return -ERANGE", gfxclk_patch)
         self.assertIn("gpu_metrics->current_gfxclk = gfxclk", gfxclk_patch)
+        self.assertFalse(
+            (ROOT / "bc250-audio-fix/bc250-cyan-skillfish-8core-metrics.patch").exists()
+        )
         self.assertIn(".bc250-metrics-fix", installer)
         self.assertIn(".bc250-metrics-fix", rollback)
 
