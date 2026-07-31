@@ -228,6 +228,41 @@ class ControlService:
             cancellable=False,
         )
 
+    async def set_uma_size(self, sender: str, uma_mib: int) -> str:
+        _whole(uma_mib, "UMA size must be a whole number of MiB.")
+        if not 256 <= uma_mib <= 12288 or uma_mib % 16 != 0 or uma_mib == 2048:
+            raise InvalidArguments(
+                "UMA size must be 256-12288 MiB, aligned to 16 MiB, and not 2048 MiB."
+            )
+        return await self._submit(
+            sender,
+            "ram",
+            "SetUmaSize",
+            lambda backend: backend.set_uma_size(uma_mib),
+            cancellable=False,
+        )
+
+    async def set_ttm_pages(self, sender: str, pages: int) -> str:
+        _whole(pages, "TTM limit must be a whole page count.")
+        if not 65536 <= pages <= 3145728:
+            raise InvalidArguments("TTM limit must be 65536-3145728 pages.")
+        return await self._submit(
+            sender,
+            "ram",
+            "SetTtmPages",
+            lambda backend: backend.set_ttm_pages(pages),
+            cancellable=False,
+        )
+
+    async def remove_ttm_override(self, sender: str) -> str:
+        return await self._submit(
+            sender,
+            "ram",
+            "RemoveTtmOverride",
+            lambda backend: backend.remove_ttm_override(),
+            cancellable=False,
+        )
+
     async def cec_action(self, sender: str, action: str) -> str:
         allowed = (
             "tv-on",

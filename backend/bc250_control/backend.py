@@ -31,6 +31,7 @@ SYSTEMCTL = "/usr/bin/systemctl"
 GPU_CONFIG_PATH = Path("/etc/cyan-skillfish-governor-smu/config.toml")
 GPU_STATE_PATH = Path("/var/lib/bc250-control/governor/freq-state")
 CPU_HELPER_PATH = Path("/var/lib/bc250-control/helper/bc250-power.sh")
+RAM_HELPER_PATH = Path("/var/lib/bc250-control/desktop/bc250-ram-split.sh")
 CPU_STATE_DIR = Path("/var/lib/bc250-control/smu-oc")
 CPU_UNLOCK_PAYLOAD_PATH = Path("/var/lib/bc250-control/desktop")
 CPU_UNLOCK_HELPER_PATH = Path(
@@ -381,6 +382,22 @@ class ToolkitBackend:
         }
         _, out, _ = await self._exec(
             [BASH, str(CPU_HELPER_PATH), *args], timeout=timeout, env=env
+        )
+        return out
+
+    async def _ram_tool(self, *args: str, timeout: float = 30) -> str:
+        if not self._trusted_root_file(RAM_HELPER_PATH):
+            raise CommandError(
+                "RAM configuration helper is missing or unsafe; reinstall the frontend."
+            )
+        env = {
+            "PATH": "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+            "HOME": "/root",
+            "USER": "root",
+            "LOGNAME": "root",
+        }
+        _, out, _ = await self._exec(
+            [BASH, str(RAM_HELPER_PATH), *args], timeout=timeout, env=env
         )
         return out
 
@@ -1579,6 +1596,57 @@ class ToolkitBackend:
             ).is_file(),
         }
 
+    async def get_ram_status(self) -> dict[str, Any]:
+        unavailable = {
+            "schemaVersion": 1,
+            "available": False,
+            "toolState": "not-installed",
+            "toolVersion": None,
+            "umaLastRequestedMiB": None,
+            "ttmState": "default",
+            "ttmConfiguredPages": None,
+            "ttmBootPages": None,
+            "ttmLivePages": None,
+            "rebootRequired": False,
+            "protected": False,
+        }
+        if not self._trusted_root_file(RAM_HELPER_PATH):
+            return unavailable
+        output = await self._ram_tool("status-json", timeout=10)
+        try:
+            status = json.loads(output)
+        except (TypeError, ValueError) as error:
+            raise CommandError("RAM status returned invalid JSON.") from error
+        if not isinstance(status, dict):
+            raise CommandError("RAM status returned invalid data.")
+
+        integer_fields = (
+            "umaLastRequestedMiB",
+            "ttmConfiguredPages",
+            "ttmBootPages",
+            "ttmLivePages",
+        )
+        if (
+            status.get("schemaVersion") != 1
+            or status.get("available") is not True
+            or status.get("toolState") not in {"verified", "invalid", "not-installed"}
+            or status.get("ttmState") not in {"configured", "foreign", "default"}
+            or type(status.get("rebootRequired")) is not bool
+            or type(status.get("protected")) is not bool
+            or any(
+                status.get(field) is not None and type(status.get(field)) is not int
+                for field in integer_fields
+            )
+        ):
+            raise CommandError("RAM status returned invalid data.")
+        version = status.get("toolVersion")
+        if version is not None and (
+            not isinstance(version, str)
+            or re.fullmatch(r"v[0-9][0-9A-Za-z._-]*", version) is None
+        ):
+            raise CommandError("RAM status returned an invalid tool version.")
+        return status
+
     async def _get_snapshot(self) -> dict[str, Any]:
         power_available = self._user_script_available("bc250-power.sh")
         cec_available = self._user_script_available("bc250-cec.sh")
@@ -1588,12 +1656,13 @@ class ToolkitBackend:
             and power_available
             and cec_available
         )
-        cu, power, gpu, cpu, cec = await asyncio.gather(
+        cu, power, gpu, cpu, cec, ram = await asyncio.gather(
             self.get_cu_status(),
             self.get_power_status(),
             self.get_gpu_status(),
             self.get_cpu_status(),
             self.get_cec_status(),
+            self.get_ram_status(),
         )
         return {
             "toolkit": {
@@ -1602,6 +1671,7 @@ class ToolkitBackend:
                 "powerAvailable": power_available,
                 "cpuControlAvailable": cpu_control_available,
                 "cecAvailable": cec_available,
+                "ramControlAvailable": ram["available"],
                 "path": str(self.toolkit),
             },
             "cu": cu,
@@ -1609,6 +1679,7 @@ class ToolkitBackend:
             "gpu": gpu,
             "cpu": cpu,
             "cec": cec,
+            "ram": ram,
         }
 
     async def get_snapshot(self) -> dict[str, Any]:
@@ -1689,6 +1760,49 @@ class ToolkitBackend:
         async with self._mutation_lock:
             async with self._process_lock():
                 return await callback()
+
+    async def set_uma_size(self, uma_mib: int) -> dict[str, str]:
+        if (
+            type(uma_mib) is not int
+            or not 256 <= uma_mib <= 12288
+            or uma_mib % 16 != 0
+            or uma_mib == 2048
+        ):
+            raise CommandError(
+                "UMA size must be 256-12288 MiB, aligned to 16 MiB, and not 2048 MiB."
+            )
+
+        async def action() -> dict[str, str]:
+            await self._ram_tool("set", str(uma_mib), "--yes", timeout=120)
+            return {
+                "message": f"CMOS minimum VRAM set to {uma_mib} MiB.",
+                "nextStep": "warm-reboot",
+            }
+
+        return await self._mutate(action)
+
+    async def set_ttm_pages(self, pages: int) -> dict[str, str]:
+        if type(pages) is not int or not 65536 <= pages <= 3145728:
+            raise CommandError("TTM limit must be 65536-3145728 pages.")
+
+        async def action() -> dict[str, str]:
+            await self._ram_tool("ttm-set", str(pages), "--yes", timeout=120)
+            return {
+                "message": f"TTM dynamic VRAM limit set to {pages} pages.",
+                "nextStep": "warm-reboot",
+            }
+
+        return await self._mutate(action)
+
+    async def remove_ttm_override(self) -> dict[str, str]:
+        async def action() -> dict[str, str]:
+            await self._ram_tool("ttm-remove", timeout=120)
+            return {
+                "message": "TTM dynamic VRAM override removed.",
+                "nextStep": "warm-reboot",
+            }
+
+        return await self._mutate(action)
 
     async def set_mesh_game_enabled(
         self, app_id: int, friendly_name: str, enabled: bool

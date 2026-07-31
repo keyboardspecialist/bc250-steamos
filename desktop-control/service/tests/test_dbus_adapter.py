@@ -122,6 +122,17 @@ class AdapterHandlerTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn('<method name="GetCpuUnlockStatus">', INTROSPECTION_XML)
         self.assertIn('<method name="CpuUnlockAction">', INTROSPECTION_XML)
 
+    def test_ram_dbus_signatures_are_declared(self):
+        self.assertEqual(DbusAdapter._METHODS["SetUmaSize"], ("u", "s", "set_uma_size"))
+        self.assertEqual(DbusAdapter._METHODS["SetTtmPages"], ("u", "s", "set_ttm_pages"))
+        self.assertEqual(
+            DbusAdapter._METHODS["RemoveTtmOverride"],
+            ("", "s", "remove_ttm_override"),
+        )
+        self.assertIn('<method name="SetUmaSize">', INTROSPECTION_XML)
+        self.assertIn('<method name="SetTtmPages">', INTROSPECTION_XML)
+        self.assertIn('<method name="RemoveTtmOverride">', INTROSPECTION_XML)
+
     async def test_rejects_calls_above_dispatch_limit(self):
         adapter = DbusAdapter(HandlerBus(), FakeControl(), dispatch_limit=0)
         call = Message(

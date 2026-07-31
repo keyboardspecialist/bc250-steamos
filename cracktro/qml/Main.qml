@@ -15,7 +15,7 @@ ApplicationWindow {
     property int fittedHeight: 676
     property int currentPage: 0
     readonly property real designRatio: 1200 / 676
-    readonly property var pageNames: ["STATUS", "GPU", "COMPUTE UNITS", "CPU", "SETUP"]
+    readonly property var pageNames: ["STATUS", "GPU", "CUs", "CPU", "MEMORY", "SETUP"]
     width: fittedWidth
     height: fittedHeight
     minimumWidth: fittedWidth
@@ -72,7 +72,7 @@ ApplicationWindow {
         property var trailPoints: []
         readonly property real effectRadius: Math.max(44, Math.min(72, root.width * 0.06))
         readonly property real diameter: effectRadius * 2
-        readonly property int gridSize: 9
+        readonly property int gridSize: 7
         readonly property real cellSize: diameter / gridSize
         readonly property real pointerX: backgroundHover.point.position.x
         readonly property real pointerY: backgroundHover.point.position.y
@@ -83,14 +83,13 @@ ApplicationWindow {
 
         function resetTrail() {
             var point = currentPoint()
-            trailPoints = [point, point, point]
+            trailPoints = [point, point]
         }
 
         function sampleTrail() {
             var point = currentPoint()
             trailPoints = [point,
-                           trailPoints.length > 0 ? trailPoints[0] : point,
-                           trailPoints.length > 1 ? trailPoints[1] : point]
+                           trailPoints.length > 0 ? trailPoints[0] : point]
         }
 
         function pointForLayer(layer) {
@@ -101,12 +100,12 @@ ApplicationWindow {
 
         Behavior on opacity { NumberAnimation { duration: 240; easing.type: Easing.OutCubic } }
 
-        NumberAnimation on phase {
-            from: 0
-            to: Math.PI * 2
-            duration: 850
-            loops: Animation.Infinite
+        Timer {
+            interval: 50
+            repeat: true
             running: backgroundDistortion.visible
+            onTriggered: backgroundDistortion.phase = (backgroundDistortion.phase
+                + Math.PI * 2 / 17) % (Math.PI * 2)
         }
 
         Timer {
@@ -118,14 +117,14 @@ ApplicationWindow {
         }
 
         Repeater {
-            model: 4
+            model: 3
             Item {
                 id: trailLayer
                 required property int index
                 anchors.fill: parent
                 readonly property point trailPoint: backgroundDistortion.pointForLayer(index)
                 readonly property real strength: index === 0 ? 0.68
-                    : index === 1 ? 0.22 : index === 2 ? 0.12 : 0.06
+                    : index === 1 ? 0.22 : 0.12
 
                 Repeater {
                     model: backgroundDistortion.gridSize * backgroundDistortion.gridSize
@@ -226,7 +225,7 @@ ApplicationWindow {
                 C.NeonButton {
                     required property string modelData
                     required property int index
-                    text: (index < 4 ? "F" + (index + 1) + " " : "") + modelData
+                    text: (index < 5 ? "F" + (index + 1) + " " : "") + modelData
                     accent: root.currentPage === index ? "#ef48bb" : "#22e7f2"
                     checked: root.currentPage === index
                     Layout.fillWidth: true
@@ -262,7 +261,8 @@ ApplicationWindow {
                 sourceComponent: root.currentPage === 0 ? statusComponent
                     : root.currentPage === 1 ? gpuComponent
                     : root.currentPage === 2 ? cuComponent
-                    : root.currentPage === 3 ? cpuComponent : setupComponent
+                    : root.currentPage === 3 ? cpuComponent
+                    : root.currentPage === 4 ? ramComponent : setupComponent
             }
         }
 
@@ -305,6 +305,7 @@ ApplicationWindow {
     Shortcut { sequence: "F2"; onActivated: root.currentPage = 1 }
     Shortcut { sequence: "F3"; onActivated: root.currentPage = 2 }
     Shortcut { sequence: "F4"; onActivated: root.currentPage = 3 }
+    Shortcut { sequence: "F5"; onActivated: root.currentPage = 4 }
     Shortcut { sequence: "M"; onActivated: mediaController.muted = !mediaController.muted }
     Shortcut { sequence: "P"; onActivated: mediaController.togglePlayback() }
     Shortcut { sequence: "R"; onActivated: if (!bridge.busy) bridge.refresh() }
@@ -314,5 +315,6 @@ ApplicationWindow {
     Component { id: gpuComponent; Pages.GpuPage { backend: bridge } }
     Component { id: cuComponent; Pages.CuPage { backend: bridge } }
     Component { id: cpuComponent; Pages.CpuPage { backend: bridge } }
+    Component { id: ramComponent; Pages.RamPage { backend: bridge } }
     Component { id: setupComponent; Pages.SetupPage { backend: bridge } }
 }

@@ -34,8 +34,10 @@ int main(int argc, char *argv[])
                      &application, [] { QCoreApplication::exit(2); }, Qt::QueuedConnection);
     engine.load(QUrl(QStringLiteral("qrc:/qml/Main.qml")));
 
-    if (smokeTest)
+    if (smokeTest && !engine.rootObjects().isEmpty()) {
+        engine.rootObjects().constFirst()->setProperty("currentPage", 4);
         QTimer::singleShot(1200, &application, &QCoreApplication::quit);
+    }
 
     return application.exec();
 }

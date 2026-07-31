@@ -20,6 +20,7 @@ DEFAULT_EPOCH = 315532800  # 1980-01-01, the earliest timestamp supported by ZIP
 ARCHIVE_ROOT = "bc250-desktop-control"
 EXECUTABLES = {
     Path("bc250-power.sh"),
+    Path("bc250-ram-split.sh"),
     Path("bc250-storage.sh"),
     Path("topology.sh"),
     Path("bc250-update-persistence.sh"),
@@ -83,6 +84,7 @@ def stage(output: Path, epoch: int) -> None:
     try:
         for name in (
             "bc250-power.sh",
+            "bc250-ram-split.sh",
             "bc250-storage.sh",
             "bc250-update-persistence.sh",
             "topology.sh",

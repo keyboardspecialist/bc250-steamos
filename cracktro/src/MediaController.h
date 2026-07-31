@@ -13,6 +13,7 @@ class QAudioDecoder;
 class QAudioOutput;
 class QFileSystemWatcher;
 class QSettings;
+class QThread;
 class QTimer;
 
 class MediaController final : public QObject
@@ -98,8 +99,11 @@ private:
     void updateWatcher();
     void activateTrack(int index, bool play);
     void startWaveformAnalysis();
-    void consumeDecodedBuffer();
+    void consumeDecodedPeaks(const QVector<float> &framePeaks, qint64 position,
+                             qint64 duration, quint64 generation);
     void finishWaveformAnalysis();
+    void publishWaveformData(bool complete = false);
+    void publishVisualizerData();
     void setError(const QString &error);
     void setWaveformError(const QString &error);
     void setWaveform(const QVariantList &waveform);
@@ -110,9 +114,13 @@ private:
     QMediaPlayer *m_player = nullptr;
     QAudioOutput *m_audioOutput = nullptr;
     QAudioDecoder *m_decoder = nullptr;
+    QObject *m_analysisWorker = nullptr;
+    QThread *m_analysisThread = nullptr;
     QFileSystemWatcher *m_watcher = nullptr;
     QTimer *m_rescanTimer = nullptr;
+    QTimer *m_analysisPublishTimer = nullptr;
     bool m_mediaProcessingEnabled = true;
+    bool m_threadedAnalysis = false;
     QVector<Track> m_tracks;
     QVector<float> m_analysisPeaks;
     QVector<float> m_visualizerLevels;
@@ -129,6 +137,10 @@ private:
     float m_analysisChunkPeak = 0.0f;
     int m_visualizerChunkFrames = 0;
     double m_visualizerSumSquares = 0.0;
-    qsizetype m_nextWaveformUpdate = 16;
+    qsizetype m_publishedWaveformPeaks = 0;
+    qsizetype m_publishedVisualizerLevels = 0;
     quint64 m_analysisGeneration = 0;
+    quint64 m_workerAnalysisGeneration = 0;
+    qint64 m_analysisPosition = 0;
+    qint64 m_analysisDuration = 0;
 };

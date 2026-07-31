@@ -87,6 +87,15 @@ class FakeBackend:
         await self._mutation("cpu_unlock_action", *args)
         return {"action": args[0], "nextStep": "none"}
 
+    async def set_uma_size(self, *args):
+        await self._mutation("set_uma_size", *args)
+
+    async def set_ttm_pages(self, *args):
+        await self._mutation("set_ttm_pages", *args)
+
+    async def remove_ttm_override(self, *args):
+        await self._mutation("remove_ttm_override", *args)
+
     async def cec_action(self, *args):
         await self._mutation("cec_action", *args)
 
@@ -181,6 +190,14 @@ class ControlServiceTests(unittest.IsolatedAsyncioTestCase):
             self.backends[0].calls, [("cpu_unlock_action", ("enable",))]
         )
 
+    async def test_ram_mutations_are_authorized_and_non_cancellable(self):
+        operation_id = await self.service.set_uma_size(":1.1", 512)
+        operation = await self.wait_for_status(":1.1", operation_id, "succeeded")
+        self.assertFalse(operation["cancellable"])
+        self.assertEqual(operation["method"], "SetUmaSize")
+        self.assertEqual(self.authorizer.calls, [(":1.1", 1000, "audit:1000", "ram")])
+        self.assertEqual(self.backends[0].calls, [("set_uma_size", (512,))])
+
     async def test_operations_are_private_to_uid_but_survive_sender_change(self):
         operation_id = await self.service.cec_action(":1.1", "mute")
         await self.wait_for_status(":9.9", operation_id, "succeeded")
@@ -197,5 +214,11 @@ class ControlServiceTests(unittest.IsolatedAsyncioTestCase):
         for action in ("", "uninstall", "test; reboot", 1):
             with self.subTest(action=action), self.assertRaises(InvalidArguments):
                 await self.service.cpu_unlock_action(":1.1", action)
+        for value in (255, 513, 2048, 12289, True):
+            with self.subTest(uma=value), self.assertRaises(InvalidArguments):
+                await self.service.set_uma_size(":1.1", value)
+        for value in (65535, 3145729, True):
+            with self.subTest(ttm=value), self.assertRaises(InvalidArguments):
+                await self.service.set_ttm_pages(":1.1", value)
         self.assertEqual(self.authorizer.calls, [])
         self.assertEqual(self.backends, [])

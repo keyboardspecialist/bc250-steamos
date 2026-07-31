@@ -17,7 +17,7 @@ Version one will include:
 - CPU overclock detection, application, and boot enablement
 - Collapsible music library, waveform, transport, volume, and mute controls
 
-CEC, RAM split, drivers, mesh shaders, and maintenance operations are deferred,
+CEC, drivers, mesh shaders, and maintenance operations are deferred,
 but the application structure should allow those pages to be added later.
 
 ## Application Architecture

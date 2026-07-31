@@ -15,6 +15,7 @@
         <file alias="qml/pages/GpuPage.qml">qml/pages/GpuPage.qml</file>
         <file alias="qml/pages/CuPage.qml">qml/pages/CuPage.qml</file>
         <file alias="qml/pages/CpuPage.qml">qml/pages/CpuPage.qml</file>
+        <file alias="qml/pages/RamPage.qml">qml/pages/RamPage.qml</file>
         <file alias="qml/pages/SetupPage.qml">qml/pages/SetupPage.qml</file>
         <file alias="assets/background.png">ChatGPT Image Jul 29, 2026, 08_44_21 PM.png</file>
     </qresource>

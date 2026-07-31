@@ -14,9 +14,6 @@ assets and released them under the Unlicense in
 | `tracks/Static Horizon.mp3` | `tracks/Static Horizon.mp3` | `07eeab095f25a2f0682b3d80217e1ed7149a2bb9e5d94388dccb24061fa8eef4` | MP3, stereo, 48 kHz, 64 kbps |
 | `tracks/System Override.mp3` | `tracks/System Override.mp3` | `e0be60e4412735f893614c1f847be0caa39bda9e8156ed9043fcaa122b248482` | MP3, stereo, 48 kHz, 64 kbps |
 
-The legacy `bc250_unlocked_silicon_og_tweak_v12.oga` remains in the source tree
-but is not loaded or included in the standalone runtime.
-
 ## Provenance And Rights
 
 - On July 30, 2026, the repository maintainer confirmed ownership of the artwork

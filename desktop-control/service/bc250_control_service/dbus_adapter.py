@@ -33,6 +33,9 @@ INTROSPECTION_XML = """<node>
     <method name="SetRamp"><arg name="climb_ms" type="u" direction="in"/><arg name="operation_id" type="s" direction="out"/></method>
     <method name="CpuOcAction"><arg name="action" type="s" direction="in"/><arg name="frequency" type="u" direction="in"/><arg name="voltage" type="u" direction="in"/><arg name="temperature" type="u" direction="in"/><arg name="operation_id" type="s" direction="out"/></method>
     <method name="CpuUnlockAction"><arg name="action" type="s" direction="in"/><arg name="operation_id" type="s" direction="out"/></method>
+    <method name="SetUmaSize"><arg name="uma_mib" type="u" direction="in"/><arg name="operation_id" type="s" direction="out"/></method>
+    <method name="SetTtmPages"><arg name="pages" type="u" direction="in"/><arg name="operation_id" type="s" direction="out"/></method>
+    <method name="RemoveTtmOverride"><arg name="operation_id" type="s" direction="out"/></method>
     <method name="CecAction"><arg name="action" type="s" direction="in"/><arg name="operation_id" type="s" direction="out"/></method>
     <method name="SetCecToggle"><arg name="key" type="s" direction="in"/><arg name="enabled" type="b" direction="in"/><arg name="operation_id" type="s" direction="out"/></method>
     <method name="SetCecName"><arg name="name" type="s" direction="in"/><arg name="operation_id" type="s" direction="out"/></method>
@@ -157,6 +160,9 @@ class DbusAdapter:
         "SetRamp": ("u", "s", "set_ramp"),
         "CpuOcAction": ("suuu", "s", "cpu_oc_action"),
         "CpuUnlockAction": ("s", "s", "cpu_unlock_action"),
+        "SetUmaSize": ("u", "s", "set_uma_size"),
+        "SetTtmPages": ("u", "s", "set_ttm_pages"),
+        "RemoveTtmOverride": ("", "s", "remove_ttm_override"),
         "CecAction": ("s", "s", "cec_action"),
         "SetCecToggle": ("sb", "s", "set_cec_toggle"),
         "SetCecName": ("s", "s", "set_cec_name"),

@@ -87,6 +87,7 @@ class CracktroReleaseTests(unittest.TestCase):
                     "desktop-control/service/bc250-control-service",
                     "backend/bc250_control/backend.py",
                     "bc250-power.sh",
+                    "bc250-ram-split.sh",
                     "bc250-storage.sh",
                     "bc250-update-persistence.sh",
                     "core-unlock/bc250-unlock-cores.py",

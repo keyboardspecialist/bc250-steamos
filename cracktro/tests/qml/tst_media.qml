@@ -93,6 +93,9 @@ TestCase {
         compare(findChild(pane, "currentTrackText").text, "Beta")
         compare(findChild(pane, "mediaTimeText").text, "1:05 / 3:05")
         compare(playButton.text, "PAUSE")
+        verify(playButton.width <= 70)
+        verify(findChild(pane, "previousButton").width <= 32)
+        verify(findChild(pane, "nextButton").width <= 32)
 
         findChild(pane, "previousButton").clicked()
         playButton.clicked()
@@ -169,6 +172,9 @@ TestCase {
         waveform.position = 250
         waveform.playing = true
         verify(!waveform.quiet)
+        var waveformBar = findChild(waveform, "waveformBar64")
+        verify(waveformBar !== null)
+        verify(waveformBar.height > 30)
         compare(waveform.playbackFraction, 0.25)
         compare(waveform.playheadX, 75)
 
@@ -202,6 +208,8 @@ TestCase {
         fixture.controller.visualizerData = [0.2, 0.8, 0.4]
         verify(visualizer.active)
         tryVerify(function() { return centerBar.height > 2 }, 500)
+        fixture.controller.duration = 0
+        verify(visualizer.active)
     }
 
     function test_panelConsumesBackgroundPresses() {

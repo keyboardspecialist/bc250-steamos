@@ -64,6 +64,16 @@ private slots:
         bridge.setCustomLoadTarget(80, 40);
         QVERIFY(bridge.error().contains(QStringLiteral("below maximum")));
         QVERIFY(!bridge.busy());
+
+        bridge.clearMessage();
+        bridge.setUmaSize(2048);
+        QVERIFY(bridge.error().contains(QStringLiteral("not 2048")));
+        QVERIFY(!bridge.busy());
+
+        bridge.clearMessage();
+        bridge.setTtmPages(65535);
+        QVERIFY(bridge.error().contains(QStringLiteral("65536")));
+        QVERIFY(!bridge.busy());
     }
 
     void mockUnlockSchemaMatchesService()
@@ -77,6 +87,17 @@ private slots:
                     .value(QStringLiteral("test")).toMap()
                     .value(QStringLiteral("available")).toBool());
         QCOMPARE(unlock.value(QStringLiteral("ccxGroups")).toList().size(), 2);
+    }
+
+    void mockRamSchemaMatchesService()
+    {
+        Bc250Bridge bridge(true);
+        const QVariantMap ram = bridge.snapshot().value(QStringLiteral("ram")).toMap();
+        QCOMPARE(ram.value(QStringLiteral("schemaVersion")).toInt(), 1);
+        QVERIFY(ram.value(QStringLiteral("available")).toBool());
+        QCOMPARE(ram.value(QStringLiteral("umaLastRequestedMiB")).toInt(), 512);
+        QCOMPARE(ram.value(QStringLiteral("ttmConfiguredPages")).toInt(), 3014656);
+        QVERIFY(!ram.value(QStringLiteral("rebootRequired")).toBool());
     }
 };
 

@@ -7,7 +7,7 @@ Rectangle {
 
     required property var controller
     property bool expanded: false
-    readonly property int collapsedHeight: 228
+    readonly property int collapsedHeight: 142
     readonly property int expandedHeight: 462
 
     signal directorySelectionRequested()
@@ -213,14 +213,14 @@ Rectangle {
         anchors.leftMargin: 11
         anchors.rightMargin: 10
         anchors.bottomMargin: 7
-        height: root.collapsedHeight - 13
+        height: root.collapsedHeight - 11
 
         RowLayout {
             id: titleRow
             anchors.left: parent.left
             anchors.right: parent.right
             anchors.top: parent.top
-            height: 23
+            height: 21
             spacing: 7
 
             Text {
@@ -248,8 +248,8 @@ Rectangle {
                 objectName: "expandButton"
                 text: root.expanded ? "TRACKS -" : "TRACKS +"
                 accent: root.expanded ? "#ef48bb" : "#22e7f2"
-                implicitWidth: 72
-                implicitHeight: 24
+                implicitWidth: 64
+                implicitHeight: 22
                 onClicked: root.expanded = !root.expanded
                 hint: root.expanded ? "Collapse media library" : "Expand media library"
             }
@@ -261,8 +261,8 @@ Rectangle {
             anchors.left: parent.left
             anchors.right: parent.right
             anchors.top: titleRow.bottom
-            anchors.topMargin: 2
-            height: 58
+            anchors.topMargin: 1
+            height: 42
             levels: root.controller.visualizerData || []
             position: root.controller.position
             duration: root.controller.duration
@@ -276,8 +276,8 @@ Rectangle {
             anchors.left: parent.left
             anchors.right: parent.right
             anchors.top: audioVisualizer.bottom
-            anchors.topMargin: 3
-            height: 37
+            anchors.topMargin: 2
+            height: 28
             amplitudes: root.controller.waveformData || []
             position: root.controller.position
             duration: root.controller.duration
@@ -290,15 +290,16 @@ Rectangle {
             anchors.left: parent.left
             anchors.right: parent.right
             anchors.top: audioWaveform.bottom
-            anchors.topMargin: 4
-            height: 32
-            spacing: 5
+            anchors.topMargin: 3
+            height: 26
+            spacing: 4
 
             NeonButton {
                 id: previousButton
                 objectName: "previousButton"
                 text: "|<"
-                implicitWidth: 42
+                implicitWidth: 32
+                implicitHeight: 26
                 onClicked: root.controller.previous()
                 hint: "Previous track"
             }
@@ -307,7 +308,8 @@ Rectangle {
                 objectName: "playPauseButton"
                 text: root.controller.playing ? "PAUSE" : "PLAY"
                 accent: "#ef48bb"
-                Layout.fillWidth: true
+                implicitWidth: 70
+                implicitHeight: 26
                 onClicked: root.controller.togglePlayback()
                 hint: root.controller.playing ? "Pause soundtrack" : "Play soundtrack"
             }
@@ -315,26 +317,18 @@ Rectangle {
                 id: nextButton
                 objectName: "nextButton"
                 text: ">|"
-                implicitWidth: 42
+                implicitWidth: 32
+                implicitHeight: 26
                 onClicked: root.controller.next()
                 hint: "Next track"
             }
-        }
-
-        RowLayout {
-            anchors.left: parent.left
-            anchors.right: parent.right
-            anchors.bottom: parent.bottom
-            height: 28
-            spacing: 8
-
             NeonButton {
                 id: muteButton
                 objectName: "muteButton"
                 text: root.controller.muted ? "MUTED" : "MUTE"
                 accent: root.controller.muted ? "#ef48bb" : "#22e7f2"
-                implicitWidth: 66
-                implicitHeight: 28
+                implicitWidth: 50
+                implicitHeight: 26
                 onClicked: root.controller.muted = !root.controller.muted
                 hint: root.controller.muted ? "Unmute soundtrack" : "Mute soundtrack"
             }
@@ -344,6 +338,7 @@ Rectangle {
                 from: 0
                 to: 1
                 value: root.controller.volume
+                implicitHeight: 23
                 Layout.fillWidth: true
                 onMoved: root.controller.volume = value
                 Accessible.name: "Soundtrack volume"
@@ -352,7 +347,7 @@ Rectangle {
                     x: volumeSlider.leftPadding
                     y: volumeSlider.topPadding + volumeSlider.availableHeight / 2 - height / 2
                     width: volumeSlider.availableWidth
-                    height: 3
+                    height: 2
                     color: "#244f5a"
                     radius: 1
                     Rectangle {
@@ -365,8 +360,8 @@ Rectangle {
                 handle: Rectangle {
                     x: volumeSlider.leftPadding + volumeSlider.visualPosition * (volumeSlider.availableWidth - width)
                     y: volumeSlider.topPadding + volumeSlider.availableHeight / 2 - height / 2
-                    implicitWidth: 10
-                    implicitHeight: 16
+                    implicitWidth: 8
+                    implicitHeight: 12
                     radius: 2
                     color: root.controller.muted ? "#ef70cc" : "#dffcff"
                     border.color: root.controller.muted ? "#ef48bb" : "#22e7f2"
@@ -379,7 +374,7 @@ Rectangle {
                 font.family: "monospace"
                 font.pixelSize: 9
                 horizontalAlignment: Text.AlignRight
-                Layout.preferredWidth: 32
+                Layout.preferredWidth: 28
             }
         }
     }

@@ -8,9 +8,12 @@
 #include <QDir>
 #include <QFileInfo>
 #include <QFileSystemWatcher>
+#include <QLibraryInfo>
 #include <QSettings>
+#include <QThread>
 #include <QTimer>
 #include <QUrl>
+#include <QVersionNumber>
 
 #include <algorithm>
 #include <cmath>
@@ -74,6 +77,7 @@ MediaController::MediaController(QObject *parent, bool autoPlay, const QString &
     , m_audioOutput(mediaProcessingEnabled ? new QAudioOutput(this) : nullptr)
     , m_watcher(new QFileSystemWatcher(this))
     , m_rescanTimer(new QTimer(this))
+    , m_analysisPublishTimer(new QTimer(this))
     , m_mediaProcessingEnabled(mediaProcessingEnabled)
     , m_waveform(quietWaveform())
     , m_settingsApplication(settingsApplication)
@@ -99,6 +103,66 @@ MediaController::MediaController(QObject *parent, bool autoPlay, const QString &
     connect(m_rescanTimer, &QTimer::timeout, this, &MediaController::rescan);
     connect(m_watcher, &QFileSystemWatcher::directoryChanged, m_rescanTimer,
             qOverload<>(&QTimer::start));
+    m_analysisPublishTimer->setInterval(50);
+    connect(m_analysisPublishTimer, &QTimer::timeout, this, [this] {
+        if (m_analysisPeaks.size() != m_publishedWaveformPeaks) {
+            publishWaveformData();
+            m_publishedWaveformPeaks = m_analysisPeaks.size();
+        }
+        if (m_visualizerLevels.size() != m_publishedVisualizerLevels) {
+            publishVisualizerData();
+            m_publishedVisualizerLevels = m_visualizerLevels.size();
+        }
+    });
+
+    m_threadedAnalysis = m_mediaProcessingEnabled
+        && QLibraryInfo::version() >= QVersionNumber(6, 5, 0);
+    if (m_threadedAnalysis) {
+        m_analysisThread = new QThread(this);
+        m_analysisWorker = new QObject;
+        m_analysisWorker->moveToThread(m_analysisThread);
+        connect(m_analysisThread, &QThread::finished, m_analysisWorker, &QObject::deleteLater);
+        m_analysisThread->start();
+        QMetaObject::invokeMethod(m_analysisWorker, [this] {
+            m_decoder = new QAudioDecoder;
+        }, Qt::BlockingQueuedConnection);
+        connect(m_decoder, &QAudioDecoder::bufferReady, m_analysisWorker, [this] {
+            const QAudioBuffer buffer = m_decoder->read();
+            if (!buffer.isValid() || buffer.byteCount() <= 0)
+                return;
+            const QByteArray pcm(static_cast<const char *>(buffer.constData<char>()),
+                                 buffer.byteCount());
+            QVector<float> peaks = pcmFramePeaks(pcm, buffer.format());
+            const quint64 generation = m_workerAnalysisGeneration;
+            const qint64 position = m_decoder->position();
+            const qint64 duration = m_decoder->duration();
+            QMetaObject::invokeMethod(this,
+                [this, peaks = std::move(peaks), position, duration, generation] {
+                    consumeDecodedPeaks(peaks, position, duration, generation);
+                }, Qt::QueuedConnection);
+        });
+        connect(m_decoder, &QAudioDecoder::finished, m_analysisWorker, [this] {
+            const quint64 generation = m_workerAnalysisGeneration;
+            QMetaObject::invokeMethod(this, [this, generation] {
+                if (generation == m_analysisGeneration)
+                    finishWaveformAnalysis();
+            }, Qt::QueuedConnection);
+        });
+        connect(m_decoder, qOverload<QAudioDecoder::Error>(&QAudioDecoder::error),
+                m_analysisWorker, [this](QAudioDecoder::Error) {
+                    const quint64 generation = m_workerAnalysisGeneration;
+                    const QString message = m_decoder->errorString();
+                    QMetaObject::invokeMethod(this, [this, generation, message] {
+                        if (generation != m_analysisGeneration)
+                            return;
+                        m_analysisPublishTimer->stop();
+                        setWaveformError(message.isEmpty()
+                            ? QStringLiteral("Waveform analysis is unavailable.") : message);
+                        if (m_analysisPeaks.isEmpty())
+                            setWaveform(quietWaveform());
+                    }, Qt::QueuedConnection);
+                });
+    }
 
     if (m_player) {
         m_player->setAudioOutput(m_audioOutput);
@@ -133,7 +197,18 @@ MediaController::MediaController(QObject *parent, bool autoPlay, const QString &
 
 MediaController::~MediaController()
 {
-    if (m_decoder) {
+    m_analysisPublishTimer->stop();
+    ++m_analysisGeneration;
+    if (m_threadedAnalysis && m_analysisThread && m_analysisThread->isRunning()) {
+        QMetaObject::invokeMethod(m_analysisWorker, [this] {
+            m_decoder->stop();
+            m_decoder->setSourceDevice(nullptr);
+            delete m_decoder;
+            m_decoder = nullptr;
+        }, Qt::BlockingQueuedConnection);
+        m_analysisThread->quit();
+        m_analysisThread->wait();
+    } else if (m_decoder) {
         m_decoder->stop();
         m_decoder->setSourceDevice(nullptr);
     }
@@ -506,39 +581,18 @@ void MediaController::startWaveformAnalysis()
     if (!m_mediaProcessingEnabled)
         return;
 
+    m_analysisPublishTimer->stop();
     const quint64 generation = ++m_analysisGeneration;
-    if (m_decoder) {
-        disconnect(m_decoder, nullptr, this, nullptr);
-        m_decoder->stop();
-        m_decoder->setSourceDevice(nullptr);
-        delete m_decoder;
-    }
-    m_decoder = new QAudioDecoder(this);
-    QAudioDecoder *decoder = m_decoder;
-    connect(decoder, &QAudioDecoder::bufferReady, this, [this, decoder, generation] {
-        if (generation == m_analysisGeneration && decoder == m_decoder)
-            consumeDecodedBuffer();
-    });
-    connect(decoder, &QAudioDecoder::finished, this, [this, decoder, generation] {
-        if (generation == m_analysisGeneration && decoder == m_decoder)
-            finishWaveformAnalysis();
-    });
-    connect(m_decoder, qOverload<QAudioDecoder::Error>(&QAudioDecoder::error), this,
-            [this, decoder, generation](QAudioDecoder::Error) {
-                if (generation != m_analysisGeneration || decoder != m_decoder)
-                    return;
-                const QString message = decoder->errorString();
-                setWaveformError(message.isEmpty() ? QStringLiteral("Waveform analysis is unavailable.") : message);
-                if (m_analysisPeaks.isEmpty())
-                    setWaveform(quietWaveform());
-            });
     m_analysisPeaks.clear();
     m_visualizerLevels.clear();
     m_analysisChunkFrames = 0;
     m_analysisChunkPeak = 0.0f;
     m_visualizerChunkFrames = 0;
     m_visualizerSumSquares = 0.0;
-    m_nextWaveformUpdate = 16;
+    m_publishedWaveformPeaks = 0;
+    m_publishedVisualizerLevels = 0;
+    m_analysisPosition = 0;
+    m_analysisDuration = 0;
     setWaveformError({});
     setWaveform(quietWaveform());
     setVisualizerData({});
@@ -546,17 +600,61 @@ void MediaController::startWaveformAnalysis()
     if (m_currentIndex < 0 || m_currentIndex >= m_tracks.size())
         return;
     const Track &track = m_tracks.at(m_currentIndex);
-    m_decoder->setSource(track.source);
-    decoder->start();
+    m_analysisPublishTimer->start();
+    if (m_threadedAnalysis) {
+        QMetaObject::invokeMethod(m_analysisWorker, [this, generation, source = track.source] {
+            m_workerAnalysisGeneration = generation;
+            m_decoder->stop();
+            m_decoder->setSource(source);
+            m_decoder->start();
+        }, Qt::QueuedConnection);
+    } else {
+        if (m_decoder) {
+            disconnect(m_decoder, nullptr, this, nullptr);
+            m_decoder->stop();
+            m_decoder->setSourceDevice(nullptr);
+            delete m_decoder;
+        }
+        m_decoder = new QAudioDecoder(this);
+        QAudioDecoder *decoder = m_decoder;
+        connect(decoder, &QAudioDecoder::bufferReady, this, [this, decoder, generation] {
+            if (generation != m_analysisGeneration || decoder != m_decoder)
+                return;
+            const QAudioBuffer buffer = decoder->read();
+            if (!buffer.isValid() || buffer.byteCount() <= 0)
+                return;
+            const QByteArray pcm(static_cast<const char *>(buffer.constData<char>()),
+                                 buffer.byteCount());
+            consumeDecodedPeaks(pcmFramePeaks(pcm, buffer.format()), decoder->position(),
+                                decoder->duration(), generation);
+        });
+        connect(decoder, &QAudioDecoder::finished, this, [this, decoder, generation] {
+            if (generation == m_analysisGeneration && decoder == m_decoder)
+                finishWaveformAnalysis();
+        });
+        connect(decoder, qOverload<QAudioDecoder::Error>(&QAudioDecoder::error), this,
+                [this, decoder, generation](QAudioDecoder::Error) {
+                    if (generation != m_analysisGeneration || decoder != m_decoder)
+                        return;
+                    m_analysisPublishTimer->stop();
+                    const QString message = decoder->errorString();
+                    setWaveformError(message.isEmpty()
+                        ? QStringLiteral("Waveform analysis is unavailable.") : message);
+                    if (m_analysisPeaks.isEmpty())
+                        setWaveform(quietWaveform());
+                });
+        decoder->setSource(track.source);
+        decoder->start();
+    }
 }
 
-void MediaController::consumeDecodedBuffer()
+void MediaController::consumeDecodedPeaks(const QVector<float> &framePeaks, qint64 position,
+                                          qint64 duration, quint64 generation)
 {
-    const QAudioBuffer buffer = m_decoder->read();
-    if (!buffer.isValid() || buffer.byteCount() <= 0)
+    if (generation != m_analysisGeneration)
         return;
-    const QByteArray pcm(static_cast<const char *>(buffer.constData<char>()), buffer.byteCount());
-    const QVector<float> framePeaks = pcmFramePeaks(pcm, buffer.format());
+    m_analysisPosition = position;
+    m_analysisDuration = duration;
     for (float peak : framePeaks) {
         m_analysisChunkPeak = std::max(m_analysisChunkPeak, peak);
         if (++m_analysisChunkFrames == AnalysisChunkFrames) {
@@ -572,21 +670,18 @@ void MediaController::consumeDecodedBuffer()
             m_visualizerSumSquares = 0.0;
         }
     }
-    if (m_analysisPeaks.size() >= m_nextWaveformUpdate) {
-        setWaveform(compactEnvelope(m_analysisPeaks, WaveformBuckets));
-        m_nextWaveformUpdate *= 2;
-    }
 }
 
 void MediaController::finishWaveformAnalysis()
 {
+    m_analysisPublishTimer->stop();
     if (m_analysisChunkFrames > 0) {
         m_analysisPeaks.append(m_analysisChunkPeak);
         m_analysisChunkFrames = 0;
         m_analysisChunkPeak = 0.0f;
     }
     if (!m_analysisPeaks.isEmpty())
-        setWaveform(compactEnvelope(m_analysisPeaks, WaveformBuckets));
+        publishWaveformData(true);
     else if (m_waveformError.isEmpty())
         setWaveformError(QStringLiteral("No waveform samples were decoded."));
 
@@ -596,17 +691,45 @@ void MediaController::finishWaveformAnalysis()
         m_visualizerChunkFrames = 0;
         m_visualizerSumSquares = 0.0;
     }
-    if (!m_visualizerLevels.isEmpty()) {
-        QVariantList levels = compactEnvelope(m_visualizerLevels, VisualizerMaximumSamples);
-        float maximum = 0.0f;
-        for (const QVariant &level : levels)
-            maximum = std::max(maximum, level.toFloat());
-        if (maximum > 0.0f) {
-            for (QVariant &level : levels)
-                level = std::clamp(level.toFloat() / maximum, 0.0f, 1.0f);
-        }
-        setVisualizerData(levels);
+    publishVisualizerData();
+    m_publishedWaveformPeaks = m_analysisPeaks.size();
+    m_publishedVisualizerLevels = m_visualizerLevels.size();
+}
+
+void MediaController::publishWaveformData(bool complete)
+{
+    if (m_analysisPeaks.isEmpty())
+        return;
+    QVariantList waveform;
+    const qint64 totalDuration = m_analysisDuration > 0 ? m_analysisDuration : duration();
+    if (!complete && totalDuration > 0) {
+        const double progress = std::clamp(
+            static_cast<double>(m_analysisPosition) / totalDuration, 0.0, 1.0);
+        const int decodedBuckets = std::clamp(
+            static_cast<int>(std::ceil(progress * WaveformBuckets)), 1, WaveformBuckets);
+        waveform = compactEnvelope(m_analysisPeaks, decodedBuckets);
+        waveform.reserve(WaveformBuckets);
+        while (waveform.size() < WaveformBuckets)
+            waveform.append(0.0f);
+    } else {
+        waveform = compactEnvelope(m_analysisPeaks, WaveformBuckets);
     }
+    setWaveform(waveform);
+}
+
+void MediaController::publishVisualizerData()
+{
+    if (m_visualizerLevels.isEmpty())
+        return;
+    QVariantList levels = compactEnvelope(m_visualizerLevels, VisualizerMaximumSamples);
+    float maximum = 0.0f;
+    for (const QVariant &level : levels)
+        maximum = std::max(maximum, level.toFloat());
+    if (maximum > 0.0f) {
+        for (QVariant &level : levels)
+            level = std::clamp(level.toFloat() / maximum, 0.0f, 1.0f);
+    }
+    setVisualizerData(levels);
 }
 
 void MediaController::setError(const QString &error)

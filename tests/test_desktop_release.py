@@ -98,6 +98,7 @@ class DesktopReleaseTests(unittest.TestCase):
                 for expected in (
                     "backend/bc250_control/backend.py",
                     "bc250-power.sh",
+                    "bc250-ram-split.sh",
                     "core-unlock/bc250-unlock-cores.py",
                     "core-unlock/LICENSE",
                     "desktop-control/install.sh",

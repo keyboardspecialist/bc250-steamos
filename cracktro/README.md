@@ -9,6 +9,7 @@ The application does not invoke scripts, `sudo`, `busctl`, or any subprocess. Ha
 - Status dashboard with one-second telemetry while the page is active
 - Adaptive, ranged, pinned, and maximum GPU clock modes
 - GPU load target and ramp controls with service-equivalent client bounds
+- RAM/VRAM split controls for CMOS UMA minimums and dynamic TTM limits
 - Live WGP routing with an advanced interlock and per-write confirmation
 - CPU core-unlock status, one-time test, replay enable, and replay disable controls
 - CPU overclock detection, apply, boot replay, and stock actions

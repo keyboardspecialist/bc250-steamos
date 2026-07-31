@@ -35,6 +35,7 @@ class PolkitAuthorizerTests(unittest.IsolatedAsyncioTestCase):
         await authorizer.authorize(":1.20", 1000, "audit:7", "cu")
         await authorizer.authorize(":1.20", 1000, "audit:7", "gpu")
         await authorizer.authorize(":1.20", 1000, "audit:7", "cpu")
+        await authorizer.authorize(":1.20", 1000, "audit:7", "ram")
         self.assertEqual(authorizer.checks, [":1.20"])
 
     async def test_grant_is_reused_across_busctl_senders_in_same_session(self):

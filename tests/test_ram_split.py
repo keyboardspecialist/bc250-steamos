@@ -73,6 +73,49 @@ class RamSplitTests(unittest.TestCase):
         self.assertEqual(installed.returncode, 1)
         self.assertEqual(installed.stdout, "not-installed\n")
 
+    def test_status_json_reports_reboot_mismatch(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            data = root / "data"
+            profile = data / "ram-split/settings.conf"
+            profile.parent.mkdir(parents=True)
+            profile.write_text("UMA_MB=512\n", encoding="utf-8")
+            config = root / "ttm.cfg"
+            config.write_text(
+                "# BC-250 TTM limit managed by bc250-ram-split.sh.\n"
+                "# Remove with: bc250-ram-split.sh ttm-remove\n"
+                'GRUB_CMDLINE_LINUX_DEFAULT="${GRUB_CMDLINE_LINUX_DEFAULT:-} '
+                'ttm.pages_limit=3014656"\n',
+                encoding="utf-8",
+            )
+            cmdline = root / "cmdline"
+            cmdline.write_text("quiet ttm.pages_limit=2097152\n", encoding="utf-8")
+            env = os.environ.copy()
+            env.update(
+                {
+                    "ROOT_DATA_DIR": str(data),
+                    "TTM_CONFIG": str(config),
+                    "GRUB_DEFAULT": str(root / "grub-default"),
+                    "PROC_CMDLINE": str(cmdline),
+                    "TTM_SYS_PARAM": str(root / "missing-live-limit"),
+                    "RAM_KEEP_FILE": str(root / "missing-keep"),
+                }
+            )
+            result = subprocess.run(
+                ["bash", str(RAM), "status-json"],
+                check=True,
+                capture_output=True,
+                text=True,
+                env=env,
+            )
+
+        status = json.loads(result.stdout)
+        self.assertEqual(status["schemaVersion"], 1)
+        self.assertEqual(status["umaLastRequestedMiB"], 512)
+        self.assertEqual(status["ttmConfiguredPages"], 3014656)
+        self.assertEqual(status["ttmBootPages"], 2097152)
+        self.assertTrue(status["rebootRequired"])
+
     def test_uma_validation_blocks_unsafe_values(self):
         for value in ("nope", "0", "00256", "255", "513", "2048", "12289", "16384"):
             result = run_sourced('validate_uma_size "$1"', value)

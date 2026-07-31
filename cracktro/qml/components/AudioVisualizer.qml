@@ -9,7 +9,7 @@ Item {
     property bool playing: false
     property bool muted: false
 
-    readonly property bool active: levels && levels.length > 0 && duration > 0
+    readonly property bool active: levels && levels.length > 0
     property real liveLevel: 0
     property real beatPulse: 0
     property real phase: 0
@@ -37,7 +37,7 @@ Item {
         var value = syncPosition
         if (playing)
             value += Date.now() - syncTime
-        return Math.max(0, Math.min(duration, value))
+        return duration > 0 ? Math.max(0, Math.min(duration, value)) : Math.max(0, value)
     }
 
     function updateFrame() {
@@ -48,7 +48,7 @@ Item {
             return
         }
 
-        var fraction = estimatedPosition() / duration
+        var fraction = duration > 0 ? estimatedPosition() / duration : 0
         var index = Math.min(levels.length - 1, Math.floor(fraction * levels.length))
         frameIndex = index
         var current = levelAt(index)

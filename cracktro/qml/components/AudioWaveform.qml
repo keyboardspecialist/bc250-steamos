@@ -10,6 +10,7 @@ Item {
     property bool muted: false
 
     readonly property bool quiet: !amplitudes || amplitudes.length === 0
+    readonly property int barCount: 128
     readonly property real playbackFraction: duration > 0
         ? Math.max(0, Math.min(1, position / duration)) : 0
     readonly property real playheadX: playbackFraction * width
@@ -17,79 +18,51 @@ Item {
     implicitWidth: 320
     implicitHeight: 48
 
-    onAmplitudesChanged: waveform.requestPaint()
-    onPositionChanged: waveform.requestPaint()
-    onDurationChanged: waveform.requestPaint()
-    onPlayingChanged: waveform.requestPaint()
-    onMutedChanged: waveform.requestPaint()
+    function levelAt(index) {
+        if (quiet)
+            return 0
+        var sourceIndex = Math.min(amplitudes.length - 1,
+                                   Math.floor(index * amplitudes.length / barCount))
+        var sample = Number(amplitudes[sourceIndex])
+        return isFinite(sample) ? Math.max(0, Math.min(1, Math.abs(sample))) : 0
+    }
 
-    Canvas {
-        id: waveform
+    Rectangle {
         anchors.fill: parent
+        color: "transparent"
 
-        function drawEnvelope(context, samples, color, endX) {
-            var inset = 2
-            var drawableWidth = Math.max(0, width - inset * 2)
-            var center = height / 2
-            var peakHeight = Math.max(1, height * 0.42)
-            var count = samples.length
-            var step = count > 1 ? drawableWidth / (count - 1) : 0
-
-            context.save()
-            context.beginPath()
-            context.rect(0, 0, Math.max(0, endX), height)
-            context.clip()
-            context.strokeStyle = color
-            context.lineWidth = count > drawableWidth / 2 ? 1 : 1.5
-            context.beginPath()
-            for (var i = 0; i < count; ++i) {
-                var sample = Number(samples[i])
-                if (!isFinite(sample))
-                    sample = 0
-                var amplitude = Math.max(0, Math.min(1, Math.abs(sample)))
-                var x = count > 1 ? inset + i * step : width / 2
-                var halfHeight = Math.max(0.75, amplitude * peakHeight)
-                context.moveTo(x, center - halfHeight)
-                context.lineTo(x, center + halfHeight)
-            }
-            context.stroke()
-            context.restore()
+        Rectangle {
+            anchors.verticalCenter: parent.verticalCenter
+            width: parent.width
+            height: 1
+            color: "#25515a"
         }
 
-        onPaint: {
-            var context = getContext("2d")
-            context.reset()
-            context.clearRect(0, 0, width, height)
+        Repeater {
+            model: root.barCount
+            Rectangle {
+                required property int index
+                objectName: "waveformBar" + index
+                readonly property real level: root.levelAt(index)
+                readonly property bool played: index / Math.max(1, root.barCount - 1)
+                    <= root.playbackFraction
 
-            var center = height / 2
-            context.strokeStyle = "#25515a"
-            context.lineWidth = 1
-            context.beginPath()
-            context.moveTo(0, center + 0.5)
-            context.lineTo(width, center + 0.5)
-            context.stroke()
-
-            if (root.quiet) {
-                context.strokeStyle = "#326670"
-                context.beginPath()
-                for (var x = 3; x < width; x += 8) {
-                    context.moveTo(x, center - 1)
-                    context.lineTo(Math.min(width, x + 3), center + 1)
-                }
-                context.stroke()
-                return
+                x: (index + 0.5) * root.width / root.barCount - width / 2
+                y: root.height / 2 - height / 2
+                width: Math.max(1, root.width / root.barCount * 0.62)
+                height: Math.max(1, level * root.height * 0.84)
+                color: played ? "#ef48bb" : "#397985"
+                opacity: root.muted ? 0.55 : 0.72 + level * 0.28
             }
+        }
 
-            drawEnvelope(context, root.amplitudes, "#397985", width)
-            drawEnvelope(context, root.amplitudes, "#ef48bb", root.playheadX)
-
-            context.strokeStyle = root.muted ? "#ef70cc"
-                                               : root.playing ? "#dffcff" : "#22e7f2"
-            context.lineWidth = 1
-            context.beginPath()
-            context.moveTo(Math.round(root.playheadX) + 0.5, 2)
-            context.lineTo(Math.round(root.playheadX) + 0.5, height - 2)
-            context.stroke()
+        Rectangle {
+            visible: !root.quiet && root.duration > 0
+            x: Math.round(root.playheadX)
+            y: 2
+            width: 1
+            height: parent.height - 4
+            color: root.muted ? "#ef70cc" : root.playing ? "#dffcff" : "#22e7f2"
         }
     }
 

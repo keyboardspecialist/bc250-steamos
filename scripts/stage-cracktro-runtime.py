@@ -24,6 +24,7 @@ EXECUTABLES = {
     Path("bc250-storage.sh"),
     Path("bc250-update-persistence.sh"),
     Path("bc250-power.sh"),
+    Path("bc250-ram-split.sh"),
     Path("topology.sh"),
     Path("core-unlock/bc250-unlock-cores.py"),
     Path("cracktro/install.sh"),
@@ -87,7 +88,7 @@ def stage(binary: Path, output: Path, epoch: int) -> None:
     output.parent.mkdir(parents=True, exist_ok=True)
     temporary = Path(tempfile.mkdtemp(prefix=".cracktro-runtime-", dir=str(output.parent)))
     try:
-        for name in ("bc250-storage.sh", "bc250-update-persistence.sh", "bc250-power.sh", "topology.sh"):
+        for name in ("bc250-storage.sh", "bc250-update-persistence.sh", "bc250-power.sh", "bc250-ram-split.sh", "topology.sh"):
             copy_file(REPOSITORY / name, temporary / name)
         copy_tree(REPOSITORY / "core-unlock", temporary / "core-unlock")
         copy_file(CRACKTRO_SOURCE / "install.sh", temporary / "cracktro/install.sh")

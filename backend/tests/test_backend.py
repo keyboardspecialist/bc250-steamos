@@ -10,7 +10,7 @@ import unittest
 from contextlib import ExitStack, asynccontextmanager
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, call, patch
 
 import bc250_control.backend as backend_module
 from bc250_control.backend import BusyError, CommandError, ToolkitBackend
@@ -1060,6 +1060,58 @@ class BackendLockTests(unittest.IsolatedAsyncioTestCase):
                 backend_module.fcntl.flock(descriptor, backend_module.fcntl.LOCK_UN)
                 os.close(descriptor)
             self.assertEqual(telemetry["cpuClock"], 1000)
+
+
+class RamControlTests(unittest.IsolatedAsyncioTestCase):
+    async def test_ram_status_is_validated(self):
+        backend = object.__new__(ToolkitBackend)
+        status = {
+            "schemaVersion": 1,
+            "available": True,
+            "toolState": "verified",
+            "toolVersion": "v0.1",
+            "umaLastRequestedMiB": 512,
+            "ttmState": "configured",
+            "ttmConfiguredPages": 3014656,
+            "ttmBootPages": 3014656,
+            "ttmLivePages": 3014656,
+            "rebootRequired": False,
+            "protected": True,
+        }
+        backend._ram_tool = AsyncMock(return_value=json.dumps(status))
+        with patch.object(ToolkitBackend, "_trusted_root_file", return_value=True):
+            self.assertEqual(await backend.get_ram_status(), status)
+        backend._ram_tool.assert_awaited_once_with("status-json", timeout=10)
+
+    async def test_ram_mutations_use_exact_helper_arguments(self):
+        backend = object.__new__(ToolkitBackend)
+        prepare_mutation_backend(backend)
+        backend._ram_tool = AsyncMock(return_value="")
+
+        await backend.set_uma_size(512)
+        await backend.set_ttm_pages(3014656)
+        await backend.remove_ttm_override()
+
+        self.assertEqual(
+            backend._ram_tool.await_args_list,
+            [
+                call("set", "512", "--yes", timeout=120),
+                call("ttm-set", "3014656", "--yes", timeout=120),
+                call("ttm-remove", timeout=120),
+            ],
+        )
+
+    async def test_ram_mutations_reject_invalid_bounds(self):
+        backend = object.__new__(ToolkitBackend)
+        prepare_mutation_backend(backend)
+        backend._ram_tool = AsyncMock(return_value="")
+        for value in (255, 513, 2048, 12289, True):
+            with self.subTest(uma=value), self.assertRaises(CommandError):
+                await backend.set_uma_size(value)
+        for value in (65535, 3145729, True):
+            with self.subTest(ttm=value), self.assertRaises(CommandError):
+                await backend.set_ttm_pages(value)
+        backend._ram_tool.assert_not_awaited()
 
 
 class DeckyRuntimeTests(unittest.TestCase):

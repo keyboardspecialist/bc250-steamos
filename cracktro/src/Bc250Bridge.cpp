@@ -383,6 +383,35 @@ void Bc250Bridge::cpuUnlockAction(const QString &action)
                   QStringLiteral("Running CPU core-unlock ") + action, false);
 }
 
+void Bc250Bridge::setUmaSize(int umaMiB)
+{
+    if (umaMiB < 256 || umaMiB > 12288 || umaMiB % 16 != 0 || umaMiB == 2048) {
+        reject(QStringLiteral("UMA size must be 256-12288 MiB, aligned to 16 MiB, and not 2048 MiB."));
+        return;
+    }
+    if (!ensureReady()) return;
+    startMutation(QStringLiteral("SetUmaSize"), {QVariant::fromValue<uint>(umaMiB)},
+                  QStringLiteral("Writing CMOS UMA split"), false);
+}
+
+void Bc250Bridge::setTtmPages(int pages)
+{
+    if (pages < 65536 || pages > 3145728) {
+        reject(QStringLiteral("TTM limit must be 65536-3145728 pages."));
+        return;
+    }
+    if (!ensureReady()) return;
+    startMutation(QStringLiteral("SetTtmPages"), {QVariant::fromValue<uint>(pages)},
+                  QStringLiteral("Updating TTM boot limit"), false);
+}
+
+void Bc250Bridge::removeTtmOverride()
+{
+    if (!ensureReady()) return;
+    startMutation(QStringLiteral("RemoveTtmOverride"), {},
+                  QStringLiteral("Removing TTM boot limit"), false);
+}
+
 void Bc250Bridge::startMutation(const QString &method, const QVariantList &arguments,
                                 const QString &label, bool cancellable)
 {
@@ -570,7 +599,7 @@ void Bc250Bridge::makeMockSnapshot()
 {
     static const QByteArray json = R"json({
       "schemaVersion":1,
-      "toolkit":{"available":true,"privileged":true,"powerAvailable":true,"cpuControlAvailable":true,"path":"/mock/bc250-steamos","version":"mock-1"},
+      "toolkit":{"available":true,"privileged":true,"powerAvailable":true,"cpuControlAvailable":true,"ramControlAvailable":true,"path":"/mock/bc250-steamos","version":"mock-1"},
       "cu":{"available":true,"controllable":true,"liveReason":"","total":24,"maximum":40,"factoryMapAvailable":true,"factoryTotal":24,"savedMasks":[7,7,7,7],"protected":true,"service":{"enabled":"enabled","active":"active"},"rows":[
         {"se":0,"sh":0,"wgps":[true,true,true,false,false],"factoryWgps":[true,true,true,false,false],"cus":6},
         {"se":0,"sh":1,"wgps":[true,true,true,false,false],"factoryWgps":[true,true,true,false,false],"cus":6},
@@ -578,7 +607,8 @@ void Bc250Bridge::makeMockSnapshot()
         {"se":1,"sh":1,"wgps":[true,true,true,false,false],"factoryWgps":[true,true,true,false,false],"cus":6}]},
       "power":{"acpiActive":true,"cStates":3,"cpuGovernor":"schedutil","cpuCurrentMhz":3650,"governor":{"enabled":"enabled","active":"active"},"frequencyRestore":{"enabled":"enabled","active":"exited"},"temperatures":[{"device":"amdgpu","label":"edge","celsius":57}]},
       "gpu":{"available":true,"controllable":true,"dbusReady":true,"mode":"adaptive","requestedMode":"adaptive","minimum":100,"maximum":1500,"liveMinimum":100,"liveMaximum":1500,"activeMhz":1120,"allowedMinimum":100,"allowedMaximum":2150,"climbMs":500,"loadUpper":0.80,"loadLower":0.65,"configuredMax":1500,"persistent":true,"replayApplied":true,"governorService":{"enabled":"enabled","active":"active"},"safePoints":[{"frequency":1000,"voltage":850},{"frequency":1500,"voltage":975}]},
-      "cpu":{"service":{"enabled":"enabled","active":"active"},"installed":{"values":{"frequency":"4000","voltage":"1275"},"detected":"4000 MHz @ 1275 mV"},"staged":null,"toolAvailable":true}
+      "cpu":{"service":{"enabled":"enabled","active":"active"},"installed":{"values":{"frequency":"4000","voltage":"1275"},"detected":"4000 MHz @ 1275 mV"},"staged":null,"toolAvailable":true},
+      "ram":{"schemaVersion":1,"available":true,"toolState":"verified","toolVersion":"v0.1","umaLastRequestedMiB":512,"ttmState":"configured","ttmConfiguredPages":3014656,"ttmBootPages":3014656,"ttmLivePages":3014656,"rebootRequired":false,"protected":true}
     })json";
     QString parseError;
     m_snapshot = parseJsonObject(json, &parseError);
