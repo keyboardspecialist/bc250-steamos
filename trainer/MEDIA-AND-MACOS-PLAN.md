@@ -3,7 +3,7 @@
 ## Status
 
 Planning decisions were confirmed on July 30, 2026. The media controller, media
-deck, waveform, generated-WAV tests, local macOS harness, and macOS checks are
+deck, waveform, generated-WAV tests, local macOS harness, and Linux checks are
 implemented. The complete Homebrew harness passed on macOS with Qt 6.11.1 on
 July 30, 2026. Existing release-workflow and asset-license changes were
 preserved during implementation.
@@ -12,7 +12,8 @@ preserved during implementation.
 
 1. Provide a repeatable native macOS build and test harness for mock-mode
    frontend development.
-2. Add a macOS GitHub Actions check without changing Linux release authority.
+2. Keep GitHub Actions and release authority on Linux while retaining macOS as
+   an internal manual test target.
 3. Move all soundtrack controls from the right control deck and Setup page to a
    collapsible lower-left media deck.
 4. Add play/pause, previous, next, current-track display, a selectable music
@@ -169,7 +170,7 @@ The script will:
 
 The build directory already matches `trainer/build-*` in `.gitignore`.
 
-## macOS CI
+## Linux CI
 
 Add `.github/workflows/trainer-checks.yml`.
 
@@ -178,11 +179,15 @@ The workflow will:
 - Run on pushes to `trainer` and relevant pull requests.
 - Restrict path triggers to BC250 Trainer, shared service/backend code, staging code,
   relevant tests, and the workflow itself.
-- Use `macos-latest` and `actions/checkout`.
-- Install the Homebrew dependencies required by `build-macos.sh`.
-- Invoke the same local harness rather than duplicating test commands.
+- Use `ubuntu-latest` and `actions/checkout`.
+- Install the native Qt, QML, multimedia, Python, and Node.js dependencies.
+- Build the native Linux frontend and run its C++, QML, backend, service, and
+  release tests.
 - Use read-only repository permissions.
 - Never create tags, upload releases, or alter the main release timeline.
+
+The Homebrew harness remains available through `trainer/build-macos.sh` for
+manual internal testing and is not part of CI/CD.
 
 ## Native Tests
 

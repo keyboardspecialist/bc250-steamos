@@ -1,4 +1,4 @@
-name: BC250 Trainer macOS checks
+name: BC250 Trainer Linux checks
 
 on:
   pull_request:
@@ -24,19 +24,65 @@ permissions:
   contents: read
 
 jobs:
-  macos:
-    name: Native macOS build and tests
-    runs-on: macos-latest
-    env:
-      HOMEBREW_NO_AUTO_UPDATE: "1"
+  linux:
+    name: Native Linux build and tests
+    runs-on: ubuntu-latest
 
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
 
-      - name: Install native dependencies
-        run: brew install cmake ninja qt bash coreutils
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.8"
 
-      - name: Build and verify BC250 Trainer
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Install native dependencies
         run: |
-          "$(brew --prefix bash)/bin/bash" trainer/build-macos.sh
+          sudo apt-get update
+          sudo apt-get install -y \
+            acpica-tools cpio cmake ninja-build g++ \
+            qt6-base-dev qt6-base-dev-tools \
+            qt6-declarative-dev qt6-declarative-dev-tools \
+            qt6-multimedia-dev qt6-tools-dev-tools \
+            qml6-module-qt-labs-settings qml6-module-qtmultimedia \
+            qml6-module-qtqml-workerscript \
+            qml6-module-qtquick qml6-module-qtquick-controls \
+            qml6-module-qtquick-dialogs \
+            qml6-module-qtquick-templates \
+            qml6-module-qtquick-layouts qml6-module-qtquick-window \
+            qml6-module-qttest \
+            gstreamer1.0-plugins-base gstreamer1.0-plugins-good \
+            gstreamer1.0-pulseaudio
+
+      - name: Configure BC250 Trainer
+        run: |
+          cmake -S trainer -B build/trainer -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DBUILD_TESTING=ON
+
+      - name: Build BC250 Trainer
+        run: cmake --build build/trainer --parallel
+
+      - name: Run BC250 Trainer tests
+        env:
+          QT_QPA_PLATFORM: offscreen
+          QT_QUICK_BACKEND: software
+        run: |
+          ctest --test-dir build/trainer --output-on-failure
+          cmake --build build/trainer --target qml-lint
+          QT_MEDIA_BACKEND=mock build/trainer/bc250-trainer --mock --smoke-test
+
+      - name: Run service and release tests
+        run: |
+          PYTHONPATH=backend:backend/vendor \
+            python3 -m unittest discover -s backend/tests
+          PYTHONPATH=desktop-control/service:desktop-control/vendor:backend:backend/vendor \
+            python3 -m unittest discover -s desktop-control/service/tests
+          python3 -m unittest discover -s tests -p 'test_*.py'
+          node tests/test_qml_utils.cjs
