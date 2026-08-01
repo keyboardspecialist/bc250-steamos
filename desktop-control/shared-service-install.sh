@@ -55,6 +55,9 @@ shared_validate_sources() {
         "$SHARED_REPO_DIR/bc250-update-persistence.sh" \
         "$SHARED_REPO_DIR/topology.sh" \
         "$SHARED_REPO_DIR/core-unlock/bc250-unlock-cores.py" \
+        "$SHARED_REPO_DIR/core-unlock/bc250-unlock-cores-efi.c" \
+        "$SHARED_REPO_DIR/core-unlock/EFI-LICENSE" \
+        "$SHARED_REPO_DIR/core-unlock/EFI-HEADERS-LICENSE" \
         "$SHARED_REPO_DIR/core-unlock/LICENSE"; do
         [[ -e "$path" && ! -L "$path" ]] \
             || shared_die "Required shared-service source is missing or unsafe: $path"
@@ -123,6 +126,15 @@ shared_stage_payload() {
         "$SHARED_REPO_DIR/core-unlock/bc250-unlock-cores.py" \
         "$SHARED_STAGE/core-unlock/bc250-unlock-cores.py"
     install -o root -g root -m 0644 \
+        "$SHARED_REPO_DIR/core-unlock/bc250-unlock-cores-efi.c" \
+        "$SHARED_STAGE/core-unlock/bc250-unlock-cores-efi.c"
+    install -o root -g root -m 0644 \
+        "$SHARED_REPO_DIR/core-unlock/EFI-LICENSE" \
+        "$SHARED_STAGE/core-unlock/EFI-LICENSE"
+    install -o root -g root -m 0644 \
+        "$SHARED_REPO_DIR/core-unlock/EFI-HEADERS-LICENSE" \
+        "$SHARED_STAGE/core-unlock/EFI-HEADERS-LICENSE"
+    install -o root -g root -m 0644 \
         "$SHARED_REPO_DIR/core-unlock/LICENSE" "$SHARED_STAGE/core-unlock/LICENSE"
     find "$SHARED_STAGE" -type d -name __pycache__ -prune -exec rm -rf {} +
     find "$SHARED_STAGE" -type f \( -name '*.pyc' -o -name '*.pyo' \) -delete
@@ -134,6 +146,9 @@ shared_stage_payload() {
         && -x "$SHARED_STAGE/bc250-storage.sh" \
         && -x "$SHARED_STAGE/bc250-update-persistence.sh" \
         && -x "$SHARED_STAGE/core-unlock/bc250-unlock-cores.py" \
+        && -f "$SHARED_STAGE/core-unlock/bc250-unlock-cores-efi.c" \
+        && -f "$SHARED_STAGE/core-unlock/EFI-LICENSE" \
+        && -f "$SHARED_STAGE/core-unlock/EFI-HEADERS-LICENSE" \
         && -f "$SHARED_STAGE/core-unlock/LICENSE" \
         && -f "$SHARED_STAGE/py_modules/bc250_control_service/main.py" \
         && -f "$SHARED_STAGE/py_modules/bc250_control/backend.py" \

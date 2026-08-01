@@ -12,7 +12,7 @@ ColumnLayout {
     readonly property var cu: snap.cu || ({})
     readonly property var unlock: backend.cpuUnlockStatus || ({})
     readonly property var unlockGuard: unlock.guard || ({})
-    readonly property bool automaticRebootPending: unlockGuard.state === "automatic"
+    readonly property bool automaticRebootPending: unlockGuard.state === "automatic" && unlockGuard.currentBoot === true
     readonly property var telemetry: backend.telemetry || ({})
 
     GridLayout {

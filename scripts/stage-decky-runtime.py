@@ -89,7 +89,14 @@ def stage(output: Path, epoch: int) -> None:
                 REPOSITORY / directory,
                 temporary / "privileged-helper" / directory,
             )
-        for name in ("bc250-unlock-cores.py", "LICENSE"):
+        for name in (
+            "bc250-unlock-cores.py",
+            "bc250-unlock-cores-efi.c",
+            "EFI-LICENSE",
+            "EFI-HEADERS-LICENSE",
+            "LICENSE",
+            "README.md",
+        ):
             copy_file(
                 REPOSITORY / "core-unlock" / name,
                 temporary / "privileged-helper/core-unlock" / name,

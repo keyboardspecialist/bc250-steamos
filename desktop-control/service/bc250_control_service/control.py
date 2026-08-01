@@ -217,6 +217,7 @@ class ControlService:
         if _text(action, "Unknown CPU core-unlock action.") not in (
             "test",
             "enable",
+            "efi-enable",
             "off",
         ):
             raise InvalidArguments("Unknown CPU core-unlock action.")

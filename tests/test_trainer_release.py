@@ -93,14 +93,25 @@ class TrainerReleaseTests(unittest.TestCase):
                     "bc250-storage.sh",
                     "bc250-update-persistence.sh",
                     "core-unlock/bc250-unlock-cores.py",
+                    "core-unlock/bc250-unlock-cores-efi.c",
+                    "core-unlock/EFI-LICENSE",
+                    "core-unlock/EFI-HEADERS-LICENSE",
                     "core-unlock/LICENSE",
                     "topology.sh",
                 ):
                     self.assertIn(prefix + expected, names)
                 self.assertFalse(any("__pycache__" in name for name in names))
                 self.assertFalse(any(name.endswith(".DS_Store") for name in names))
+                self.assertFalse(any(name.endswith("bc250-core-unlock.efi") for name in names))
                 mode = archive.getinfo(prefix + "trainer/bc250-trainer").external_attr >> 16
                 self.assertEqual(mode & 0o777, 0o755)
+                for name in (
+                    "core-unlock/bc250-unlock-cores-efi.c",
+                    "core-unlock/EFI-LICENSE",
+                    "core-unlock/EFI-HEADERS-LICENSE",
+                ):
+                    mode = archive.getinfo(prefix + name).external_attr >> 16
+                    self.assertEqual(mode & 0o777, 0o644)
 
     def test_installer_uses_absolute_exec_and_recognized_ownership(self):
         source = INSTALLER.read_text(encoding="utf-8")
@@ -203,9 +214,13 @@ class TrainerReleaseTests(unittest.TestCase):
                     "backend/bc250_control/backend.py",
                     "bc250-storage.sh",
                     "bc250-update-persistence.sh",
+                    "core-unlock/bc250-unlock-cores-efi.c",
+                    "core-unlock/EFI-LICENSE",
+                    "core-unlock/EFI-HEADERS-LICENSE",
                 ):
                     self.assertIn(prefix + expected, names)
                 self.assertNotIn(prefix + "trainer/bc250-trainer", names)
+                self.assertFalse(any(name.endswith("bc250-core-unlock.efi") for name in names))
                 mode = archive.getinfo(prefix + "trainer/install-flatpak.sh").external_attr >> 16
                 self.assertEqual(mode & 0o777, 0o755)
 
@@ -249,6 +264,9 @@ class TrainerReleaseTests(unittest.TestCase):
             '"$SHARED_REPO_DIR/bc250-storage.sh"',
             '"$SHARED_REPO_DIR/bc250-update-persistence.sh"',
             '"$SHARED_REPO_DIR/core-unlock/bc250-unlock-cores.py"',
+            '"$SHARED_REPO_DIR/core-unlock/bc250-unlock-cores-efi.c"',
+            '"$SHARED_REPO_DIR/core-unlock/EFI-LICENSE"',
+            '"$SHARED_REPO_DIR/core-unlock/EFI-HEADERS-LICENSE"',
             '"$SHARED_REPO_DIR/core-unlock/LICENSE"',
         ):
             self.assertIn(expected, source)

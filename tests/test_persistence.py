@@ -383,6 +383,15 @@ grep -Fxq "daemon-reload" "$SYSTEMCTL_LOG"
         self.assertNotIn("systemctl enable", test)
         self.assertNotIn("install_update_persistence", test)
 
+        efi_source = (ROOT / "core-unlock" / "bc250-unlock-cores-efi.c").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn("BC250CoreUnlockAttempt", efi_source)
+        self.assertIn("0x8000000000000000ULL", efi_source)
+        self.assertIn("CORE_UNLOCK_EFI_HEADER_LICENSE", power)
+        self.assertIn("efi_transaction_rollback", power)
+        self.assertIn("remove_core_unlock_efi", power)
+
     def test_acpi_persistence_targets_active_steamos_grub_config(self):
         source = (ROOT / "bc250-power.sh").read_text(encoding="utf-8")
         persistence = (ROOT / "bc250-update-persistence.sh").read_text(

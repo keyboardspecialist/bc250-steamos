@@ -24,7 +24,11 @@ PAYLOAD_FILES: Tuple[Tuple[Path, int], ...] = (
     (Path("smu-oc-patches/stress_helper.py"), 0o644),
     (Path("smu-oc-patches/transport.py"), 0o644),
     (Path("core-unlock/bc250-unlock-cores.py"), 0o644),
+    (Path("core-unlock/bc250-unlock-cores-efi.c"), 0o644),
+    (Path("core-unlock/EFI-LICENSE"), 0o644),
+    (Path("core-unlock/EFI-HEADERS-LICENSE"), 0o644),
     (Path("core-unlock/LICENSE"), 0o644),
+    (Path("core-unlock/README.md"), 0o644),
     (Path("topology.sh"), 0o755),
     (Path("bc250-power.sh"), 0o755),
 )

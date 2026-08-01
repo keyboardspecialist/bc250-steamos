@@ -56,7 +56,7 @@ does not bundle or update the complete toolkit source tree.
 - GPU load target and ramp controls with service-equivalent client bounds
 - RAM/VRAM split controls for CMOS UMA minimums and dynamic TTM limits
 - Live WGP routing with an advanced interlock and per-write confirmation
-- CPU core-unlock status, one-time test, replay enable, and replay disable controls
+- Mutually exclusive CPU core-unlock controls for recommended Linux replay and experimental EFI preboot
 - CPU overclock detection, apply, boot replay, and stock actions
 - Asynchronous QtDBus operation tracking, protected-operation cancellation state, and service lifetime monitoring
 - Collapsible music library with transport, natural track ordering, and folder watching
@@ -64,7 +64,7 @@ does not bundle or update the complete toolkit source tree.
 - Persisted music directory, current track, and volume via `QSettings`; mute is session-only
 - `--mock` development mode that never contacts hardware
 
-The installed service must include `GetCpuUnlockStatus()` and `CpuUnlockAction(string)` for core-unlock controls. Older services remain usable for status, GPU, CU, and CPU-overclock features; the UI reports the missing extension rather than using toolkit execution as a hardware-control fallback.
+The installed service must include `GetCpuUnlockStatus()` and `CpuUnlockAction(string)` for core-unlock controls. The action allowlist is `test`, `enable`, `efi-enable`, and `off`; action availability is always taken from the status response. Older services remain usable for status, GPU, CU, and CPU-overclock features; schema-v1 Linux replay status remains supported, and the UI reports a missing extension rather than using toolkit execution as a hardware-control fallback.
 
 ## Build
 

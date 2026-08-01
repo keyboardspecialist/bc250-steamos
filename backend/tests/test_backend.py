@@ -1,4 +1,5 @@
 import asyncio
+import hashlib
 import importlib.util
 import json
 import os
@@ -843,6 +844,7 @@ class BackendMutationTests(unittest.IsolatedAsyncioTestCase):
         cases = (
             ("test", 8, "none"),
             ("enable", 8, "none"),
+            ("efi-enable", 8, "none"),
             ("off", 8, "full-power-off"),
             ("off", 6, "none"),
         )
@@ -850,20 +852,370 @@ class BackendMutationTests(unittest.IsolatedAsyncioTestCase):
             backend = object.__new__(ToolkitBackend)
             prepare_mutation_backend(backend)
             backend._cpu_unlock_payload_available = MagicMock(return_value=True)
+            backend._cpu_unlock_off_payload_available = MagicMock(return_value=True)
             backend._cpu_topology = MagicMock(return_value={"physicalCores": cores})
             backend._exec = AsyncMock(return_value=(0, "anything", ""))
             result = await backend.cpu_unlock_action(action)
             self.assertEqual(result["nextStep"], expected)
 
-    async def test_cpu_unlock_bundle_requires_all_five_trusted_files(self):
+    async def test_cpu_unlock_off_requires_only_trusted_power_script(self):
+        backend = object.__new__(ToolkitBackend)
+        prepare_mutation_backend(backend)
+        backend._cpu_unlock_payload_available = MagicMock(return_value=False)
+        backend._cpu_unlock_off_payload_available = MagicMock(return_value=True)
+        backend._cpu_topology = MagicMock(side_effect=RuntimeError("unavailable"))
+        backend._exec = AsyncMock(return_value=(0, "", ""))
+
+        result = await backend.cpu_unlock_action("off")
+
+        self.assertEqual(result["nextStep"], "none")
+        backend._cpu_unlock_payload_available.assert_not_called()
+
+    async def test_cpu_unlock_efi_enable_uses_install_timeout(self):
+        backend = object.__new__(ToolkitBackend)
+        prepare_mutation_backend(backend)
+        backend._cpu_unlock_payload_available = MagicMock(return_value=True)
+        backend._cpu_topology = MagicMock(return_value={"physicalCores": 8})
+        backend._exec = AsyncMock(return_value=(0, "", ""))
+
+        await backend.cpu_unlock_action("efi-enable")
+
+        self.assertEqual(backend._exec.await_args.kwargs["timeout"], 1800)
+
+    async def test_cpu_unlock_bundle_requires_all_trusted_files(self):
         backend = object.__new__(ToolkitBackend)
         bundle = Path("/trusted/helper-bundle")
+        self.assertTrue(
+            {
+                Path("core-unlock/bc250-unlock-cores-efi.c"),
+                Path("core-unlock/EFI-LICENSE"),
+                Path("core-unlock/EFI-HEADERS-LICENSE"),
+            }.issubset(backend_module.CPU_UNLOCK_PAYLOAD_FILES)
+        )
         trusted = MagicMock(side_effect=lambda path: path != bundle / "core-unlock/LICENSE")
         with patch.object(backend_module, "CPU_UNLOCK_PAYLOAD_PATH", bundle), patch.object(
             ToolkitBackend, "_trusted_root_directory", return_value=True
         ), patch.object(ToolkitBackend, "_trusted_root_file", trusted):
             self.assertFalse(backend._cpu_unlock_payload_available())
         self.assertIn(bundle / "core-unlock/LICENSE", [call.args[0] for call in trusted.call_args_list])
+
+        with patch.object(backend_module, "CPU_UNLOCK_PAYLOAD_PATH", bundle), patch.object(
+            ToolkitBackend, "_trusted_root_directory", return_value=True
+        ), patch.object(
+            ToolkitBackend,
+            "_trusted_root_file",
+            side_effect=lambda path: path == bundle / "bc250-power.sh",
+        ):
+            self.assertTrue(backend._cpu_unlock_off_payload_available())
+
+    @staticmethod
+    def _write_efi_artifacts(root):
+        paths = {
+            "master": root / "state/bc250-core-unlock.efi",
+            "state": root / "state/efi-state",
+            "bootnum": root / "state/efi-bootnum",
+            "image_hash": root / "state/efi-image.sha256",
+            "recovery": root / "state/efi-recovery",
+            "image": root / "efi/EFI/bc250/bc250-core-unlock.efi",
+            "esp_root": root / "efi",
+            "guard": root / "efivars/BC250CoreUnlockAttempt-guard",
+            "license": root / "licenses/bc250-core-unlock-efi-LICENSE",
+            "headers_license": root / "licenses/yoppeh-efi-LICENSE",
+        }
+        for path in paths.values():
+            path.parent.mkdir(parents=True, exist_ok=True)
+        paths["master"].write_bytes(b"efi image")
+        paths["image"].write_bytes(paths["master"].read_bytes())
+        paths["bootnum"].write_text("00aF\n", encoding="ascii")
+        paths["state"].write_text(
+            "BOOTNUM=00AF\n"
+            "ESP_SOURCE=/dev/nvme0n1p1\n"
+            "DISK=/dev/nvme0n1\n"
+            "PART=1\n"
+            "PARTUUID=12345678-1234-5678-9abc-def012345678\n"
+            "LABEL=BC250 Core Unlock\n"
+            "LOADER=\\EFI\\bc250\\bc250-core-unlock.efi\n",
+            encoding="ascii",
+        )
+        digest = hashlib.sha256(paths["master"].read_bytes()).hexdigest()
+        paths["image_hash"].write_text(digest + "\n", encoding="ascii")
+        paths["license"].write_text("EFI license\n", encoding="ascii")
+        paths["headers_license"].write_text("EFI headers license\n", encoding="ascii")
+        return paths
+
+    @staticmethod
+    def _patch_efi_paths(paths):
+        return patch.multiple(
+            backend_module,
+            CPU_UNLOCK_EFI_MASTER_PATH=paths["master"],
+            CPU_UNLOCK_EFI_STATE_PATH=paths["state"],
+            CPU_UNLOCK_EFI_BOOTNUM_PATH=paths["bootnum"],
+            CPU_UNLOCK_EFI_IMAGE_HASH_PATH=paths["image_hash"],
+            CPU_UNLOCK_EFI_RECOVERY_PATH=paths["recovery"],
+            CPU_UNLOCK_EFI_ESP_IMAGE_PATH=paths["image"],
+            CPU_UNLOCK_EFI_ESP_ROOT_PATH=paths["esp_root"],
+            CPU_UNLOCK_EFI_GUARD_PATH=paths["guard"],
+            CPU_UNLOCK_EFIVARS_DIR_PATH=paths["guard"].parent,
+            CPU_UNLOCK_EFI_LICENSE_PATH=paths["license"],
+            CPU_UNLOCK_EFI_HEADER_LICENSE_PATH=paths["headers_license"],
+        )
+
+    @staticmethod
+    def _efi_boot_output():
+        return (
+            "BootCurrent: 00AF\n"
+            "BootOrder: 00AF,0001\n"
+            "Boot00AF* BC250 Core Unlock "
+            "HD(1,GPT,12345678-1234-5678-9abc-def012345678,0x800,0x100000)"
+            "/File(\\EFI\\bc250\\bc250-core-unlock.efi)\n"
+        )
+
+    async def _efi_status(self, backend, paths, *, output=None, returncode=0):
+        trusted_paths = set(paths.values())
+        def command_result(command, **_kwargs):
+            if command[0] == backend_module.EFIBOOTMGR:
+                return (
+                    returncode,
+                    self._efi_boot_output() if output is None else output,
+                    "",
+                )
+            if command[0] == backend_module.FINDMNT:
+                return (
+                    0,
+                    f"/dev/nvme0n1p1 {paths['esp_root']} vfat rw,nosuid\n",
+                    "",
+                )
+            if command[0] == backend_module.LSBLK:
+                return (
+                    0,
+                    "/dev/nvme0n1p1 part /dev/nvme0n1 1 "
+                    "12345678-1234-5678-9abc-def012345678 "
+                    "c12a7328-f81f-11d2-ba4b-00a0c93ec93b\n",
+                    "",
+                )
+            raise AssertionError(f"unexpected command: {command}")
+
+        backend._exec = AsyncMock(side_effect=command_result)
+        with self._patch_efi_paths(paths), patch.object(
+            ToolkitBackend,
+            "_trusted_root_file",
+            side_effect=lambda path: path in trusted_paths and path.exists(),
+        ):
+            return await backend._cpu_unlock_efi_status()
+
+    async def test_cpu_unlock_efi_status_requires_complete_trusted_transaction(self):
+        backend = object.__new__(ToolkitBackend)
+        with tempfile.TemporaryDirectory() as directory:
+            paths = self._write_efi_artifacts(Path(directory))
+            status = await self._efi_status(backend, paths)
+
+        self.assertTrue(status["installed"])
+        self.assertTrue(status["stateInstalled"])
+        self.assertTrue(status["stateValid"])
+        self.assertTrue(status["licenseInstalled"])
+        self.assertTrue(status["headersLicenseInstalled"])
+        self.assertTrue(status["bootEntryConfigured"])
+        self.assertEqual(
+            status["bootEntry"],
+            {
+                "present": True,
+                "active": True,
+                "matching": True,
+                "firstInBootOrder": True,
+                "effective": True,
+                "queryAvailable": True,
+            },
+        )
+        self.assertTrue(status["imageHashValid"])
+        self.assertEqual(
+            [call.args[0][0] for call in backend._exec.await_args_list],
+            [
+                backend_module.EFIBOOTMGR,
+                backend_module.FINDMNT,
+                backend_module.LSBLK,
+            ],
+        )
+
+    async def test_cpu_unlock_efi_status_missing_state_is_partial(self):
+        backend = object.__new__(ToolkitBackend)
+        with tempfile.TemporaryDirectory() as directory:
+            paths = self._write_efi_artifacts(Path(directory))
+            paths["state"].unlink()
+            status = await self._efi_status(backend, paths)
+
+        self.assertFalse(status["installed"])
+        self.assertTrue(status["partial"])
+        self.assertFalse(status["stateInstalled"])
+        self.assertFalse(status["stateValid"])
+        self.assertFalse(status["bootEntry"]["present"])
+        self.assertFalse(status["bootEntry"]["effective"])
+
+    async def test_cpu_unlock_efi_status_recovery_state_is_partial(self):
+        backend = object.__new__(ToolkitBackend)
+        with tempfile.TemporaryDirectory() as directory:
+            paths = self._write_efi_artifacts(Path(directory))
+            paths["recovery"].write_text("PHASE=create\n", encoding="ascii")
+            status = await self._efi_status(backend, paths)
+
+        self.assertTrue(status["recoveryStatePresent"])
+        self.assertFalse(status["installed"])
+        self.assertTrue(status["partial"])
+
+    async def test_cpu_unlock_efi_status_accepts_efibootmgr_backslash_file_node(self):
+        backend = object.__new__(ToolkitBackend)
+        with tempfile.TemporaryDirectory() as directory:
+            paths = self._write_efi_artifacts(Path(directory))
+            output = self._efi_boot_output().replace("/File(", "/\\File(")
+            status = await self._efi_status(backend, paths, output=output)
+
+        self.assertTrue(status["installed"])
+        self.assertTrue(status["bootEntry"]["effective"])
+
+    async def test_cpu_unlock_efi_status_rejects_malformed_state(self):
+        backend = object.__new__(ToolkitBackend)
+        for name in ("duplicate", "unknown", "missing"):
+            with self.subTest(name=name), tempfile.TemporaryDirectory() as directory:
+                paths = self._write_efi_artifacts(Path(directory))
+                content = paths["state"].read_text(encoding="ascii")
+                if name == "duplicate":
+                    content += "BOOTNUM=00AF\n"
+                elif name == "unknown":
+                    content += "UNKNOWN=value\n"
+                else:
+                    content = content.replace(
+                        "LOADER=\\EFI\\bc250\\bc250-core-unlock.efi\n", ""
+                    )
+                paths["state"].write_text(content, encoding="ascii")
+                status = await self._efi_status(backend, paths)
+                self.assertFalse(status["installed"])
+                self.assertTrue(status["partial"])
+                self.assertTrue(status["stateInstalled"])
+                self.assertFalse(status["stateValid"])
+
+    async def test_cpu_unlock_efi_status_rejects_state_bootnum_mismatch(self):
+        backend = object.__new__(ToolkitBackend)
+        with tempfile.TemporaryDirectory() as directory:
+            paths = self._write_efi_artifacts(Path(directory))
+            content = paths["state"].read_text(encoding="ascii")
+            paths["state"].write_text(
+                content.replace("BOOTNUM=00AF", "BOOTNUM=BEEF"),
+                encoding="ascii",
+            )
+            status = await self._efi_status(backend, paths)
+
+        self.assertFalse(status["installed"])
+        self.assertTrue(status["partial"])
+        self.assertFalse(status["stateValid"])
+        self.assertFalse(status["bootEntryConfigured"])
+
+    async def test_cpu_unlock_efi_status_missing_hash_is_partial(self):
+        backend = object.__new__(ToolkitBackend)
+        with tempfile.TemporaryDirectory() as directory:
+            paths = self._write_efi_artifacts(Path(directory))
+            paths["image_hash"].unlink()
+            status = await self._efi_status(backend, paths)
+
+        self.assertFalse(status["installed"])
+        self.assertTrue(status["partial"])
+        self.assertFalse(status["imageHashPresent"])
+        self.assertIsNone(status["imageHashValid"])
+
+    async def test_cpu_unlock_efi_status_requires_trusted_installed_licenses(self):
+        backend = object.__new__(ToolkitBackend)
+        for key, status_key in (
+            ("license", "licenseInstalled"),
+            ("headers_license", "headersLicenseInstalled"),
+        ):
+            with self.subTest(key=key), tempfile.TemporaryDirectory() as directory:
+                paths = self._write_efi_artifacts(Path(directory))
+                paths[key].unlink()
+                status = await self._efi_status(backend, paths)
+                self.assertFalse(status["installed"])
+                self.assertTrue(status["partial"])
+                self.assertFalse(status[status_key])
+
+    async def test_cpu_unlock_efi_status_requires_effective_nvram_entry(self):
+        valid = self._efi_boot_output()
+        cases = {
+            "deleted": valid.split("Boot00AF", 1)[0],
+            "reordered": valid.replace("BootOrder: 00AF,0001", "BootOrder: 0001,00AF"),
+            "inactive": valid.replace("Boot00AF*", "Boot00AF"),
+            "wrong-bootnum": valid.replace("Boot00AF*", "BootBEEF*"),
+            "wrong-label": valid.replace("BC250 Core Unlock", "Other Unlock"),
+            "wrong-loader": valid.replace(
+                "\\EFI\\bc250\\bc250-core-unlock.efi",
+                "\\EFI\\other\\bc250-core-unlock.efi",
+            ),
+            "wrong-partition": valid.replace("HD(1,GPT", "HD(2,GPT"),
+            "wrong-partuuid": valid.replace(
+                "12345678-1234-5678-9abc-def012345678",
+                "87654321-4321-8765-cba9-876543210fed",
+            ),
+            "unavailable": valid,
+        }
+        for name, output in cases.items():
+            with self.subTest(name=name), tempfile.TemporaryDirectory() as directory:
+                backend = object.__new__(ToolkitBackend)
+                paths = self._write_efi_artifacts(Path(directory))
+                status = await self._efi_status(
+                    backend,
+                    paths,
+                    output=output,
+                    returncode=1 if name == "unavailable" else 0,
+                )
+                self.assertFalse(status["installed"])
+                self.assertTrue(status["partial"])
+                self.assertTrue(status["bootEntryConfigured"])
+                self.assertFalse(status["bootEntry"]["effective"])
+
+    async def test_cpu_unlock_efi_status_queries_nvram_without_local_artifacts(self):
+        backend = object.__new__(ToolkitBackend)
+        backend._exec = AsyncMock(return_value=(0, "BootOrder: 0001\n", ""))
+        with patch.object(ToolkitBackend, "_trusted_root_file", return_value=False), patch.object(
+            ToolkitBackend, "_path_represented", return_value=False
+        ):
+            status = await backend._cpu_unlock_efi_status()
+
+        self.assertFalse(status["installed"])
+        self.assertFalse(status["partial"])
+        backend._exec.assert_awaited_once_with(
+            [backend_module.EFIBOOTMGR, "-v"], timeout=5, check=False
+        )
+
+    async def test_cpu_unlock_efi_status_detects_guard_and_nvram_only_states(self):
+        backend = object.__new__(ToolkitBackend)
+        output = self._efi_boot_output()
+        backend._exec = AsyncMock(return_value=(0, output, ""))
+        guard = Path("/test/efi-guard")
+        with patch.object(backend_module, "CPU_UNLOCK_EFI_GUARD_PATH", guard), patch.object(
+            ToolkitBackend, "_trusted_root_file", return_value=False
+        ), patch.object(
+            ToolkitBackend,
+            "_path_represented",
+            side_effect=lambda path: path == guard,
+        ):
+            status = await backend._cpu_unlock_efi_status()
+
+        self.assertTrue(status["partial"])
+        self.assertTrue(status["efiGuardPresent"])
+        self.assertTrue(status["unrecordedMatchingEntries"])
+        self.assertEqual(status["matchingEntryCount"], 1)
+
+    async def test_cpu_unlock_efi_status_fails_closed_when_uefi_query_fails(self):
+        backend = object.__new__(ToolkitBackend)
+        backend._exec = AsyncMock(return_value=(1, "", "unavailable"))
+        with tempfile.TemporaryDirectory() as directory, patch.object(
+            backend_module, "CPU_UNLOCK_EFIVARS_DIR_PATH", Path(directory)
+        ), patch.object(
+            ToolkitBackend, "_trusted_root_file", return_value=False
+        ), patch.object(
+            ToolkitBackend, "_path_represented", return_value=False
+        ):
+            status = await backend._cpu_unlock_efi_status()
+
+        self.assertTrue(status["uefiRuntimeAvailable"])
+        self.assertTrue(status["partial"])
+        self.assertFalse(status["bootEntry"]["queryAvailable"])
 
     async def test_cpu_unlock_status_has_installation_state_and_advisory_blockers(self):
         backend = object.__new__(ToolkitBackend)
@@ -885,7 +1237,11 @@ class BackendMutationTests(unittest.IsolatedAsyncioTestCase):
         )
         backend._bc250_present_secure = MagicMock(return_value=True)
         backend._cpu_unlock_payload_available = MagicMock(return_value=True)
+        backend._cpu_unlock_off_payload_available = MagicMock(return_value=True)
         backend._cpu_unlock_persistent = MagicMock(return_value=False)
+        backend._cpu_unlock_efi_status = AsyncMock(
+            return_value={"installed": False, "partial": False}
+        )
 
         with patch.object(ToolkitBackend, "_trusted_root_file", return_value=True):
             status = await backend.get_cpu_unlock_status()
@@ -893,24 +1249,94 @@ class BackendMutationTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(status["schemaVersion"], 1)
         self.assertTrue(status["helperInstalled"])
         self.assertTrue(status["unitInstalled"])
+        self.assertEqual(status["mode"], "temporary")
+        self.assertFalse(status["linuxReplay"]["enabled"])
+        self.assertEqual(status["linuxReplay"]["service"], status["service"])
         self.assertTrue(status["actions"]["enable"]["available"])
-        self.assertEqual(
-            status["actions"]["off"]["blockers"], ["persistent-replay-disabled"]
-        )
+        self.assertTrue(status["actions"]["efi-enable"]["available"])
+        self.assertTrue(status["actions"]["off"]["available"])
+        self.assertEqual(status["actions"]["off"]["blockers"], [])
 
     async def test_cpu_unlock_automatic_guard_blocks_every_action(self):
         guard = {"state": "automatic", "active": True, "currentBoot": True}
-        for action in ("test", "enable", "off"):
+        for action in ("test", "enable", "efi-enable", "off"):
             result = ToolkitBackend._cpu_unlock_action_status(
                 action,
                 device_present=True,
                 topology_state="unlocked",
                 payload_available=True,
                 service_enabled=True,
+                mode="linux-replay",
                 guard=guard,
             )
             self.assertIn("automatic-reboot-pending", result["blockers"])
             self.assertFalse(result["available"])
+
+    def test_cpu_unlock_mode_specific_action_blockers(self):
+        guard = {"state": "clear", "active": False, "currentBoot": False}
+
+        def available(action, mode, service_enabled=False):
+            return ToolkitBackend._cpu_unlock_action_status(
+                action,
+                device_present=True,
+                topology_state="unlocked",
+                payload_available=True,
+                service_enabled=service_enabled,
+                mode=mode,
+                guard=guard,
+            )["available"]
+
+        self.assertFalse(available("test", "efi"))
+        self.assertFalse(available("enable", "efi"))
+        self.assertFalse(available("efi-enable", "efi"))
+        self.assertTrue(available("off", "efi"))
+
+        self.assertFalse(available("test", "linux-replay", True))
+        self.assertFalse(available("enable", "linux-replay", True))
+        self.assertFalse(available("efi-enable", "linux-replay", True))
+        self.assertTrue(available("off", "linux-replay", True))
+
+        for mode in ("partial", "conflict"):
+            self.assertFalse(available("test", mode, mode == "conflict"))
+            self.assertFalse(available("enable", mode, mode == "conflict"))
+            self.assertFalse(available("efi-enable", mode, mode == "conflict"))
+            self.assertTrue(available("off", mode, mode == "conflict"))
+
+        self.assertTrue(available("test", "temporary"))
+        self.assertTrue(available("enable", "temporary"))
+        self.assertTrue(available("efi-enable", "temporary"))
+        self.assertTrue(available("off", "temporary"))
+
+    def test_cpu_unlock_off_ignores_setup_blockers_except_current_automatic_guard(self):
+        base = {
+            "action": "off",
+            "device_present": False,
+            "topology_state": "unavailable",
+            "payload_available": True,
+            "service_enabled": False,
+            "mode": "partial",
+        }
+        for guard in (
+            {"state": "unavailable", "active": True, "currentBoot": False},
+            {"state": "automatic", "active": True, "currentBoot": False},
+        ):
+            result = ToolkitBackend._cpu_unlock_action_status(**base, guard=guard)
+            self.assertTrue(result["available"])
+            self.assertEqual(result["blockers"], [])
+
+        result = ToolkitBackend._cpu_unlock_action_status(
+            **base,
+            guard={"state": "automatic", "active": True, "currentBoot": True},
+        )
+        self.assertFalse(result["available"])
+        self.assertEqual(result["blockers"], ["automatic-reboot-pending"])
+
+        result = ToolkitBackend._cpu_unlock_action_status(
+            **{**base, "payload_available": False},
+            guard={"state": "clear", "active": False, "currentBoot": False},
+        )
+        self.assertFalse(result["available"])
+        self.assertEqual(result["blockers"], ["helper-bundle-unavailable"])
 
     async def test_inactive_governor_config_update_does_not_start_service(self):
         backend = object.__new__(ToolkitBackend)
@@ -1347,6 +1773,12 @@ class DeckyRuntimeTests(unittest.TestCase):
                 / "smu-oc-patches/README.md",
                 Path("core-unlock/bc250-unlock-cores.py"): repository
                 / "core-unlock/bc250-unlock-cores.py",
+                Path("core-unlock/bc250-unlock-cores-efi.c"): repository
+                / "core-unlock/bc250-unlock-cores-efi.c",
+                Path("core-unlock/EFI-LICENSE"): repository
+                / "core-unlock/EFI-LICENSE",
+                Path("core-unlock/EFI-HEADERS-LICENSE"): repository
+                / "core-unlock/EFI-HEADERS-LICENSE",
                 Path("core-unlock/LICENSE"): repository / "core-unlock/LICENSE",
                 Path("topology.sh"): repository / "topology.sh",
             }

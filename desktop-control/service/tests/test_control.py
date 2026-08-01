@@ -190,6 +190,17 @@ class ControlServiceTests(unittest.IsolatedAsyncioTestCase):
             self.backends[0].calls, [("cpu_unlock_action", ("enable",))]
         )
 
+    async def test_cpu_unlock_accepts_efi_enable_without_changing_dbus_contract(self):
+        operation_id = await self.service.cpu_unlock_action(":1.1", "efi-enable")
+        operation = await self.wait_for_status(":1.1", operation_id, "succeeded")
+
+        self.assertEqual(
+            operation["result"], {"action": "efi-enable", "nextStep": "none"}
+        )
+        self.assertEqual(
+            self.backends[0].calls, [("cpu_unlock_action", ("efi-enable",))]
+        )
+
     async def test_ram_mutations_are_authorized_and_non_cancellable(self):
         operation_id = await self.service.set_uma_size(":1.1", 512)
         operation = await self.wait_for_status(":1.1", operation_id, "succeeded")

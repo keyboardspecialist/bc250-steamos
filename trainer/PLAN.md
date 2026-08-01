@@ -210,6 +210,7 @@ CpuUnlockAction(action string) -> operation ID
 
 - `test`
 - `enable`
+- `efi-enable`
 - `off`
 
 Do not expose arbitrary command arguments, raw SMU operations, internal helper
@@ -223,7 +224,10 @@ Structured status should include:
 - Locked, unlocked, unexpected, or unavailable topology state
 - CCX/core grouping derived directly from sysfs
 - Helper and unit installation state
-- Service active and enabled state
+- Current mutually exclusive mode (`none`, `temporary`, `linux-replay`, `efi`,
+  `conflict`, or `partial`)
+- Linux replay service active and enabled state
+- EFI image and firmware boot-entry state
 - Update-persistence state
 - Manual or automatic reboot-guard state
 - Advisory action availability and blocker codes

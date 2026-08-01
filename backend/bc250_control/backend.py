@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import fcntl
 import glob
+import hashlib
 import json
 import math
 import os
@@ -25,6 +26,9 @@ except ModuleNotFoundError:  # pragma: no cover - used by older SteamOS Python
 BASH = "/usr/bin/bash"
 BUSCTL = "/usr/bin/busctl"
 ENV = "/usr/bin/env"
+EFIBOOTMGR = "/usr/bin/efibootmgr"
+FINDMNT = "/usr/bin/findmnt"
+LSBLK = "/usr/bin/lsblk"
 RUNUSER = "/usr/bin/runuser"
 PYTHON3 = "/usr/bin/python3"
 SYSTEMCTL = "/usr/bin/systemctl"
@@ -55,6 +59,34 @@ CPU_UNLOCK_UNIT_PATH = Path("/etc/systemd/system/bc250-core-unlock.service")
 CPU_UNLOCK_PERSISTENCE_PATH = Path(
     "/etc/atomic-update.conf.d/bc250-power.conf"
 )
+CPU_UNLOCK_EFI_MASTER_PATH = Path(
+    "/var/lib/bc250-control/core-unlock/bc250-core-unlock.efi"
+)
+CPU_UNLOCK_EFI_STATE_PATH = Path(
+    "/var/lib/bc250-control/core-unlock/efi-state"
+)
+CPU_UNLOCK_EFI_BOOTNUM_PATH = Path(
+    "/var/lib/bc250-control/core-unlock/efi-bootnum"
+)
+CPU_UNLOCK_EFI_IMAGE_HASH_PATH = Path(
+    "/var/lib/bc250-control/core-unlock/efi-image.sha256"
+)
+CPU_UNLOCK_EFI_RECOVERY_PATH = Path(
+    "/var/lib/bc250-control/core-unlock/efi-recovery"
+)
+CPU_UNLOCK_EFI_ESP_IMAGE_PATH = Path("/efi/EFI/bc250/bc250-core-unlock.efi")
+CPU_UNLOCK_EFI_ESP_ROOT_PATH = Path("/efi")
+CPU_UNLOCK_EFI_GUARD_PATH = Path(
+    "/sys/firmware/efi/efivars/"
+    "BC250CoreUnlockAttempt-4f6f6f13-1ec2-4f26-a250-bc250c0e77ff"
+)
+CPU_UNLOCK_EFIVARS_DIR_PATH = Path("/sys/firmware/efi/efivars")
+CPU_UNLOCK_EFI_LICENSE_PATH = Path(
+    "/var/lib/bc250-control/licenses/bc250-core-unlock-efi-LICENSE"
+)
+CPU_UNLOCK_EFI_HEADER_LICENSE_PATH = Path(
+    "/var/lib/bc250-control/licenses/yoppeh-efi-LICENSE"
+)
 CPU_SYSFS_PATH = Path("/sys/devices/system/cpu")
 PCI_SYSFS_PATH = Path("/sys/bus/pci/devices")
 BOOT_ID_PATH = Path("/proc/sys/kernel/random/boot_id")
@@ -63,6 +95,9 @@ CPU_UNLOCK_PAYLOAD_FILES = (
     Path("bc250-storage.sh"),
     Path("bc250-update-persistence.sh"),
     Path("core-unlock/bc250-unlock-cores.py"),
+    Path("core-unlock/bc250-unlock-cores-efi.c"),
+    Path("core-unlock/EFI-LICENSE"),
+    Path("core-unlock/EFI-HEADERS-LICENSE"),
     Path("core-unlock/LICENSE"),
 )
 ROOT_UMR_PATH = Path("/var/lib/bc250-control/umr/bin/umr")
@@ -449,7 +484,7 @@ class ToolkitBackend:
             return default
 
     @staticmethod
-    def _read_bounded(path: Path, limit: int) -> Optional[str]:
+    def _read_bounded_bytes(path: Path, limit: int) -> Optional[bytes]:
         if limit <= 0:
             return None
         descriptor = -1
@@ -463,12 +498,22 @@ class ToolkitBackend:
             content = os.read(descriptor, limit + 1)
             if len(content) > limit:
                 return None
-            return content.decode("ascii", "strict").strip()
-        except (OSError, UnicodeError):
+            return content
+        except OSError:
             return None
         finally:
             if descriptor >= 0:
                 os.close(descriptor)
+
+    @classmethod
+    def _read_bounded(cls, path: Path, limit: int) -> Optional[str]:
+        content = cls._read_bounded_bytes(path, limit)
+        if content is None:
+            return None
+        try:
+            return content.decode("ascii", "strict").strip()
+        except UnicodeError:
+            return None
 
     @staticmethod
     def _read_key_values(path: Union[str, Path]) -> dict[str, str]:
@@ -712,6 +757,11 @@ class ToolkitBackend:
             for relative in CPU_UNLOCK_PAYLOAD_FILES
         )
 
+    def _cpu_unlock_off_payload_available(self) -> bool:
+        return self._trusted_root_directory(
+            CPU_UNLOCK_PAYLOAD_PATH
+        ) and self._trusted_root_file(CPU_UNLOCK_PAYLOAD_PATH / "bc250-power.sh")
+
     def _cpu_unlock_persistent(self) -> bool:
         if not self._trusted_root_file(CPU_UNLOCK_PERSISTENCE_PATH):
             return False
@@ -725,6 +775,394 @@ class ToolkitBackend:
         }.issubset(paths)
 
     @staticmethod
+    def _path_represented(path: Path) -> bool:
+        try:
+            return os.path.lexists(path)
+        except OSError:
+            return True
+
+    @staticmethod
+    def _file_sha256(path: Path) -> Optional[str]:
+        descriptor = -1
+        try:
+            descriptor = os.open(
+                str(path), os.O_RDONLY | os.O_CLOEXEC | os.O_NOFOLLOW
+            )
+            if not stat.S_ISREG(os.fstat(descriptor).st_mode):
+                return None
+            digest = hashlib.sha256()
+            while True:
+                chunk = os.read(descriptor, 1024 * 1024)
+                if not chunk:
+                    return digest.hexdigest()
+                digest.update(chunk)
+        except OSError:
+            return None
+        finally:
+            if descriptor >= 0:
+                os.close(descriptor)
+
+    def _cpu_unlock_efi_file_status(self) -> dict[str, Any]:
+        master_installed = self._trusted_root_file(CPU_UNLOCK_EFI_MASTER_PATH)
+        image_installed = self._trusted_root_file(CPU_UNLOCK_EFI_ESP_IMAGE_PATH)
+        state_installed = self._trusted_root_file(CPU_UNLOCK_EFI_STATE_PATH)
+        license_installed = self._trusted_root_file(CPU_UNLOCK_EFI_LICENSE_PATH)
+        header_license_installed = self._trusted_root_file(
+            CPU_UNLOCK_EFI_HEADER_LICENSE_PATH
+        )
+        recovery_present = self._path_represented(CPU_UNLOCK_EFI_RECOVERY_PATH)
+        bootnum_trusted = self._trusted_root_file(CPU_UNLOCK_EFI_BOOTNUM_PATH)
+        bootnum = (
+            self._read_bounded_bytes(CPU_UNLOCK_EFI_BOOTNUM_PATH, 5)
+            if bootnum_trusted
+            else None
+        )
+        bootnum_valid = bool(
+            bootnum is not None and re.fullmatch(rb"[0-9a-fA-F]{4}\n?", bootnum)
+        )
+        bootnum_text = bootnum.rstrip(b"\n").decode("ascii") if bootnum_valid else None
+
+        state_valid = False
+        values: dict[str, str] = {}
+        state_content = (
+            self._read_bounded_bytes(CPU_UNLOCK_EFI_STATE_PATH, 4096)
+            if state_installed
+            else None
+        )
+        if state_content is not None:
+            try:
+                state_text = state_content.decode("ascii", "strict")
+            except UnicodeError:
+                state_text = ""
+            allowed = {
+                "BOOTNUM",
+                "ESP_SOURCE",
+                "DISK",
+                "PART",
+                "PARTUUID",
+                "LABEL",
+                "LOADER",
+            }
+            for line in state_text.splitlines():
+                if not line or "=" not in line:
+                    state_text = ""
+                    break
+                key, value = line.split("=", 1)
+                if key not in allowed or key in values:
+                    state_text = ""
+                    break
+                values[key] = value
+            state_valid = bool(
+                state_text
+                and values.keys() == allowed
+                and bootnum_text is not None
+                and re.fullmatch(r"[0-9a-fA-F]{4}", values["BOOTNUM"])
+                and values["BOOTNUM"].lower() == bootnum_text.lower()
+                and re.fullmatch(r"/dev/\S+", values["ESP_SOURCE"])
+                and re.fullmatch(r"/dev/\S+", values["DISK"])
+                and re.fullmatch(r"[1-9][0-9]*", values["PART"])
+                and re.fullmatch(
+                    r"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-"
+                    r"[0-9a-fA-F]{4}-[0-9a-fA-F]{12}",
+                    values["PARTUUID"],
+                )
+                and values["LABEL"] == "BC250 Core Unlock"
+                and values["LOADER"] == r"\EFI\bc250\bc250-core-unlock.efi"
+            )
+
+        master_hash = (
+            self._file_sha256(CPU_UNLOCK_EFI_MASTER_PATH)
+            if master_installed
+            else None
+        )
+        image_hash = (
+            self._file_sha256(CPU_UNLOCK_EFI_ESP_IMAGE_PATH)
+            if image_installed
+            else None
+        )
+        images_match = master_hash is not None and master_hash == image_hash
+
+        hash_present = self._path_represented(CPU_UNLOCK_EFI_IMAGE_HASH_PATH)
+        hash_trusted = False
+        hash_valid: Optional[bool] = None
+        if hash_present:
+            hash_trusted = self._trusted_root_file(CPU_UNLOCK_EFI_IMAGE_HASH_PATH)
+            hash_content = (
+                self._read_bounded_bytes(CPU_UNLOCK_EFI_IMAGE_HASH_PATH, 65)
+                if hash_trusted
+                else None
+            )
+            hash_match = (
+                re.fullmatch(rb"([0-9a-f]{64})\n?", hash_content)
+                if hash_content is not None
+                else None
+            )
+            hash_valid = bool(
+                hash_match is not None
+                and master_hash is not None
+                and image_hash is not None
+                and hash_match[1].decode("ascii").lower() == master_hash == image_hash
+            )
+
+        files_complete = bool(
+            master_installed
+            and image_installed
+            and state_installed
+            and state_valid
+            and not recovery_present
+            and license_installed
+            and header_license_installed
+            and images_match
+            and hash_valid is True
+        )
+        required_represented = any(
+            self._path_represented(path)
+            for path in (
+                CPU_UNLOCK_EFI_MASTER_PATH,
+                CPU_UNLOCK_EFI_STATE_PATH,
+                CPU_UNLOCK_EFI_BOOTNUM_PATH,
+                CPU_UNLOCK_EFI_IMAGE_HASH_PATH,
+                CPU_UNLOCK_EFI_RECOVERY_PATH,
+                CPU_UNLOCK_EFI_ESP_IMAGE_PATH,
+                CPU_UNLOCK_EFI_LICENSE_PATH,
+                CPU_UNLOCK_EFI_HEADER_LICENSE_PATH,
+            )
+        )
+        return {
+            "installed": False,
+            "partial": required_represented,
+            "masterInstalled": master_installed,
+            "stateInstalled": state_installed,
+            "stateValid": state_valid,
+            "licenseInstalled": license_installed,
+            "headerLicenseInstalled": header_license_installed,
+            "headersLicenseInstalled": header_license_installed,
+            "licensesInstalled": license_installed and header_license_installed,
+            "imageInstalled": image_installed,
+            "espImageInstalled": image_installed,
+            "imagesMatch": images_match,
+            "bootnumStateInstalled": bootnum_trusted,
+            "bootEntryConfigured": state_valid,
+            "bootEntry": {
+                "present": False,
+                "active": False,
+                "matching": False,
+                "firstInBootOrder": False,
+                "effective": False,
+                "queryAvailable": False,
+            },
+            "imageHashPresent": hash_present,
+            "imageHashStateInstalled": hash_trusted,
+            "imageHashValid": hash_valid,
+            "recoveryStatePresent": recovery_present,
+            "_artifactsRepresented": required_represented,
+            "_filesComplete": files_complete,
+            "_bootnum": values.get("BOOTNUM") if state_valid else None,
+            "_source": values.get("ESP_SOURCE") if state_valid else None,
+            "_disk": values.get("DISK") if state_valid else None,
+            "_part": values.get("PART") if state_valid else None,
+            "_partuuid": values.get("PARTUUID") if state_valid else None,
+        }
+
+    @staticmethod
+    def _cpu_unlock_boot_entry_status(
+        output: str,
+        *,
+        bootnum: Optional[str],
+        part: Optional[str],
+        partuuid: Optional[str],
+    ) -> dict[str, bool]:
+        result = {
+            "present": False,
+            "active": False,
+            "matching": False,
+            "firstInBootOrder": False,
+            "effective": False,
+            "queryAvailable": True,
+        }
+        if bootnum is None or part is None or partuuid is None:
+            return result
+
+        recorded = bootnum.upper()
+        order_match = re.search(
+            r"^BootOrder:\s*([0-9a-fA-F]{4}(?:,[0-9a-fA-F]{4})*)\s*$",
+            output,
+            re.MULTILINE,
+        )
+        if order_match is not None:
+            result["firstInBootOrder"] = (
+                order_match[1].split(",", 1)[0].upper() == recorded
+            )
+
+        entry_match = re.search(
+            rf"^Boot{re.escape(recorded)}(\*)?\s+(.+)$",
+            output,
+            re.MULTILINE | re.IGNORECASE,
+        )
+        if entry_match is None:
+            return result
+        result["present"] = True
+        result["active"] = entry_match[1] == "*"
+        identity_match = re.fullmatch(
+            r"BC250 Core Unlock HD\(([1-9][0-9]*),GPT,"
+            r"([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-"
+            r"[0-9a-fA-F]{4}-[0-9a-fA-F]{12}),[^)]*\)"
+            r"(?:/\\?)?File\((\\EFI\\bc250\\bc250-core-unlock\.efi)\)\s*",
+            entry_match[2],
+            re.IGNORECASE,
+        )
+        result["matching"] = bool(
+            identity_match is not None
+            and entry_match[2].startswith("BC250 Core Unlock HD(")
+            and identity_match[1] == part
+            and identity_match[2].lower() == partuuid.lower()
+            and identity_match[3].lower()
+            == r"\EFI\bc250\bc250-core-unlock.efi".lower()
+        )
+        result["effective"] = all(
+            result[key]
+            for key in ("present", "active", "matching", "firstInBootOrder")
+        )
+        return result
+
+    @staticmethod
+    def _cpu_unlock_matching_boot_numbers(output: str) -> list[str]:
+        pattern = re.compile(
+            r"^Boot([0-9a-fA-F]{4})\*?\s+BC250 Core Unlock "
+            r"HD\([^)]*\)(?:/\\?)?File\(\\EFI\\bc250\\bc250-core-unlock\.efi\)\s*$",
+            re.MULTILINE | re.IGNORECASE,
+        )
+        return [match[1].upper() for match in pattern.finditer(output)]
+
+    async def _cpu_unlock_efi_esp_identity_valid(
+        self,
+        *,
+        source: Optional[str],
+        disk: Optional[str],
+        part: Optional[str],
+        partuuid: Optional[str],
+    ) -> Optional[bool]:
+        if None in (source, disk, part, partuuid):
+            return False
+        try:
+            returncode, output, _ = await self._exec(
+                [
+                    FINDMNT,
+                    "-nro",
+                    "SOURCE,TARGET,FSTYPE,OPTIONS",
+                    "--target",
+                    str(CPU_UNLOCK_EFI_ESP_ROOT_PATH),
+                ],
+                timeout=5,
+                check=False,
+            )
+            if returncode != 0:
+                return None
+            mount_fields = output.split()
+            if len(mount_fields) != 4:
+                return False
+            mount_source, target, filesystem, options = mount_fields
+            if (
+                target != str(CPU_UNLOCK_EFI_ESP_ROOT_PATH)
+                or filesystem.lower() not in {"vfat", "fat", "fat32"}
+                or "rw" not in options.split(",")
+            ):
+                return False
+            returncode, output, _ = await self._exec(
+                [
+                    LSBLK,
+                    "-dnpo",
+                    "NAME,TYPE,PKNAME,PARTNUM,PARTUUID,PARTTYPE",
+                    mount_source,
+                ],
+                timeout=5,
+                check=False,
+            )
+            if returncode != 0:
+                return None
+            fields = output.split()
+            if len(fields) != 6:
+                return False
+            name, kind, parent, actual_part, actual_uuid, parttype = fields
+            return bool(
+                name == source
+                and kind == "part"
+                and parent == disk
+                and actual_part == part
+                and actual_uuid.lower() == partuuid.lower()
+                and parttype.lower()
+                == "c12a7328-f81f-11d2-ba4b-00a0c93ec93b"
+            )
+        except (CommandError, OSError):
+            return None
+
+    async def _cpu_unlock_efi_status(self) -> dict[str, Any]:
+        status = self._cpu_unlock_efi_file_status()
+        represented = status.pop("_artifactsRepresented")
+        files_complete = status.pop("_filesComplete")
+        bootnum = status.pop("_bootnum")
+        source = status.pop("_source")
+        disk = status.pop("_disk")
+        part = status.pop("_part")
+        partuuid = status.pop("_partuuid")
+        guard_present = self._path_represented(CPU_UNLOCK_EFI_GUARD_PATH)
+        uefi_runtime_available = CPU_UNLOCK_EFIVARS_DIR_PATH.is_dir()
+        boot_entry = {
+            "present": False,
+            "active": False,
+            "matching": False,
+            "firstInBootOrder": False,
+            "effective": False,
+            "queryAvailable": False,
+        }
+        matching_numbers: list[str] = []
+        try:
+            returncode, output, _ = await self._exec(
+                [EFIBOOTMGR, "-v"], timeout=5, check=False
+            )
+            if returncode == 0 and re.search(r"^BootOrder:", output, re.MULTILINE):
+                boot_entry = self._cpu_unlock_boot_entry_status(
+                    output, bootnum=bootnum, part=part, partuuid=partuuid
+                )
+                matching_numbers = self._cpu_unlock_matching_boot_numbers(output)
+        except (CommandError, OSError):
+            pass
+        esp_identity_valid = await self._cpu_unlock_efi_esp_identity_valid(
+            source=source,
+            disk=disk,
+            part=part,
+            partuuid=partuuid,
+        )
+        represented = bool(
+            represented
+            or guard_present
+            or matching_numbers
+            or (uefi_runtime_available and not boot_entry["queryAvailable"])
+        )
+        unique_recorded_entry = bool(
+            bootnum is not None
+            and matching_numbers == [bootnum.upper()]
+        )
+        status["bootEntry"] = boot_entry
+        status["efiGuardPresent"] = guard_present
+        status["uefiRuntimeAvailable"] = uefi_runtime_available
+        status["espIdentityValid"] = esp_identity_valid
+        status["matchingEntryCount"] = len(matching_numbers)
+        status["unrecordedMatchingEntries"] = bool(
+            matching_numbers
+            and (bootnum is None or matching_numbers != [bootnum.upper()])
+        )
+        status["installed"] = bool(
+            files_complete
+            and not guard_present
+            and esp_identity_valid is True
+            and boot_entry["effective"]
+            and unique_recorded_entry
+        )
+        status["partial"] = represented and not status["installed"]
+        return status
+
+    @staticmethod
     def _cpu_unlock_action_status(
         action: str,
         *,
@@ -732,9 +1170,16 @@ class ToolkitBackend:
         topology_state: str,
         payload_available: bool,
         service_enabled: bool,
+        mode: str,
         guard: dict[str, Any],
     ) -> dict[str, Any]:
         blockers = []
+        if action == "off":
+            if not payload_available:
+                blockers.append("helper-bundle-unavailable")
+            if guard["state"] == "automatic" and guard["currentBoot"]:
+                blockers.append("automatic-reboot-pending")
+            return {"available": not blockers, "blockers": blockers}
         if not payload_available:
             blockers.append("helper-bundle-unavailable")
         if not device_present:
@@ -749,48 +1194,93 @@ class ToolkitBackend:
             blockers.append("automatic-reboot-pending")
         elif action == "test" and guard["currentBoot"] and topology_state == "locked":
             blockers.append("unlock-already-attempted-this-boot")
-        if action == "test" and service_enabled:
-            blockers.append("persistent-replay-enabled")
+        if action == "test":
+            if mode in ("linux-replay", "conflict"):
+                blockers.append("persistent-replay-enabled")
+            if mode in ("efi", "conflict"):
+                blockers.append("efi-unlock-enabled")
+            if mode == "partial":
+                blockers.append("efi-installation-partial")
         if action == "enable" and topology_state != "unlocked":
             blockers.append("eight-cores-required")
         if action == "enable" and service_enabled:
             blockers.append("persistent-replay-enabled")
-        if action == "off" and not service_enabled:
-            blockers.append("persistent-replay-disabled")
+        if action == "enable" and mode in ("efi", "conflict"):
+            blockers.append("efi-unlock-enabled")
+        if action == "enable" and mode == "partial":
+            blockers.append("efi-installation-partial")
+        if action == "efi-enable" and topology_state != "unlocked":
+            blockers.append("eight-cores-required")
+        if action == "efi-enable" and mode in ("linux-replay", "conflict"):
+            blockers.append("persistent-replay-enabled")
+        if action == "efi-enable" and mode == "efi":
+            blockers.append("efi-unlock-enabled")
+        if action == "efi-enable" and mode == "partial":
+            blockers.append("efi-installation-partial")
         return {"available": not blockers, "blockers": blockers}
 
     async def get_cpu_unlock_status(self) -> dict[str, Any]:
         service_task = asyncio.create_task(
             self._service("bc250-core-unlock.service")
         )
+        efi_task = asyncio.create_task(self._cpu_unlock_efi_status())
         topology = self._cpu_topology()
         guard = self._cpu_unlock_guard()
-        service = await service_task
+        service, efi = await asyncio.gather(service_task, efi_task)
         service_enabled = service["enabled"] == "enabled"
         device_present = self._bc250_present_secure()
         payload_available = self._cpu_unlock_payload_available()
+        off_payload_available = self._cpu_unlock_off_payload_available()
+        helper_installed = self._trusted_root_file(CPU_UNLOCK_HELPER_PATH)
+        license_installed = self._trusted_root_file(CPU_UNLOCK_LICENSE_PATH)
+        unit_installed = self._trusted_root_file(CPU_UNLOCK_UNIT_PATH)
+        update_persistence = self._cpu_unlock_persistent()
+        linux_replay = {
+            "installed": helper_installed and license_installed and unit_installed,
+            "enabled": service_enabled,
+            "service": service,
+            "updatePersistence": update_persistence,
+        }
+        if service_enabled and (efi["installed"] or efi["partial"]):
+            mode = "conflict"
+        elif efi["partial"]:
+            mode = "partial"
+        elif service_enabled:
+            mode = "linux-replay"
+        elif efi["installed"]:
+            mode = "efi"
+        elif topology["topologyState"] == "unlocked":
+            mode = "temporary"
+        else:
+            mode = "none"
         actions = {
             action: self._cpu_unlock_action_status(
                 action,
                 device_present=device_present,
                 topology_state=topology["topologyState"],
-                payload_available=payload_available,
+                payload_available=(
+                    off_payload_available if action == "off" else payload_available
+                ),
                 service_enabled=service_enabled,
+                mode=mode,
                 guard=guard,
             )
-            for action in ("test", "enable", "off")
+            for action in ("test", "enable", "efi-enable", "off")
         }
         return {
             "schemaVersion": 1,
             "devicePresent": device_present,
             **topology,
-            "helperInstalled": self._trusted_root_file(CPU_UNLOCK_HELPER_PATH),
-            "licenseInstalled": self._trusted_root_file(CPU_UNLOCK_LICENSE_PATH),
-            "unitInstalled": self._trusted_root_file(CPU_UNLOCK_UNIT_PATH),
+            "helperInstalled": helper_installed,
+            "licenseInstalled": license_installed,
+            "unitInstalled": unit_installed,
             "helperBundleAvailable": payload_available,
             "service": service,
-            "updatePersistence": self._cpu_unlock_persistent(),
+            "updatePersistence": update_persistence,
             "guard": guard,
+            "mode": mode,
+            "linuxReplay": linux_replay,
+            "efi": efi,
             "actions": actions,
             "semantics": {
                 "test": "A six-core test requires a warm reboot before Linux can enumerate eight cores.",
@@ -2140,16 +2630,31 @@ class ToolkitBackend:
         return await self._mutate(action)
 
     async def cpu_unlock_action(self, action_name: str) -> dict[str, Any]:
-        if type(action_name) is not str or action_name not in {"test", "enable", "off"}:
+        if type(action_name) is not str or action_name not in {
+            "test",
+            "enable",
+            "efi-enable",
+            "off",
+        }:
             raise CommandError("Unknown CPU core-unlock action.")
 
         async def action() -> dict[str, Any]:
-            if not self._cpu_unlock_payload_available():
+            payload_available = (
+                self._cpu_unlock_off_payload_available()
+                if action_name == "off"
+                else self._cpu_unlock_payload_available()
+            )
+            if not payload_available:
                 raise CommandError(
                     "CPU core-unlock helper bundle is missing or unsafe; reinstall the service."
                 )
-            topology = self._cpu_topology()
-            physical_cores = topology["physicalCores"]
+            if action_name == "off":
+                try:
+                    physical_cores = self._cpu_topology()["physicalCores"]
+                except Exception:
+                    physical_cores = None
+            else:
+                physical_cores = self._cpu_topology()["physicalCores"]
             env = {
                 "PATH": "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
                 "HOME": "/root",
@@ -2164,7 +2669,7 @@ class ToolkitBackend:
                     "cpu-unlock",
                     action_name,
                 ],
-                timeout=180,
+                timeout=1800 if action_name == "efi-enable" else 180,
                 env=env,
             )
             if action_name == "test" and physical_cores == 6:

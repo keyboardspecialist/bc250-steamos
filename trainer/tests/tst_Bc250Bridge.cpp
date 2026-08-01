@@ -83,10 +83,48 @@ private slots:
         QCOMPARE(unlock.value(QStringLiteral("schemaVersion")).toInt(), 1);
         QCOMPARE(unlock.value(QStringLiteral("guard")).toMap().value(QStringLiteral("state")).toString(),
                  QStringLiteral("clear"));
+        QCOMPARE(unlock.value(QStringLiteral("mode")).toString(), QStringLiteral("linux-replay"));
+        QCOMPARE(unlock.value(QStringLiteral("linuxReplay")).toMap()
+                     .value(QStringLiteral("service")).toMap()
+                     .value(QStringLiteral("enabled")).toString(), QStringLiteral("enabled"));
+        QVERIFY(unlock.value(QStringLiteral("linuxReplay")).toMap()
+                    .value(QStringLiteral("enabled")).toBool());
+        const QVariantMap efi = unlock.value(QStringLiteral("efi")).toMap();
+        QVERIFY(!efi.value(QStringLiteral("installed")).toBool());
+        QVERIFY(!efi.value(QStringLiteral("partial")).toBool());
+        QVERIFY(!efi.value(QStringLiteral("bootEntryConfigured")).toBool());
+        QVERIFY(!efi.value(QStringLiteral("bootEntry")).toMap()
+                     .value(QStringLiteral("present")).toBool());
+        QVERIFY(!efi.value(QStringLiteral("bootEntry")).toMap()
+                     .value(QStringLiteral("matching")).toBool());
+        QVERIFY(!efi.value(QStringLiteral("bootEntry")).toMap()
+                     .value(QStringLiteral("firstInBootOrder")).toBool());
+        QVERIFY(!efi.value(QStringLiteral("bootEntry")).toMap()
+                     .value(QStringLiteral("effective")).toBool());
+        QCOMPARE(unlock.value(QStringLiteral("actions")).toMap()
+                     .value(QStringLiteral("efi-enable")).toMap()
+                     .value(QStringLiteral("blockers")).toList(),
+                 QVariantList{QStringLiteral("persistent-replay-enabled")});
         QVERIFY(unlock.value(QStringLiteral("actions")).toMap()
-                    .value(QStringLiteral("test")).toMap()
-                    .value(QStringLiteral("available")).toBool());
+                    .contains(QStringLiteral("efi-enable")));
         QCOMPARE(unlock.value(QStringLiteral("ccxGroups")).toList().size(), 2);
+    }
+
+    void acceptsEfiUnlockAction()
+    {
+        Bc250Bridge bridge(true);
+        bridge.cpuUnlockAction(QStringLiteral("efi-enable"));
+        QVERIFY2(bridge.error().isEmpty(), qPrintable(bridge.error()));
+        QVERIFY(bridge.busy());
+        QVERIFY(bridge.busyLabel().contains(QStringLiteral("efi-enable")));
+    }
+
+    void rejectsUnknownUnlockAction()
+    {
+        Bc250Bridge bridge(true);
+        bridge.cpuUnlockAction(QStringLiteral("efi-remove"));
+        QVERIFY(bridge.error().contains(QStringLiteral("Unknown CPU core-unlock action")));
+        QVERIFY(!bridge.busy());
     }
 
     void mockRamSchemaMatchesService()

@@ -105,6 +105,30 @@ CORE_UNLOCK_LOCK="/run/lock/bc250-core-unlock.lock"
 CORE_UNLOCK_LIFECYCLE_LOCK="/run/lock/bc250-core-unlock-lifecycle.lock"
 CORE_UNLOCK_UNIT="/etc/systemd/system/bc250-core-unlock.service"
 CORE_UNLOCK_SVC="bc250-core-unlock.service"
+CORE_UNLOCK_EFI_SOURCE="$SCRIPT_DIR/core-unlock/bc250-unlock-cores-efi.c"
+CORE_UNLOCK_EFI_LICENSE_SOURCE="$SCRIPT_DIR/core-unlock/EFI-LICENSE"
+CORE_UNLOCK_EFI_HEADER_LICENSE_SOURCE="$SCRIPT_DIR/core-unlock/EFI-HEADERS-LICENSE"
+CORE_UNLOCK_EFI_LICENSE="$ROOT_DATA_DIR/licenses/bc250-core-unlock-efi-LICENSE"
+CORE_UNLOCK_EFI_HEADER_LICENSE="$ROOT_DATA_DIR/licenses/yoppeh-efi-LICENSE"
+CORE_UNLOCK_EFI_PIN="761b114e3b186adb82516d5fa8e7a4c559f56ba5"
+CORE_UNLOCK_EFI_REPO="https://github.com/yoppeh/efi.git"
+CORE_UNLOCK_EFI_MASTER="$CORE_UNLOCK_STATE_DIR/bc250-core-unlock.efi"
+CORE_UNLOCK_EFI_STATE="$CORE_UNLOCK_STATE_DIR/efi-state"
+CORE_UNLOCK_EFI_BOOTNUM="$CORE_UNLOCK_STATE_DIR/efi-bootnum"
+CORE_UNLOCK_EFI_IMAGE_HASH="$CORE_UNLOCK_STATE_DIR/efi-image.sha256"
+CORE_UNLOCK_EFI_RECOVERY="$CORE_UNLOCK_STATE_DIR/efi-recovery"
+CORE_UNLOCK_ESP_ROOT="${BC250_CORE_UNLOCK_ESP_ROOT:-/efi}"
+CORE_UNLOCK_ESP_SOURCE="${BC250_CORE_UNLOCK_ESP_SOURCE:-}"
+CORE_UNLOCK_ESP_DISK="${BC250_CORE_UNLOCK_ESP_DISK:-}"
+CORE_UNLOCK_ESP_PART="${BC250_CORE_UNLOCK_ESP_PART:-}"
+CORE_UNLOCK_ESP_PARTUUID="${BC250_CORE_UNLOCK_ESP_PARTUUID:-}"
+CORE_UNLOCK_ESP_PARTTYPE="c12a7328-f81f-11d2-ba4b-00a0c93ec93b"
+CORE_UNLOCK_EFI_DIR="$CORE_UNLOCK_ESP_ROOT/EFI/bc250"
+CORE_UNLOCK_EFI_IMAGE="$CORE_UNLOCK_EFI_DIR/bc250-core-unlock.efi"
+CORE_UNLOCK_EFI_LABEL="BC250 Core Unlock"
+CORE_UNLOCK_EFI_LOADER='\EFI\bc250\bc250-core-unlock.efi'
+CORE_UNLOCK_EFI_GUARD_GUID="4f6f6f13-1ec2-4f26-a250-bc250c0e77ff"
+CORE_UNLOCK_EFIVARS_DIR="${BC250_EFIVARS_DIR:-/sys/firmware/efi/efivars}"
 TOPOLOGY_SH="${TOPOLOGY_SH:-$SCRIPT_DIR/topology.sh}"
 AMDGPU_MODULES_ROOT="${AMDGPU_MODULES_ROOT:-/usr/lib/modules}"
 UPDATE_PERSIST_SH="$SCRIPT_DIR/bc250-update-persistence.sh"
@@ -233,9 +257,58 @@ resume_governor() {
 
 TEMP_DIRS=()
 TEMP_FILES=()
+EFI_TRANSACTION_ACTIVE=0
+EFI_TRANSACTION_BOOTNUM=""
+efi_transaction_rollback() {
+    local number rc=0
+    [[ $EFI_TRANSACTION_ACTIVE -eq 1 ]] || return 0
+    if ! efi_recovery_read || ! verify_core_unlock_recovery_esp_state; then
+        warn "Rollback retained EFI artifacts because ESP ownership could not be revalidated."
+        return 1
+    fi
+    if ! efi_read_boot_listing; then
+        warn "Rollback retained EFI artifacts because EFI Boot entries could not be read."
+        return 1
+    fi
+    if [[ -n "$EFI_TRANSACTION_BOOTNUM" ]]; then
+        number="$EFI_TRANSACTION_BOOTNUM"
+        if efi_number_in_csv "$EFI_RECOVERY_BEFORE" "$number"; then
+            warn "Rollback retained EFI artifacts because Boot$number failed exact transaction validation."
+            return 1
+        fi
+        if efi_boot_entry_present_in "$number" "$EFI_BOOT_LISTING" \
+            && ! efi_boot_entry_matches_in "$number" 0 "$EFI_BOOT_LISTING"; then
+            warn "Rollback retained EFI artifacts because Boot$number failed exact transaction validation."
+            return 1
+        fi
+    else
+        if ! efi_recovery_resolve_boot_number "$EFI_BOOT_LISTING"; then
+            warn "Rollback retained EFI artifacts because the created Boot entry could not be identified safely."
+            return 1
+        fi
+        number="$EFI_RECOVERY_RESOLVED_BOOTNUM"
+    fi
+    if [[ -n "$number" ]] && efi_boot_entry_present_in "$number" "$EFI_BOOT_LISTING"; then
+        if ! efibootmgr --bootnum "$number" --delete-bootnum >/dev/null 2>&1 \
+            || ! efi_read_boot_listing \
+            || efi_boot_entry_present_in "$number" "$EFI_BOOT_LISTING"; then
+            warn "Rollback retained EFI artifacts because Boot$number could not be deleted and verified absent."
+            return 1
+        fi
+    fi
+    rm -f "$CORE_UNLOCK_EFI_STATE" "$CORE_UNLOCK_EFI_BOOTNUM" \
+        "$CORE_UNLOCK_EFI_IMAGE_HASH" "$CORE_UNLOCK_EFI_RECOVERY" \
+        "$CORE_UNLOCK_EFI_IMAGE" \
+        "$CORE_UNLOCK_EFI_MASTER" "$CORE_UNLOCK_EFI_LICENSE" \
+        "$CORE_UNLOCK_EFI_HEADER_LICENSE" || rc=1
+    rmdir "$CORE_UNLOCK_EFI_DIR" 2>/dev/null || true
+    EFI_TRANSACTION_ACTIVE=0
+    return "$rc"
+}
 cleanup() {
     local temp_dir temp_file
     tui_show_cursor
+    efi_transaction_rollback || true
     resume_governor || true
     for temp_dir in "${TEMP_DIRS[@]-}"; do
         [[ -z "$temp_dir" ]] || rm -rf "$temp_dir"
@@ -320,7 +393,10 @@ ask() {   # ask "Prompt" [default] -> REPLY
 # still relocks the rootfs / resumes the governor on the way out
 run_action() {
     local rc=0
-    ( trap cleanup EXIT; "$@" ) || rc=$?
+    set +e
+    ( set -e; trap cleanup EXIT; "$@" )
+    rc=$?
+    set -e
     if [[ $rc -ne 0 ]]; then
         echo -e "${CR}${CB}[power]${C0} action failed (exit $rc) -- see message above."
     fi
@@ -1672,11 +1748,331 @@ core_unlock_operation_unlock() {
     exec 9>&-
 }
 
+efi_state_read() {
+    local key value seen_boot=0 seen_source=0 seen_disk=0 seen_part=0
+    local seen_partuuid=0 seen_label=0 seen_loader=0
+    EFI_STATE_BOOTNUM="" EFI_STATE_SOURCE="" EFI_STATE_DISK="" EFI_STATE_PART=""
+    EFI_STATE_PARTUUID="" EFI_STATE_LABEL="" EFI_STATE_LOADER=""
+    [[ -f "$CORE_UNLOCK_EFI_STATE" && ! -L "$CORE_UNLOCK_EFI_STATE" ]] || return 1
+    while IFS='=' read -r key value; do
+        case "$key" in
+            BOOTNUM) [[ $seen_boot -eq 0 ]] || return 1; seen_boot=1; EFI_STATE_BOOTNUM="$value" ;;
+            ESP_SOURCE) [[ $seen_source -eq 0 ]] || return 1; seen_source=1; EFI_STATE_SOURCE="$value" ;;
+            DISK) [[ $seen_disk -eq 0 ]] || return 1; seen_disk=1; EFI_STATE_DISK="$value" ;;
+            PART) [[ $seen_part -eq 0 ]] || return 1; seen_part=1; EFI_STATE_PART="$value" ;;
+            PARTUUID) [[ $seen_partuuid -eq 0 ]] || return 1; seen_partuuid=1; EFI_STATE_PARTUUID="$value" ;;
+            LABEL) [[ $seen_label -eq 0 ]] || return 1; seen_label=1; EFI_STATE_LABEL="$value" ;;
+            LOADER) [[ $seen_loader -eq 0 ]] || return 1; seen_loader=1; EFI_STATE_LOADER="$value" ;;
+            "") ;;
+            *) return 1 ;;
+        esac
+    done < "$CORE_UNLOCK_EFI_STATE"
+    [[ $seen_boot -eq 1 && $seen_source -eq 1 && $seen_disk -eq 1 \
+        && $seen_part -eq 1 && $seen_partuuid -eq 1 \
+        && $seen_label -eq 1 && $seen_loader -eq 1 \
+        && "$EFI_STATE_BOOTNUM" =~ ^[0-9A-Fa-f]{4}$ \
+        && "$EFI_STATE_SOURCE" == /dev/* \
+        && "$EFI_STATE_SOURCE" != *[$'\n\r\t ']* \
+        && "$EFI_STATE_DISK" == /dev/* \
+        && "$EFI_STATE_DISK" != *[$'\n\r\t ']* \
+        && "$EFI_STATE_PART" =~ ^[1-9][0-9]*$ \
+        && "$EFI_STATE_PARTUUID" =~ ^[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}$ \
+        && "$EFI_STATE_LABEL" == "$CORE_UNLOCK_EFI_LABEL" \
+        && "$EFI_STATE_LOADER" == "$CORE_UNLOCK_EFI_LOADER" ]] || return 1
+    EFI_STATE_BOOTNUM=${EFI_STATE_BOOTNUM^^}
+    EFI_STATE_PARTUUID=${EFI_STATE_PARTUUID,,}
+}
+
+efi_recovery_read() {
+    local key value seen_phase=0 seen_source=0 seen_disk=0 seen_part=0
+    local seen_partuuid=0 seen_before=0 seen_after=0 seen_candidate=0
+    EFI_RECOVERY_SOURCE="" EFI_RECOVERY_DISK="" EFI_RECOVERY_PART=""
+    EFI_RECOVERY_PARTUUID="" EFI_RECOVERY_BEFORE="" EFI_RECOVERY_AFTER=""
+    EFI_RECOVERY_CANDIDATE="" EFI_RECOVERY_BEFORE_VALID=0 EFI_RECOVERY_AFTER_VALID=0
+    [[ -f "$CORE_UNLOCK_EFI_RECOVERY" && ! -L "$CORE_UNLOCK_EFI_RECOVERY" ]] \
+        || return 1
+    while IFS='=' read -r key value; do
+        case "$key" in
+            PHASE) [[ $seen_phase -eq 0 && "$value" == create ]] || return 1; seen_phase=1 ;;
+            ESP_SOURCE) [[ $seen_source -eq 0 ]] || return 1; seen_source=1; EFI_RECOVERY_SOURCE="$value" ;;
+            DISK) [[ $seen_disk -eq 0 ]] || return 1; seen_disk=1; EFI_RECOVERY_DISK="$value" ;;
+            PART) [[ $seen_part -eq 0 ]] || return 1; seen_part=1; EFI_RECOVERY_PART="$value" ;;
+            PARTUUID) [[ $seen_partuuid -eq 0 ]] || return 1; seen_partuuid=1; EFI_RECOVERY_PARTUUID="$value" ;;
+            BEFORE) [[ $seen_before -eq 0 ]] || return 1; seen_before=1; EFI_RECOVERY_BEFORE="$value" ;;
+            AFTER) [[ $seen_after -eq 0 ]] || return 1; seen_after=1; EFI_RECOVERY_AFTER="$value" ;;
+            CANDIDATE) [[ $seen_candidate -eq 0 ]] || return 1; seen_candidate=1; EFI_RECOVERY_CANDIDATE="$value" ;;
+            "") ;;
+            *) return 1 ;;
+        esac
+    done < "$CORE_UNLOCK_EFI_RECOVERY"
+    [[ $seen_phase -eq 1 && $seen_source -eq 1 && $seen_disk -eq 1 \
+        && $seen_part -eq 1 && $seen_partuuid -eq 1 \
+        && "$EFI_RECOVERY_SOURCE" == /dev/* \
+        && "$EFI_RECOVERY_SOURCE" != *[$'\n\r\t ']* \
+        && "$EFI_RECOVERY_DISK" == /dev/* \
+        && "$EFI_RECOVERY_DISK" != *[$'\n\r\t ']* \
+        && "$EFI_RECOVERY_PART" =~ ^[1-9][0-9]*$ \
+        && "$EFI_RECOVERY_PARTUUID" =~ ^[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}$ ]] \
+        || return 1
+    [[ $seen_before -eq 0 \
+        || "$EFI_RECOVERY_BEFORE" =~ ^([0-9A-Fa-f]{4}(,[0-9A-Fa-f]{4})*)?$ ]] \
+        || return 1
+    [[ $seen_after -eq 0 \
+        || "$EFI_RECOVERY_AFTER" =~ ^([0-9A-Fa-f]{4}(,[0-9A-Fa-f]{4})*)?$ ]] \
+        || return 1
+    [[ $seen_candidate -eq 0 || "$EFI_RECOVERY_CANDIDATE" =~ ^[0-9A-Fa-f]{4}$ ]] \
+        || return 1
+    EFI_RECOVERY_PARTUUID=${EFI_RECOVERY_PARTUUID,,}
+    EFI_RECOVERY_BEFORE=${EFI_RECOVERY_BEFORE^^}
+    EFI_RECOVERY_AFTER=${EFI_RECOVERY_AFTER^^}
+    EFI_RECOVERY_CANDIDATE=${EFI_RECOVERY_CANDIDATE^^}
+    [[ $seen_before -eq 0 ]] || EFI_RECOVERY_BEFORE_VALID=1
+    [[ $seen_after -eq 0 ]] || EFI_RECOVERY_AFTER_VALID=1
+}
+
+efi_recovery_write() {
+    local tmp="$CORE_UNLOCK_STATE_DIR/.efi-recovery.$$"
+    TEMP_FILES+=("$tmp")
+    {
+        printf 'PHASE=create\nESP_SOURCE=%s\nDISK=%s\nPART=%s\nPARTUUID=%s\n' \
+            "$EFI_RECOVERY_SOURCE" "$EFI_RECOVERY_DISK" \
+            "$EFI_RECOVERY_PART" "$EFI_RECOVERY_PARTUUID"
+        [[ $EFI_RECOVERY_BEFORE_VALID -eq 0 ]] \
+            || printf 'BEFORE=%s\n' "$EFI_RECOVERY_BEFORE"
+        [[ $EFI_RECOVERY_AFTER_VALID -eq 0 ]] \
+            || printf 'AFTER=%s\n' "$EFI_RECOVERY_AFTER"
+        [[ -z "$EFI_RECOVERY_CANDIDATE" ]] \
+            || printf 'CANDIDATE=%s\n' "$EFI_RECOVERY_CANDIDATE"
+    } > "$tmp"
+    chmod 0600 "$tmp"
+    sync "$tmp"
+    mv -f "$tmp" "$CORE_UNLOCK_EFI_RECOVERY"
+    sync "$CORE_UNLOCK_STATE_DIR"
+}
+
+efi_number_in_csv() {
+    local list=",${1^^}," number=",${2^^},"
+    [[ "$list" == *"$number"* ]]
+}
+
+efi_read_boot_listing() {
+    command -v efibootmgr >/dev/null 2>&1 || return 1
+    EFI_BOOT_LISTING=$(LC_ALL=C efibootmgr -v 2>/dev/null) || return 1
+    [[ "$EFI_BOOT_LISTING" == *"BootOrder:"* ]] || return 1
+}
+
+efi_boot_entry_present_in() {
+    local number="${1^^}" listing="$2" line
+    while IFS= read -r line; do
+        [[ "$line" =~ ^Boot${number}\*?[[:space:]] ]] && return 0
+    done <<< "$listing"
+    return 1
+}
+
+efi_boot_entry_matches_in() {
+    local number="${1^^}" require_active="$2" listing="$3"
+    local line active rest lower expected="${CORE_UNLOCK_EFI_LOADER,,}"
+    local loader_regex pattern
+    loader_regex=${expected//\\/\\\\}
+    loader_regex=${loader_regex//./\\.}
+    pattern="^${CORE_UNLOCK_EFI_LABEL,,}[[:space:]]+hd\\(${CORE_UNLOCK_ESP_PART},gpt,${CORE_UNLOCK_ESP_PARTUUID,,},[^)]*\\)/(\\\\)?file\\(${loader_regex}\\)[[:space:]]*$"
+    while IFS= read -r line; do
+        [[ "$line" =~ ^Boot${number}(\*)?[[:space:]]+(.+)$ ]] || continue
+        active=${BASH_REMATCH[1]}
+        rest=${BASH_REMATCH[2]//$'\t'/ }
+        lower=${rest,,}
+        [[ "$require_active" -eq 0 || "$active" == "*" ]] || return 1
+        [[ "$lower" =~ $pattern ]] || return 1
+        return 0
+    done <<< "$listing"
+    return 1
+}
+
+efi_boot_order_first_in() {
+    local listing="$1" line
+    while IFS= read -r line; do
+        [[ "$line" =~ ^BootOrder:[[:space:]]*([0-9A-Fa-f]{4})(,|$) ]] || continue
+        printf '%s\n' "${BASH_REMATCH[1]^^}"
+        return 0
+    done <<< "$listing"
+    return 1
+}
+
+efi_boot_numbers_in() {
+    local listing="$1" line
+    while IFS= read -r line; do
+        [[ "$line" =~ ^Boot([0-9A-Fa-f]{4})\*?[[:space:]] ]] || continue
+        printf '%s\n' "${BASH_REMATCH[1]^^}"
+    done <<< "$listing"
+    return 0
+}
+
+efi_matching_boot_numbers_in() {
+    local listing="$1" line rest lower number expected="${CORE_UNLOCK_EFI_LOADER,,}"
+    local loader_regex pattern
+    loader_regex=${expected//\\/\\\\}
+    loader_regex=${loader_regex//./\\.}
+    pattern="^${CORE_UNLOCK_EFI_LABEL,,}[[:space:]]+hd\\([^)]*\\)/(\\\\)?file\\(${loader_regex}\\)[[:space:]]*$"
+    while IFS= read -r line; do
+        [[ "$line" =~ ^Boot([0-9A-Fa-f]{4})\*?[[:space:]]+(.+)$ ]] || continue
+        number=${BASH_REMATCH[1]^^}
+        rest=${BASH_REMATCH[2]//$'\t'/ }
+        lower=${rest,,}
+        [[ "$lower" =~ $pattern ]] && printf '%s\n' "$number"
+    done <<< "$listing"
+    return 0
+}
+
+verify_core_unlock_recovery_esp_state() {
+    discover_core_unlock_esp || return 1
+    if [[ "$CORE_UNLOCK_ESP_SOURCE" != "$EFI_RECOVERY_SOURCE" \
+        || "$CORE_UNLOCK_ESP_DISK" != "$EFI_RECOVERY_DISK" \
+        || "$CORE_UNLOCK_ESP_PART" != "$EFI_RECOVERY_PART" \
+        || "$CORE_UNLOCK_ESP_PARTUUID" != "$EFI_RECOVERY_PARTUUID" ]]; then
+        ESP_DISCOVERY_ERROR="Mounted ESP identity differs from recorded EFI recovery state."
+        return 1
+    fi
+}
+
+efi_recovery_resolve_boot_number() {
+    local listing="$1" number match unexpected=0
+    local -a owned_matches=()
+    EFI_RECOVERY_RESOLVED_BOOTNUM=
+    while IFS= read -r number; do
+        [[ -n "$number" ]] || continue
+        efi_number_in_csv "$EFI_RECOVERY_BEFORE" "$number" && continue
+        if efi_boot_entry_matches_in "$number" 0 "$listing"; then
+            if [[ $EFI_RECOVERY_AFTER_VALID -eq 1 ]] \
+                && efi_number_in_csv "$EFI_RECOVERY_AFTER" "$number"; then
+                owned_matches+=("$number")
+            else
+                unexpected=1
+            fi
+        fi
+    done < <(efi_boot_numbers_in "$listing")
+    [[ $unexpected -eq 0 ]] || return 1
+    if [[ -n "$EFI_RECOVERY_CANDIDATE" ]]; then
+        [[ $EFI_RECOVERY_BEFORE_VALID -eq 1 ]] || return 1
+        efi_number_in_csv "$EFI_RECOVERY_BEFORE" "$EFI_RECOVERY_CANDIDATE" \
+            && return 1
+        [[ $EFI_RECOVERY_AFTER_VALID -eq 1 ]] \
+            && efi_number_in_csv "$EFI_RECOVERY_AFTER" "$EFI_RECOVERY_CANDIDATE" \
+            || return 1
+        if efi_boot_entry_present_in "$EFI_RECOVERY_CANDIDATE" "$listing"; then
+            efi_boot_entry_matches_in "$EFI_RECOVERY_CANDIDATE" 0 "$listing" \
+                || return 1
+        fi
+        for match in "${owned_matches[@]-}"; do
+            [[ -z "$match" || "$match" == "$EFI_RECOVERY_CANDIDATE" ]] || return 1
+        done
+        EFI_RECOVERY_RESOLVED_BOOTNUM="$EFI_RECOVERY_CANDIDATE"
+        return 0
+    fi
+    if [[ $EFI_RECOVERY_BEFORE_VALID -eq 0 && ${#owned_matches[@]} -gt 0 ]]; then
+        return 1
+    fi
+    [[ ${#owned_matches[@]} -le 1 ]] || return 1
+    [[ ${#owned_matches[@]} -eq 0 ]] \
+        || EFI_RECOVERY_RESOLVED_BOOTNUM="${owned_matches[0]}"
+}
+
+efi_nvram_artifact_present() {
+    local matches
+    efi_read_boot_listing || return 2
+    matches=$(efi_matching_boot_numbers_in "$EFI_BOOT_LISTING")
+    [[ -n "$matches" ]]
+}
+
+core_unlock_efi_guard_path() {
+    printf '%s/BC250CoreUnlockAttempt-%s\n' \
+        "$CORE_UNLOCK_EFIVARS_DIR" "$CORE_UNLOCK_EFI_GUARD_GUID"
+}
+
+efi_guard_present() {
+    [[ -e "$(core_unlock_efi_guard_path)" ]]
+}
+
+efi_owned_files_present() {
+    [[ -e "$CORE_UNLOCK_EFI_MASTER" || -e "$CORE_UNLOCK_EFI_STATE" \
+        || -e "$CORE_UNLOCK_EFI_BOOTNUM" || -e "$CORE_UNLOCK_EFI_IMAGE_HASH" \
+        || -e "$CORE_UNLOCK_EFI_RECOVERY" || -e "$CORE_UNLOCK_EFI_IMAGE" \
+        || -e "$CORE_UNLOCK_EFI_LICENSE" || -e "$CORE_UNLOCK_EFI_HEADER_LICENSE" ]]
+}
+
+efi_artifacts_present() {
+    local rc
+    if efi_owned_files_present || efi_guard_present; then
+        return 0
+    fi
+    efi_nvram_artifact_present && return 0
+    rc=$?
+    [[ $rc -eq 2 && -d "$CORE_UNLOCK_EFIVARS_DIR" ]] && return 0
+    return 1
+}
+
+efi_configuration_complete() {
+    local allow_recovery="${1:-0}"
+    [[ -f "$CORE_UNLOCK_EFI_MASTER" && ! -L "$CORE_UNLOCK_EFI_MASTER" \
+        && -f "$CORE_UNLOCK_EFI_IMAGE" && ! -L "$CORE_UNLOCK_EFI_IMAGE" \
+        && -f "$CORE_UNLOCK_EFI_LICENSE" && ! -L "$CORE_UNLOCK_EFI_LICENSE" \
+        && -f "$CORE_UNLOCK_EFI_HEADER_LICENSE" && ! -L "$CORE_UNLOCK_EFI_HEADER_LICENSE" \
+        && -f "$CORE_UNLOCK_EFI_BOOTNUM" && ! -L "$CORE_UNLOCK_EFI_BOOTNUM" \
+        && -f "$CORE_UNLOCK_EFI_IMAGE_HASH" && ! -L "$CORE_UNLOCK_EFI_IMAGE_HASH" ]] \
+        || return 1
+    [[ "$allow_recovery" -eq 1 || ! -e "$CORE_UNLOCK_EFI_RECOVERY" ]] || return 1
+    efi_guard_present && return 1
+    cmp -s "$CORE_UNLOCK_EFI_MASTER" "$CORE_UNLOCK_EFI_IMAGE" || return 1
+    efi_state_read || return 1
+    verify_core_unlock_esp_state || return 1
+    [[ "$(tr -d '\n' < "$CORE_UNLOCK_EFI_BOOTNUM")" == "$EFI_STATE_BOOTNUM" ]] \
+        || return 1
+    local expected_hash actual_hash
+    expected_hash=$(tr -d '\n' < "$CORE_UNLOCK_EFI_IMAGE_HASH")
+    [[ "$expected_hash" =~ ^[0-9a-f]{64}$ ]] || return 1
+    actual_hash=$(sha256sum "$CORE_UNLOCK_EFI_MASTER" | awk '{print $1}')
+    [[ "$actual_hash" == "$expected_hash" ]] || return 1
+    efi_read_boot_listing || return 1
+    efi_boot_entry_matches_in "$EFI_STATE_BOOTNUM" 1 "$EFI_BOOT_LISTING" || return 1
+    [[ "$(efi_boot_order_first_in "$EFI_BOOT_LISTING")" == "$EFI_STATE_BOOTNUM" \
+        && "$(efi_matching_boot_numbers_in "$EFI_BOOT_LISTING")" == "$EFI_STATE_BOOTNUM" ]]
+}
+
+# Authoritative persistence state. Support files left by a one-time test do not
+# select a mode; enabled systemd replay and the complete EFI transaction do.
+core_unlock_mode() {
+    local systemd_active=0 efi_any=0 efi_complete=0
+    core_unlock_service_enabled && systemd_active=1
+    efi_artifacts_present && efi_any=1
+    [[ $efi_any -eq 0 ]] || { efi_configuration_complete && efi_complete=1 || true; }
+    if [[ $systemd_active -eq 1 && $efi_any -eq 1 ]]; then
+        echo conflict
+    elif [[ $efi_any -eq 1 && $efi_complete -eq 0 ]]; then
+        echo partial
+    elif [[ $efi_complete -eq 1 ]]; then
+        echo efi
+    elif [[ $systemd_active -eq 1 ]]; then
+        echo systemd
+    else
+        echo none
+    fi
+}
+
+core_unlock_require_no_efi() {
+    local action="$1" mode
+    mode=$(core_unlock_mode)
+    case "$mode" in
+        efi) die "$action is unavailable while EFI core unlock is enabled; run '$0 cpu-unlock off' first." ;;
+        partial) die "$action is blocked by partial EFI core-unlock state; run '$0 cpu-unlock off' to remove toolkit-owned artifacts." ;;
+        conflict) die "$action is blocked by conflicting systemd and EFI core-unlock artifacts; run '$0 cpu-unlock off'." ;;
+    esac
+}
+
 power_is_installed() {
     other_power_payload_is_installed || [[ -e "$POWER_KEEP_FILE" ]] \
         || [[ -e "$CORE_UNLOCK_UNIT" || -e "$CORE_UNLOCK_BIN" \
             || -e "$CORE_UNLOCK_LICENSE" || -e "$CORE_UNLOCK_PENDING" \
-            || -L "$SYSTEMD_WANTS_DIR/$CORE_UNLOCK_SVC" ]]
+            || -L "$SYSTEMD_WANTS_DIR/$CORE_UNLOCK_SVC" ]] \
+        || efi_artifacts_present
 }
 
 cmd_installed() {
@@ -1759,6 +2155,7 @@ cmd_uninstall() {
             return 1
         fi
     fi
+    remove_core_unlock_efi
 
     if reset_cpu_stock_live; then
         cpu_reverted=1
@@ -1895,6 +2292,320 @@ install_core_unlock_files() {
         || die "Could not install the core-unlock license."
 }
 
+core_unlock_secure_boot_disabled() {
+    local state
+    command -v mokutil >/dev/null 2>&1 \
+        || die "mokutil is required to determine Secure Boot state."
+    state=$(LC_ALL=C mokutil --sb-state 2>&1 || true)
+    case "${state,,}" in
+        *"secureboot disabled"*|*"secure boot disabled"*) return 0 ;;
+        *"secureboot enabled"*|*"secure boot enabled"*)
+            die "Secure Boot is enabled; the experimental EFI helper is unsigned and cannot be installed." ;;
+        *) die "Secure Boot state is unknown; refusing to install an unsigned EFI helper: ${state:-no result}" ;;
+    esac
+}
+
+ensure_core_unlock_efi_tools() {
+    local packages=()
+    command -v clang >/dev/null 2>&1 || packages+=(clang)
+    command -v lld-link >/dev/null 2>&1 || packages+=(lld)
+    command -v git >/dev/null 2>&1 || packages+=(git)
+    command -v file >/dev/null 2>&1 || packages+=(file)
+    command -v efibootmgr >/dev/null 2>&1 || packages+=(efibootmgr)
+    command -v mokutil >/dev/null 2>&1 || packages+=(mokutil)
+    command -v findmnt >/dev/null 2>&1 || packages+=(util-linux)
+    command -v lsblk >/dev/null 2>&1 || packages+=(util-linux)
+    [[ ${#packages[@]} -gt 0 ]] || return 0
+    unlock_rootfs
+    prepare_pacman_keyring
+    pacman -Sy --noconfirm --needed "${packages[@]}" \
+        || die "EFI core-unlock build tools unavailable and pacman install failed."
+}
+
+discover_core_unlock_esp() {
+    local mount_info source target fstype options extra block_info name type parent
+    local part partuuid parttype
+    ESP_DISCOVERY_ERROR=
+    [[ -d "$CORE_UNLOCK_ESP_ROOT" && ! -L "$CORE_UNLOCK_ESP_ROOT" ]] \
+        || { ESP_DISCOVERY_ERROR="EFI system partition mount is missing or unsafe: $CORE_UNLOCK_ESP_ROOT"; return 1; }
+    [[ -w "$CORE_UNLOCK_ESP_ROOT" ]] \
+        || { ESP_DISCOVERY_ERROR="EFI system partition is not writable: $CORE_UNLOCK_ESP_ROOT"; return 1; }
+    mount_info=$(findmnt -nro SOURCE,TARGET,FSTYPE,OPTIONS --target "$CORE_UNLOCK_ESP_ROOT" 2>/dev/null) \
+        || { ESP_DISCOVERY_ERROR="Could not query the EFI system partition mount."; return 1; }
+    read -r source target fstype options extra <<< "$mount_info"
+    [[ -z "$extra" && "$target" == "$CORE_UNLOCK_ESP_ROOT" ]] \
+        || { ESP_DISCOVERY_ERROR="$CORE_UNLOCK_ESP_ROOT is not an actual mountpoint."; return 1; }
+    case "${fstype,,}" in
+        vfat|fat|fat32) ;;
+        *) ESP_DISCOVERY_ERROR="EFI system partition must use FAT/vfat, not ${fstype:-unknown}."; return 1 ;;
+    esac
+    [[ ",$options," == *,rw,* ]] \
+        || { ESP_DISCOVERY_ERROR="EFI system partition is mounted read-only."; return 1; }
+    block_info=$(lsblk -dnpo NAME,TYPE,PKNAME,PARTNUM,PARTUUID,PARTTYPE "$source" 2>/dev/null) \
+        || { ESP_DISCOVERY_ERROR="Could not inspect ESP block identity for $source."; return 1; }
+    read -r name type parent part partuuid parttype extra <<< "$block_info"
+    [[ -z "$extra" && "$name" == /dev/* && "$type" == part \
+        && "$parent" == /dev/* && "$part" =~ ^[1-9][0-9]*$ \
+        && "$partuuid" =~ ^[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}$ \
+        && "${parttype,,}" == "$CORE_UNLOCK_ESP_PARTTYPE" ]] \
+        || { ESP_DISCOVERY_ERROR="Mounted EFI path is not a GPT ESP block partition."; return 1; }
+    CORE_UNLOCK_ESP_SOURCE="$name"
+    CORE_UNLOCK_ESP_DISK="$parent"
+    CORE_UNLOCK_ESP_PART="$part"
+    CORE_UNLOCK_ESP_PARTUUID=${partuuid,,}
+}
+
+verify_core_unlock_esp_state() {
+    local source="$EFI_STATE_SOURCE" disk="$EFI_STATE_DISK"
+    local part="$EFI_STATE_PART" partuuid="$EFI_STATE_PARTUUID"
+    discover_core_unlock_esp || return 1
+    if [[ "$CORE_UNLOCK_ESP_SOURCE" != "$source" \
+        || "$CORE_UNLOCK_ESP_DISK" != "$disk" \
+        || "$CORE_UNLOCK_ESP_PART" != "$part" \
+        || "$CORE_UNLOCK_ESP_PARTUUID" != "$partuuid" ]]; then
+        ESP_DISCOVERY_ERROR="Mounted ESP identity differs from recorded core-unlock ownership state."
+        return 1
+    fi
+}
+
+build_core_unlock_efi() {
+    local work head description output
+    for output in "$CORE_UNLOCK_EFI_SOURCE" "$CORE_UNLOCK_EFI_LICENSE_SOURCE" \
+        "$CORE_UNLOCK_EFI_HEADER_LICENSE_SOURCE"; do
+        [[ -f "$output" && ! -L "$output" ]] \
+            || die "EFI core-unlock source/license missing or unsafe: $output"
+    done
+    work=$(mktemp -d /tmp/bc250-core-unlock-efi.XXXXXX)
+    TEMP_DIRS+=("$work")
+    git -C "$work" init -q
+    git -C "$work" remote add origin "$CORE_UNLOCK_EFI_REPO"
+    log "Fetching yoppeh/efi @ ${CORE_UNLOCK_EFI_PIN:0:7} (pinned headers only)..."
+    git -C "$work" fetch -q --no-tags --depth=1 origin "$CORE_UNLOCK_EFI_PIN" \
+        || die "Could not fetch pinned yoppeh/efi headers."
+    git -C "$work" checkout -q --detach FETCH_HEAD
+    head=$(git -C "$work" rev-parse HEAD)
+    [[ "$head" == "$CORE_UNLOCK_EFI_PIN" ]] \
+        || die "Fetched EFI header commit mismatch: $head"
+
+    clang -I "$work" -DEFI_PLATFORM=1 -target x86_64-unknown-windows \
+        -ffreestanding -mno-red-zone -nostdlib -fuse-ld=lld \
+        -Wl,-entry:efi_main -Wl,-subsystem:efi_application \
+        -o "$work/bc250-core-unlock.efi" "$CORE_UNLOCK_EFI_SOURCE" \
+        || die "Could not compile the EFI core-unlock application."
+    description=$(LC_ALL=C file -b "$work/bc250-core-unlock.efi")
+    [[ "$description" == *PE32+* && "${description,,}" == *"efi application"* \
+        && "${description,,}" == *"x86-64"* ]] \
+        || die "Built image is not an x86-64 PE EFI application: $description"
+    CORE_UNLOCK_EFI_BUILD="$work/bc250-core-unlock.efi"
+}
+
+core_unlock_efi_enable() {
+    require_root
+    core_unlock_lifecycle_lock || return $?
+    local mode number order state_tmp bootnum_tmp hash_tmp hash
+    local master_tmp esp_tmp before_list after_list create_rc=0 candidate matches_list
+    local -a new_numbers=()
+    local -A before_numbers=()
+    mode=$(core_unlock_mode)
+    case "$mode" in
+        systemd|conflict)
+            die "EFI mode cannot be enabled while systemd core-unlock replay is active; run '$0 cpu-unlock off' first." ;;
+        partial)
+            die "EFI mode cannot repair partial EFI state implicitly; run '$0 cpu-unlock off', then retry." ;;
+        efi)
+            log "EFI core unlock is already installed and its owned Boot entry is valid."
+            core_unlock_lifecycle_unlock
+            return 0 ;;
+    esac
+
+    install_core_unlock_files || return $?
+    BC250_CORE_UNLOCK_STATE_DIR="$CORE_UNLOCK_STATE_DIR" \
+        python3 -I "$CORE_UNLOCK_BIN" verify-unlocked || return $?
+    ensure_core_unlock_efi_tools
+    core_unlock_secure_boot_disabled
+    discover_core_unlock_esp || die "$ESP_DISCOVERY_ERROR"
+    build_core_unlock_efi
+    efi_read_boot_listing \
+        || die "Could not read EFI Boot entries before installation."
+    matches_list=$(efi_matching_boot_numbers_in "$EFI_BOOT_LISTING")
+    [[ -z "$matches_list" ]] \
+        || die "An unrecorded $CORE_UNLOCK_EFI_LABEL Boot entry already exists; refusing to claim or replace it."
+    before_list=$(efi_boot_numbers_in "$EFI_BOOT_LISTING")
+    while IFS= read -r candidate; do
+        [[ -z "$candidate" ]] || before_numbers["$candidate"]=1
+    done <<< "$before_list"
+
+    install -d -o root -g root -m 0755 "$CORE_UNLOCK_STATE_DIR" \
+        "$ROOT_DATA_DIR/licenses" "$CORE_UNLOCK_EFI_DIR"
+    EFI_RECOVERY_SOURCE="$CORE_UNLOCK_ESP_SOURCE"
+    EFI_RECOVERY_DISK="$CORE_UNLOCK_ESP_DISK"
+    EFI_RECOVERY_PART="$CORE_UNLOCK_ESP_PART"
+    EFI_RECOVERY_PARTUUID="$CORE_UNLOCK_ESP_PARTUUID"
+    EFI_RECOVERY_BEFORE="${before_list//$'\n'/,}"
+    EFI_RECOVERY_AFTER=""
+    EFI_RECOVERY_CANDIDATE=""
+    EFI_RECOVERY_BEFORE_VALID=1
+    EFI_RECOVERY_AFTER_VALID=0
+    efi_recovery_write
+    EFI_TRANSACTION_ACTIVE=1
+    master_tmp="$CORE_UNLOCK_STATE_DIR/.bc250-core-unlock.efi.$$"
+    esp_tmp="$CORE_UNLOCK_EFI_DIR/.bc250-core-unlock.efi.$$"
+    TEMP_FILES+=("$master_tmp" "$esp_tmp")
+    install -o root -g root -m 0644 "$CORE_UNLOCK_EFI_BUILD" "$master_tmp"
+    mv -f "$master_tmp" "$CORE_UNLOCK_EFI_MASTER"
+    sync "$CORE_UNLOCK_EFI_MASTER"
+    install -o root -g root -m 0644 "$CORE_UNLOCK_EFI_BUILD" "$esp_tmp"
+    sync "$esp_tmp"
+    mv -f "$esp_tmp" "$CORE_UNLOCK_EFI_IMAGE"
+    sync "$CORE_UNLOCK_EFI_DIR"
+    install -o root -g root -m 0644 "$CORE_UNLOCK_EFI_LICENSE_SOURCE" \
+        "$CORE_UNLOCK_EFI_LICENSE"
+    install -o root -g root -m 0644 "$CORE_UNLOCK_EFI_HEADER_LICENSE_SOURCE" \
+        "$CORE_UNLOCK_EFI_HEADER_LICENSE"
+    hash=$(sha256sum "$CORE_UNLOCK_EFI_MASTER" | awk '{print $1}')
+    [[ "$hash" =~ ^[0-9a-f]{64}$ ]] || die "Could not hash the staged EFI image."
+    hash_tmp="$CORE_UNLOCK_STATE_DIR/.efi-image.sha256.$$"
+    TEMP_FILES+=("$hash_tmp")
+    printf '%s\n' "$hash" > "$hash_tmp"
+    chmod 0600 "$hash_tmp"
+    mv -f "$hash_tmp" "$CORE_UNLOCK_EFI_IMAGE_HASH"
+    sync "$CORE_UNLOCK_EFI_IMAGE_HASH"
+    sync "$CORE_UNLOCK_STATE_DIR"
+    sync "$ROOT_DATA_DIR/licenses"
+    efibootmgr --create --disk "$CORE_UNLOCK_ESP_DISK" \
+        --part "$CORE_UNLOCK_ESP_PART" --label "$CORE_UNLOCK_EFI_LABEL" \
+        --loader "$CORE_UNLOCK_EFI_LOADER" >/dev/null || create_rc=$?
+    efi_read_boot_listing \
+        || die "Could not snapshot EFI Boot numbers after creating the core-unlock entry."
+    after_list=$(efi_boot_numbers_in "$EFI_BOOT_LISTING")
+    while IFS= read -r candidate; do
+        [[ -z "$candidate" || -n "${before_numbers[$candidate]+owned}" ]] \
+            || new_numbers+=("$candidate")
+    done <<< "$after_list"
+    [[ ${#new_numbers[@]} -eq 1 ]] \
+        || die "Could not identify exactly one newly created EFI core-unlock Boot entry."
+    number=${new_numbers[0]^^}
+    EFI_TRANSACTION_BOOTNUM="$number"
+    EFI_RECOVERY_AFTER="${after_list//$'\n'/,}"
+    EFI_RECOVERY_AFTER_VALID=1
+    EFI_RECOVERY_CANDIDATE="$number"
+    efi_recovery_write
+    [[ $create_rc -eq 0 ]] \
+        || die "efibootmgr reported failure after adding Boot$number; retaining all EFI recovery evidence."
+    bootnum_tmp="$CORE_UNLOCK_STATE_DIR/.efi-bootnum.$$"
+    TEMP_FILES+=("$bootnum_tmp")
+    printf '%s\n' "$number" > "$bootnum_tmp"
+    chmod 0600 "$bootnum_tmp"
+    mv -f "$bootnum_tmp" "$CORE_UNLOCK_EFI_BOOTNUM"
+
+    state_tmp="$CORE_UNLOCK_STATE_DIR/.efi-state.$$"
+    TEMP_FILES+=("$state_tmp")
+    printf 'BOOTNUM=%s\nESP_SOURCE=%s\nDISK=%s\nPART=%s\nPARTUUID=%s\nLABEL=%s\nLOADER=%s\n' \
+        "$number" "$CORE_UNLOCK_ESP_SOURCE" "$CORE_UNLOCK_ESP_DISK" \
+        "$CORE_UNLOCK_ESP_PART" "$CORE_UNLOCK_ESP_PARTUUID" \
+        "$CORE_UNLOCK_EFI_LABEL" "$CORE_UNLOCK_EFI_LOADER" > "$state_tmp"
+    chmod 0600 "$state_tmp"
+    mv -f "$state_tmp" "$CORE_UNLOCK_EFI_STATE"
+    sync "$CORE_UNLOCK_EFI_BOOTNUM"
+    sync "$CORE_UNLOCK_EFI_STATE"
+    sync "$CORE_UNLOCK_STATE_DIR"
+    efi_boot_entry_matches_in "$number" 1 "$EFI_BOOT_LISTING" \
+        || die "Created Boot$number does not exactly match the expected active label, loader, and ESP identity."
+    order=$(efi_boot_order_first_in "$EFI_BOOT_LISTING") \
+        || die "Created EFI BootOrder could not be validated."
+    [[ "$order" == "$number" ]] \
+        || die "Firmware did not place Boot$number first in BootOrder; refusing an ineffective install."
+    efi_configuration_complete 1 \
+        || die "Installed EFI core-unlock transaction failed final validation."
+    EFI_TRANSACTION_ACTIVE=0
+    EFI_TRANSACTION_BOOTNUM=""
+    rm -f "$CORE_UNLOCK_EFI_RECOVERY" \
+        || die "Could not remove EFI transaction recovery state."
+    sync "$CORE_UNLOCK_STATE_DIR"
+    core_unlock_lifecycle_unlock
+    log "Experimental EFI core unlock installed as Boot$number at $CORE_UNLOCK_EFI_IMAGE."
+    warn "The unsigned helper removes Linux boot replay, but firmware still performs one warm reset after cold power."
+}
+
+clear_core_unlock_efi_guard() {
+    local guard
+    guard=$(core_unlock_efi_guard_path)
+    [[ -e "$guard" ]] || return 0
+    if command -v chattr >/dev/null 2>&1; then
+        chattr -i "$guard" 2>/dev/null || true
+    fi
+    rm -f "$guard" 2>/dev/null || true
+    if [[ -e "$guard" ]]; then
+        warn "Could not clear the EFI one-attempt guard at $guard."
+        return 1
+    fi
+}
+
+remove_core_unlock_efi() {
+    local number matches
+    if ! efi_owned_files_present; then
+        if efi_read_boot_listing; then
+            [[ -z "$(efi_matching_boot_numbers_in "$EFI_BOOT_LISTING")" ]] \
+                || die "An unrecorded EFI core-unlock entry exists; retaining it for manual ownership review."
+        elif efi_guard_present; then
+            die "Could not read EFI Boot entries; retaining the one-attempt guard."
+        elif [[ -d "$CORE_UNLOCK_EFIVARS_DIR" ]]; then
+            die "Could not verify that no EFI core-unlock Boot entry remains."
+        fi
+        if efi_guard_present; then
+            clear_core_unlock_efi_guard \
+                || die "EFI guard removal is incomplete; no other core-unlock artifacts were changed."
+        fi
+        return 0
+    fi
+    if efi_state_read; then
+        number="$EFI_STATE_BOOTNUM"
+        verify_core_unlock_esp_state \
+            || die "${ESP_DISCOVERY_ERROR:-ESP ownership validation failed}; retaining all EFI files and Boot entries."
+    elif efi_recovery_read; then
+        verify_core_unlock_recovery_esp_state \
+            || die "${ESP_DISCOVERY_ERROR:-ESP recovery validation failed}; retaining all EFI files and Boot entries."
+        number=
+    else
+        die "EFI ownership and recovery state are missing or invalid; retaining all EFI files and Boot entries."
+    fi
+    efi_read_boot_listing \
+        || die "Could not read EFI Boot entries; retaining all EFI files and ownership state."
+    if [[ -z "$number" ]]; then
+        efi_recovery_resolve_boot_number "$EFI_BOOT_LISTING" \
+            || die "Could not identify the transaction-owned EFI Boot entry safely; retaining all evidence."
+        number="$EFI_RECOVERY_RESOLVED_BOOTNUM"
+    fi
+    if [[ -n "$number" ]] && efi_boot_entry_present_in "$number" "$EFI_BOOT_LISTING"; then
+        efi_boot_entry_matches_in "$number" 0 "$EFI_BOOT_LISTING" \
+            || die "Recorded Boot$number has mismatched label, loader, or ESP identity; retaining all evidence."
+    fi
+    matches=$(efi_matching_boot_numbers_in "$EFI_BOOT_LISTING")
+    if [[ -n "$matches" ]]; then
+        [[ -n "$number" && "$matches" == "$number" ]] \
+            || die "Duplicate or unowned EFI core-unlock entries exist; retaining all evidence."
+    fi
+    if [[ -n "$number" ]] && efi_boot_entry_present_in "$number" "$EFI_BOOT_LISTING"; then
+        efibootmgr --bootnum "$number" --delete-bootnum >/dev/null \
+            || die "Could not delete verified owned Boot$number; retaining EFI files and state."
+        efi_read_boot_listing \
+            || die "Could not verify Boot$number deletion; retaining EFI files and state."
+        efi_boot_entry_present_in "$number" "$EFI_BOOT_LISTING" \
+            && die "Boot$number still exists; retaining EFI files and state."
+        [[ -z "$(efi_matching_boot_numbers_in "$EFI_BOOT_LISTING")" ]] \
+            || die "Another EFI core-unlock entry remains; retaining EFI files and state."
+    fi
+    clear_core_unlock_efi_guard \
+        || die "EFI guard removal failed after Boot entry deletion; retaining loader and ownership state."
+    rm -f "$CORE_UNLOCK_EFI_STATE" "$CORE_UNLOCK_EFI_BOOTNUM" \
+        "$CORE_UNLOCK_EFI_IMAGE_HASH" "$CORE_UNLOCK_EFI_RECOVERY" \
+        "$CORE_UNLOCK_EFI_IMAGE" \
+        "$CORE_UNLOCK_EFI_MASTER" "$CORE_UNLOCK_EFI_LICENSE" \
+        "$CORE_UNLOCK_EFI_HEADER_LICENSE" \
+        || die "Could not remove all toolkit-owned EFI core-unlock files."
+    rmdir "$CORE_UNLOCK_EFI_DIR" 2>/dev/null || true
+}
+
 write_core_unlock_unit() {
     local tmp
     tmp=$(mktemp "${CORE_UNLOCK_UNIT%/*}/.bc250-core-unlock.XXXXXX") \
@@ -1925,6 +2636,7 @@ EOF
 core_unlock_test() {
     require_root
     core_unlock_lifecycle_lock || return $?
+    core_unlock_require_no_efi "One-time Linux core-unlock test"
     if core_unlock_service_enabled; then
         die "Core-unlock persistence is already enabled; run '$0 cpu-unlock off' before a one-time test."
     fi
@@ -1942,6 +2654,7 @@ core_unlock_test() {
 core_unlock_enable() {
     require_root
     core_unlock_lifecycle_lock || return $?
+    core_unlock_require_no_efi "Linux/systemd core-unlock enable"
     install_core_unlock_files || return $?
     BC250_CORE_UNLOCK_STATE_DIR="$CORE_UNLOCK_STATE_DIR" \
         python3 -I "$CORE_UNLOCK_BIN" verify-unlocked || return $?
@@ -1967,8 +2680,15 @@ core_unlock_enable() {
 }
 
 core_unlock_status() {
-    echo -e "${CB}=== CPU core unlock (rw-r-r-0644) ===${C0}"
-    local en ac cores metrics_state
+    echo -e "${CB}=== CPU core unlock ===${C0}"
+    local en ac cores metrics_state mode
+    mode=$(core_unlock_mode)
+    echo "  persistence mode: $mode"
+    case "$mode" in
+        efi) echo "  EFI mode: experimental, unsigned; cold power still causes one firmware warm reset" ;;
+        partial) warn "Partial EFI state blocks test/enable/efi-enable; use 'cpu-unlock off' to repair it." ;;
+        conflict) warn "Systemd and EFI artifacts conflict; use 'cpu-unlock off' before any enable action." ;;
+    esac
     en=$(systemctl is-enabled "$CORE_UNLOCK_SVC" 2>/dev/null) || en=-
     ac=$(systemctl is-active "$CORE_UNLOCK_SVC" 2>/dev/null) || ac=-
     printf '  %-38s %s / %s\n' "$CORE_UNLOCK_SVC" "$(c_state "$en")" "$(c_state "$ac")"
@@ -2002,9 +2722,10 @@ core_unlock_off() {
     fi
     rm -f "$CORE_UNLOCK_PENDING" \
         || die "Could not remove the core-unlock reboot guard."
+    remove_core_unlock_efi
     core_unlock_operation_unlock
     core_unlock_lifecycle_unlock
-    log "Automatic core unlock and warm reboot disabled; helper retained."
+    log "Automatic systemd/EFI core unlock disabled; Linux helper retained."
     warn "A full power-off is required for firmware to restore the six-core mask."
 }
 
@@ -2015,6 +2736,7 @@ core_unlock_uninstall() {
     if core_unlock_auto_attempt_this_boot; then
         die "An automatic unlock attempt/reboot is already in progress; wait for the next boot."
     fi
+    remove_core_unlock_efi
     systemctl disable --now "$CORE_UNLOCK_SVC" 2>/dev/null || true
     if systemctl is-active --quiet "$CORE_UNLOCK_SVC" \
         || core_unlock_service_enabled; then
@@ -2023,9 +2745,16 @@ core_unlock_uninstall() {
     remove_power_unit "$CORE_UNLOCK_UNIT" || return $?
     rm -f "$SYSTEMD_WANTS_DIR/$CORE_UNLOCK_SVC" "$CORE_UNLOCK_BIN" \
         "$CORE_UNLOCK_LICENSE" "$CORE_UNLOCK_PENDING" \
+        "$CORE_UNLOCK_EFI_LICENSE" "$CORE_UNLOCK_EFI_HEADER_LICENSE" \
         || die "Could not remove all core-unlock files."
     [[ ! -e "$CORE_UNLOCK_UNIT" && ! -e "$CORE_UNLOCK_BIN" \
         && ! -e "$CORE_UNLOCK_LICENSE" && ! -e "$CORE_UNLOCK_PENDING" \
+        && ! -e "$CORE_UNLOCK_EFI_MASTER" && ! -e "$CORE_UNLOCK_EFI_STATE" \
+        && ! -e "$CORE_UNLOCK_EFI_BOOTNUM" \
+        && ! -e "$CORE_UNLOCK_EFI_IMAGE_HASH" \
+        && ! -e "$CORE_UNLOCK_EFI_IMAGE" \
+        && ! -e "$CORE_UNLOCK_EFI_LICENSE" \
+        && ! -e "$CORE_UNLOCK_EFI_HEADER_LICENSE" \
         && ! -e "$CORE_UNLOCK_UNIT.d/10-bc250-storage.conf" \
         && ! -L "$SYSTEMD_WANTS_DIR/$CORE_UNLOCK_SVC" ]] \
         || die "Core-unlock files remain; refusing to report a successful uninstall."
@@ -2038,22 +2767,23 @@ core_unlock_uninstall() {
     fi
     core_unlock_operation_unlock
     core_unlock_lifecycle_unlock
-    log "CPU core-unlock service, helper, license copy, and pending state removed."
+    log "CPU core-unlock systemd/EFI artifacts, helper, licenses, and pending state removed."
     warn "A full power-off is required for firmware to restore the six-core mask."
 }
 
 cmd_cpu_unlock() {
     local sub="${1:-status}"
     shift || true
-    (($# == 0)) || die "Usage: $0 cpu-unlock {topology|status|test|enable|off|uninstall}"
+    (($# == 0)) || die "Usage: $0 cpu-unlock {topology|status|test|enable|efi-enable|off|uninstall}"
     case "$sub" in
         topology)  core_unlock_topology ;;
         status)    core_unlock_status ;;
         test)      core_unlock_test ;;
         enable)    core_unlock_enable ;;
+        efi-enable) core_unlock_efi_enable ;;
         off)       core_unlock_off ;;
         uninstall) core_unlock_uninstall ;;
-        *) die "Usage: $0 cpu-unlock {topology|status|test|enable|off|uninstall}" ;;
+        *) die "Usage: $0 cpu-unlock {topology|status|test|enable|efi-enable|off|uninstall}" ;;
     esac
 }
 
@@ -2452,9 +3182,10 @@ menu_cpu_unlock() {
             "Show core-unlock status||Report service state, physical cores, and reboot-loop guard."
             "Show CCX core map||Display active and unavailable CPU cores grouped by CCX."
             "Test eight cores once||Write the volatile mask only. Manually reboot, stress-test, then return here."
-            "Enable boot persistence||Only allowed when this boot already has eight tested cores."
-            "Disable automatic unlock||Stop boot replay. A full power-off restores six cores."
-            "Uninstall core unlock||Remove its service, trusted helper, license copy, and pending state."
+            "Enable Linux boot persistence (recommended)||Safest mode. Only allowed when this boot already has eight tested cores."
+            "Enable EFI pre-boot mode (experimental)||Removes Linux replay; unsigned and incompatible with Secure Boot."
+            "Disable automatic unlock||Remove either boot mode. A full power-off restores six cores."
+            "Uninstall core unlock||Remove systemd/EFI artifacts, trusted helper, licenses, and pending state."
         )
         menu_select "CPU core unlock  ${CD}(experimental: 6c/12t to 8c/16t)${C0}" "${items[@]}" || return 0
         case $MENU_CHOICE in
@@ -2462,8 +3193,9 @@ menu_cpu_unlock() {
             1) run_action core_unlock_topology ;;
             2) run_action core_unlock_test ;;
             3) run_action core_unlock_enable ;;
-            4) run_action core_unlock_off ;;
-            5) run_action core_unlock_uninstall ;;
+            4) run_action core_unlock_efi_enable ;;
+            5) run_action core_unlock_off ;;
+            6) run_action core_unlock_uninstall ;;
         esac
     done
 }
@@ -2486,7 +3218,7 @@ cmd_menu() {
             "GPU load targets|$(badge_load_target)|When to clock up/down. Fixes light games stuck at idle clocks."
             "GPU ramp behavior|$(badge_ramp)|How fast + how granular clocks move. One number, rest derived."
             "CPU overclock / undervolt|$(badge_oc)|bc250_smu_oc: ~200 mV undervolt even at stock clocks."
-            "CPU core unlock||Experimental 6c/12t to 8c/16t; cold boots need one automatic warm reboot."
+            "CPU core unlock||Linux replay recommended; experimental EFI mode removes the extra Linux boot."
             "Reinstall D-Bus helpers||Fixes 'name is not activatable' errors from freq control."
             "Full help||The complete manual for every CLI command."
         )
@@ -2586,7 +3318,7 @@ CPU OVERCLOCK / UNDERVOLT (bc250-collective/bc250_smu_oc, CPU only)
                     no local clone, no pip, no git needed. The first
                     detect/apply/enable fetches automatically (network).
 
-CPU CORE UNLOCK (rw-r-r-0644/bc250-core-unlock, experimental)
+CPU CORE UNLOCK (experimental; Linux/systemd mode is recommended)
   cpu-unlock topology  Show active and unavailable CPU cores grouped by CCX.
   cpu-unlock test      Write the fixed 0xff mask ONCE without installing boot
                        persistence. Manually reboot, confirm 8c/16t, then
@@ -2594,14 +3326,27 @@ CPU CORE UNLOCK (rw-r-r-0644/bc250-core-unlock, experimental)
                        system is unstable, power off fully to restore six cores.
   cpu-unlock enable    Only after a successful test: verify this boot already
                        exposes eight physical cores, then install and enable
-                       boot replay. It refuses while the system has six cores.
+                       Linux/systemd boot replay. This is the safest and
+                       recommended persistence mode. It refuses while the
+                       system has six cores.
                        On later cold boots the firmware resets to six cores;
                        the service writes the mask and requests ONE guarded
                        warm reboot so AGESA can enumerate 8c/16t. Initramfs
                        cannot avoid this because AGESA runs before Linux.
-  cpu-unlock status    Show service, physical-core, and loop-guard state.
-  cpu-unlock off       Disable boot replay. The helper is retained.
-  cpu-unlock uninstall Remove the unit, helper, license copy, and guard state.
+  cpu-unlock efi-enable
+                       EXPERIMENTAL alternative: verify eight active cores,
+                       require Secure Boot disabled, build the shipped hardened
+                       C source with pinned yoppeh/efi headers, and create an
+                       owned BC250 Boot entry. This removes the extra Linux boot
+                       before replay, but still performs one firmware warm reset
+                       after cold power. The image is unsigned and incompatible
+                       with Secure Boot. Linux replay above is recommended.
+  cpu-unlock status    Show none/systemd/efi/conflict/partial mode, service,
+                       physical-core, and reboot-guard state.
+  cpu-unlock off       Disable/remove either persistence mode. Helper retained.
+  cpu-unlock uninstall Remove all systemd/EFI artifacts, helper, licenses, and
+                       guard state. A mismatched recorded EFI entry is never
+                       deleted and causes removal to fail safely.
                        Off/uninstall cannot relock live: a full power-off is
                        required to restore the firmware's six-core mask.
                WARNING: disabled cores may be defective. Upstream tested only
@@ -2689,6 +3434,10 @@ FILE MAP
                                patched from smu-oc-patches/)
   /var/lib/bc250-control/helper/bc250-unlock-cores
                                modified MIT helper from rw-r-r-0644
+  /var/lib/bc250-control/core-unlock/bc250-core-unlock.efi
+                               persistent master EFI image + ownership state
+  /efi/EFI/bc250/bc250-core-unlock.efi
+                               namespaced unsigned EFI boot image
   /etc/bc250-smu-oc.conf       CPU OC config       (atomic-update keep list)
   /etc/cyan-skillfish-governor-smu/config.toml     (atomic-update keep list)
   /var/lib/bc250-control/governor/freq-state  last 'freq' setting,

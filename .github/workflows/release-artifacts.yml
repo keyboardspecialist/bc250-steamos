@@ -57,6 +57,7 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y \
             acpica-tools cpio cmake ninja-build g++ flatpak flatpak-builder \
+            clang lld file \
             qt6-base-dev qt6-base-dev-tools \
             qt6-declarative-dev qt6-declarative-dev-tools \
             qt6-multimedia-dev qt6-tools-dev-tools \
@@ -70,6 +71,9 @@ jobs:
             qml6-module-qttest \
             gstreamer1.0-plugins-base gstreamer1.0-plugins-good \
             gstreamer1.0-pulseaudio
+
+      - name: Build hardened EFI core unlock
+        run: bash scripts/check-efi-core-unlock-build.sh
 
       - name: Set up pnpm
         uses: pnpm/action-setup@v4

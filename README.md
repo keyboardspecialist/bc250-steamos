@@ -276,6 +276,8 @@ sudo reboot
 sudo ./bc250-power.sh cpu-unlock status
 # Stress-test the extra cores and inspect dmesg, then opt into persistence:
 sudo ./bc250-power.sh cpu-unlock enable
+# Optional experimental alternative after the same validation:
+# sudo ./bc250-power.sh cpu-unlock efi-enable
 ```
 
 The mask survives warm reboots but resets after a full power-off. AGESA reads
@@ -283,6 +285,20 @@ it before Linux starts, so initramfs cannot apply it early enough. On a later
 cold boot, the enabled service safely writes the mask and requests one warm
 reboot. A persistent pending marker prevents a failed unlock from creating a
 reboot loop.
+
+Linux/systemd replay is the safest recommended persistence mode. The optional
+`efi-enable` mode installs an unsigned, namespaced pre-boot application and
+removes the extra Linux boot from the cold-start sequence, but firmware still
+performs one warm reset after cold power so AGESA can enumerate eight cores.
+EFI mode is experimental, requires Secure Boot disabled, and refuses install
+when Secure Boot state is unknown.
+Its installer requires `/efi` to be the writable FAT filesystem mounted from a
+GPT ESP block partition and records that partition's canonical source,
+partition number, and PARTUUID. The firmware entry must be active, first in
+`BootOrder`, and match that device identity. Removal retains the loader and all
+ownership evidence if the ESP, entry, or NVRAM query cannot be verified. After
+the warm reset, the helper clears its guard and returns high-bit `EFI_ABORTED`
+so firmware advances to the next `BootOrder` entry.
 
 The unlocked firmware retains its published six-core SMU metrics layout, but
 the GFX clock slot reports an unrelated `0-100` value. The AMDGPU workflow
@@ -296,9 +312,10 @@ running kernel.
 | `./bc250-power.sh cpu-unlock topology` | Show active CPU cores grouped by CCX |
 | `sudo ./bc250-power.sh cpu-unlock test` | Apply the volatile mask once without installing boot persistence; reboot manually |
 | `sudo ./bc250-power.sh cpu-unlock enable` | After testing, verify eight cores are already active and install boot replay |
+| `sudo ./bc250-power.sh cpu-unlock efi-enable` | Experimental: build and install unsigned EFI pre-boot replay after verifying eight cores |
 | `sudo ./bc250-power.sh cpu-unlock status` | Show service, topology, and reboot-guard state |
-| `sudo ./bc250-power.sh cpu-unlock off` | Disable boot replay but retain the helper |
-| `sudo ./bc250-power.sh cpu-unlock uninstall` | Remove the service, helper, license copy, and pending state |
+| `sudo ./bc250-power.sh cpu-unlock off` | Disable/remove either replay mode but retain the Linux helper |
+| `sudo ./bc250-power.sh cpu-unlock uninstall` | Remove all systemd/EFI artifacts, helper, license copies, and pending state |
 
 `test` does not create a systemd unit, enablement symlink, or atomic-update
 entry. If the extra cores are unstable, do not run `enable`; power the system
@@ -310,12 +327,20 @@ be defective. Upstream tested BIOS 3.0 with kernel 6.18.40; BIOS 5 is untested.
 Stress-test all cores and inspect `dmesg` for hardware errors before relying on
 them.
 
-The vendored helper is pinned to upstream commit
+The vendored Linux helper is pinned to upstream commit
 [`87ec098`](https://github.com/rw-r-r-0644/bc250-core-unlock/commit/87ec09877df57d2e310a9b9961584a78b6d1c79d)
 under its MIT license. Toolkit changes are documented in
 [`core-unlock/README.md`](core-unlock/README.md): whole-transaction locking,
 strict mailbox timeout handling, topology checks, service modes, and the
 guarded cold-boot reboot flow.
+
+The hardened EFI source is adapted from
+[`Hexxeh/bc250-efi-core-unlock@3e45131`](https://github.com/Hexxeh/bc250-efi-core-unlock/commit/3e45131678b111c50e5c285834869ecd3c487a2e)
+under Liam McLoughlin's MIT license. Builds fetch only
+[`yoppeh/efi@761b114`](https://github.com/yoppeh/efi/commit/761b114e3b186adb82516d5fa8e7a4c559f56ba5)
+headers under Warren Mann's MIT license and verify the exact commit. The custom
+guard variable, GUID, build flow, ownership checks, and both notices are
+documented in [`core-unlock/README.md`](core-unlock/README.md).
 
 ## CEC
 
@@ -576,7 +601,7 @@ Run the normal component setup commands afterward to regenerate services for the
 | BC-250 ACPI Fix | [Original tables](https://github.com/bc250-collective/bc250-acpi-fix) · [8-core update](https://github.com/mendesrr/bc250-acpi-fix-updated-8c) · [guarded universal sources](acpi-tables/) | `bc250-power.sh` |
 | Cyan Skillfish Governor | [Repository](https://github.com/filippor/cyan-skillfish-governor/tree/smu) · [Performance-mode script](https://github.com/filippor/cyan-skillfish-governor/blob/smu/scripts/cyan-skillfish-performance-mode) | `bc250-power.sh` |
 | BC-250 SMU OC | [Repository](https://github.com/bc250-collective/bc250_smu_oc) | `bc250-power.sh` |
-| BC-250 CPU Core Unlock | [Repository](https://github.com/rw-r-r-0644/bc250-core-unlock) | Original SMU method and helper adapted by `bc250-power.sh` |
+| BC-250 CPU Core Unlock | [Linux helper](https://github.com/rw-r-r-0644/bc250-core-unlock) · [EFI source](https://github.com/Hexxeh/bc250-efi-core-unlock) · [EFI headers](https://github.com/yoppeh/efi) | Original SMU method and the optional pre-boot implementation adapted by `bc250-power.sh` |
 | BC-250 Memory Config | [Repository](https://github.com/fanoush/bc250_memcfg) · [VRAM guide](https://elektricm.github.io/amd-bc250-docs/bios/vram/) | CMOS UMA utility fetched by `bc250-ram-split.sh` |
 | BC-250 Mesh Shader Patch | [SteamOS branch](https://github.com/lonewolf0622/BC-250-Mesh-Shader-Patch---driconf-Edition-opt-in-per-application-/tree/Steam-OS) | Pinned alternate RADV build fetched by `bc250-mesh-shader.sh` |
 | Valve kernel mirror | [Repository](https://github.com/Evlav/linux-integration) | `bc250-audio-fix/fetch-sources.sh` |

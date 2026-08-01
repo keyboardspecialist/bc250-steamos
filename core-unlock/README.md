@@ -1,6 +1,6 @@
 # BC-250 CPU Core Unlock Integration
 
-This directory is derived from
+The Linux helper in this directory is derived from
 [`rw-r-r-0644/bc250-core-unlock`](https://github.com/rw-r-r-0644/bc250-core-unlock),
 commit [`87ec098`](https://github.com/rw-r-r-0644/bc250-core-unlock/commit/87ec09877df57d2e310a9b9961584a78b6d1c79d).
 The original implementation and hardware research are copyright 2026
@@ -35,3 +35,47 @@ the one-time test leaves no boot service that can reapply it.
 AGESA consumes the core mask before Linux starts, so initramfs is already too
 late. After a full power-off resets the mask, the boot service writes it and
 requests one warm reboot. AGESA then sees `0xff` and enumerates all eight cores.
+
+## Experimental EFI Mode
+
+`bc250-unlock-cores-efi.c` is adapted and hardened from
+[`Hexxeh/bc250-efi-core-unlock`](https://github.com/Hexxeh/bc250-efi-core-unlock)
+commit [`3e45131`](https://github.com/Hexxeh/bc250-efi-core-unlock/commit/3e45131678b111c50e5c285834869ecd3c487a2e),
+copyright Liam McLoughlin and licensed under the MIT notice in
+[`EFI-LICENSE`](EFI-LICENSE). It builds against headers fetched only from
+[`yoppeh/efi`](https://github.com/yoppeh/efi) commit
+[`761b114`](https://github.com/yoppeh/efi/commit/761b114e3b186adb82516d5fa8e7a4c559f56ba5),
+copyright Warren Mann and licensed under
+[`EFI-HEADERS-LICENSE`](EFI-HEADERS-LICENSE). The toolkit ships no fetched header
+or EFI binary.
+
+The hardened application adds the following protections:
+
+- Verifies the complete PCI configuration ID `0x13fe1002` before any SMN/SMU
+  access and accepts only full masks `0x00000077` and `0x000000ff`.
+- Retains the proven queue 3 message `0x98` and SMN address `0x0115A870`, with
+  bounded mailbox waits and high-bit-encoded EFI error returns.
+- Persists a one-attempt UEFI guard before the SMU write. A `0x77` mask with an
+  existing guard refuses another reset; a verified `0xff` mask clears the guard
+  and returns high-bit `EFI_ABORTED` so firmware continues to the next
+  `BootOrder` entry without entering the interactive-success exception path.
+- Uses the toolkit-specific UEFI vendor GUID
+  `4f6f6f13-1ec2-4f26-a250-bc250c0e77ff` and variable name
+  `BC250CoreUnlockAttempt`.
+
+`cpu-unlock efi-enable` requires exactly eight active physical cores and Secure
+Boot disabled. It compiles the local source with clang/lld, verifies an x86-64
+PE EFI application, stores a master image and ownership state under
+`/var/lib/bc250-control/core-unlock`, installs the namespaced loader at
+`/efi/EFI/bc250/bc250-core-unlock.efi`, then creates and verifies its recorded
+`Boot####` entry. The mounted path must be a writable FAT GPT ESP block
+partition; its canonical source, parent disk, partition number, and PARTUUID
+are recorded. Completeness additionally requires an active entry first in
+`BootOrder`. Rollback and removal delete only an entry whose exact label,
+loader, partition number, and PARTUUID match; uncertainty retains the loader
+and ownership/recovery state for manual review.
+
+EFI mode eliminates the extra Linux boot used to replay the mask, but firmware
+still performs one warm reset after each cold power-on. It is unsigned,
+incompatible with Secure Boot, and experimental. Linux/systemd replay remains
+the safest recommended default.

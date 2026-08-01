@@ -100,6 +100,9 @@ class DesktopReleaseTests(unittest.TestCase):
                     "bc250-power.sh",
                     "bc250-ram-split.sh",
                     "core-unlock/bc250-unlock-cores.py",
+                    "core-unlock/bc250-unlock-cores-efi.c",
+                    "core-unlock/EFI-LICENSE",
+                    "core-unlock/EFI-HEADERS-LICENSE",
                     "core-unlock/LICENSE",
                     "desktop-control/install.sh",
                     "desktop-control/shared-service-install.sh",
@@ -112,6 +115,14 @@ class DesktopReleaseTests(unittest.TestCase):
                 self.assertFalse(any("decky-plugin" in name for name in names))
                 self.assertFalse(any("__pycache__" in name for name in names))
                 self.assertFalse(any(name.endswith((".pyc", ".pyo")) for name in names))
+                self.assertFalse(any(name.endswith("bc250-core-unlock.efi") for name in names))
+                for name in (
+                    "core-unlock/bc250-unlock-cores-efi.c",
+                    "core-unlock/EFI-LICENSE",
+                    "core-unlock/EFI-HEADERS-LICENSE",
+                ):
+                    mode = archive.getinfo(prefix + name).external_attr >> 16
+                    self.assertEqual(mode & 0o777, 0o644)
 
 
 if __name__ == "__main__":

@@ -375,7 +375,8 @@ void Bc250Bridge::cpuOcAction(const QString &action, int frequency, int voltage,
 
 void Bc250Bridge::cpuUnlockAction(const QString &action)
 {
-    if (!QStringList{QStringLiteral("test"), QStringLiteral("enable"), QStringLiteral("off")}.contains(action)) {
+    if (!QStringList{QStringLiteral("test"), QStringLiteral("enable"), QStringLiteral("efi-enable"),
+                     QStringLiteral("off")}.contains(action)) {
         reject(QStringLiteral("Unknown CPU core-unlock action.")); return;
     }
     if (!ensureReady()) return;
@@ -627,6 +628,7 @@ void Bc250Bridge::makeMockSnapshot()
     }
     m_cpuUnlockStatus = {
         {QStringLiteral("schemaVersion"), 1}, {QStringLiteral("devicePresent"), true},
+        {QStringLiteral("mode"), QStringLiteral("linux-replay")},
         {QStringLiteral("physicalCores"), 8}, {QStringLiteral("logicalThreads"), 16},
         {QStringLiteral("topologyState"), QStringLiteral("unlocked")},
         {QStringLiteral("cores"), cores}, {QStringLiteral("ccxAvailable"), true},
@@ -636,14 +638,44 @@ void Bc250Bridge::makeMockSnapshot()
         {QStringLiteral("helperInstalled"), true}, {QStringLiteral("licenseInstalled"), true},
         {QStringLiteral("unitInstalled"), true}, {QStringLiteral("helperBundleAvailable"), true},
         {QStringLiteral("service"), QVariantMap{{QStringLiteral("active"), QStringLiteral("active")},
-                                                 {QStringLiteral("enabled"), QStringLiteral("enabled")}}},
+                                                  {QStringLiteral("enabled"), QStringLiteral("enabled")}}},
         {QStringLiteral("updatePersistence"), true},
+        {QStringLiteral("linuxReplay"), QVariantMap{
+            {QStringLiteral("installed"), true},
+            {QStringLiteral("enabled"), true},
+            {QStringLiteral("service"), QVariantMap{{QStringLiteral("active"), QStringLiteral("active")},
+                                                       {QStringLiteral("enabled"), QStringLiteral("enabled")}}},
+            {QStringLiteral("updatePersistence"), true}}},
+        {QStringLiteral("efi"), QVariantMap{
+            {QStringLiteral("installed"), false},
+            {QStringLiteral("partial"), false},
+            {QStringLiteral("masterInstalled"), false},
+            {QStringLiteral("imageInstalled"), false},
+            {QStringLiteral("espImageInstalled"), false},
+            {QStringLiteral("imagesMatch"), false},
+            {QStringLiteral("bootnumStateInstalled"), false},
+            {QStringLiteral("bootEntryConfigured"), false},
+            {QStringLiteral("bootEntry"), QVariantMap{{QStringLiteral("present"), false},
+                                                        {QStringLiteral("active"), false},
+                                                         {QStringLiteral("matching"), false},
+                                                         {QStringLiteral("firstInBootOrder"), false},
+                                                         {QStringLiteral("effective"), false},
+                                                         {QStringLiteral("queryAvailable"), true}}},
+            {QStringLiteral("efiGuardPresent"), false},
+            {QStringLiteral("uefiRuntimeAvailable"), true},
+            {QStringLiteral("espIdentityValid"), false},
+            {QStringLiteral("matchingEntryCount"), 0},
+            {QStringLiteral("unrecordedMatchingEntries"), false},
+            {QStringLiteral("imageHashPresent"), false},
+            {QStringLiteral("imageHashStateInstalled"), false},
+            {QStringLiteral("imageHashValid"), QVariant{}}}},
         {QStringLiteral("guard"), QVariantMap{{QStringLiteral("state"), QStringLiteral("clear")},
                                                {QStringLiteral("active"), false},
                                                {QStringLiteral("currentBoot"), false}}},
         {QStringLiteral("actions"), QVariantMap{
-            {QStringLiteral("test"), QVariantMap{{QStringLiteral("available"), true}, {QStringLiteral("blockers"), QVariantList{}}}},
+            {QStringLiteral("test"), QVariantMap{{QStringLiteral("available"), false}, {QStringLiteral("blockers"), QVariantList{QStringLiteral("persistent-replay-enabled")}}}},
             {QStringLiteral("enable"), QVariantMap{{QStringLiteral("available"), false}, {QStringLiteral("blockers"), QVariantList{QStringLiteral("persistent-replay-enabled")}}}},
+            {QStringLiteral("efi-enable"), QVariantMap{{QStringLiteral("available"), false}, {QStringLiteral("blockers"), QVariantList{QStringLiteral("persistent-replay-enabled")}}}},
             {QStringLiteral("off"), QVariantMap{{QStringLiteral("available"), true}, {QStringLiteral("blockers"), QVariantList{}}}}}}
     };
     emit snapshotChanged();

@@ -18,6 +18,14 @@ BACKEND_SOURCE = REPOSITORY / "backend"
 DEFAULT_OUTPUT = DESKTOP_SOURCE / "out"
 DEFAULT_EPOCH = 315532800  # 1980-01-01, the earliest timestamp supported by ZIP.
 ARCHIVE_ROOT = "bc250-desktop-control"
+CORE_UNLOCK_FILES = (
+    "bc250-unlock-cores.py",
+    "bc250-unlock-cores-efi.c",
+    "EFI-LICENSE",
+    "EFI-HEADERS-LICENSE",
+    "LICENSE",
+    "README.md",
+)
 EXECUTABLES = {
     Path("bc250-power.sh"),
     Path("bc250-ram-split.sh"),
@@ -90,7 +98,11 @@ def stage(output: Path, epoch: int) -> None:
             "topology.sh",
         ):
             copy_file(REPOSITORY / name, temporary / name)
-        copy_tree(REPOSITORY / "core-unlock", temporary / "core-unlock")
+        for name in CORE_UNLOCK_FILES:
+            copy_file(
+                REPOSITORY / "core-unlock" / name,
+                temporary / "core-unlock" / name,
+            )
 
         for name in (
             "LICENSE",
