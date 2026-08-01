@@ -18,10 +18,11 @@ Dialog {
         password.forceActiveFocus()
     }
 
-    background: Rectangle {
-        color: "#0b0e18f8"
-        border.color: "#ef48bb"
-        border.width: 2
+    background: BackdropPanel {
+        objectName: "passwordDialogBackdrop"
+        fillColor: "#d90b0e18"
+        borderColor: "#ef48bb"
+        borderWidth: 2
     }
     header: Text {
         text: dialog.title
@@ -51,7 +52,7 @@ Dialog {
             font.family: "monospace"
             onAccepted: dialog.accept()
             background: Rectangle {
-                color: "#050810"
+                color: "#f2050810"
                 border.color: password.activeFocus ? "#22e7f2" : "#35525d"
             }
         }

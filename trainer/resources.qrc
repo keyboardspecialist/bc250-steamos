@@ -2,6 +2,7 @@
     <qresource prefix="/">
         <file alias="qml/Main.qml">qml/Main.qml</file>
         <file alias="qml/components/ConfirmDialog.qml">qml/components/ConfirmDialog.qml</file>
+        <file alias="qml/components/BackdropPanel.qml">qml/components/BackdropPanel.qml</file>
         <file alias="qml/components/ConsolePanel.qml">qml/components/ConsolePanel.qml</file>
         <file alias="qml/components/MetricTile.qml">qml/components/MetricTile.qml</file>
         <file alias="qml/components/AudioWaveform.qml">qml/components/AudioWaveform.qml</file>

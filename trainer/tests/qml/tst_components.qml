@@ -39,7 +39,9 @@ TestCase {
         verify(toolTip !== null)
         compare(toolTip.text, "A test control")
         compare(toolTip.delay, 450)
-        verify(findChild(toolTip, "neonToolTipFrame") !== null)
+        var frame = findChild(toolTip, "neonToolTipFrame")
+        verify(frame !== null)
+        verify(findChild(frame, "backdropPanelTint") !== null)
     }
 
     function test_statusRow() {

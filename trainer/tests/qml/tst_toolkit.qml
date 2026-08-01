@@ -98,7 +98,6 @@ TestCase {
         fixture.backend.busy = false
         fixture.controller.refreshing = true
         tryCompare(storage, "actionEnabled", false)
-        fixture.page.destroy()
     }
 
     function test_missingToolkitDisablesActions() {
@@ -106,7 +105,6 @@ TestCase {
         fixture.controller.available = false
         var storage = findChild(fixture.page, "toolkitCard-storage")
         tryCompare(storage, "actionEnabled", false)
-        fixture.page.destroy()
     }
 
     function test_consoleReflectsAndClearsOutput() {

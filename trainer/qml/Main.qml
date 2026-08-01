@@ -61,6 +61,11 @@ ApplicationWindow {
         bridge.refresh()
     }
 
+    Item {
+        id: scene
+        objectName: "trainerBackdrop"
+        anchors.fill: parent
+
     Image {
         id: backgroundImage
         anchors.fill: parent
@@ -473,6 +478,7 @@ ApplicationWindow {
         controller: mediaController
         width: Math.min(root.width * 0.47, 440)
         onDirectorySelectionRequested: folderDialog.open()
+    }
     }
 
     FolderDialog {

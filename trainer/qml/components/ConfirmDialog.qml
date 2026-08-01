@@ -24,7 +24,12 @@ Dialog {
         open()
     }
 
-    background: Rectangle { color: "#0b0e18f5"; border.color: dialog.highRisk ? "#ff4d8d" : "#22e7f2"; border.width: 2 }
+    background: BackdropPanel {
+        objectName: "confirmDialogBackdrop"
+        fillColor: "#d90b0e18"
+        borderColor: dialog.highRisk ? "#ff4d8d" : "#22e7f2"
+        borderWidth: 2
+    }
     header: Text {
         text: dialog.title
         color: dialog.highRisk ? "#ff6aa2" : "#22e7f2"

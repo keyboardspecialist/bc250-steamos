@@ -54,11 +54,11 @@ Button {
             wrapMode: Text.Wrap
         }
 
-        background: Rectangle {
+        background: BackdropPanel {
             objectName: "neonToolTipFrame"
-            color: "#071018f2"
-            border.color: control.accent
-            border.width: 1
+            fillColor: "#dc071018"
+            borderColor: control.accent
+            borderWidth: 1
             radius: 2
 
             Rectangle {
