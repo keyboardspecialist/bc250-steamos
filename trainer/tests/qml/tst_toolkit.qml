@@ -1,6 +1,5 @@
 import QtQuick 2.15
 import QtTest 1.3
-import "../../qml/components" as Components
 import "../../qml/pages" as Pages
 
 TestCase {
@@ -57,14 +56,11 @@ TestCase {
         function clearOutput() { outputText = "" }
     }
 
-    Component {
-        id: pageComponent
-        Pages.ToolkitPage { width: 580 }
-    }
-
-    Component {
-        id: consoleComponent
-        Components.ConsolePanel { width: 580; height: implicitHeight }
+    Pages.ToolkitPage {
+        id: page
+        width: 580
+        backend: backend
+        controller: controller
     }
 
     function init() {
@@ -81,46 +77,33 @@ TestCase {
         controller.startedOperation = ""
     }
 
-    function makePage() {
-        var page = createTemporaryObject(pageComponent, testCase,
-            {"backend": backend, "controller": controller})
-        verify(page !== null)
-        wait(0)
-        return {"page": page, "backend": backend, "controller": controller}
-    }
-
     function test_inventoryStatesAndBusyInterlock() {
-        var fixture = makePage()
-        compare(fixture.page.componentState("storage"), "installed")
-        compare(fixture.page.componentState("power"), "partial")
-        compare(fixture.page.componentState("persistence"), "installed")
+        compare(page.componentState("storage"), "installed")
+        compare(page.componentState("power"), "partial")
+        compare(page.componentState("persistence"), "installed")
 
-        var storage = findChild(fixture.page, "toolkitCard-storage")
+        var storage = findChild(page, "toolkitCard-storage")
         verify(storage !== null)
         compare(storage.installState, "installed")
         verify(storage.actionEnabled)
         verify(storage.removeVisible)
 
-        fixture.backend.busy = true
+        backend.busy = true
         tryCompare(storage, "actionEnabled", false)
-        fixture.backend.busy = false
-        fixture.controller.refreshing = true
+        backend.busy = false
+        controller.refreshing = true
         tryCompare(storage, "actionEnabled", false)
     }
 
     function test_missingToolkitDisablesActions() {
-        var fixture = makePage()
-        fixture.controller.available = false
-        var storage = findChild(fixture.page, "toolkitCard-storage")
+        controller.available = false
+        var storage = findChild(page, "toolkitCard-storage")
         tryCompare(storage, "actionEnabled", false)
     }
 
     function test_consoleReflectsAndClearsOutput() {
         controller.outputText = "build line 1\nbuild line 2\n"
-        var console = createTemporaryObject(consoleComponent, testCase,
-            {"controller": controller})
-        verify(console !== null)
-        var output = findChild(console, "consoleOutput")
+        var output = findChild(page, "consoleOutput")
         verify(output !== null)
         compare(output.text, controller.outputText)
         controller.clearOutput()
