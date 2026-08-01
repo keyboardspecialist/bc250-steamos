@@ -22,7 +22,7 @@ ColumnLayout {
     C.StatusRow { label: "Live / saved mode"; value: (root.gpu.mode || "--") + " / " + (root.gpu.requestedMode || "--"); health: root.gpu.dbusReady ? 1 : -1 }
     C.StatusRow { label: "Live range"; value: (root.gpu.liveMinimum ?? "--") + " - " + (root.gpu.liveMaximum ?? "--") + " MHz" }
 
-    ComboBox {
+    C.NeonComboBox {
         id: modeBox
         Layout.fillWidth: true
         enabled: root.enabledControls

@@ -30,6 +30,15 @@ TestCase {
         }
     }
 
+    Component {
+        id: comboBoxComponent
+        Components.NeonComboBox {
+            model: ["Adaptive", "Custom range", "Pinned frequency"]
+            currentIndex: 1
+            width: 240
+        }
+    }
+
     function test_neonButton() {
         var button = createTemporaryObject(buttonComponent, this)
         verify(button !== null)
@@ -61,5 +70,15 @@ TestCase {
         spinBox.forceActiveFocus()
         keyClick(Qt.Key_Up)
         compare(spinBox.value, 50)
+    }
+
+    function test_neonComboBox() {
+        var comboBox = createTemporaryObject(comboBoxComponent, this)
+        verify(comboBox !== null)
+        compare(comboBox.displayText, "Custom range")
+        verify(comboBox.implicitHeight >= 32)
+        verify(findChild(comboBox, "comboDisplay") !== null)
+        verify(findChild(comboBox, "comboIndicator") !== null)
+        verify(findChild(comboBox.popup, "comboPopupFrame") !== null)
     }
 }
