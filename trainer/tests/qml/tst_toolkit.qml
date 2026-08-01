@@ -81,6 +81,14 @@ TestCase {
         return {"page": page, "backend": backend, "controller": controller}
     }
 
+    function destroyFixture(fixture) {
+        fixture.page.destroy()
+        wait(0)
+        fixture.controller.destroy()
+        fixture.backend.destroy()
+        wait(0)
+    }
+
     function test_inventoryStatesAndBusyInterlock() {
         var fixture = makePage()
         compare(fixture.page.componentState("storage"), "installed")
@@ -98,6 +106,7 @@ TestCase {
         fixture.backend.busy = false
         fixture.controller.refreshing = true
         tryCompare(storage, "actionEnabled", false)
+        destroyFixture(fixture)
     }
 
     function test_missingToolkitDisablesActions() {
@@ -105,6 +114,7 @@ TestCase {
         fixture.controller.available = false
         var storage = findChild(fixture.page, "toolkitCard-storage")
         tryCompare(storage, "actionEnabled", false)
+        destroyFixture(fixture)
     }
 
     function test_consoleReflectsAndClearsOutput() {
@@ -118,5 +128,9 @@ TestCase {
         compare(output.text, controller.outputText)
         controller.clearOutput()
         compare(output.text, "No command output yet. Select an action to begin.")
+        console.destroy()
+        wait(0)
+        controller.destroy()
+        wait(0)
     }
 }
