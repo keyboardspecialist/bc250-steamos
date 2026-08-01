@@ -255,7 +255,10 @@ systemctl() {
 }
 verify_core_unlock_esp_state() { :; }
 efibootmgr() {
-    [[ $NVRAM_ACTIVE -eq 1 ]] || return 0
+    if [[ $NVRAM_ACTIVE -eq 0 ]]; then
+        printf '%s\n' 'BootOrder: 0001'
+        return 0
+    fi
     printf '%s\n' 'BootOrder: 0007,0001'
     printf '%s\n' 'Boot0007* BC250 Core Unlock HD(1,GPT,11111111-2222-3333-4444-555555555555,0x800,0x1000)/File(\EFI\bc250\bc250-core-unlock.efi)'
 }
@@ -268,10 +271,12 @@ CORE_UNLOCK_EFI_DIR="$base/esp/EFI/bc250"
 CORE_UNLOCK_EFI_IMAGE="$CORE_UNLOCK_EFI_DIR/bc250-core-unlock.efi"
 CORE_UNLOCK_EFI_LICENSE="$base/licenses/efi"
 CORE_UNLOCK_EFI_HEADER_LICENSE="$base/licenses/header"
+CORE_UNLOCK_EFIVARS_DIR="$base/efivars"
 CORE_UNLOCK_ESP_PART=1
 CORE_UNLOCK_ESP_PARTUUID=11111111-2222-3333-4444-555555555555
 mkdir -p "$SYSTEMD_WANTS_DIR" "$(dirname "$CORE_UNLOCK_EFI_MASTER")" \
-    "$CORE_UNLOCK_EFI_DIR" "$(dirname "$CORE_UNLOCK_EFI_LICENSE")"
+    "$CORE_UNLOCK_EFI_DIR" "$(dirname "$CORE_UNLOCK_EFI_LICENSE")" \
+    "$CORE_UNLOCK_EFIVARS_DIR"
 core_unlock_mode
 SYSTEMD_ACTIVE=1; core_unlock_mode
 SYSTEMD_ACTIVE=0; NVRAM_ACTIVE=1; core_unlock_mode
