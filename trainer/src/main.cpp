@@ -1,5 +1,6 @@
 #include "Bc250Bridge.h"
 #include "MediaController.h"
+#include "ToolkitController.h"
 
 #include <QGuiApplication>
 #include <QQmlApplicationEngine>
@@ -23,10 +24,13 @@ int main(int argc, char *argv[])
     const bool smokeTest = arguments.contains(QStringLiteral("--smoke-test"));
 
     Bc250Bridge bridge(mockMode);
+    ToolkitController toolkitController(mockMode);
     MediaController mediaController(nullptr, !smokeTest, QStringLiteral("bc250-trainer"),
                                     !smokeTest);
     QQmlApplicationEngine engine;
     engine.rootContext()->setContextProperty(QStringLiteral("bridge"), &bridge);
+    engine.rootContext()->setContextProperty(QStringLiteral("toolkitController"),
+                                              &toolkitController);
     engine.rootContext()->setContextProperty(QStringLiteral("mediaController"), &mediaController);
     engine.rootContext()->setContextProperty(QStringLiteral("applicationVersion"),
                                               application.applicationVersion());
@@ -35,7 +39,7 @@ int main(int argc, char *argv[])
     engine.load(QUrl(QStringLiteral("qrc:/qml/Main.qml")));
 
     if (smokeTest && !engine.rootObjects().isEmpty()) {
-        engine.rootObjects().constFirst()->setProperty("currentPage", 4);
+        engine.rootObjects().constFirst()->setProperty("currentPage", 0);
         QTimer::singleShot(1200, &application, &QCoreApplication::quit);
     }
 

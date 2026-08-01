@@ -79,7 +79,7 @@ private slots:
         QVERIFY(QDir(directory.path()).mkdir(QStringLiteral("nested")));
         writeWav(directory.filePath(QStringLiteral("nested/track1.wav")));
 
-        MediaController controller(nullptr, false, settingsApplication());
+        MediaController controller(nullptr, false, settingsApplication(), false);
         controller.setDirectory(QUrl::fromLocalFile(directory.path()).toString());
         QCOMPARE(controller.trackTitles(), QStringList({QStringLiteral("track2"), QStringLiteral("track10")}));
     }
@@ -100,7 +100,7 @@ private slots:
     void leavesEmptyDirectoryEmpty()
     {
         QTemporaryDir directory;
-        MediaController controller(nullptr, false, settingsApplication());
+        MediaController controller(nullptr, false, settingsApplication(), false);
         controller.setDirectory(directory.path());
         QVERIFY(controller.trackTitles().isEmpty());
         QCOMPARE(controller.currentIndex(), -1);
@@ -112,7 +112,7 @@ private slots:
         QTemporaryDir directory;
         writeWav(directory.filePath(QStringLiteral("song2.wav")));
         writeWav(directory.filePath(QStringLiteral("song10.wav")));
-        MediaController controller(nullptr, false, settingsApplication());
+        MediaController controller(nullptr, false, settingsApplication(), false);
         controller.setDirectory(directory.path());
         controller.selectTrack(1);
         QCOMPARE(controller.currentTitle(), QStringLiteral("song10"));
@@ -132,7 +132,7 @@ private slots:
         writeWav(first);
         writeWav(second);
         writeWav(third);
-        MediaController controller(nullptr, false, settingsApplication());
+        MediaController controller(nullptr, false, settingsApplication(), false);
         controller.setDirectory(directory.path());
         controller.selectTrack(1);
 
@@ -152,7 +152,7 @@ private slots:
     {
         QTemporaryDir directory;
         writeWav(directory.filePath(QStringLiteral("song1.wav")));
-        MediaController controller(nullptr, false, settingsApplication());
+        MediaController controller(nullptr, false, settingsApplication(), false);
         controller.setDirectory(directory.path());
         QCOMPARE(controller.trackTitles().size(), 1);
 
@@ -171,7 +171,7 @@ private slots:
         QTemporaryDir directory;
         writeWav(directory.filePath(QStringLiteral("song1.wav")));
         writeWav(directory.filePath(QStringLiteral("song2.wav")));
-        MediaController controller(nullptr, false, settingsApplication());
+        MediaController controller(nullptr, false, settingsApplication(), false);
         controller.setDirectory(directory.path());
         controller.previous();
         QCOMPARE(controller.currentIndex(), 1);
@@ -184,7 +184,7 @@ private slots:
         QTemporaryDir directory;
         writeWav(directory.filePath(QStringLiteral("song.wav")));
         {
-            MediaController controller(nullptr, false, settingsApplication());
+            MediaController controller(nullptr, false, settingsApplication(), false);
             controller.setVolume(-2.0);
             QCOMPARE(controller.volume(), 0.0);
             controller.setVolume(4.0);
@@ -205,7 +205,7 @@ private slots:
 
         settings.setValue(QStringLiteral("audio/muted"), true);
         settings.sync();
-        MediaController restored(nullptr, false, settingsApplication());
+        MediaController restored(nullptr, false, settingsApplication(), false);
         QCOMPARE(restored.volume(), 1.0);
         QVERIFY(!restored.muted());
         QCOMPARE(restored.selectedDirectory(), canonicalDirectory);

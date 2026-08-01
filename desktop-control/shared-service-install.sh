@@ -13,6 +13,7 @@ SHARED_KEEP_FILE=/etc/atomic-update.conf.d/bc250-desktop.conf
 SHARED_INSTALL_LOCK=/run/lock/bc250-service-install.lock
 SHARED_CORE_UNLOCK_LIFECYCLE_LOCK=/run/lock/bc250-core-unlock-lifecycle.lock
 SHARED_ROOT_UID=0
+SHARED_ROOT_GID=0
 SHARED_STAGE=""
 SHARED_OLD_PAYLOAD=""
 SHARED_PAYLOAD_SWAPPED=0
@@ -205,13 +206,13 @@ shared_validate_client_registry() {
 shared_register_client() {
     local client="$1" uid="$2" marker tmp
     shared_validate_client "$client" "$uid"
-    install -d -o root -g root -m 0755 "$SHARED_CLIENT_DIR"
+    install -d -o "$SHARED_ROOT_UID" -g "$SHARED_ROOT_GID" -m 0755 "$SHARED_CLIENT_DIR"
     marker=$(shared_marker_path "$client" "$uid")
     [[ ! -L "$marker" && ( ! -e "$marker" || -f "$marker" ) ]] \
         || shared_die "Refusing unsafe service client marker: $marker"
     tmp=$(mktemp "$SHARED_CLIENT_DIR/.client.XXXXXX")
     printf 'schema=1\nclient=%s\nuid=%s\n' "$client" "$uid" > "$tmp"
-    install -o root -g root -m 0644 "$tmp" "$marker"
+    install -o "$SHARED_ROOT_UID" -g "$SHARED_ROOT_GID" -m 0644 "$tmp" "$marker"
     rm -f "$tmp"
 }
 

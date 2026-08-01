@@ -97,12 +97,19 @@ Each child requests administrator access only when needed.
 |---|---|
 | `./bc250-toolkit.sh` | Open the unified interactive menu |
 | `./bc250-toolkit.sh status` | Show the read-only component status overview |
+| `./bc250-toolkit.sh inventory-json` | Emit versioned lifecycle state for the native Trainer dashboard |
+| `./bc250-toolkit.sh action OPERATION_ID` | Run one fixed dashboard action without opening a TUI |
 | `./bc250-toolkit.sh power` | Open a component menu directly |
 | `./bc250-toolkit.sh ram` | Open RAM / VRAM split settings |
 | `./bc250-toolkit.sh mesh` | Open per-game mesh-shader setup and toggles |
 | `./bc250-toolkit.sh trainer` | Install or upgrade BC250 Trainer |
 | `./bc250-toolkit.sh manage` | Review and remove installed components |
 | `./bc250-toolkit.sh help` | List launcher commands and components |
+
+`action` accepts only the operation IDs printed by `help`; it does not accept
+arbitrary scripts or arguments. These machine-facing commands back the native
+Trainer dashboard. Normal interactive use should continue through the toolkit
+menu.
 
 ### Uninstall And Cleanup
 

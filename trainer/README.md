@@ -1,11 +1,13 @@
 # BC250 Trainer
 
-Native Qt 6 frontend for the BC-250 control service. It renders the supplied retro artwork as a fixed-aspect frameless window, includes a native music library with six bundled MP3 tracks, and communicates with the privileged toolkit exclusively over the system D-Bus.
+Native Qt 6 frontend for the BC-250 control service and toolkit. It renders the supplied retro artwork as a fixed-aspect frameless window, includes a native music library with six bundled MP3 tracks, and uses the system D-Bus service for live hardware controls.
 
-The application does not invoke scripts, `sudo`, `busctl`, or any subprocess. Hardware checks and authorization remain in `io.github.keyboardspecialist.BC250Control1`.
+The native build can also launch a fixed allowlist of install, build, repair, and removal actions from an existing toolkit checkout. A native PTY streams bounded plain-text output into the application and handles `sudo` authentication without logging password input. QML cannot supply executable paths, arguments, or shell fragments. Live hardware checks and authorization remain in `io.github.keyboardspecialist.BC250Control1`.
 
 The Flatpak packages only this unprivileged frontend. Release installation kits
-pair it with a host-side installer for the required BC-250 control service.
+pair it with a host-side installer for the required BC-250 control service. The
+Flatpak cannot launch host toolkit actions and reports that dashboard capability
+as unavailable.
 
 ## Install
 
@@ -40,9 +42,16 @@ bash trainer/install.sh install
 The native package uses `bash trainer/install.sh status` and
 `bash trainer/install.sh uninstall` for management.
 
+The Toolkit dashboard expects the full checkout at
+`~/.local/share/bc250-fixes/bc250-steamos`. Set `BC250_TOOLKIT_DIR` when using a
+different development checkout. The standalone Trainer archive intentionally
+does not bundle or update the complete toolkit source tree.
+
 ## Features
 
 - Status dashboard with one-second telemetry while the page is active
+- Native Toolkit task dashboard for component inventory, setup, driver builds, repairs, and per-component removal
+- Live bounded console output with secure `sudo` prompting and protected process cancellation
 - Adaptive, ranged, pinned, and maximum GPU clock modes
 - GPU load target and ramp controls with service-equivalent client bounds
 - RAM/VRAM split controls for CMOS UMA minimums and dynamic TTM limits
@@ -55,7 +64,7 @@ The native package uses `bash trainer/install.sh status` and
 - Persisted music directory, current track, and volume via `QSettings`; mute is session-only
 - `--mock` development mode that never contacts hardware
 
-The installed service must include `GetCpuUnlockStatus()` and `CpuUnlockAction(string)` for core-unlock controls. Older services remain usable for status, GPU, CU, and CPU-overclock features; the UI reports the missing extension rather than falling back to command execution.
+The installed service must include `GetCpuUnlockStatus()` and `CpuUnlockAction(string)` for core-unlock controls. Older services remain usable for status, GPU, CU, and CPU-overclock features; the UI reports the missing extension rather than using toolkit execution as a hardware-control fallback.
 
 ## Build
 
@@ -118,7 +127,7 @@ flatpak run io.github.keyboardspecialist.bc250trainer
 The sandbox can open Wayland or X11 windows, use GPU acceleration and audio,
 and talk only to the BC-250 system D-Bus service. It has no general host
 filesystem or host-command access. Folder selection is handled through the
-desktop portal.
+desktop portal. Toolkit dashboard actions are therefore native-only.
 
 Release users should use the complete `*-flatpak-installer.zip` artifact instead
 of installing the raw bundle. After extracting it:
@@ -146,7 +155,10 @@ QT_QPA_PLATFORM=offscreen QT_QUICK_BACKEND=software QT_MEDIA_BACKEND=mock \
   ./build/bc250-trainer --mock --smoke-test
 ```
 
-Controls are `F1` Status, `F2` GPU, `F3` Compute Units, `F4` CPU, `M` mute, `P` play/pause, `R` refresh, and `Escape` close. Drag the noninteractive upper-left artwork to request a compositor-managed system move under Wayland.
+Controls are `F1` Toolkit, `F2` Status, `F3` GPU, `F4` Compute Units, `F5` CPU,
+`F6` Memory, `M` mute, `P` play/pause, `R` refresh, and `Escape` close. Drag the
+noninteractive upper-left artwork to request a compositor-managed system move
+under Wayland.
 
 The media deck defaults to the bundled `tracks/` directory and scans only the
 selected folder. It accepts OGA, OGG, Opus, MP3, FLAC, WAV, M4A, and AAC files.

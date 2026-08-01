@@ -204,6 +204,41 @@ show_status() {
     done
 }
 
+json_quote() {
+    local value="$1"
+    value=${value//\\/\\\\}
+    value=${value//\"/\\\"}
+    value=${value//$'\n'/\\n}
+    value=${value//$'\r'/\\r}
+    value=${value//$'\t'/\\t}
+    printf '"%s"' "$value"
+}
+
+show_status_json() {
+    require_normal_user
+    local component separator="" i
+    local -a components=("${COMPONENTS[@]}" storage) states=()
+
+    # Resolve every probe before emitting output so failures cannot truncate JSON.
+    for component in "${components[@]}"; do
+        states+=("$(component_state "$component")")
+    done
+
+    printf '{"schemaVersion":1,"components":['
+    for i in "${!components[@]}"; do
+        component=${components[$i]}
+        printf '%s{"id":' "$separator"
+        json_quote "$component"
+        printf ',"label":'
+        json_quote "$(component_label "$component")"
+        printf ',"state":'
+        json_quote "${states[$i]}"
+        printf '}'
+        separator=,
+    done
+    printf ']}\n'
+}
+
 plan_component() {
     local component="$1" state
     state=$(component_state "$component")
@@ -490,11 +525,12 @@ cmd_menu() {
 
 cmd_help() {
     cat << EOF
-Usage: $0 {menu|status|plan [COMPONENT|all]|uninstall COMPONENT|all [--yes]|purge [--yes]|help}
+Usage: $0 {menu|status|status-json|plan [COMPONENT|all]|uninstall COMPONENT|all [--yes]|purge [--yes]|help}
 
 Components: trainer, desktop, decky, cec, power, ram, compute, mesh, audio, aic, storage
 
   status                 Show lifecycle state for every component.
+  status-json            Emit versioned JSON lifecycle state for automation.
   plan [COMPONENT|all]   Describe removals and preserved data without changing anything.
   uninstall COMPONENT    Restore stock behavior and remove one component.
   uninstall all          Remove components in dependency-safe order, then remove storage infrastructure.
@@ -523,6 +559,7 @@ require_normal_user
 case "${1:-menu}" in
     menu) (($# <= 1)) || die "Usage: $0 menu"; cmd_menu ;;
     status) (($# == 1)) || die "Usage: $0 status"; show_status ;;
+    status-json) (($# == 1)) || die "Usage: $0 status-json"; show_status_json ;;
     plan)
         (($# <= 2)) || die "Usage: $0 plan [COMPONENT|all]"
         show_plan "${2:-all}"

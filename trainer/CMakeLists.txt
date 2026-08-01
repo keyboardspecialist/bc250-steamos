@@ -24,6 +24,8 @@ add_executable(bc250-trainer
     src/Bc250Bridge.h
     src/MediaController.cpp
     src/MediaController.h
+    src/ToolkitController.cpp
+    src/ToolkitController.h
     resources.qrc
 )
 
@@ -35,6 +37,9 @@ target_link_libraries(bc250-trainer PRIVATE
     Qt6::DBus
     Qt6::Multimedia
 )
+if(UNIX AND NOT APPLE)
+    target_link_libraries(bc250-trainer PRIVATE util)
+endif()
 
 target_compile_definitions(bc250-trainer PRIVATE
     BC250_TRAINER_VERSION="${PROJECT_VERSION}"
@@ -65,6 +70,18 @@ if(BUILD_TESTING)
             Qt6::Test
         )
         add_test(NAME media-native COMMAND media-controller-tests)
+
+        add_executable(toolkit-controller-tests
+            tests/tst_ToolkitController.cpp
+            src/ToolkitController.cpp
+            src/ToolkitController.h
+        )
+        target_include_directories(toolkit-controller-tests PRIVATE src)
+        target_link_libraries(toolkit-controller-tests PRIVATE Qt6::Core Qt6::Test)
+        if(UNIX AND NOT APPLE)
+            target_link_libraries(toolkit-controller-tests PRIVATE util)
+        endif()
+        add_test(NAME toolkit-controller-native COMMAND toolkit-controller-tests)
     endif()
 endif()
 

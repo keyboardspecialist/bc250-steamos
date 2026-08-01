@@ -12,11 +12,13 @@ Dialog {
     property var acceptedAction: null
     property bool highRisk: false
     property string detail: ""
+    property string acknowledgementText: "I understand the hardware and stability risk."
 
-    function ask(titleText, detailText, dangerous, action) {
+    function ask(titleText, detailText, dangerous, action, acknowledgement) {
         title = titleText
         detail = detailText
         highRisk = dangerous
+        acknowledgementText = acknowledgement || "I understand the hardware and stability risk."
         acceptedAction = action
         acknowledgement.checked = false
         open()
@@ -42,7 +44,7 @@ Dialog {
         CheckBox {
             id: acknowledgement
             visible: dialog.highRisk
-            text: "I understand the hardware and stability risk."
+            text: dialog.acknowledgementText
             palette.text: "#ffb0cd"
         }
     }

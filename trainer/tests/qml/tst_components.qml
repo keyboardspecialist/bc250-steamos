@@ -56,7 +56,8 @@ TestCase {
         verify(findChild(spinBox, "spinInput") !== null)
         verify(findChild(spinBox, "spinUpIndicator") !== null)
         verify(findChild(spinBox, "spinDownIndicator") !== null)
-        spinBox.increase()
+        spinBox.forceActiveFocus()
+        keyClick(Qt.Key_Up)
         compare(spinBox.value, 50)
     }
 }

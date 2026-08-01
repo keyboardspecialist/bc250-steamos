@@ -2,6 +2,7 @@
     <qresource prefix="/">
         <file alias="qml/Main.qml">qml/Main.qml</file>
         <file alias="qml/components/ConfirmDialog.qml">qml/components/ConfirmDialog.qml</file>
+        <file alias="qml/components/ConsolePanel.qml">qml/components/ConsolePanel.qml</file>
         <file alias="qml/components/MetricTile.qml">qml/components/MetricTile.qml</file>
         <file alias="qml/components/AudioWaveform.qml">qml/components/AudioWaveform.qml</file>
         <file alias="qml/components/AudioVisualizer.qml">qml/components/AudioVisualizer.qml</file>
@@ -9,14 +10,16 @@
         <file alias="qml/components/NeonButton.qml">qml/components/NeonButton.qml</file>
         <file alias="qml/components/NeonSpinBox.qml">qml/components/NeonSpinBox.qml</file>
         <file alias="qml/components/NeonPanel.qml">qml/components/NeonPanel.qml</file>
+        <file alias="qml/components/PasswordDialog.qml">qml/components/PasswordDialog.qml</file>
         <file alias="qml/components/SectionHeader.qml">qml/components/SectionHeader.qml</file>
         <file alias="qml/components/StatusRow.qml">qml/components/StatusRow.qml</file>
+        <file alias="qml/components/ToolkitCard.qml">qml/components/ToolkitCard.qml</file>
         <file alias="qml/pages/StatusPage.qml">qml/pages/StatusPage.qml</file>
         <file alias="qml/pages/GpuPage.qml">qml/pages/GpuPage.qml</file>
         <file alias="qml/pages/CuPage.qml">qml/pages/CuPage.qml</file>
         <file alias="qml/pages/CpuPage.qml">qml/pages/CpuPage.qml</file>
         <file alias="qml/pages/RamPage.qml">qml/pages/RamPage.qml</file>
-        <file alias="qml/pages/SetupPage.qml">qml/pages/SetupPage.qml</file>
+        <file alias="qml/pages/ToolkitPage.qml">qml/pages/ToolkitPage.qml</file>
         <file alias="assets/background.png">ChatGPT Image Jul 29, 2026, 08_44_21 PM.png</file>
     </qresource>
 </RCC>

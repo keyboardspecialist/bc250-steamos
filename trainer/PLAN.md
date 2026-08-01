@@ -44,8 +44,11 @@ qrc:/qml/Main.qml
 qrc:/assets/background.png
 ```
 
-The application must remain an unprivileged D-Bus client. It must never run
-toolkit scripts, `sudo`, or `busctl` from QML.
+The application remains unprivileged. Live hardware controls use the typed
+system D-Bus service. Native toolkit management uses a dedicated C++ PTY
+controller with a fixed operation allowlist; QML must never construct script
+paths, arguments, shell fragments, `sudo`, or `busctl` calls. Flatpak remains a
+D-Bus-only client without host command access.
 
 ## Proposed Layout
 
@@ -355,6 +358,10 @@ an offscreen startup test before installation.
 ### Native Application
 
 - JSON parsing and error propagation with QtTest
+- Fixed toolkit action allowlist and exact launcher arguments
+- PTY output streaming, UTF-8 decoding, ANSI filtering, and bounded retention
+- Secure sudo-prompt detection and process-group cancellation
+- Toolkit dashboard state, action interlocks, and console behavior
 - Service appearance and disappearance
 - Poll coalescing and operation completion
 - Argument bounds and operation-ID validation

@@ -369,6 +369,7 @@ class TrainerReleaseTests(unittest.TestCase):
                 'set -- help; source "$script" >/dev/null; '
                 'SHARED_CLIENT_DIR=$registry; SHARED_PAYLOAD_DIR=$payload; '
                 'SHARED_ROOT_UID=$(id -u); '
+                'SHARED_ROOT_GID=$(id -g); '
                 'shared_require_root() { :; }; shared_acquire_install_lock() { :; }; '
                 'shared_service_release trainer-flatpak "$uid"'
             )

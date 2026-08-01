@@ -15,7 +15,7 @@ ApplicationWindow {
     property int fittedHeight: 676
     property int currentPage: 0
     readonly property real designRatio: 1200 / 676
-    readonly property var pageNames: ["STATUS", "GPU", "CUs", "CPU", "MEMORY", "SETUP"]
+    readonly property var pageNames: ["TOOLKIT", "STATUS", "GPU", "CUs", "CPU", "MEMORY"]
     readonly property bool ambientEffectsActive: visibility !== Window.Hidden
         && visibility !== Window.Minimized
     width: fittedWidth
@@ -44,11 +44,22 @@ ApplicationWindow {
         fittedHeight = Math.round(fittedWidth / designRatio)
     }
 
-    Component.onCompleted: fitToScreen()
+    Component.onCompleted: {
+        fitToScreen()
+        bridge.statusPageActive = currentPage === 1
+    }
     onVisibilityChanged: function(visibility) {
         bridge.visible = visibility !== Window.Hidden && visibility !== Window.Minimized
     }
-    onCurrentPageChanged: bridge.statusPageActive = currentPage === 0
+    onCurrentPageChanged: bridge.statusPageActive = currentPage === 1
+
+    function refreshCurrentPage() {
+        if (bridge.busy || toolkitController.running)
+            return
+        if (currentPage === 0)
+            toolkitController.refreshInventory()
+        bridge.refresh()
+    }
 
     Image {
         id: backgroundImage
@@ -353,7 +364,13 @@ ApplicationWindow {
         width: root.width * 0.51
         height: root.height - 42
 
-        C.NeonPanel { anchors.fill: parent; accent: bridge.error || mediaController.error ? "#ff4d8d" : "#22e7f2" }
+        readonly property bool toolkitFailed: root.currentPage === 0
+            && (toolkitController.resultStatus === "failed"
+                || toolkitController.resultStatus === "error"
+                || toolkitController.resultStatus === "signaled"
+                || toolkitController.error.length > 0)
+
+        C.NeonPanel { anchors.fill: parent; accent: bridge.error || mediaController.error || controlDeck.toolkitFailed ? "#ff4d8d" : "#22e7f2" }
 
         RowLayout {
             id: titleBar
@@ -377,7 +394,7 @@ ApplicationWindow {
                 C.NeonButton {
                     required property string modelData
                     required property int index
-                    text: (index < 5 ? "F" + (index + 1) + " " : "") + modelData
+                    text: "F" + (index + 1) + " " + modelData
                     accent: root.currentPage === index ? "#ef48bb" : "#22e7f2"
                     checked: root.currentPage === index
                     Layout.fillWidth: true
@@ -389,32 +406,43 @@ ApplicationWindow {
         Rectangle {
             id: messageBar
             x: 14; y: 87; width: parent.width - 28; height: 27
-            color: bridge.error || mediaController.error ? "#481126dd" : bridge.notice ? "#102f32dd" : "#0c131bdd"
-            border.color: bridge.error || mediaController.error ? "#ff4d8d" : bridge.busy ? "#ef48bb" : "#244f5a"
+            color: bridge.error || mediaController.error || controlDeck.toolkitFailed ? "#481126dd"
+                : bridge.notice ? "#102f32dd" : "#0c131bdd"
+            border.color: bridge.error || mediaController.error || controlDeck.toolkitFailed ? "#ff4d8d"
+                : bridge.busy || toolkitController.running ? "#ef48bb" : "#244f5a"
             clip: true
             Text {
                 anchors.fill: parent; anchors.margins: 6
-                text: bridge.busy ? "WORKING: " + bridge.busyLabel : bridge.error ? "ERROR: " + bridge.error : mediaController.error ? "AUDIO: " + mediaController.error : bridge.notice ? bridge.notice : "READY // read-only polling active"
+                text: toolkitController.running ? "TOOLKIT: " + toolkitController.activeOperationTitle
+                    : root.currentPage === 0 && toolkitController.refreshing ? "TOOLKIT: scanning component inventory"
+                    : bridge.busy ? "WORKING: " + bridge.busyLabel
+                    : bridge.error ? "ERROR: " + bridge.error
+                    : mediaController.error ? "AUDIO: " + mediaController.error
+                    : root.currentPage === 0 && toolkitController.error ? "TOOLKIT: " + toolkitController.error
+                    : controlDeck.toolkitFailed ? "TOOLKIT: operation " + toolkitController.resultStatus
+                    : bridge.notice ? bridge.notice : "READY // read-only polling active"
                 textFormat: Text.PlainText
-                color: bridge.error ? "#ff8ab4" : bridge.busy ? "#ef80ce" : "#9cdbe0"
+                color: bridge.error || controlDeck.toolkitFailed ? "#ff8ab4"
+                    : bridge.busy || toolkitController.running ? "#ef80ce" : "#9cdbe0"
                 font.family: "monospace"; font.pixelSize: 9
                 elide: Text.ElideRight; verticalAlignment: Text.AlignVCenter
             }
         }
 
-        BusyIndicator { anchors.centerIn: pageArea; running: bridge.loading && !Object.keys(bridge.snapshot).length; visible: running }
+        BusyIndicator { anchors.centerIn: pageArea; running: root.currentPage === 1 && bridge.loading && !Object.keys(bridge.snapshot).length; visible: running }
         ScrollView {
             id: pageArea
             x: 14; y: 120; width: parent.width - 28; height: parent.height - 184
             clip: true
+            enabled: !toolkitController.running || root.currentPage === 0
             ScrollBar.horizontal.policy: ScrollBar.AlwaysOff
             Loader {
                 width: pageArea.availableWidth
-                sourceComponent: root.currentPage === 0 ? statusComponent
-                    : root.currentPage === 1 ? gpuComponent
-                    : root.currentPage === 2 ? cuComponent
-                    : root.currentPage === 3 ? cpuComponent
-                    : root.currentPage === 4 ? ramComponent : setupComponent
+                sourceComponent: root.currentPage === 0 ? toolkitComponent
+                    : root.currentPage === 1 ? statusComponent
+                    : root.currentPage === 2 ? gpuComponent
+                    : root.currentPage === 3 ? cuComponent
+                    : root.currentPage === 4 ? cpuComponent : ramComponent
             }
         }
 
@@ -435,7 +463,7 @@ ApplicationWindow {
             Text { text: "v" + applicationVersion; color: "#607783"; font.family: "monospace"; font.pixelSize: 8 }
             Item { Layout.fillWidth: true }
             C.NeonButton { visible: bridge.busy && bridge.operationId.length > 0; enabled: bridge.operationCancellable; text: bridge.operationCancellable ? "CANCEL OP" : "NON-CANCELLABLE"; accent: "#ff6aa2"; onClicked: bridge.cancelOperation() }
-            C.NeonButton { text: "REFRESH [R]"; enabled: !bridge.busy; onClicked: bridge.refresh() }
+            C.NeonButton { text: "REFRESH [R]"; enabled: !bridge.busy && !toolkitController.refreshing && !toolkitController.running; onClicked: root.refreshCurrentPage() }
         }
     }
 
@@ -453,20 +481,23 @@ ApplicationWindow {
         onAccepted: mediaController.setDirectory(selectedFolder)
     }
 
+    C.PasswordDialog { controller: toolkitController }
+
     Shortcut { sequence: "F1"; onActivated: root.currentPage = 0 }
     Shortcut { sequence: "F2"; onActivated: root.currentPage = 1 }
     Shortcut { sequence: "F3"; onActivated: root.currentPage = 2 }
     Shortcut { sequence: "F4"; onActivated: root.currentPage = 3 }
     Shortcut { sequence: "F5"; onActivated: root.currentPage = 4 }
+    Shortcut { sequence: "F6"; onActivated: root.currentPage = 5 }
     Shortcut { sequence: "M"; onActivated: mediaController.muted = !mediaController.muted }
     Shortcut { sequence: "P"; onActivated: mediaController.togglePlayback() }
-    Shortcut { sequence: "R"; onActivated: if (!bridge.busy) bridge.refresh() }
+    Shortcut { sequence: "R"; onActivated: root.refreshCurrentPage() }
     Shortcut { sequence: "Escape"; onActivated: root.close() }
 
+    Component { id: toolkitComponent; Pages.ToolkitPage { backend: bridge; controller: toolkitController } }
     Component { id: statusComponent; Pages.StatusPage { backend: bridge } }
     Component { id: gpuComponent; Pages.GpuPage { backend: bridge } }
     Component { id: cuComponent; Pages.CuPage { backend: bridge } }
     Component { id: cpuComponent; Pages.CpuPage { backend: bridge } }
     Component { id: ramComponent; Pages.RamPage { backend: bridge } }
-    Component { id: setupComponent; Pages.SetupPage { backend: bridge } }
 }

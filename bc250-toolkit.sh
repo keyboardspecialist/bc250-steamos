@@ -54,6 +54,13 @@ run_script() {
     bash "$script" "$@"
 }
 
+run_sudo_script() {
+    local script="$1"
+    shift
+    require_script "$script"
+    sudo bash "$script" "$@"
+}
+
 confirm_action() {
     local prompt="$1" answer
     shift
@@ -104,6 +111,40 @@ install_trainer() {
     confirm_action \
         "Install or upgrade BC250 Trainer?" \
         bash "$TRAINER_INSTALL_SH" install
+}
+
+run_machine_action() {
+    (($# == 1)) || die "Usage: $0 action OPERATION_ID"
+    require_normal_user
+    local operation="$1"
+    export BC250_TOOLKIT_MACHINE=1
+
+    case "$operation" in
+        storage-install) run_sudo_script "$STORAGE_SH" install ;;
+        storage-repair) run_sudo_script "$STORAGE_SH" repair-infrastructure ;;
+        power-install) run_sudo_script "$POWER_SH" all ;;
+        ram-install) run_sudo_script "$RAM_SPLIT_SH" install ;;
+        compute-build) run_sudo_script "$COMPUTE_SH" prep ;;
+        cec-setup) run_script "$CEC_SH" setup ;;
+        cec-repair) run_script "$CEC_SH" repair ;;
+        persistence-install) run_sudo_script "$PERSISTENCE_SH" install all ;;
+        aic-install) run_sudo_script "$AIC_SETUP_SH" install ;;
+        audio-build) run_script "$AUDIO_FIX_SH" ;;
+        mesh-setup) run_script "$MESH_SHADER_SH" setup ;;
+        decky-install) run_script "$DECKY_INSTALL_SH" install ;;
+        desktop-install) run_script "$DESKTOP_INSTALL_SH" install ;;
+        persistence-remove) run_sudo_script "$PERSISTENCE_SH" remove all ;;
+        storage-remove|power-remove|ram-remove|compute-remove|cec-remove|aic-remove|audio-remove|mesh-remove|decky-remove|desktop-remove)
+            require_script "$MAINTENANCE_SH"
+            bash "$MAINTENANCE_SH" uninstall "${operation%-remove}" --yes
+            ;;
+        *) die "Unknown operation ID: $operation" ;;
+    esac
+}
+
+show_inventory_json() {
+    require_normal_user
+    run_script "$MAINTENANCE_SH" status-json
 }
 
 status_section() {
@@ -254,7 +295,7 @@ cmd_menu() {
 
 cmd_help() {
     cat << EOF
-Usage: $0 [menu|status|power|ram|compute|cec|storage|persistence|wifi|audio|mesh|decky|desktop|trainer|manage|help]
+Usage: $0 [menu|status|inventory-json|action OPERATION_ID|power|ram|compute|cec|storage|persistence|wifi|audio|mesh|decky|desktop|trainer|manage|help]
 
 Run without arguments in a terminal to open the unified toolkit menu.
 Run the toolkit as the logged-in Deck user, not with sudo; child tools request
@@ -262,6 +303,8 @@ administrator access when needed.
 
 Commands:
   status                 Show a read-only component status overview
+  inventory-json         Emit versioned JSON component inventory for automation
+  action OPERATION_ID    Run one fixed, noninteractive dashboard operation
   power                  Open the Power Management menu
   ram                    Open the RAM / VRAM Split menu
   compute                Open the Compute Units menu
@@ -275,6 +318,17 @@ Commands:
   desktop                Confirm and run the Plasma desktop-control installer
   trainer                Confirm and run the BC250 Trainer installer
   manage                 Open installed-component maintenance and cleanup
+
+Action operation IDs:
+  storage-install        power-install          ram-install
+  compute-build          cec-setup              persistence-install
+  aic-install            audio-build            mesh-setup
+  decky-install          desktop-install
+  storage-repair         cec-repair
+  storage-remove         power-remove           ram-remove
+  compute-remove         cec-remove             persistence-remove
+  aic-remove             audio-remove           mesh-remove
+  decky-remove           desktop-remove
 EOF
 }
 
@@ -292,6 +346,8 @@ shift
 case "$command_name" in
     menu) (($# == 0)) || die "Usage: $0 menu"; cmd_menu ;;
     status) (($# == 0)) || die "Usage: $0 status"; show_status ;;
+    inventory-json) (($# == 0)) || die "Usage: $0 inventory-json"; show_inventory_json ;;
+    action) run_machine_action "$@" ;;
     power) (($# == 0)) || die "Usage: $0 power"; run_script "$POWER_SH" menu ;;
     ram) (($# == 0)) || die "Usage: $0 ram"; run_script "$RAM_SPLIT_SH" menu ;;
     compute) (($# == 0)) || die "Usage: $0 compute"; run_script "$COMPUTE_SH" menu ;;

@@ -100,7 +100,7 @@ run_python_suite() {
 
 verify() {
     local ctest_listing
-    local expected_tests=(bridge-native media-native qml-components qml-qt6-offscreen-smoke offscreen-startup)
+    local expected_tests=(bridge-native media-native toolkit-controller-native qml-components qml-qt6-offscreen-smoke offscreen-startup)
     local missing_tests=()
 
     if ! command -v python3 >/dev/null 2>&1 || ! command -v node >/dev/null 2>&1; then
