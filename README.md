@@ -303,9 +303,12 @@ so firmware advances to the next `BootOrder` entry.
 The unlocked firmware retains the published six-core SMU metrics transfer size,
 but its eight-core writers overlap per-core fields and the GFX clock slot. The
 AMDGPU workflow queries and validates the GFX clock directly, adds bounded GPU
-utilization reporting, and synthesizes eight per-core rows from the version-
-gated Robin 3 MP1 SRAM layout. Other firmware revisions retain the published
-table path until their internal layouts are validated.
+utilization reporting, and obtains all eight Robin 3 core clocks, powers, and
+temperatures from the firmware's separate `0x344`-byte PM status table. The
+table-3 path is gated to SMU version `0x00580600`, all eight presence bits, and
+the 16-thread topology; transfer or range-validation failures leave the
+per-core ABI fields unavailable instead of exposing overlapped table-6 data.
+Other firmware revisions retain the published six-core table path.
 `cpu-unlock status` reports whether the patched module is installed for the
 running kernel.
 

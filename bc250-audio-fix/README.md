@@ -4,7 +4,8 @@ Corrects DisplayPort video/audio timing and Cyan Skillfish GPU telemetry
 through one patched `amdgpu` module. GPU activity comes from GC status sampling
 and GFX clock comes from a validated direct SMU query. Six-core systems retain
 the firmware's published `SmuMetrics_t` layout; unlocked eight-core systems
-running Robin 3 read per-core telemetry directly from MP1 SRAM.
+running Robin 3 use the firmware's separate PM status table for all eight core
+clocks, powers, and temperatures.
 
 ## Install
 
@@ -27,8 +28,8 @@ sudo reboot
 
 Both versions also apply the Cyan Skillfish telemetry patches. They preserve
 the firmware's published metrics-table transfer size, query and validate the
-GFX clock through the SMU, sample GPU activity from GC status, and synthesize
-eight per-core rows from the Robin 3 MP1 SRAM layout when all cores are present.
+GFX clock through the SMU, sample GPU activity from GC status, and transfer the
+`0x344`-byte PM status table when Robin 3 reports all cores present.
 The build selects the display patch from the running kernel and produces
 `amdgpu.ko.zst` for that exact release.
 
@@ -43,7 +44,7 @@ override.
 |---|---|
 | `bc250-cyan-skillfish-gpu-telemetry.patch` | Apply bounded GC activity sampling while retaining `SmuMetrics_t` |
 | `bc250-cyan-skillfish-gfxclk.patch` | Apply range-checked direct SMU GFX-clock reporting |
-| `bc250-cyan-skillfish-8core-metrics.patch` | Apply version-gated Robin 3 direct per-core telemetry |
+| `bc250-cyan-skillfish-8core-metrics.patch` | Apply version-gated Robin 3 PM status telemetry |
 
 ### Runtime Data
 
@@ -55,9 +56,9 @@ override.
 | `gpu_metrics_v2_2.current_gfxclk` | `PPSMC_MSG_GetGfxFrequency` | Point-in-time MHz |
 | `gpu_metrics_v2_2.average_gfxclk_frequency` | `PPSMC_MSG_GetGfxFrequency` | Point-in-time MHz |
 | Six-core CPU arrays | Firmware `SmuMetrics_t` | Six per-core entries |
-| Robin 3 eight-core frequency | MP1 SRAM records | Point-in-time MHz |
-| Robin 3 eight-core temperature | MP1 SRAM records | Point-in-time centi-Celsius |
-| Robin 3 `average_core_power` | MP1 SRAM records | Point-in-time mW |
+| Robin 3 `current_coreclk[8]` | PM status table 3 at `0x198` | Firmware average GHz, scaled to MHz |
+| Robin 3 `average_core_power[8]` | PM status table 3 at `0x118` | Firmware average W, scaled to mW |
+| Robin 3 `temperature_core[8]` | PM status table 3 at `0x158` | Firmware average C, scaled to centi-C |
 
 ### Activity Sampling
 
@@ -81,19 +82,22 @@ Stock 6-core/12-thread systems use its six CPU rows. On an unlocked
 Robin 3 version `0x00580600` and the low eight bits of core-presence register
 `0x0115a870` are set.
 
-The experimental Robin 3 reader uses eight records at stride `0x178`, decodes
-the firmware's binary32 power, temperature, frequency, and C0 values without
-kernel floating point, and range-validates every field before publishing the
-sample. A nonzero frequency floor prevents an uninitialized SRAM window from
-being accepted as live telemetry.
-The `gpu_metrics_v2_2` ABI has no C0 field, so C0 is used only to validate the
-record layout. Power is an instantaneous sample even though the ABI member is
-named `average_core_power`. If a direct sample is invalid, all per-core fields
-remain at the `0xffff` unavailable sentinel rather than exposing the firmware's
-overlapped six-entry payload. Other firmware versions continue to use the
-published table path; Robin 5 is not yet supported. The individual SMN reads
-are serialized but are not an atomic PMFW snapshot, so rapidly changing values
-can span adjacent firmware update epochs.
+Robin 3 writes eight entries into arrays sized for six in table 6, permanently
+overwriting core 0 power, core temperatures 0-3, and the GFX clock/temperature
+slot. Its tool-facing PM status table 3 instead exports eight IEEE-754 values
+for each internal per-core field. The driver allocates a dedicated `0x344`-byte
+PM status BO, serializes queue-3 messages `0x7a`, `0x7b`, and `0x22` with the
+normal SMU message lock, invalidates HDP after the firmware DMA, and decodes the
+power, temperature, and frequency arrays without kernel floating point.
+
+Every decoded value is range checked. A Robin 3 mailbox, DMA, or decode failure
+leaves all per-core fields at the `0xffff` ABI sentinel rather than falling back
+to corrupted table 6. Other firmware versions continue to use the published
+table path; Robin 5 is not yet supported. The table-3 layout is confirmed by
+static Robin 3 firmware analysis and still requires validation against live
+transferred bytes. Userspace software that directly accesses queue 3 must not
+run concurrently with a `gpu_metrics` read because its lock cannot coordinate
+with the kernel SMU lock.
 
 ## Commands
 
@@ -204,6 +208,6 @@ The complete fallback remains mandatory for the AMDGPU override. AIC8800 may ins
 | `bc250-dp-audio-clock-6.18.patch` | SteamOS 3.9.x display clock patch |
 | `bc250-cyan-skillfish-gpu-telemetry.patch` | Runtime GPU activity export using the published metrics layout |
 | `bc250-cyan-skillfish-gfxclk.patch` | Runtime GFX clock export using a direct SMU query |
-| `bc250-cyan-skillfish-8core-metrics.patch` | Experimental Robin 3 eight-core MP1 SRAM telemetry |
+| `bc250-cyan-skillfish-8core-metrics.patch` | Robin 3 eight-core PM status telemetry |
 | `bc250-cg-flags.patch` | Experimental GFX clock gating |
 | `bc250-cg-flags-unvalidated.patch` | Experimental expanded clock gating |
