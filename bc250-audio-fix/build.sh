@@ -259,6 +259,7 @@ fi
 step "apply Cyan Skillfish GPU metrics patches"
 METRICS_PATCH=$HERE/bc250-cyan-skillfish-gpu-telemetry.patch
 GFXCLK_PATCH=$HERE/bc250-cyan-skillfish-gfxclk.patch
+CORE_METRICS_PATCH=$HERE/bc250-cyan-skillfish-8core-metrics.patch
 
 METRICS_SOURCE=drivers/gpu/drm/amd/pm/swsmu/smu11/cyan_skillfish_ppt.c
 METRICS_HEADER=drivers/gpu/drm/amd/pm/swsmu/inc/pmfw_if/smu11_driver_if_cyan_skillfish.h
@@ -275,7 +276,14 @@ if grep -q 'SmuMetricsTable8_t' "$METRICS_HEADER"; then
     echo "restored invalid topology-sized Cyan Skillfish metrics files from $SHA"
 fi
 
-if patch -p1 -R --dry-run -s -f < "$METRICS_PATCH" >/dev/null 2>&1; then
+TELEMETRY_SOURCE_SHA=ab86a4598bf907c6963c0a9b4c43f7a50727ce11993833a0b307d9ae0ae0e017
+GFXCLK_SOURCE_SHA=572014e03cff22fb57f21121e8e8722f11d3d99822ee86e60fbfe50ed6e76f30
+CORE_METRICS_SOURCE_SHA=d7191ecdd18a34478d7f58de79a149935e2deef73444e996cde6cf5cb596e35c
+
+METRICS_SOURCE_SHA=$(sha256sum "$METRICS_SOURCE" | cut -d' ' -f1)
+if [ "$METRICS_SOURCE_SHA" = "$TELEMETRY_SOURCE_SHA" ] \
+   || [ "$METRICS_SOURCE_SHA" = "$GFXCLK_SOURCE_SHA" ] \
+   || [ "$METRICS_SOURCE_SHA" = "$CORE_METRICS_SOURCE_SHA" ]; then
     echo "GPU telemetry patch already applied"
 elif patch -p1 --dry-run -s -f < "$METRICS_PATCH" >/dev/null 2>&1; then
     patch -p1 -s < "$METRICS_PATCH"
@@ -284,13 +292,25 @@ else
     die "GPU telemetry patch neither applies nor reverses cleanly — tree has drifted; inspect by hand"
 fi
 
-if patch -p1 -R --dry-run -s -f < "$GFXCLK_PATCH" >/dev/null 2>&1; then
+METRICS_SOURCE_SHA=$(sha256sum "$METRICS_SOURCE" | cut -d' ' -f1)
+if [ "$METRICS_SOURCE_SHA" = "$GFXCLK_SOURCE_SHA" ] \
+   || [ "$METRICS_SOURCE_SHA" = "$CORE_METRICS_SOURCE_SHA" ]; then
     echo "GPU clock query patch already applied"
 elif patch -p1 --dry-run -s -f < "$GFXCLK_PATCH" >/dev/null 2>&1; then
     patch -p1 -s < "$GFXCLK_PATCH"
     echo "GPU clock query patch applied"
 else
     die "GPU clock query patch neither applies nor reverses cleanly — tree has drifted; inspect by hand"
+fi
+
+METRICS_SOURCE_SHA=$(sha256sum "$METRICS_SOURCE" | cut -d' ' -f1)
+if [ "$METRICS_SOURCE_SHA" = "$CORE_METRICS_SOURCE_SHA" ]; then
+    echo "Robin 3 eight-core metrics patch already applied"
+elif patch -p1 --dry-run -s -f < "$CORE_METRICS_PATCH" >/dev/null 2>&1; then
+    patch -p1 -s < "$CORE_METRICS_PATCH"
+    echo "Robin 3 eight-core metrics patch applied"
+else
+    die "Robin 3 eight-core metrics patch neither applies nor reverses cleanly — tree has drifted; inspect by hand"
 fi
 
 step "clock-gating patches (BC-250 idle power) — EXPERIMENTAL, opt-in"

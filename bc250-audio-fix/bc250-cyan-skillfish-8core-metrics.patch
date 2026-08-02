@@ -1,0 +1,162 @@
+diff --git a/drivers/gpu/drm/amd/pm/swsmu/smu11/cyan_skillfish_ppt.c b/drivers/gpu/drm/amd/pm/swsmu/smu11/cyan_skillfish_ppt.c
+index 7771ec17d1f3..0c1f067737c2 100644
+--- a/drivers/gpu/drm/amd/pm/swsmu/smu11/cyan_skillfish_ppt.c
++++ b/drivers/gpu/drm/amd/pm/swsmu/smu11/cyan_skillfish_ppt.c
+@@ -84,6 +84,118 @@ static int cyan_skillfish_get_gfxclk_frequency(struct smu_context *smu,
+ 	return 0;
+ }
+ 
++#define CYAN_SKILLFISH_ROBIN3_SMU_VERSION	0x00580600
++#define CYAN_SKILLFISH_CORE_PRESENCE		0x0115a870
++#define CYAN_SKILLFISH_CORE_COUNT		8
++#define CYAN_SKILLFISH_CORE_RECORD_STRIDE	0x178
++#define CYAN_SKILLFISH_CORE_POWER_BASE		0x03c0fad4
++#define CYAN_SKILLFISH_CORE_TEMP_BASE		0x03c0fae0
++#define CYAN_SKILLFISH_CORE_FREQ_BASE		0x03c0fc04
++#define CYAN_SKILLFISH_CORE_C0_BASE		0x03c0fc10
++
++#define CYAN_SKILLFISH_CORE_FREQ_MIN		100
++#define CYAN_SKILLFISH_CORE_FREQ_MAX		6000
++#define CYAN_SKILLFISH_CORE_POWER_MAX		30000
++#define CYAN_SKILLFISH_CORE_TEMP_MAX		15000
++#define CYAN_SKILLFISH_CORE_C0_MAX		100
++
++struct cyan_skillfish_core_metrics {
++	uint16_t frequency[CYAN_SKILLFISH_CORE_COUNT];
++	uint16_t power[CYAN_SKILLFISH_CORE_COUNT];
++	uint16_t temperature[CYAN_SKILLFISH_CORE_COUNT];
++};
++
++static int cyan_skillfish_float_to_u16(uint32_t raw, uint32_t scale,
++					uint16_t max, uint16_t *value)
++{
++	uint32_t exponent = (raw >> 23) & 0xff;
++	uint64_t mantissa, scaled;
++	int shift;
++
++	if (raw & BIT(31) || exponent == 0xff)
++		return -ERANGE;
++
++	mantissa = raw & GENMASK(22, 0);
++	if (!exponent) {
++		if (mantissa)
++			return -ERANGE;
++		*value = 0;
++		return 0;
++	}
++
++	mantissa |= BIT(23);
++	shift = exponent - 127 - 23;
++	scaled = mantissa * scale;
++	if (shift >= 0) {
++		if (shift >= 64 || scaled > (U64_MAX >> shift))
++			return -ERANGE;
++		scaled <<= shift;
++	} else if (shift <= -64) {
++		scaled = 0;
++	} else {
++		scaled >>= -shift;
++	}
++
++	if (scaled > max)
++		return -ERANGE;
++
++	*value = scaled;
++	return 0;
++}
++
++static int cyan_skillfish_get_robin3_core_metrics(
++		struct smu_context *smu,
++		struct cyan_skillfish_core_metrics *metrics)
++{
++	struct amdgpu_device *adev = smu->adev;
++	uint32_t address, smu_version;
++	uint16_t c0;
++	int i, ret;
++
++	ret = smu_cmn_get_smc_version(smu, NULL, &smu_version);
++	if (ret)
++		return ret;
++	if (smu_version != CYAN_SKILLFISH_ROBIN3_SMU_VERSION)
++		return -EOPNOTSUPP;
++	if ((RREG32_PCIE(CYAN_SKILLFISH_CORE_PRESENCE) & 0xff) != 0xff)
++		return -EOPNOTSUPP;
++
++	for (i = 0; i < CYAN_SKILLFISH_CORE_COUNT; i++) {
++		address = i * CYAN_SKILLFISH_CORE_RECORD_STRIDE;
++
++		ret = cyan_skillfish_float_to_u16(
++			RREG32_PCIE(CYAN_SKILLFISH_CORE_POWER_BASE + address),
++			1000, CYAN_SKILLFISH_CORE_POWER_MAX,
++			&metrics->power[i]);
++		if (ret)
++			return ret;
++
++		ret = cyan_skillfish_float_to_u16(
++			RREG32_PCIE(CYAN_SKILLFISH_CORE_TEMP_BASE + address),
++			100, CYAN_SKILLFISH_CORE_TEMP_MAX,
++			&metrics->temperature[i]);
++		if (ret)
++			return ret;
++
++		ret = cyan_skillfish_float_to_u16(
++			RREG32_PCIE(CYAN_SKILLFISH_CORE_FREQ_BASE + address),
++			1000, CYAN_SKILLFISH_CORE_FREQ_MAX,
++			&metrics->frequency[i]);
++		if (ret)
++			return ret;
++		if (metrics->frequency[i] < CYAN_SKILLFISH_CORE_FREQ_MIN)
++			return -ERANGE;
++
++		ret = cyan_skillfish_float_to_u16(
++			RREG32_PCIE(CYAN_SKILLFISH_CORE_C0_BASE + address),
++			100, CYAN_SKILLFISH_CORE_C0_MAX, &c0);
++		if (ret)
++			return ret;
++	}
++
++	return 0;
++}
++
+ #define FEATURE_MASK(feature) (1ULL << feature)
+ #define SMC_DPM_FEATURE ( \
+ 	FEATURE_MASK(FEATURE_FCLK_DPM_BIT)	|	\
+@@ -436,8 +548,9 @@ static ssize_t cyan_skillfish_get_gpu_metrics(struct smu_context *smu,
+ 	struct gpu_metrics_v2_2 *gpu_metrics =
+ 		(struct gpu_metrics_v2_2 *)smu_table->gpu_metrics_table;
+ 	SmuMetrics_t metrics;
++	struct cyan_skillfish_core_metrics core_metrics;
+ 	uint32_t gfxclk;
+-	int i, ret = 0;
++	int core_ret, i, ret = 0;
+ 
+ 	ret = smu_cmn_get_metrics_table(smu, &metrics, true);
+ 	if (ret)
+@@ -480,6 +593,27 @@ static ssize_t cyan_skillfish_get_gpu_metrics(struct smu_context *smu,
+ 		gpu_metrics->current_coreclk[i] = metrics.Current.CoreFrequency[i];
+ 	}
+ 
++	core_ret = cyan_skillfish_get_robin3_core_metrics(smu, &core_metrics);
++	if (!core_ret) {
++		for (i = 0; i < CYAN_SKILLFISH_CORE_COUNT; i++) {
++			gpu_metrics->temperature_core[i] =
++				core_metrics.temperature[i];
++			gpu_metrics->average_core_power[i] =
++				core_metrics.power[i];
++			gpu_metrics->current_coreclk[i] =
++				core_metrics.frequency[i];
++		}
++	} else if (core_ret != -EOPNOTSUPP) {
++		memset(gpu_metrics->temperature_core, 0xff,
++		       sizeof(gpu_metrics->temperature_core));
++		memset(gpu_metrics->average_core_power, 0xff,
++		       sizeof(gpu_metrics->average_core_power));
++		memset(gpu_metrics->current_coreclk, 0xff,
++		       sizeof(gpu_metrics->current_coreclk));
++		dev_dbg(smu->adev->dev, "Robin 3 core metrics invalid: %d\n",
++			core_ret);
++	}
++
+ 	for (i = 0; i < 2; i++) {
+ 		gpu_metrics->temperature_l3[i] = metrics.Current.L3Temperature[i];
+ 		gpu_metrics->current_l3clk[i] = metrics.Current.L3Frequency[i];

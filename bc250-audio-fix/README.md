@@ -1,10 +1,10 @@
 # AMDGPU corrections
 
 Corrects DisplayPort video/audio timing and Cyan Skillfish GPU telemetry
-through one patched `amdgpu` module. Six-core and eight-core CPU topologies use
-the firmware's published `SmuMetrics_t` layout. GPU activity comes from GC
-status sampling, GFX clock comes from a validated direct SMU query, and per-core
-CPU metrics contain the firmware's six entries.
+through one patched `amdgpu` module. GPU activity comes from GC status sampling
+and GFX clock comes from a validated direct SMU query. Six-core systems retain
+the firmware's published `SmuMetrics_t` layout; unlocked eight-core systems
+running Robin 3 read per-core telemetry directly from MP1 SRAM.
 
 ## Install
 
@@ -26,8 +26,9 @@ sudo reboot
 | 3.9.x | `linux-neptune-618` | [`bc250-dp-audio-clock-6.18.patch`](bc250-dp-audio-clock-6.18.patch) |
 
 Both versions also apply the Cyan Skillfish telemetry patches. They preserve
-the firmware's published metrics layout, query and validate the GFX clock
-through the SMU, and sample GPU activity from GC status.
+the firmware's published metrics-table transfer size, query and validate the
+GFX clock through the SMU, sample GPU activity from GC status, and synthesize
+eight per-core rows from the Robin 3 MP1 SRAM layout when all cores are present.
 The build selects the display patch from the running kernel and produces
 `amdgpu.ko.zst` for that exact release.
 
@@ -42,6 +43,7 @@ override.
 |---|---|
 | `bc250-cyan-skillfish-gpu-telemetry.patch` | Apply bounded GC activity sampling while retaining `SmuMetrics_t` |
 | `bc250-cyan-skillfish-gfxclk.patch` | Apply range-checked direct SMU GFX-clock reporting |
+| `bc250-cyan-skillfish-8core-metrics.patch` | Apply version-gated Robin 3 direct per-core telemetry |
 
 ### Runtime Data
 
@@ -52,7 +54,10 @@ override.
 | `METRICS_CURR_GFXCLK` | `PPSMC_MSG_GetGfxFrequency` | Point-in-time MHz |
 | `gpu_metrics_v2_2.current_gfxclk` | `PPSMC_MSG_GetGfxFrequency` | Point-in-time MHz |
 | `gpu_metrics_v2_2.average_gfxclk_frequency` | `PPSMC_MSG_GetGfxFrequency` | Point-in-time MHz |
-| CPU core arrays | Firmware `SmuMetrics_t` | Six per-core entries |
+| Six-core CPU arrays | Firmware `SmuMetrics_t` | Six per-core entries |
+| Robin 3 eight-core frequency | MP1 SRAM records | Point-in-time MHz |
+| Robin 3 eight-core temperature | MP1 SRAM records | Point-in-time centi-Celsius |
+| Robin 3 `average_core_power` | MP1 SRAM records | Point-in-time mW |
 
 ### Activity Sampling
 
@@ -70,11 +75,25 @@ outside the supported 1000-2000 MHz range propagate to the metrics caller.
 
 ### Core Count
 
-The runtime patches use the published `SmuMetrics_t` transfer size for stock
-6-core/12-thread and unlocked 8-core/16-thread topologies. CPU topology does not
-change the firmware metrics ABI, which supplies six CPU rows. GPU activity and
-GFX clock reporting use topology-independent register and SMU sources, so an
-unrelated firmware-table value cannot be exposed as either metric.
+The runtime patches always retain the published `SmuMetrics_t` transfer size.
+Stock 6-core/12-thread systems use its six CPU rows. On an unlocked
+8-core/16-thread system, direct telemetry is enabled only when the SMU reports
+Robin 3 version `0x00580600` and the low eight bits of core-presence register
+`0x0115a870` are set.
+
+The experimental Robin 3 reader uses eight records at stride `0x178`, decodes
+the firmware's binary32 power, temperature, frequency, and C0 values without
+kernel floating point, and range-validates every field before publishing the
+sample. A nonzero frequency floor prevents an uninitialized SRAM window from
+being accepted as live telemetry.
+The `gpu_metrics_v2_2` ABI has no C0 field, so C0 is used only to validate the
+record layout. Power is an instantaneous sample even though the ABI member is
+named `average_core_power`. If a direct sample is invalid, all per-core fields
+remain at the `0xffff` unavailable sentinel rather than exposing the firmware's
+overlapped six-entry payload. Other firmware versions continue to use the
+published table path; Robin 5 is not yet supported. The individual SMN reads
+are serialized but are not an atomic PMFW snapshot, so rapidly changing values
+can span adjacent firmware update epochs.
 
 ## Commands
 
@@ -185,5 +204,6 @@ The complete fallback remains mandatory for the AMDGPU override. AIC8800 may ins
 | `bc250-dp-audio-clock-6.18.patch` | SteamOS 3.9.x display clock patch |
 | `bc250-cyan-skillfish-gpu-telemetry.patch` | Runtime GPU activity export using the published metrics layout |
 | `bc250-cyan-skillfish-gfxclk.patch` | Runtime GFX clock export using a direct SMU query |
+| `bc250-cyan-skillfish-8core-metrics.patch` | Experimental Robin 3 eight-core MP1 SRAM telemetry |
 | `bc250-cg-flags.patch` | Experimental GFX clock gating |
 | `bc250-cg-flags-unvalidated.patch` | Experimental expanded clock gating |
