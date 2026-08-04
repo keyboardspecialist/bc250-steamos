@@ -430,6 +430,7 @@ class TrainerReleaseTests(unittest.TestCase):
             "scripts/stage-trainer-runtime.py",
             "TRAINER_ARTIFACT_BASENAME",
             "trainer core-unlock backend scripts topology.sh",
+            "install -m 0755 build/trainer/bc250-trainer",
             "BC250 Trainer asset redistribution is not yet cleared",
             "Main release tags must point to commits on master",
             "flatpak-builder",
@@ -438,6 +439,10 @@ class TrainerReleaseTests(unittest.TestCase):
             "-flatpak-installer.zip",
         ):
             self.assertIn(expected, workflow)
+        self.assertLess(
+            workflow.index("git archive --format=tar HEAD"),
+            workflow.index('"$package_dir/trainer/bc250-trainer"'),
+        )
 
     def test_trainer_release_has_isolated_tag_namespace(self):
         workflow = (ROOT / ".github/workflows/trainer-release.yml").read_text(
