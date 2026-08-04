@@ -1,0 +1,342 @@
+diff --git a/drivers/gpu/drm/amd/pm/swsmu/smu11/cyan_skillfish_ppt.c b/drivers/gpu/drm/amd/pm/swsmu/smu11/cyan_skillfish_ppt.c
+index 7771ec17d1f3..3138f91832d0 100644
+--- a/drivers/gpu/drm/amd/pm/swsmu/smu11/cyan_skillfish_ppt.c
++++ b/drivers/gpu/drm/amd/pm/swsmu/smu11/cyan_skillfish_ppt.c
+@@ -22,7 +22,10 @@
+  */
+ 
+ #define SWSMU_CODE_LAYER_L2
++#include <linux/cpu.h>
+ #include <linux/delay.h>
++#include <linux/iopoll.h>
++#include <linux/unaligned.h>
+ 
+ #include "amdgpu.h"
+ #include "amdgpu_smu.h"
+@@ -100,6 +103,246 @@ static int cyan_skillfish_get_gfxclk_frequency(struct smu_context *smu,
+ 	return 0;
+ }
+ 
++#define CYAN_SKILLFISH_ROBIN3_SMU_VERSION	0x00580600
++#define CYAN_SKILLFISH_CORE_PRESENCE		0x0115a870
++#define CYAN_SKILLFISH_CORE_COUNT		8
++#define CYAN_SKILLFISH_L3_COUNT			2
++
++#define CYAN_SKILLFISH_ROBIN3_TABLE_SIZE	0x344
++#define CYAN_SKILLFISH_ROBIN3_CORE_POWER	0x118
++#define CYAN_SKILLFISH_ROBIN3_CORE_TEMP		0x158
++#define CYAN_SKILLFISH_ROBIN3_CORE_FREQ		0x198
++#define CYAN_SKILLFISH_ROBIN3_L3_TEMP		0x2a8
++#define CYAN_SKILLFISH_ROBIN3_L3_FREQ		0x2c0
++
++#define CYAN_SKILLFISH_Q4_MSG_REG		0x03b10a24
++#define CYAN_SKILLFISH_Q4_RESP_REG		0x03b10a84
++#define CYAN_SKILLFISH_Q4_ARG_REG		0x03b10a8c
++#define CYAN_SKILLFISH_Q4_SET_TOOLS_HIGH	0x3e
++#define CYAN_SKILLFISH_Q4_SET_TOOLS_LOW		0x3f
++#define CYAN_SKILLFISH_Q4_TRANSFER_TABLE	0x22
++
++#define CYAN_SKILLFISH_Q4_POLL_US		50
++#define CYAN_SKILLFISH_Q4_TIMEOUT_US		1000000
++
++#define CYAN_SKILLFISH_CORE_FREQ_MAX_MHZ	6000
++#define CYAN_SKILLFISH_CORE_POWER_MAX_MW	30000
++#define CYAN_SKILLFISH_CPU_TEMP_MAX		15000
++
++struct cyan_skillfish_robin3_cpu_metrics {
++	u16 core_power[CYAN_SKILLFISH_CORE_COUNT];
++	u16 core_temperature[CYAN_SKILLFISH_CORE_COUNT];
++	u16 core_frequency[CYAN_SKILLFISH_CORE_COUNT];
++	u16 l3_temperature[CYAN_SKILLFISH_L3_COUNT];
++	u16 l3_frequency[CYAN_SKILLFISH_L3_COUNT];
++};
++static bool cyan_skillfish_q4_disabled;
++
++static int cyan_skillfish_is_robin3_8core(struct smu_context *smu)
++{
++	struct amdgpu_device *adev = smu->adev;
++	u32 smu_version;
++	int ret;
++
++	if (adev->no_hw_access)
++		return -EIO;
++	ret = smu_cmn_get_smc_version(smu, NULL, &smu_version);
++	if (ret)
++		return ret;
++	if ((RREG32_PCIE(CYAN_SKILLFISH_CORE_PRESENCE) & 0xff) != 0xff)
++		return -ENODEV;
++	if (smu_version != CYAN_SKILLFISH_ROBIN3_SMU_VERSION ||
++	    num_present_cpus() != CYAN_SKILLFISH_CORE_COUNT * 2)
++		return -EOPNOTSUPP;
++
++	return 0;
++}
++
++static bool cyan_skillfish_q4_response_done(u32 response)
++{
++	switch (response) {
++	case PPSMC_Result_OK:
++	case PPSMC_Result_Failed:
++	case PPSMC_Result_UnknownCmd:
++	case PPSMC_Result_CmdRejectedPrereq:
++	case PPSMC_Result_CmdRejectedBusy:
++		return true;
++	default:
++		return false;
++	}
++}
++
++static int
++cyan_skillfish_q4_send_msg_locked(struct smu_context *smu, u8 msg, u32 arg)
++{
++	struct amdgpu_device *adev = smu->adev;
++	u32 response;
++	int ret;
++
++	lockdep_assert_held(&smu->message_lock);
++
++	WREG32_PCIE(CYAN_SKILLFISH_Q4_RESP_REG, 0);
++	WREG32_PCIE(CYAN_SKILLFISH_Q4_ARG_REG, arg);
++	WREG32_PCIE(CYAN_SKILLFISH_Q4_MSG_REG, msg);
++
++	ret = read_poll_timeout(RREG32_PCIE, response,
++				cyan_skillfish_q4_response_done(response),
++				CYAN_SKILLFISH_Q4_POLL_US,
++				CYAN_SKILLFISH_Q4_TIMEOUT_US, false,
++				CYAN_SKILLFISH_Q4_RESP_REG);
++	if (ret)
++		return ret;
++
++	switch (response) {
++	case PPSMC_Result_OK:
++		return 0;
++	case PPSMC_Result_Failed:
++		return -EIO;
++	case PPSMC_Result_UnknownCmd:
++		return -EOPNOTSUPP;
++	case PPSMC_Result_CmdRejectedPrereq:
++		return -EINVAL;
++	case PPSMC_Result_CmdRejectedBusy:
++		return -EBUSY;
++	default:
++		return -EREMOTEIO;
++	}
++}
++
++/* Probe-only hook. It deliberately performs no register or mailbox access. */
++static noinline void cyan_skillfish_trace_cpu_metrics(const u8 *table)
++{
++	asm volatile("" : : "r" (table) : "memory");
++}
++
++/* Table 3 stores positive binary32 values; decode them without kernel FP. */
++static int
++cyan_skillfish_robin3_float_to_u16(const u8 *table, u32 offset, u32 scale,
++				   u32 min, u32 max, u16 *value)
++{
++	u32 bits = get_unaligned_le32(table + offset);
++	u32 exponent = (bits >> 23) & 0xff;
++	u64 significand, scaled;
++	int shift;
++
++	if (bits & BIT(31) || exponent == 0xff)
++		return -ERANGE;
++
++	if (exponent) {
++		significand = BIT(23) | (bits & GENMASK(22, 0));
++		shift = exponent - 127 - 23;
++	} else {
++		significand = bits & GENMASK(22, 0);
++		shift = -149;
++	}
++
++	scaled = significand * scale;
++	if (shift >= 0) {
++		if (shift >= 64 || scaled > (U64_MAX >> shift))
++			return -ERANGE;
++		scaled <<= shift;
++	} else if (shift <= -64) {
++		scaled = 0;
++	} else {
++		scaled >>= -shift;
++	}
++
++	if (scaled < min || scaled > max)
++		return -ERANGE;
++
++	*value = scaled;
++	return 0;
++}
++
++static int
++cyan_skillfish_get_robin3_cpu_metrics(
++		struct smu_context *smu,
++		struct cyan_skillfish_robin3_cpu_metrics *metrics)
++{
++	struct amdgpu_device *adev = smu->adev;
++	struct smu_table *table =
++		&smu->smu_table.tables[SMU_TABLE_PMSTATUSLOG];
++	const u8 *data;
++	int i, ret;
++
++	ret = cyan_skillfish_is_robin3_8core(smu);
++	if (ret)
++		return ret;
++	if (!table->bo || !table->cpu_addr || !table->mc_address ||
++	    table->size < CYAN_SKILLFISH_ROBIN3_TABLE_SIZE)
++		return -EINVAL;
++
++	memset(table->cpu_addr, 0xff, CYAN_SKILLFISH_ROBIN3_TABLE_SIZE);
++	amdgpu_asic_flush_hdp(adev, NULL);
++
++	mutex_lock(&smu->message_lock);
++	if (cyan_skillfish_q4_disabled) {
++		ret = -EIO;
++		goto out_unlock;
++	}
++
++	ret = cyan_skillfish_q4_send_msg_locked(smu,
++				CYAN_SKILLFISH_Q4_SET_TOOLS_HIGH,
++				upper_32_bits(table->mc_address));
++	if (!ret)
++		ret = cyan_skillfish_q4_send_msg_locked(smu,
++					CYAN_SKILLFISH_Q4_SET_TOOLS_LOW,
++					lower_32_bits(table->mc_address));
++	if (!ret)
++		ret = cyan_skillfish_q4_send_msg_locked(smu,
++					CYAN_SKILLFISH_Q4_TRANSFER_TABLE,
++					TABLE_PMSTATUSLOG);
++	if (ret)
++		cyan_skillfish_q4_disabled = true;
++
++out_unlock:
++	mutex_unlock(&smu->message_lock);
++	if (ret)
++		return ret;
++
++	amdgpu_asic_invalidate_hdp(adev, NULL);
++	data = table->cpu_addr;
++	cyan_skillfish_trace_cpu_metrics(data);
++
++	for (i = 0; i < CYAN_SKILLFISH_CORE_COUNT; i++) {
++		ret = cyan_skillfish_robin3_float_to_u16(data,
++			CYAN_SKILLFISH_ROBIN3_CORE_POWER + i * sizeof(u32),
++			1000, 0, CYAN_SKILLFISH_CORE_POWER_MAX_MW,
++			&metrics->core_power[i]);
++		if (ret)
++			return ret;
++		ret = cyan_skillfish_robin3_float_to_u16(data,
++			CYAN_SKILLFISH_ROBIN3_CORE_TEMP + i * sizeof(u32),
++			100, 1, CYAN_SKILLFISH_CPU_TEMP_MAX,
++			&metrics->core_temperature[i]);
++		if (ret)
++			return ret;
++		ret = cyan_skillfish_robin3_float_to_u16(data,
++			CYAN_SKILLFISH_ROBIN3_CORE_FREQ + i * sizeof(u32),
++			1000, 0, CYAN_SKILLFISH_CORE_FREQ_MAX_MHZ,
++			&metrics->core_frequency[i]);
++		if (ret)
++			return ret;
++	}
++
++	for (i = 0; i < CYAN_SKILLFISH_L3_COUNT; i++) {
++		ret = cyan_skillfish_robin3_float_to_u16(data,
++			CYAN_SKILLFISH_ROBIN3_L3_TEMP + i * sizeof(u32),
++			100, 1, CYAN_SKILLFISH_CPU_TEMP_MAX,
++			&metrics->l3_temperature[i]);
++		if (ret)
++			return ret;
++		ret = cyan_skillfish_robin3_float_to_u16(data,
++			CYAN_SKILLFISH_ROBIN3_L3_FREQ + i * sizeof(u32),
++			1000, 0, CYAN_SKILLFISH_CORE_FREQ_MAX_MHZ,
++			&metrics->l3_frequency[i]);
++		if (ret)
++			return ret;
++	}
++
++	return 0;
++}
++
+ #define FEATURE_MASK(feature) (1ULL << feature)
+ #define SMC_DPM_FEATURE ( \
+ 	FEATURE_MASK(FEATURE_FCLK_DPM_BIT)	|	\
+@@ -122,5 +355,6 @@ static struct cmn2asic_msg_mapping cyan_skillfish_message_map[SMU_MSG_MAX_COUNT]
+ };
+ 
+ static struct cmn2asic_mapping cyan_skillfish_table_map[SMU_TABLE_COUNT] = {
++	TAB_MAP(PMSTATUSLOG),
+ 	TAB_MAP_VALID(SMU_METRICS),
+ };
+@@ -134,6 +368,11 @@ static int cyan_skillfish_tables_init(struct smu_context *smu)
+ 				 PAGE_SIZE,
+ 				 AMDGPU_GEM_DOMAIN_VRAM);
+ 
++	SMU_TABLE_INIT(tables, SMU_TABLE_PMSTATUSLOG,
++			 CYAN_SKILLFISH_ROBIN3_TABLE_SIZE,
++			 PAGE_SIZE,
++			 AMDGPU_GEM_DOMAIN_VRAM);
++
+ 	smu_table->metrics_table = kzalloc(sizeof(SmuMetrics_t), GFP_KERNEL);
+ 	if (!smu_table->metrics_table)
+ 		goto err0_out;
+@@ -434,8 +673,10 @@ static ssize_t cyan_skillfish_get_gpu_metrics(struct smu_context *smu,
+ 	struct gpu_metrics_v2_2 *gpu_metrics =
+ 		(struct gpu_metrics_v2_2 *)smu_table->gpu_metrics_table;
++	struct cyan_skillfish_robin3_cpu_metrics cpu_metrics;
+ 	SmuMetrics_t metrics;
++	u32 cpu_power;
+ 	uint32_t gfxclk;
+-	int i, ret = 0;
++	int cpu_ret, i, ret = 0;
+ 
+ 	ret = smu_cmn_get_metrics_table(smu, &metrics, true);
+ 	if (ret)
+@@ -467,15 +708,38 @@ static ssize_t cyan_skillfish_get_gpu_metrics(struct smu_context *smu,
+ 	gpu_metrics->current_vclk = metrics.Current.VclkFrequency;
+ 	gpu_metrics->current_dclk = metrics.Current.DclkFrequency;
+ 
+-	for (i = 0; i < 6; i++) {
+-		gpu_metrics->temperature_core[i] = metrics.Current.CoreTemperature[i];
+-		gpu_metrics->average_core_power[i] = metrics.Average.CorePower[i];
+-		gpu_metrics->current_coreclk[i] = metrics.Current.CoreFrequency[i];
+-	}
+-
+-	for (i = 0; i < 2; i++) {
+-		gpu_metrics->temperature_l3[i] = metrics.Current.L3Temperature[i];
+-		gpu_metrics->current_l3clk[i] = metrics.Current.L3Frequency[i];
+-	}
++	cpu_ret = cyan_skillfish_get_robin3_cpu_metrics(smu, &cpu_metrics);
++	if (!cpu_ret) {
++		cpu_power = 0;
++		for (i = 0; i < CYAN_SKILLFISH_CORE_COUNT; i++) {
++			gpu_metrics->temperature_core[i] =
++				cpu_metrics.core_temperature[i];
++			gpu_metrics->average_core_power[i] =
++				cpu_metrics.core_power[i];
++			cpu_power += cpu_metrics.core_power[i];
++			gpu_metrics->current_coreclk[i] =
++				cpu_metrics.core_frequency[i];
++		}
++		gpu_metrics->average_cpu_power = min_t(u32, cpu_power, U16_MAX);
++		for (i = 0; i < CYAN_SKILLFISH_L3_COUNT; i++) {
++			gpu_metrics->temperature_l3[i] =
++				cpu_metrics.l3_temperature[i];
++			gpu_metrics->current_l3clk[i] =
++				cpu_metrics.l3_frequency[i];
++		}
++	} else if (cpu_ret == -ENODEV) {
++		for (i = 0; i < 6; i++) {
++			gpu_metrics->temperature_core[i] = metrics.Current.CoreTemperature[i];
++			gpu_metrics->average_core_power[i] = metrics.Average.CorePower[i];
++			gpu_metrics->current_coreclk[i] = metrics.Current.CoreFrequency[i];
++		}
++		for (i = 0; i < 2; i++) {
++			gpu_metrics->temperature_l3[i] = metrics.Current.L3Temperature[i];
++			gpu_metrics->current_l3clk[i] = metrics.Current.L3Frequency[i];
++		}
++	} else {
++		dev_dbg(smu->adev->dev, "Robin 3 CPU metrics unavailable: %d\n",
++			cpu_ret);
++	}
+ 
+ 	gpu_metrics->throttle_status = metrics.Current.ThrottlerStatus;
