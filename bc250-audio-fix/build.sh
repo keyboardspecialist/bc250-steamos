@@ -281,12 +281,19 @@ GFXCLK_SOURCE_SHA=572014e03cff22fb57f21121e8e8722f11d3d99822ee86e60fbfe50ed6e76f
 OLD_CORE_METRICS_SOURCE_SHA=d7191ecdd18a34478d7f58de79a149935e2deef73444e996cde6cf5cb596e35c
 OLD_C0_SCALE_SOURCE_SHA=c73a50285bc70e3be3199e70c8717dd0fdf77208cff178bdd75a623ed4d08ceb
 OLD_CPUFREQ_SOURCE_SHA=ac197ddf75abfd4aa491b016a6e4c592333a83f120d14ae1d23a95f33731472f
-CORE_METRICS_SOURCE_SHA=13c0587e7c7020567fb5028e8bf21c295445cb0aaf97180f556bbc2b5940b961
+OLD_Q3_DRIVER_SOURCE_SHA=13c0587e7c7020567fb5028e8bf21c295445cb0aaf97180f556bbc2b5940b961
+
+core_metrics_applied() {
+    grep -Fq 'CYAN_SKILLFISH_ROBIN3_SET_TOOLS_HIGH' "$METRICS_SOURCE" \
+        && grep -Fq 'memset(table->cpu_addr, 0xff, CYAN_SKILLFISH_ROBIN3_TABLE_SIZE)' "$METRICS_SOURCE" \
+        && grep -Fq 'ret = -EAGAIN;' "$METRICS_SOURCE"
+}
 
 METRICS_SOURCE_SHA=$(sha256sum "$METRICS_SOURCE" | cut -d' ' -f1)
 if [ "$METRICS_SOURCE_SHA" = "$OLD_CORE_METRICS_SOURCE_SHA" ] \
    || [ "$METRICS_SOURCE_SHA" = "$OLD_C0_SCALE_SOURCE_SHA" ] \
-   || [ "$METRICS_SOURCE_SHA" = "$OLD_CPUFREQ_SOURCE_SHA" ]; then
+   || [ "$METRICS_SOURCE_SHA" = "$OLD_CPUFREQ_SOURCE_SHA" ] \
+   || [ "$METRICS_SOURCE_SHA" = "$OLD_Q3_DRIVER_SOURCE_SHA" ]; then
     git --git-dir="$GITDIR" --work-tree="$TREE" checkout -qf "$FULLSHA" -- \
         "$METRICS_SOURCE"
     echo "restored obsolete Robin 3 core telemetry patch from $SHA"
@@ -294,7 +301,7 @@ if [ "$METRICS_SOURCE_SHA" = "$OLD_CORE_METRICS_SOURCE_SHA" ] \
 fi
 if [ "$METRICS_SOURCE_SHA" = "$TELEMETRY_SOURCE_SHA" ] \
    || [ "$METRICS_SOURCE_SHA" = "$GFXCLK_SOURCE_SHA" ] \
-   || [ "$METRICS_SOURCE_SHA" = "$CORE_METRICS_SOURCE_SHA" ]; then
+   || core_metrics_applied; then
     echo "GPU telemetry patch already applied"
 elif patch -p1 --dry-run -s -f < "$METRICS_PATCH" >/dev/null 2>&1; then
     patch -p1 -s < "$METRICS_PATCH"
@@ -305,7 +312,7 @@ fi
 
 METRICS_SOURCE_SHA=$(sha256sum "$METRICS_SOURCE" | cut -d' ' -f1)
 if [ "$METRICS_SOURCE_SHA" = "$GFXCLK_SOURCE_SHA" ] \
-   || [ "$METRICS_SOURCE_SHA" = "$CORE_METRICS_SOURCE_SHA" ]; then
+   || core_metrics_applied; then
     echo "GPU clock query patch already applied"
 elif patch -p1 --dry-run -s -f < "$GFXCLK_PATCH" >/dev/null 2>&1; then
     patch -p1 -s < "$GFXCLK_PATCH"
@@ -315,7 +322,7 @@ else
 fi
 
 METRICS_SOURCE_SHA=$(sha256sum "$METRICS_SOURCE" | cut -d' ' -f1)
-if [ "$METRICS_SOURCE_SHA" = "$CORE_METRICS_SOURCE_SHA" ]; then
+if core_metrics_applied; then
     echo "Robin 3 eight-core metrics patch already applied"
 elif patch -p1 --dry-run -s -f < "$CORE_METRICS_PATCH" >/dev/null 2>&1; then
     patch -p1 -s < "$CORE_METRICS_PATCH"

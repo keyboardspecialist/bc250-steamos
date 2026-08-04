@@ -32,16 +32,15 @@ three mailbox handlers:
 4. `smu->message_lock` coordinates kernel callers only. It cannot serialize a
    userspace queue-3/queue-4 client, and the firmware tools destination is
    global mutable state.
-5. The current build does not use the queue-4 patch. `build.sh` applies
-   `bc250-cyan-skillfish-8core-metrics.patch`, which is the non-working
-   `0x7a/0x7b` queue-3 version. The separate
-   `bc250-cyan-skillfish-8core-cpu-metrics.patch` contains the queue-4 code.
+5. The current build uses queue 3 with the correct tools messages
+   `0x3e/0x3f/0x22`. It keeps BO poisoning, transfer, HDP synchronization, and
+   decode under one message-lock transaction. The separate
+   `bc250-cyan-skillfish-8core-cpu-metrics.patch` contains the queue-4 experiment.
 
 Static analysis therefore does **not** show that firmware functions `0x1b9f4`,
-`0x1ba10`, or `0x1ba5c` are intrinsically broken. It shows a valid firmware
-route wrapped by unsafe host-side lifetime/concurrency behavior. Live hardware
-tracing is still required to distinguish a queue-4 transport timeout from the
-expected first-request no-DMA result.
+`0x1ba10`, or `0x1ba5c` are intrinsically broken. Live hardware tracing is still
+required to distinguish a transport timeout from the expected first-request
+no-DMA result.
 
 ## Provenance and Ghidra setup
 
@@ -191,20 +190,17 @@ toggles a hardware control bit when enabled.
 `bc250-cyan-skillfish-8core-metrics.patch` sends:
 
 ```text
-queue 3: 0x7a(high), 0x7b(low), 0x22(table 3)
+queue 3: 0x3e(tools high), 0x3f(tools low), 0x22(table 3)
 ```
 
-The argument register in the checked-in file, `0x03b10a88`, is correct. The
-failure is descriptor selection: `0x7a/0x7b` complete `0xca38`, but queue-3
-table 3 checks `0xcad8`. Normally the transfer returns `0xff` and the driver
-logs core metrics unavailable.
+The argument register, `0x03b10a88`, is correct. Queue 3 shares the tools-setter
+dispatch entries, and table 3's permission mask includes bit 3. BO poisoning,
+HDP synchronization, transfer, poison detection, and decode remain under one
+message-lock transaction. An untouched first result returns `-EAGAIN`.
 
-`bc250-cyan-skillfish-q3-table3-tools-fix.patch` is an experimental follow-up
-that retains queue 3 but replaces `0x7a/0x7b` with `0x3e/0x3f`. This sequence is
-statically valid because queue 3 shares those dispatch entries and table 3's
-permission mask includes bit 3. The correction also keeps BO poisoning, HDP
-synchronization, transfer, poison detection, and decode under one message-lock
-transaction. It is intentionally not applied by `build.sh` pending live tests.
+The previous revision used `0x7a/0x7b`. Those messages complete the driver
+descriptor at `0xca38`, while table 3 checks the tools descriptor at `0xcad8`,
+so the firmware rejected the subsequent transfer.
 
 An older experiment used `0x03b10a60` as the queue-3 argument register. That is
 not queue 3's argument register. Stale table IDs/addresses in that experiment

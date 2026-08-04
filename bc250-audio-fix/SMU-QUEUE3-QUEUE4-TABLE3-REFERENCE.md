@@ -17,15 +17,16 @@ firmware message dispatch table.
 The important distinction for table 3 is the messages used, not only the
 queue:
 
-- The current queue-3 patch uses messages `0x7a/0x7b`. These configure the
-  normal driver address descriptor at `0xca38`, which table 3 ignores.
-- The queue-4 patch uses messages `0x3e/0x3f`. These stage and publish the tools
-  address descriptor at `0xcad8`, which table 3 requires.
+- The current queue-3 patch uses messages `0x3e/0x3f`. These stage and publish
+  the tools address descriptor at `0xcad8`, which table 3 requires.
+- The old queue-3 `0x7a/0x7b` sequence configured the normal driver descriptor
+  at `0xca38` and could not transfer table 3.
+- The queue-4 experiment uses the same `0x3e/0x3f` tools messages.
 - Both paths use message `0x22` to request a table transfer.
 
-Because queues 3 and 4 share a dispatch table, queue 3 could theoretically use
-the correct `0x3e`, `0x3f`, `0x22` sequence. Queue 4 is preferable because it
-avoids normal queue-3 OC clients.
+Queues 3 and 4 share the correct `0x3e`, `0x3f`, `0x22` dispatch entries.
+Queue 4 provides better isolation from normal queue-3 OC clients, while the
+merged runtime patch uses queue 3 under the kernel SMU message lock.
 
 The mailboxes are separate, but both can modify global SMU address descriptors
 and invoke the same table callback and DMA machinery. Concurrent kernel and
@@ -70,7 +71,7 @@ Address and mailbox helpers are:
 The intended sequence is:
 
 ```text
-Queue 4:
+Queue 3 (current runtime patch):
 0x3e -> 0x1b9f4  set tools address high
 0x3f -> 0x1ba10  set tools address low
 0x22 -> 0x1ba5c  request table 3
@@ -78,9 +79,7 @@ Queue 4:
                     -> 0x3a850 DMA
 ```
 
-The current queue-3 sequence calls `0x1b998/0x1b9b4`, configuring the wrong
-address descriptor. Its subsequent `0x1ba5c` table-3 request therefore fails
-descriptor validation.
+Queue 4 can use the same sequence through its separate mailbox registers.
 
 ## Table 3
 

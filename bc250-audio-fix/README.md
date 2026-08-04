@@ -86,9 +86,9 @@ Robin 3 writes eight entries into arrays sized for six in table 6, permanently
 overwriting core 0 power, core temperatures 0-3, and the GFX clock/temperature
 slot. Its tool-facing PM status table 3 instead exports eight IEEE-754 values
 for each internal per-core field. The driver allocates a dedicated `0x344`-byte
-PM status BO, serializes queue-3 messages `0x7a`, `0x7b`, and `0x22` with the
-normal SMU message lock, invalidates HDP after the firmware DMA, and decodes the
-power, temperature, and frequency arrays without kernel floating point.
+PM status BO, serializes queue-3 tools messages `0x3e`, `0x3f`, and `0x22` with
+the normal SMU message lock, invalidates HDP after the firmware DMA, and decodes
+the power, temperature, and frequency arrays without kernel floating point.
 
 Every decoded value is range checked. A Robin 3 mailbox, DMA, or decode failure
 leaves all per-core fields at the `0xffff` ABI sentinel rather than falling back
@@ -209,6 +209,5 @@ The complete fallback remains mandatory for the AMDGPU override. AIC8800 may ins
 | `bc250-cyan-skillfish-gpu-telemetry.patch` | Runtime GPU activity export using the published metrics layout |
 | `bc250-cyan-skillfish-gfxclk.patch` | Runtime GFX clock export using a direct SMU query |
 | `bc250-cyan-skillfish-8core-metrics.patch` | Robin 3 eight-core PM status telemetry |
-| `bc250-cyan-skillfish-q3-table3-tools-fix.patch` | Experimental queue-3 tools-descriptor correction applied after the eight-core patch; not applied by `build.sh` |
 | `bc250-cg-flags.patch` | Experimental GFX clock gating |
 | `bc250-cg-flags-unvalidated.patch` | Experimental expanded clock gating |

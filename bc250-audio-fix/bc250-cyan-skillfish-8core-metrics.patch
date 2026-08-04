@@ -1,5 +1,4 @@
 diff --git a/drivers/gpu/drm/amd/pm/swsmu/smu11/cyan_skillfish_ppt.c b/drivers/gpu/drm/amd/pm/swsmu/smu11/cyan_skillfish_ppt.c
-index 0af40d3df..72260d514 100644
 --- a/drivers/gpu/drm/amd/pm/swsmu/smu11/cyan_skillfish_ppt.c
 +++ b/drivers/gpu/drm/amd/pm/swsmu/smu11/cyan_skillfish_ppt.c
 @@ -24,0 +25 @@
@@ -7,7 +6,7 @@ index 0af40d3df..72260d514 100644
 @@ -25,0 +27,2 @@
 +#include <linux/iopoll.h>
 +#include <linux/unaligned.h>
-@@ -102,0 +106,194 @@ static int cyan_skillfish_get_gfxclk_frequency(struct smu_context *smu,
+@@ -102,0 +106,206 @@ static int cyan_skillfish_get_gfxclk_frequency(struct smu_context *smu,
 +#define CYAN_SKILLFISH_ROBIN3_SMU_VERSION	0x00580600
 +#define CYAN_SKILLFISH_CORE_PRESENCE		0x0115a870
 +#define CYAN_SKILLFISH_CORE_COUNT		8
@@ -20,8 +19,8 @@ index 0af40d3df..72260d514 100644
 +#define CYAN_SKILLFISH_ROBIN3_MSG_REG		0x03b10a20
 +#define CYAN_SKILLFISH_ROBIN3_RESP_REG		0x03b10a80
 +#define CYAN_SKILLFISH_ROBIN3_ARG_REG		0x03b10a88
-+#define CYAN_SKILLFISH_ROBIN3_SET_ADDR_HIGH	0x7a
-+#define CYAN_SKILLFISH_ROBIN3_SET_ADDR_LOW	0x7b
++#define CYAN_SKILLFISH_ROBIN3_SET_TOOLS_HIGH	0x3e
++#define CYAN_SKILLFISH_ROBIN3_SET_TOOLS_LOW	0x3f
 +#define CYAN_SKILLFISH_ROBIN3_TRANSFER_TABLE	0x22
 +
 +#define CYAN_SKILLFISH_ROBIN3_POLL_US		50
@@ -158,13 +157,20 @@ index 0af40d3df..72260d514 100644
 +		return -EINVAL;
 +
 +	mutex_lock(&smu->message_lock);
++	/*
++	 * Table 3's first successful request only starts its sampler and does
++	 * not DMA. Poison and consume the shared BO under the same lock so an
++	 * untouched first result cannot be confused with another reader's data.
++	 */
++	memset(table->cpu_addr, 0xff, CYAN_SKILLFISH_ROBIN3_TABLE_SIZE);
++	amdgpu_asic_flush_hdp(adev, NULL);
 +
 +	ret = cyan_skillfish_robin3_send_msg_locked(smu,
-+				CYAN_SKILLFISH_ROBIN3_SET_ADDR_HIGH,
++				CYAN_SKILLFISH_ROBIN3_SET_TOOLS_HIGH,
 +				upper_32_bits(table->mc_address));
 +	if (!ret)
 +		ret = cyan_skillfish_robin3_send_msg_locked(smu,
-+					CYAN_SKILLFISH_ROBIN3_SET_ADDR_LOW,
++					CYAN_SKILLFISH_ROBIN3_SET_TOOLS_LOW,
 +					lower_32_bits(table->mc_address));
 +	if (!ret)
 +		ret = cyan_skillfish_robin3_send_msg_locked(smu,
@@ -175,6 +181,11 @@ index 0af40d3df..72260d514 100644
 +
 +	amdgpu_asic_invalidate_hdp(adev, NULL);
 +	data = table->cpu_addr;
++	if (get_unaligned_le32(data + CYAN_SKILLFISH_ROBIN3_CORE_POWER) ==
++	    U32_MAX) {
++		ret = -EAGAIN;
++		goto out_unlock;
++	}
 +
 +	for (i = 0; i < CYAN_SKILLFISH_CORE_COUNT; i++) {
 +		ret = cyan_skillfish_robin3_float_to_u16(data,
@@ -202,17 +213,17 @@ index 0af40d3df..72260d514 100644
 +	return ret;
 +}
 +
-@@ -136,0 +334,4 @@ static int cyan_skillfish_tables_init(struct smu_context *smu)
+@@ -136,0 +346,4 @@ static int cyan_skillfish_tables_init(struct smu_context *smu)
 +	SMU_TABLE_INIT(tables, SMU_TABLE_PMSTATUSLOG,
 +		       CYAN_SKILLFISH_ROBIN3_TABLE_SIZE,
 +		       PAGE_SIZE,
 +		       AMDGPU_GEM_DOMAIN_VRAM);
-@@ -434,0 +636 @@ static ssize_t cyan_skillfish_get_gpu_metrics(struct smu_context *smu,
+@@ -434,0 +648 @@ static ssize_t cyan_skillfish_get_gpu_metrics(struct smu_context *smu,
 +	struct cyan_skillfish_robin3_metrics core_metrics;
-@@ -437 +639 @@ static ssize_t cyan_skillfish_get_gpu_metrics(struct smu_context *smu,
+@@ -437 +651 @@ static ssize_t cyan_skillfish_get_gpu_metrics(struct smu_context *smu,
 -	int i, ret = 0;
 +	int core_ret, i, ret = 0;
-@@ -470,4 +672,22 @@ static ssize_t cyan_skillfish_get_gpu_metrics(struct smu_context *smu,
+@@ -470,4 +684,22 @@ static ssize_t cyan_skillfish_get_gpu_metrics(struct smu_context *smu,
 -	for (i = 0; i < 6; i++) {
 -		gpu_metrics->temperature_core[i] = metrics.Current.CoreTemperature[i];
 -		gpu_metrics->average_core_power[i] = metrics.Average.CorePower[i];
