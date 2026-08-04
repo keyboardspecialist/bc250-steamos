@@ -7,6 +7,8 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 AIC_INSTALLER = ROOT / "aic8800/steamdeck-setup.sh"
+AIC_HELPER = ROOT / "aic8800/aic8800-ensure-modules.sh"
+AIC_SERVICE = ROOT / "aic8800/aic8800-modules.service"
 AUDIO_INSTALLER = ROOT / "bc250-audio-fix/patch-driver.sh"
 AUDIO_ROLLBACK = ROOT / "bc250-audio-fix/rollback.sh"
 AUDIO_PREREQS = ROOT / "bc250-audio-fix/ensure-build-prereqs.sh"
@@ -87,6 +89,20 @@ class DriverLifecycleTests(unittest.TestCase):
         )
         self.assertNotIn('rm -rf "$ROOT_SOURCE"', script)
         self.assertIn("persistent source preserved", script)
+
+    def test_aic_boot_defers_firmware_probe_until_persistent_storage(self):
+        installer = AIC_INSTALLER.read_text(encoding="utf-8")
+        helper = AIC_HELPER.read_text(encoding="utf-8")
+        service = AIC_SERVICE.read_text(encoding="utf-8")
+
+        self.assertIn("blacklist aic_load_fw", installer)
+        self.assertIn("RequiresMountsFor=/var/lib/bc250-control", service)
+        self.assertIn("After=bc250-persistence-recovery.service", service)
+        self.assertNotIn("network-online.target", service)
+        self.assertIn("usb_device_has_id a69c 8d80", helper)
+        self.assertIn("/sys/bus/usb/drivers_probe", helper)
+        self.assertIn("wait_for_aic_runtime", helper)
+        self.assertIn("did not transition from 8d80 to a bound 8d81 runtime", helper)
 
     def test_lifecycle_scripts_parse(self):
         subprocess.run(

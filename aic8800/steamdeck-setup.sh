@@ -87,6 +87,7 @@ show_status() {
     log "repair service: $state"
 
     if [ -f /etc/modprobe.d/aic8800.conf ] \
+       && grep -Fxq 'blacklist aic_load_fw' /etc/modprobe.d/aic8800.conf \
        && [ -f /etc/udev/rules.d/40-aic8800-modeswitch.rules ] \
        && [ -f /etc/usb_modeswitch.d/1111:1111 ]; then
         state=installed
@@ -451,6 +452,9 @@ ACTION=="add", SUBSYSTEM=="usb", ENV{DEVTYPE}=="usb_device", ATTR{idVendor}=="11
 EOF
 
 cat > /etc/modprobe.d/aic8800.conf <<EOF
+# udev can discover 8d80 before persistent firmware storage is mounted. The
+# boot service loads this module explicitly after storage recovery.
+blacklist aic_load_fw
 options aic_load_fw aic_fw_path=$FW
 EOF
 
