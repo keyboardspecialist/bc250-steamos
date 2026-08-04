@@ -11,17 +11,17 @@ ROM_SHA256 = "48fbe5d366e6a56e2fdffdca848426216ba1f083610dab63db89d2f4e6c940b5"
 SMU_SHA256 = "6a3da1ef6024c3143283fb92468fd71d628e9402a751c4a9799a20f473549ad9"
 SMU_ROM_OFFSET = 0x8FF000
 SMU_SIZE = 262656
-RUNTIME_TO_FILE = 0x104
+RUNTIME_TO_FILE = 0x100
 
 DISPATCH = {
-    0x7088: 0x1B998,  # primary set address high
-    0x7090: 0x1B9B4,  # primary set address low
-    0x7098: 0x1BA5C,  # primary SMU-to-DRAM transfer
-    0x7570: 0x1BA5C,  # queue 3 message 0x22
-    0x7650: 0x1B9F4,  # queues 3/4 message 0x3e, tools address high
-    0x7658: 0x1BA10,  # queues 3/4 message 0x3f, tools address low
-    0x7830: 0x1B998,  # queue 3 message 0x7a
-    0x7838: 0x1B9B4,  # queue 3 message 0x7b
+    0x708C: 0x1B998,  # primary set address high
+    0x7094: 0x1B9B4,  # primary set address low
+    0x709C: 0x1BA5C,  # primary SMU-to-DRAM transfer
+    0x7574: 0x1BA5C,  # queues 3/4 message 0x22
+    0x7654: 0x1B9F4,  # queues 3/4 message 0x3e, tools address high
+    0x765C: 0x1BA10,  # queues 3/4 message 0x3f, tools address low
+    0x7834: 0x1B998,  # queue 3 message 0x7a
+    0x783C: 0x1B9B4,  # queue 3 message 0x7b
 }
 
 
@@ -69,11 +69,23 @@ def main() -> int:
 
     checks.extend(
         [
-            ("queue 4 argument register", word(smu, 0x713C), 0x03010A8C),
-            ("queue 4 response register", word(smu, 0x7140), 0x03010A84),
-            ("queue 4 command register", word(smu, 0x7144), 0x03010A24),
-            ("table 3 callback", word(smu, 0xCBC8), 0x276DC),
-            ("table 3 queue mask", smu[0xCBD4], 0x18),
+            (
+                "queue 4 argument register",
+                word(smu, 0x703C + RUNTIME_TO_FILE),
+                0x03010A8C,
+            ),
+            (
+                "queue 4 response register",
+                word(smu, 0x7040 + RUNTIME_TO_FILE),
+                0x03010A84,
+            ),
+            (
+                "queue 4 command register",
+                word(smu, 0x7044 + RUNTIME_TO_FILE),
+                0x03010A24,
+            ),
+            ("table 3 callback", word(smu, 0xCAC8 + RUNTIME_TO_FILE), 0x276DC),
+            ("table 3 queue mask", smu[0xCAD4 + RUNTIME_TO_FILE], 0x18),
         ]
     )
 

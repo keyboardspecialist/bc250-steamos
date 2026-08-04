@@ -209,5 +209,6 @@ The complete fallback remains mandatory for the AMDGPU override. AIC8800 may ins
 | `bc250-cyan-skillfish-gpu-telemetry.patch` | Runtime GPU activity export using the published metrics layout |
 | `bc250-cyan-skillfish-gfxclk.patch` | Runtime GFX clock export using a direct SMU query |
 | `bc250-cyan-skillfish-8core-metrics.patch` | Robin 3 eight-core PM status telemetry |
+| `bc250-cyan-skillfish-q3-table3-tools-fix.patch` | Experimental queue-3 tools-descriptor correction applied after the eight-core patch; not applied by `build.sh` |
 | `bc250-cg-flags.patch` | Experimental GFX clock gating |
 | `bc250-cg-flags-unvalidated.patch` | Experimental expanded clock gating |
