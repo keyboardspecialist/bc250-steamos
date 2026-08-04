@@ -123,6 +123,8 @@ CORE_UNLOCK_ESP_DISK="${BC250_CORE_UNLOCK_ESP_DISK:-}"
 CORE_UNLOCK_ESP_PART="${BC250_CORE_UNLOCK_ESP_PART:-}"
 CORE_UNLOCK_ESP_PARTUUID="${BC250_CORE_UNLOCK_ESP_PARTUUID:-}"
 CORE_UNLOCK_ESP_PARTTYPE="c12a7328-f81f-11d2-ba4b-00a0c93ec93b"
+CORE_UNLOCK_STEAMOS_EFI_PARTTYPE="ebd0a0a2-b9e5-4433-87c0-68b6b72699c7"
+CORE_UNLOCK_STEAMOS_EFI_PARTSET="${BC250_STEAMOS_EFI_PARTSET:-/dev/disk/by-partsets/self/efi}"
 CORE_UNLOCK_EFI_DIR="$CORE_UNLOCK_ESP_ROOT/EFI/bc250"
 CORE_UNLOCK_EFI_IMAGE="$CORE_UNLOCK_EFI_DIR/bc250-core-unlock.efi"
 CORE_UNLOCK_EFI_LABEL="BC250 Core Unlock"
@@ -1875,7 +1877,7 @@ efi_boot_entry_matches_in() {
     local loader_regex pattern
     loader_regex=${expected//\\/\\\\}
     loader_regex=${loader_regex//./\\.}
-    pattern="^${CORE_UNLOCK_EFI_LABEL,,}[[:space:]]+hd\\(${CORE_UNLOCK_ESP_PART},gpt,${CORE_UNLOCK_ESP_PARTUUID,,},[^)]*\\)/(\\\\)?file\\(${loader_regex}\\)[[:space:]]*$"
+    pattern="^${CORE_UNLOCK_EFI_LABEL,,}[[:space:]]+hd\\(${CORE_UNLOCK_ESP_PART},gpt,${CORE_UNLOCK_ESP_PARTUUID,,},[^)]*\\)/((\\\\)?file\\(${loader_regex}\\)|${loader_regex})[[:space:]]*$"
     while IFS= read -r line; do
         [[ "$line" =~ ^Boot${number}(\*)?[[:space:]]+(.+)$ ]] || continue
         active=${BASH_REMATCH[1]}
@@ -1912,7 +1914,7 @@ efi_matching_boot_numbers_in() {
     local loader_regex pattern
     loader_regex=${expected//\\/\\\\}
     loader_regex=${loader_regex//./\\.}
-    pattern="^${CORE_UNLOCK_EFI_LABEL,,}[[:space:]]+hd\\([^)]*\\)/(\\\\)?file\\(${loader_regex}\\)[[:space:]]*$"
+    pattern="^${CORE_UNLOCK_EFI_LABEL,,}[[:space:]]+hd\\([^)]*\\)/((\\\\)?file\\(${loader_regex}\\)|${loader_regex})[[:space:]]*$"
     while IFS= read -r line; do
         [[ "$line" =~ ^Boot([0-9A-Fa-f]{4})\*?[[:space:]]+(.+)$ ]] || continue
         number=${BASH_REMATCH[1]^^}
@@ -2298,7 +2300,8 @@ core_unlock_secure_boot_disabled() {
         || die "mokutil is required to determine Secure Boot state."
     state=$(LC_ALL=C mokutil --sb-state 2>&1 || true)
     case "${state,,}" in
-        *"secureboot disabled"*|*"secure boot disabled"*) return 0 ;;
+        *"secureboot disabled"*|*"secure boot disabled"*|*"this system doesn't support secure boot"*)
+            return 0 ;;
         *"secureboot enabled"*|*"secure boot enabled"*)
             die "Secure Boot is enabled; the experimental EFI helper is unsigned and cannot be installed." ;;
         *) die "Secure Boot state is unknown; refusing to install an unsigned EFI helper: ${state:-no result}" ;;
@@ -2323,32 +2326,50 @@ ensure_core_unlock_efi_tools() {
 }
 
 discover_core_unlock_esp() {
-    local mount_info source target fstype options extra block_info name type parent
-    local part partuuid parttype
+    local mount_listing mount_info= line source target fstype options extra
+    local block_info name type parent part partuuid parttype partition_ok=0
+    local steamos_efi=
     ESP_DISCOVERY_ERROR=
     [[ -d "$CORE_UNLOCK_ESP_ROOT" && ! -L "$CORE_UNLOCK_ESP_ROOT" ]] \
         || { ESP_DISCOVERY_ERROR="EFI system partition mount is missing or unsafe: $CORE_UNLOCK_ESP_ROOT"; return 1; }
     [[ -w "$CORE_UNLOCK_ESP_ROOT" ]] \
         || { ESP_DISCOVERY_ERROR="EFI system partition is not writable: $CORE_UNLOCK_ESP_ROOT"; return 1; }
-    mount_info=$(findmnt -nro SOURCE,TARGET,FSTYPE,OPTIONS --target "$CORE_UNLOCK_ESP_ROOT" 2>/dev/null) \
+    mount_listing=$(findmnt -nro SOURCE,TARGET,FSTYPE,OPTIONS --target "$CORE_UNLOCK_ESP_ROOT" 2>/dev/null) \
         || { ESP_DISCOVERY_ERROR="Could not query the EFI system partition mount."; return 1; }
+    while IFS= read -r line; do
+        read -r source target fstype options extra <<< "$line"
+        [[ -z "$extra" && "$target" == "$CORE_UNLOCK_ESP_ROOT" \
+            && "${fstype,,}" != autofs ]] || continue
+        [[ -z "$mount_info" ]] \
+            || { ESP_DISCOVERY_ERROR="$CORE_UNLOCK_ESP_ROOT has multiple concrete mounts."; return 1; }
+        mount_info="$line"
+    done <<< "$mount_listing"
+    [[ -n "$mount_info" ]] \
+        || { ESP_DISCOVERY_ERROR="$CORE_UNLOCK_ESP_ROOT is not an actual mountpoint behind its automount."; return 1; }
     read -r source target fstype options extra <<< "$mount_info"
-    [[ -z "$extra" && "$target" == "$CORE_UNLOCK_ESP_ROOT" ]] \
-        || { ESP_DISCOVERY_ERROR="$CORE_UNLOCK_ESP_ROOT is not an actual mountpoint."; return 1; }
     case "${fstype,,}" in
         vfat|fat|fat32) ;;
         *) ESP_DISCOVERY_ERROR="EFI system partition must use FAT/vfat, not ${fstype:-unknown}."; return 1 ;;
     esac
     [[ ",$options," == *,rw,* ]] \
         || { ESP_DISCOVERY_ERROR="EFI system partition is mounted read-only."; return 1; }
-    block_info=$(lsblk -dnpo NAME,TYPE,PKNAME,PARTNUM,PARTUUID,PARTTYPE "$source" 2>/dev/null) \
+    block_info=$(lsblk -dnpro NAME,TYPE,PKNAME,PARTN,PARTUUID,PARTTYPE "$source" 2>/dev/null) \
         || { ESP_DISCOVERY_ERROR="Could not inspect ESP block identity for $source."; return 1; }
     read -r name type parent part partuuid parttype extra <<< "$block_info"
+    case "${parttype,,}" in
+        "$CORE_UNLOCK_ESP_PARTTYPE") partition_ok=1 ;;
+        "$CORE_UNLOCK_STEAMOS_EFI_PARTTYPE")
+            if [[ -L "$CORE_UNLOCK_STEAMOS_EFI_PARTSET" ]]; then
+                steamos_efi=$(readlink -f "$CORE_UNLOCK_STEAMOS_EFI_PARTSET" 2>/dev/null || true)
+                [[ "$steamos_efi" == "$name" ]] && partition_ok=1
+            fi
+            ;;
+    esac
     [[ -z "$extra" && "$name" == /dev/* && "$type" == part \
         && "$parent" == /dev/* && "$part" =~ ^[1-9][0-9]*$ \
         && "$partuuid" =~ ^[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}$ \
-        && "${parttype,,}" == "$CORE_UNLOCK_ESP_PARTTYPE" ]] \
-        || { ESP_DISCOVERY_ERROR="Mounted EFI path is not a GPT ESP block partition."; return 1; }
+        && $partition_ok -eq 1 ]] \
+        || { ESP_DISCOVERY_ERROR="Mounted EFI path is not a supported GPT EFI partition."; return 1; }
     CORE_UNLOCK_ESP_SOURCE="$name"
     CORE_UNLOCK_ESP_DISK="$parent"
     CORE_UNLOCK_ESP_PART="$part"
@@ -2393,7 +2414,9 @@ build_core_unlock_efi() {
         -o "$work/bc250-core-unlock.efi" "$CORE_UNLOCK_EFI_SOURCE" \
         || die "Could not compile the EFI core-unlock application."
     description=$(LC_ALL=C file -b "$work/bc250-core-unlock.efi")
-    [[ "$description" == *PE32+* && "${description,,}" == *"efi application"* \
+    [[ "$description" == *PE32+* \
+        && ( "${description,,}" == *"efi application"* \
+            || "${description,,}" == *"efi (application)"* ) \
         && "${description,,}" == *"x86-64"* ]] \
         || die "Built image is not an x86-64 PE EFI application: $description"
     CORE_UNLOCK_EFI_BUILD="$work/bc250-core-unlock.efi"
@@ -2411,7 +2434,15 @@ core_unlock_efi_enable() {
         systemd|conflict)
             die "EFI mode cannot be enabled while systemd core-unlock replay is active; run '$0 cpu-unlock off' first." ;;
         partial)
-            die "EFI mode cannot repair partial EFI state implicitly; run '$0 cpu-unlock off', then retry." ;;
+            if efi_configuration_complete 1; then
+                rm -f "$CORE_UNLOCK_EFI_RECOVERY" \
+                    || die "Could not finalize the validated EFI core-unlock transaction."
+                sync "$CORE_UNLOCK_STATE_DIR"
+                log "Validated and finalized the retained EFI core-unlock transaction."
+                core_unlock_lifecycle_unlock
+                return 0
+            fi
+            die "EFI mode cannot repair incomplete or invalid partial EFI state; run '$0 cpu-unlock off', then retry." ;;
         efi)
             log "EFI core unlock is already installed and its owned Boot entry is valid."
             core_unlock_lifecycle_unlock
@@ -2686,7 +2717,7 @@ core_unlock_status() {
     echo "  persistence mode: $mode"
     case "$mode" in
         efi) echo "  EFI mode: experimental, unsigned; cold power still causes one firmware warm reset" ;;
-        partial) warn "Partial EFI state blocks test/enable/efi-enable; use 'cpu-unlock off' to repair it." ;;
+        partial) warn "Partial EFI state blocks test/enable; retry efi-enable to finalize a valid retained transaction, or use 'cpu-unlock off'." ;;
         conflict) warn "Systemd and EFI artifacts conflict; use 'cpu-unlock off' before any enable action." ;;
     esac
     en=$(systemctl is-enabled "$CORE_UNLOCK_SVC" 2>/dev/null) || en=-

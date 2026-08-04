@@ -28,6 +28,7 @@ class CoreUnlockTests(unittest.TestCase):
         self.assertIn("-subsystem:efi_application", source)
         self.assertIn("PE32+", source)
         self.assertIn("x86-64", source)
+        self.assertIn('"efi (application)"', source)
 
     def run_power_shell(self, body, directory):
         return subprocess.run(
@@ -222,9 +223,10 @@ class CoreUnlockTests(unittest.TestCase):
         self.assertIn("command -v lld-link", power)
         self.assertNotIn("command -v ld.lld", power)
         self.assertIn('description=$(LC_ALL=C file -b', power)
+        self.assertIn('"efi (application)"', power)
         self.assertIn("Secure Boot state is unknown", power)
         self.assertIn('findmnt -nro SOURCE,TARGET,FSTYPE,OPTIONS --target "$CORE_UNLOCK_ESP_ROOT"', power)
-        self.assertIn('lsblk -dnpo NAME,TYPE,PKNAME,PARTNUM,PARTUUID,PARTTYPE "$source"', power)
+        self.assertIn('lsblk -dnpro NAME,TYPE,PKNAME,PARTN,PARTUUID,PARTTYPE "$source"', power)
         self.assertIn("c12a7328-f81f-11d2-ba4b-00a0c93ec93b", power)
         self.assertNotIn("nvme0n1", power)
         self.assertTrue((ROOT / "core-unlock" / "EFI-LICENSE").is_file())
@@ -242,6 +244,31 @@ class CoreUnlockTests(unittest.TestCase):
         recovery_writer = power[power.index("efi_recovery_write()") : power.index("efi_number_in_csv()")]
         self.assertLess(recovery_writer.index('sync "$tmp"'), recovery_writer.index('mv -f "$tmp"'))
         self.assertLess(recovery_writer.index('mv -f "$tmp"'), recovery_writer.index('sync "$CORE_UNLOCK_STATE_DIR"'))
+
+    def test_secure_boot_check_accepts_unsupported_firmware(self):
+        with tempfile.TemporaryDirectory() as directory:
+            result = self.run_power_shell(
+                r'''
+mokutil() { printf '%s\n' "This system doesn't support Secure Boot" >&2; return 1; }
+core_unlock_secure_boot_disabled
+''',
+                directory,
+            )
+            self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_secure_boot_check_still_rejects_enabled_and_unknown_states(self):
+        cases = (
+            ("SecureBoot enabled", "Secure Boot is enabled"),
+            ("unexpected mokutil response", "Secure Boot state is unknown"),
+        )
+        for state, message in cases:
+            with self.subTest(state=state), tempfile.TemporaryDirectory() as directory:
+                result = self.run_power_shell(
+                    f'''mokutil() {{ printf '%s\\n' {state!r}; }}\ncore_unlock_secure_boot_disabled\n''',
+                    directory,
+                )
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn(message, result.stderr)
 
     def test_mode_classifier_reports_all_authoritative_states(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -267,6 +294,7 @@ CORE_UNLOCK_EFI_MASTER="$base/state/bc250-core-unlock.efi"
 CORE_UNLOCK_EFI_STATE="$base/state/efi-state"
 CORE_UNLOCK_EFI_BOOTNUM="$base/state/efi-bootnum"
 CORE_UNLOCK_EFI_IMAGE_HASH="$base/state/efi-image.sha256"
+CORE_UNLOCK_EFI_RECOVERY="$base/state/efi-recovery"
 CORE_UNLOCK_EFI_DIR="$base/esp/EFI/bc250"
 CORE_UNLOCK_EFI_IMAGE="$CORE_UNLOCK_EFI_DIR/bc250-core-unlock.efi"
 CORE_UNLOCK_EFI_LICENSE="$base/licenses/efi"
@@ -313,6 +341,7 @@ CORE_UNLOCK_EFI_MASTER="$base/state/bc250-core-unlock.efi"
 CORE_UNLOCK_EFI_STATE="$base/state/efi-state"
 CORE_UNLOCK_EFI_BOOTNUM="$base/state/efi-bootnum"
 CORE_UNLOCK_EFI_IMAGE_HASH="$base/state/efi-image.sha256"
+CORE_UNLOCK_EFI_RECOVERY="$base/state/efi-recovery"
 CORE_UNLOCK_EFI_DIR="$base/esp/EFI/bc250"
 CORE_UNLOCK_EFI_IMAGE="$CORE_UNLOCK_EFI_DIR/bc250-core-unlock.efi"
 CORE_UNLOCK_EFI_LICENSE="$base/licenses/efi"
@@ -355,6 +384,7 @@ CORE_UNLOCK_EFI_MASTER="$base/state/bc250-core-unlock.efi"
 CORE_UNLOCK_EFI_STATE="$base/state/efi-state"
 CORE_UNLOCK_EFI_BOOTNUM="$base/state/efi-bootnum"
 CORE_UNLOCK_EFI_IMAGE_HASH="$base/state/efi-image.sha256"
+CORE_UNLOCK_EFI_RECOVERY="$base/state/efi-recovery"
 CORE_UNLOCK_EFI_DIR="$base/esp/EFI/bc250"
 CORE_UNLOCK_EFI_IMAGE="$CORE_UNLOCK_EFI_DIR/bc250-core-unlock.efi"
 CORE_UNLOCK_EFI_LICENSE="$base/licenses/efi"
@@ -394,6 +424,7 @@ CORE_UNLOCK_EFI_MASTER="$base/state/bc250-core-unlock.efi"
 CORE_UNLOCK_EFI_STATE="$base/state/efi-state"
 CORE_UNLOCK_EFI_BOOTNUM="$base/state/efi-bootnum"
 CORE_UNLOCK_EFI_IMAGE_HASH="$base/state/efi-image.sha256"
+CORE_UNLOCK_EFI_RECOVERY="$base/state/efi-recovery"
 CORE_UNLOCK_EFI_DIR="$base/esp/EFI/bc250"
 CORE_UNLOCK_EFI_IMAGE="$CORE_UNLOCK_EFI_DIR/bc250-core-unlock.efi"
 CORE_UNLOCK_EFI_LICENSE="$base/licenses/efi"
@@ -541,6 +572,44 @@ core_unlock_efi_enable
                 Path(directory, "esp", "EFI", "bc250", "bc250-core-unlock.efi").exists()
             )
 
+    def test_efi_enable_finalizes_only_a_fully_valid_retained_transaction(self):
+        with tempfile.TemporaryDirectory() as directory:
+            result = self.run_power_shell(
+                r'''
+require_root() { :; }
+core_unlock_lifecycle_lock() { :; }
+core_unlock_lifecycle_unlock() { printf unlocked > "$base/unlocked"; }
+core_unlock_mode() { printf partial; }
+efi_configuration_complete() { [[ "$1" == 1 ]]; }
+install_core_unlock_files() { exit 20; }
+sync() { :; }
+CORE_UNLOCK_STATE_DIR="$base/state"
+CORE_UNLOCK_EFI_RECOVERY="$CORE_UNLOCK_STATE_DIR/efi-recovery"
+mkdir -p "$CORE_UNLOCK_STATE_DIR"
+touch "$CORE_UNLOCK_EFI_RECOVERY"
+core_unlock_efi_enable
+[[ ! -e "$CORE_UNLOCK_EFI_RECOVERY" && -e "$base/unlocked" ]]
+''',
+                directory,
+            )
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertIn("Validated and finalized", result.stdout)
+
+    def test_efi_enable_still_rejects_invalid_partial_state(self):
+        with tempfile.TemporaryDirectory() as directory:
+            result = self.run_power_shell(
+                r'''
+require_root() { :; }
+core_unlock_lifecycle_lock() { :; }
+core_unlock_mode() { printf partial; }
+efi_configuration_complete() { return 1; }
+core_unlock_efi_enable
+''',
+                directory,
+            )
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("cannot repair incomplete or invalid partial EFI state", result.stderr)
+
     def test_boot_entry_checks_active_order_and_device_identity(self):
         with tempfile.TemporaryDirectory() as directory:
             result = self.run_power_shell(
@@ -549,6 +618,8 @@ CORE_UNLOCK_ESP_PART=1
 CORE_UNLOCK_ESP_PARTUUID=11111111-2222-3333-4444-555555555555
 active='BootOrder: 0007,0001
 Boot0007* BC250 Core Unlock HD(1,GPT,11111111-2222-3333-4444-555555555555,0x800,0x1000)/File(\EFI\bc250\bc250-core-unlock.efi)'
+direct='BootOrder: 0007,0001
+Boot0007* BC250 Core Unlock HD(1,GPT,11111111-2222-3333-4444-555555555555,0x800,0x1000)/\EFI\bc250\bc250-core-unlock.efi'
 inactive='BootOrder: 0007,0001
 Boot0007 BC250 Core Unlock HD(1,GPT,11111111-2222-3333-4444-555555555555,0x800,0x1000)/File(\EFI\bc250\bc250-core-unlock.efi)'
 wrong_device='BootOrder: 0007,0001
@@ -556,6 +627,8 @@ Boot0007* BC250 Core Unlock HD(2,GPT,aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee,0x800,
 extra_path='BootOrder: 0007,0001
 Boot0007* BC250 Core Unlock HD(1,GPT,11111111-2222-3333-4444-555555555555,0x800,0x1000)/File(\EFI\bc250\bc250-core-unlock.efi)/File(\EFI\BOOT\BOOTX64.EFI)'
 efi_boot_entry_matches_in 0007 1 "$active"
+efi_boot_entry_matches_in 0007 1 "$direct"
+[[ "$(efi_matching_boot_numbers_in "$direct")" == 0007 ]]
 efi_boot_entry_matches_in 0007 0 "$inactive"
 if efi_boot_entry_matches_in 0007 1 "$inactive"; then exit 20; fi
 if efi_boot_entry_matches_in 0007 0 "$wrong_device"; then exit 21; fi
@@ -591,7 +664,7 @@ if discover_core_unlock_esp; then exit 22; fi
 findmnt() { printf '/dev/alias %s vfat rw\n' "$CORE_UNLOCK_ESP_ROOT"; }
 lsblk() { printf '/dev/test1 disk /dev/test 1 11111111-2222-3333-4444-555555555555 00000000-0000-0000-0000-000000000000\n'; }
 if discover_core_unlock_esp; then exit 23; fi
-[[ "$ESP_DISCOVERY_ERROR" == *"not a GPT ESP block partition"* ]]
+[[ "$ESP_DISCOVERY_ERROR" == *"not a supported GPT EFI partition"* ]]
 ''',
                 directory,
             )
@@ -600,6 +673,43 @@ if discover_core_unlock_esp; then exit 23; fi
                 "/dev/test1 /dev/test 1 11111111-2222-3333-4444-555555555555",
                 result.stdout,
             )
+
+    def test_esp_discovery_resolves_steamos_automount_slot(self):
+        with tempfile.TemporaryDirectory() as directory:
+            result = self.run_power_shell(
+                r'''
+CORE_UNLOCK_ESP_ROOT="$base/efi"
+CORE_UNLOCK_STEAMOS_EFI_PARTSET="$base/self-efi"
+mkdir -p "$CORE_UNLOCK_ESP_ROOT"
+ln -s /dev/test3 "$CORE_UNLOCK_STEAMOS_EFI_PARTSET"
+findmnt() {
+    printf 'systemd-1 %s autofs rw,direct\n' "$CORE_UNLOCK_ESP_ROOT"
+    printf '/dev/test3 %s vfat rw,nosuid\n' "$CORE_UNLOCK_ESP_ROOT"
+}
+lsblk() { printf '/dev/test3 part /dev/test 3 11111111-2222-3333-4444-555555555555 ebd0a0a2-b9e5-4433-87c0-68b6b72699c7\n'; }
+discover_core_unlock_esp
+[[ "$CORE_UNLOCK_ESP_SOURCE" == /dev/test3 && "$CORE_UNLOCK_ESP_PART" == 3 ]]
+''',
+                directory,
+            )
+            self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_esp_discovery_rejects_unowned_basic_data_partition(self):
+        with tempfile.TemporaryDirectory() as directory:
+            result = self.run_power_shell(
+                r'''
+CORE_UNLOCK_ESP_ROOT="$base/efi"
+CORE_UNLOCK_STEAMOS_EFI_PARTSET="$base/self-efi"
+mkdir -p "$CORE_UNLOCK_ESP_ROOT"
+ln -s /dev/other3 "$CORE_UNLOCK_STEAMOS_EFI_PARTSET"
+findmnt() { printf '/dev/test3 %s vfat rw,nosuid\n' "$CORE_UNLOCK_ESP_ROOT"; }
+lsblk() { printf '/dev/test3 part /dev/test 3 11111111-2222-3333-4444-555555555555 ebd0a0a2-b9e5-4433-87c0-68b6b72699c7\n'; }
+if discover_core_unlock_esp; then exit 20; fi
+[[ "$ESP_DISCOVERY_ERROR" == *"not a supported GPT EFI partition"* ]]
+''',
+                directory,
+            )
+            self.assertEqual(result.returncode, 0, result.stderr)
 
     def test_removal_retains_evidence_on_esp_or_nvram_query_failure(self):
         template = r'''

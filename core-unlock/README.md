@@ -64,16 +64,17 @@ The hardened application adds the following protections:
   `BC250CoreUnlockAttempt`.
 
 `cpu-unlock efi-enable` requires exactly eight active physical cores and Secure
-Boot disabled. It compiles the local source with clang/lld, verifies an x86-64
-PE EFI application, stores a master image and ownership state under
-`/var/lib/bc250-control/core-unlock`, installs the namespaced loader at
-`/efi/EFI/bc250/bc250-core-unlock.efi`, then creates and verifies its recorded
-`Boot####` entry. The mounted path must be a writable FAT GPT ESP block
-partition; its canonical source, parent disk, partition number, and PARTUUID
-are recorded. Completeness additionally requires an active entry first in
-`BootOrder`. Rollback and removal delete only an entry whose exact label,
-loader, partition number, and PARTUUID match; uncertainty retains the loader
-and ownership/recovery state for manual review.
+Boot disabled or unsupported by the firmware. It compiles the local source with
+clang/lld, verifies an x86-64 PE EFI application, and stores a master image and
+ownership state under `/var/lib/bc250-control/core-unlock`. It installs the
+namespaced loader at `/efi/EFI/bc250/bc250-core-unlock.efi`, then creates and
+verifies its recorded `Boot####` entry. The mounted path must be a writable FAT
+filesystem on a standard GPT ESP or the active SteamOS EFI slot; its canonical
+source, parent disk, partition number, and PARTUUID are recorded. Completeness
+additionally requires an active entry first in `BootOrder`. Rollback and removal
+delete only an entry whose exact label, loader, partition number, and PARTUUID
+match; uncertainty retains the loader and ownership/recovery state for manual
+review.
 
 EFI mode eliminates the extra Linux boot used to replay the mask, but firmware
 still performs one warm reset after each cold power-on. It is unsigned,

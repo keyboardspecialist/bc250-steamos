@@ -260,6 +260,7 @@ set -- help
 source "$script" >/dev/null
 require_root() { :; }
 systemctl() { [[ "${1:-}" != is-active ]]; }
+efibootmgr() { return 1; }
 install_update_persistence() { return 9; }
 remove_update_persistence() { rm -f "$POWER_KEEP_FILE"; }
 other_power_payload_is_installed() { return 1; }
@@ -273,6 +274,16 @@ CORE_UNLOCK_BIN="$base/data/helper/core-unlock"
 CORE_UNLOCK_LICENSE="$base/data/licenses/core-unlock-LICENSE"
 CORE_UNLOCK_STATE_DIR="$base/data/core-unlock"
 CORE_UNLOCK_PENDING="$CORE_UNLOCK_STATE_DIR/reboot-pending"
+CORE_UNLOCK_EFI_MASTER="$CORE_UNLOCK_STATE_DIR/bc250-core-unlock.efi"
+CORE_UNLOCK_EFI_STATE="$CORE_UNLOCK_STATE_DIR/efi-state"
+CORE_UNLOCK_EFI_BOOTNUM="$CORE_UNLOCK_STATE_DIR/efi-bootnum"
+CORE_UNLOCK_EFI_IMAGE_HASH="$CORE_UNLOCK_STATE_DIR/efi-image.sha256"
+CORE_UNLOCK_EFI_RECOVERY="$CORE_UNLOCK_STATE_DIR/efi-recovery"
+CORE_UNLOCK_EFI_DIR="$base/esp/EFI/bc250"
+CORE_UNLOCK_EFI_IMAGE="$CORE_UNLOCK_EFI_DIR/bc250-core-unlock.efi"
+CORE_UNLOCK_EFI_LICENSE="$base/data/licenses/core-unlock-efi-LICENSE"
+CORE_UNLOCK_EFI_HEADER_LICENSE="$base/data/licenses/yoppeh-efi-LICENSE"
+CORE_UNLOCK_EFIVARS_DIR="$base/efivars"
 POWER_KEEP_FILE="$base/keep/power.conf"
 mkdir -p "$SYSTEMD_WANTS_DIR" "$(dirname "$CORE_UNLOCK_UNIT")" \
     "$(dirname "$CORE_UNLOCK_BIN")" "$(dirname "$CORE_UNLOCK_LICENSE")" \

@@ -290,14 +290,15 @@ Linux/systemd replay is the safest recommended persistence mode. The optional
 `efi-enable` mode installs an unsigned, namespaced pre-boot application and
 removes the extra Linux boot from the cold-start sequence, but firmware still
 performs one warm reset after cold power so AGESA can enumerate eight cores.
-EFI mode is experimental, requires Secure Boot disabled, and refuses install
-when Secure Boot state is unknown.
+EFI mode is experimental, requires Secure Boot disabled or unsupported by the
+firmware, and refuses install when Secure Boot state is unknown.
 Its installer requires `/efi` to be the writable FAT filesystem mounted from a
-GPT ESP block partition and records that partition's canonical source,
-partition number, and PARTUUID. The firmware entry must be active, first in
-`BootOrder`, and match that device identity. Removal retains the loader and all
-ownership evidence if the ESP, entry, or NVRAM query cannot be verified. After
-the warm reset, the helper clears its guard and returns high-bit `EFI_ABORTED`
+standard GPT ESP or the active SteamOS EFI slot and records that partition's
+canonical source, partition number, and PARTUUID. The firmware entry must be
+active, first in `BootOrder`, and match that device identity. Removal retains
+the loader and all ownership evidence if the ESP, entry, or NVRAM query cannot
+be verified. After the warm reset, the helper clears its guard and returns
+high-bit `EFI_ABORTED`
 so firmware advances to the next `BootOrder` entry.
 
 The unlocked firmware retains the published six-core SMU metrics transfer size,

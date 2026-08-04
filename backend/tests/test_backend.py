@@ -982,6 +982,7 @@ class BackendMutationTests(unittest.IsolatedAsyncioTestCase):
             if command[0] == backend_module.FINDMNT:
                 return (
                     0,
+                    f"systemd-1 {paths['esp_root']} autofs rw,direct\n"
                     f"/dev/nvme0n1p1 {paths['esp_root']} vfat rw,nosuid\n",
                     "",
                 )
@@ -1036,6 +1037,67 @@ class BackendMutationTests(unittest.IsolatedAsyncioTestCase):
             ],
         )
 
+    async def test_cpu_unlock_efi_status_accepts_only_active_steamos_efi_slot(self):
+        backend = object.__new__(ToolkitBackend)
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            esp_root = root / "efi"
+            source = root / "test3"
+            disk = root / "test"
+            partset = root / "self-efi"
+            esp_root.mkdir()
+            source.touch()
+            disk.touch()
+            partset.symlink_to(source)
+
+            async def command_result(command, **_kwargs):
+                if command[0] == backend_module.FINDMNT:
+                    return (
+                        0,
+                        f"systemd-1 {esp_root} autofs rw,direct\n"
+                        f"{source} {esp_root} vfat rw,nosuid\n",
+                        "",
+                    )
+                if command[0] == backend_module.LSBLK:
+                    return (
+                        0,
+                        f"{source} part {disk} 3 "
+                        "11111111-2222-3333-4444-555555555555 "
+                        "ebd0a0a2-b9e5-4433-87c0-68b6b72699c7\n",
+                        "",
+                    )
+                raise AssertionError(f"unexpected command: {command}")
+
+            backend._exec = AsyncMock(side_effect=command_result)
+            with patch.multiple(
+                backend_module,
+                CPU_UNLOCK_EFI_ESP_ROOT_PATH=esp_root,
+                CPU_UNLOCK_STEAMOS_EFI_PARTSET_PATH=partset,
+            ):
+                valid = await backend._cpu_unlock_efi_esp_identity_valid(
+                    source=str(source),
+                    disk=str(disk),
+                    part="3",
+                    partuuid="11111111-2222-3333-4444-555555555555",
+                )
+                partset.unlink()
+                other = root / "other3"
+                other.touch()
+                partset.symlink_to(other)
+                wrong_slot = await backend._cpu_unlock_efi_esp_identity_valid(
+                    source=str(source),
+                    disk=str(disk),
+                    part="3",
+                    partuuid="11111111-2222-3333-4444-555555555555",
+                )
+
+        self.assertTrue(valid)
+        self.assertFalse(wrong_slot)
+        self.assertIn(
+            "NAME,TYPE,PKNAME,PARTN,PARTUUID,PARTTYPE",
+            backend._exec.await_args_list[1].args[0],
+        )
+
     async def test_cpu_unlock_efi_status_missing_state_is_partial(self):
         backend = object.__new__(ToolkitBackend)
         with tempfile.TemporaryDirectory() as directory:
@@ -1058,18 +1120,26 @@ class BackendMutationTests(unittest.IsolatedAsyncioTestCase):
             status = await self._efi_status(backend, paths)
 
         self.assertTrue(status["recoveryStatePresent"])
+        self.assertTrue(status["recoverable"])
         self.assertFalse(status["installed"])
         self.assertTrue(status["partial"])
 
     async def test_cpu_unlock_efi_status_accepts_efibootmgr_backslash_file_node(self):
         backend = object.__new__(ToolkitBackend)
-        with tempfile.TemporaryDirectory() as directory:
-            paths = self._write_efi_artifacts(Path(directory))
-            output = self._efi_boot_output().replace("/File(", "/\\File(")
-            status = await self._efi_status(backend, paths, output=output)
+        outputs = (
+            self._efi_boot_output().replace("/File(", "/\\File("),
+            self._efi_boot_output().replace(
+                "/File(\\EFI\\bc250\\bc250-core-unlock.efi)",
+                "/\\EFI\\bc250\\bc250-core-unlock.efi",
+            ),
+        )
+        for output in outputs:
+            with self.subTest(output=output), tempfile.TemporaryDirectory() as directory:
+                paths = self._write_efi_artifacts(Path(directory))
+                status = await self._efi_status(backend, paths, output=output)
 
-        self.assertTrue(status["installed"])
-        self.assertTrue(status["bootEntry"]["effective"])
+                self.assertTrue(status["installed"])
+                self.assertTrue(status["bootEntry"]["effective"])
 
     async def test_cpu_unlock_efi_status_rejects_malformed_state(self):
         backend = object.__new__(ToolkitBackend)
@@ -1295,6 +1365,19 @@ class BackendMutationTests(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(available("enable", "linux-replay", True))
         self.assertFalse(available("efi-enable", "linux-replay", True))
         self.assertTrue(available("off", "linux-replay", True))
+
+        self.assertTrue(
+            ToolkitBackend._cpu_unlock_action_status(
+                "efi-enable",
+                device_present=True,
+                topology_state="unlocked",
+                payload_available=True,
+                service_enabled=False,
+                mode="partial",
+                guard=guard,
+                efi_recoverable=True,
+            )["available"]
+        )
 
         for mode in ("partial", "conflict"):
             self.assertFalse(available("test", mode, mode == "conflict"))

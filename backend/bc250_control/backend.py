@@ -76,6 +76,7 @@ CPU_UNLOCK_EFI_RECOVERY_PATH = Path(
 )
 CPU_UNLOCK_EFI_ESP_IMAGE_PATH = Path("/efi/EFI/bc250/bc250-core-unlock.efi")
 CPU_UNLOCK_EFI_ESP_ROOT_PATH = Path("/efi")
+CPU_UNLOCK_STEAMOS_EFI_PARTSET_PATH = Path("/dev/disk/by-partsets/self/efi")
 CPU_UNLOCK_EFI_GUARD_PATH = Path(
     "/sys/firmware/efi/efivars/"
     "BC250CoreUnlockAttempt-4f6f6f13-1ec2-4f26-a250-bc250c0e77ff"
@@ -904,17 +905,17 @@ class ToolkitBackend:
                 and hash_match[1].decode("ascii").lower() == master_hash == image_hash
             )
 
-        files_complete = bool(
+        files_valid = bool(
             master_installed
             and image_installed
             and state_installed
             and state_valid
-            and not recovery_present
             and license_installed
             and header_license_installed
             and images_match
             and hash_valid is True
         )
+        files_complete = files_valid and not recovery_present
         required_represented = any(
             self._path_represented(path)
             for path in (
@@ -957,6 +958,7 @@ class ToolkitBackend:
             "recoveryStatePresent": recovery_present,
             "_artifactsRepresented": required_represented,
             "_filesComplete": files_complete,
+            "_filesValid": files_valid,
             "_bootnum": values.get("BOOTNUM") if state_valid else None,
             "_source": values.get("ESP_SOURCE") if state_valid else None,
             "_disk": values.get("DISK") if state_valid else None,
@@ -1007,7 +1009,8 @@ class ToolkitBackend:
             r"BC250 Core Unlock HD\(([1-9][0-9]*),GPT,"
             r"([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-"
             r"[0-9a-fA-F]{4}-[0-9a-fA-F]{12}),[^)]*\)"
-            r"(?:/\\?)?File\((\\EFI\\bc250\\bc250-core-unlock\.efi)\)\s*",
+            r"(?:(?:/\\?)?File\(\\EFI\\bc250\\bc250-core-unlock\.efi\)"
+            r"|/\\EFI\\bc250\\bc250-core-unlock\.efi)\s*",
             entry_match[2],
             re.IGNORECASE,
         )
@@ -1016,8 +1019,6 @@ class ToolkitBackend:
             and entry_match[2].startswith("BC250 Core Unlock HD(")
             and identity_match[1] == part
             and identity_match[2].lower() == partuuid.lower()
-            and identity_match[3].lower()
-            == r"\EFI\bc250\bc250-core-unlock.efi".lower()
         )
         result["effective"] = all(
             result[key]
@@ -1029,7 +1030,8 @@ class ToolkitBackend:
     def _cpu_unlock_matching_boot_numbers(output: str) -> list[str]:
         pattern = re.compile(
             r"^Boot([0-9a-fA-F]{4})\*?\s+BC250 Core Unlock "
-            r"HD\([^)]*\)(?:/\\?)?File\(\\EFI\\bc250\\bc250-core-unlock\.efi\)\s*$",
+            r"HD\([^)]*\)(?:(?:/\\?)?File\(\\EFI\\bc250\\bc250-core-unlock\.efi\)"
+            r"|/\\EFI\\bc250\\bc250-core-unlock\.efi)\s*$",
             re.MULTILINE | re.IGNORECASE,
         )
         return [match[1].upper() for match in pattern.finditer(output)]
@@ -1058,10 +1060,18 @@ class ToolkitBackend:
             )
             if returncode != 0:
                 return None
-            mount_fields = output.split()
-            if len(mount_fields) != 4:
+            concrete_mounts = []
+            for line in output.splitlines():
+                fields = line.split()
+                if (
+                    len(fields) == 4
+                    and fields[1] == str(CPU_UNLOCK_EFI_ESP_ROOT_PATH)
+                    and fields[2].lower() != "autofs"
+                ):
+                    concrete_mounts.append(fields)
+            if len(concrete_mounts) != 1:
                 return False
-            mount_source, target, filesystem, options = mount_fields
+            mount_source, target, filesystem, options = concrete_mounts[0]
             if (
                 target != str(CPU_UNLOCK_EFI_ESP_ROOT_PATH)
                 or filesystem.lower() not in {"vfat", "fat", "fat32"}
@@ -1071,8 +1081,8 @@ class ToolkitBackend:
             returncode, output, _ = await self._exec(
                 [
                     LSBLK,
-                    "-dnpo",
-                    "NAME,TYPE,PKNAME,PARTNUM,PARTUUID,PARTTYPE",
+                    "-dnpro",
+                    "NAME,TYPE,PKNAME,PARTN,PARTUUID,PARTTYPE",
                     mount_source,
                 ],
                 timeout=5,
@@ -1084,14 +1094,25 @@ class ToolkitBackend:
             if len(fields) != 6:
                 return False
             name, kind, parent, actual_part, actual_uuid, parttype = fields
+            partition_type_valid = (
+                parttype.lower() == "c12a7328-f81f-11d2-ba4b-00a0c93ec93b"
+            )
+            if parttype.lower() == "ebd0a0a2-b9e5-4433-87c0-68b6b72699c7":
+                try:
+                    partition_type_valid = (
+                        CPU_UNLOCK_STEAMOS_EFI_PARTSET_PATH.is_symlink()
+                        and CPU_UNLOCK_STEAMOS_EFI_PARTSET_PATH.resolve(strict=True)
+                        == Path(name).resolve(strict=True)
+                    )
+                except (OSError, RuntimeError):
+                    partition_type_valid = False
             return bool(
                 name == source
                 and kind == "part"
                 and parent == disk
                 and actual_part == part
                 and actual_uuid.lower() == partuuid.lower()
-                and parttype.lower()
-                == "c12a7328-f81f-11d2-ba4b-00a0c93ec93b"
+                and partition_type_valid
             )
         except (CommandError, OSError):
             return None
@@ -1100,6 +1121,7 @@ class ToolkitBackend:
         status = self._cpu_unlock_efi_file_status()
         represented = status.pop("_artifactsRepresented")
         files_complete = status.pop("_filesComplete")
+        files_valid = status.pop("_filesValid")
         bootnum = status.pop("_bootnum")
         source = status.pop("_source")
         disk = status.pop("_disk")
@@ -1159,6 +1181,14 @@ class ToolkitBackend:
             and boot_entry["effective"]
             and unique_recorded_entry
         )
+        status["recoverable"] = bool(
+            files_valid
+            and status["recoveryStatePresent"]
+            and not guard_present
+            and esp_identity_valid is True
+            and boot_entry["effective"]
+            and unique_recorded_entry
+        )
         status["partial"] = represented and not status["installed"]
         return status
 
@@ -1172,6 +1202,7 @@ class ToolkitBackend:
         service_enabled: bool,
         mode: str,
         guard: dict[str, Any],
+        efi_recoverable: bool = False,
     ) -> dict[str, Any]:
         blockers = []
         if action == "off":
@@ -1215,7 +1246,7 @@ class ToolkitBackend:
             blockers.append("persistent-replay-enabled")
         if action == "efi-enable" and mode == "efi":
             blockers.append("efi-unlock-enabled")
-        if action == "efi-enable" and mode == "partial":
+        if action == "efi-enable" and mode == "partial" and not efi_recoverable:
             blockers.append("efi-installation-partial")
         return {"available": not blockers, "blockers": blockers}
 
@@ -1264,6 +1295,7 @@ class ToolkitBackend:
                 service_enabled=service_enabled,
                 mode=mode,
                 guard=guard,
+                efi_recoverable=efi.get("recoverable", False),
             )
             for action in ("test", "enable", "efi-enable", "off")
         }

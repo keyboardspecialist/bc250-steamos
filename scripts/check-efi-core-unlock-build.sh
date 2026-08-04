@@ -20,6 +20,8 @@ clang -I "$WORK" -DEFI_PLATFORM=1 -target x86_64-unknown-windows \
     -o "$WORK/bc250-core-unlock.efi" "$SOURCE"
 
 description=$(LC_ALL=C file -b "$WORK/bc250-core-unlock.efi")
-[[ "$description" == *PE32+* && "${description,,}" == *"efi application"* \
+[[ "$description" == *PE32+* \
+    && ( "${description,,}" == *"efi application"* \
+        || "${description,,}" == *"efi (application)"* ) \
     && "${description,,}" == *"x86-64"* ]] \
     || { printf 'Unexpected EFI image: %s\n' "$description" >&2; exit 1; }
