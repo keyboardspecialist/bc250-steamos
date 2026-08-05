@@ -86,8 +86,8 @@ Queue 4 can use the same sequence through its separate mailbox registers.
 
 ## Table 3
 
-Table 3 contains the Robin 3 PM status data for tools. It is not the standard
-table-6 `SmuMetrics_t` structure.
+Table 3 contains the Cyan Skillfish PM status data for tools. It is not the
+standard table-6 `SmuMetrics_t` structure.
 
 Table 3 has these properties:
 
@@ -149,9 +149,10 @@ mailbox success, but it does not do a DMA transfer.
 
 ### Why table 6 cannot be used
 
-Standard table 6 contains CPU arrays with six elements. On Robin 3, the
-firmware writes eight entries when eight cores are enabled. The last two entries
-overwrite adjacent fields. These fields include temperature and GFX data.
+Standard table 6 contains CPU arrays with six elements. On Cyan Skillfish, the
+firmware writes eight entries when eight cores are enabled. The last two
+entries overwrite adjacent fields. These fields include temperature and GFX
+data.
 
 Table 3 uses arrays with eight elements. Thus, its arrays do not overlap. The
 patch uses the five confirmed ranges in the table. Other table fields contain

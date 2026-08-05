@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Verify the Robin 3 ROM and metrics-related PMFW dispatch evidence."""
+"""Verify the Cyan Skillfish ROM and metrics-related PMFW dispatch evidence."""
 
 import argparse
 import hashlib
