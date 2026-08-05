@@ -1,0 +1,14 @@
+[Defines]
+  DEC_SPECIFICATION              = 0x00010005
+  PACKAGE_NAME                   = Bc250Pkg
+  PACKAGE_GUID                   = 5be3c7f9-147a-455e-90f4-873eb660ddf8
+  PACKAGE_VERSION                = 0.1
+
+[Includes]
+  Include
+
+[Guids]
+  gBc250PeiResultHobGuid = { 0x7ce53831, 0x7bcb, 0x4cf1, { 0xa4, 0xb2, 0xa5, 0x6e, 0x2c, 0x4e, 0xb8, 0x34 } }
+
+[Ppis]
+  gBc250SmuServicesPpiGuid = { 0xea335e48, 0x7275, 0x4d2b, { 0x82, 0x76, 0x55, 0xba, 0x55, 0x31, 0xd7, 0xd7 } }

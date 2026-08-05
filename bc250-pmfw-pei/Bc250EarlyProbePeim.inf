@@ -1,0 +1,35 @@
+[Defines]
+  INF_VERSION                    = 0x0001001B
+  BASE_NAME                      = Bc250EarlyProbePeim
+  FILE_GUID                      = 4c5f140d-1cb8-4a4f-b3e5-59541c86431a
+  MODULE_TYPE                    = PEIM
+  VERSION_STRING                 = 0.1
+  ENTRY_POINT                    = Bc250EarlyProbePeimEntryPoint
+
+[Sources]
+  Bc250EarlyProbePeim.c
+  Bc250Mailbox.c
+  Include/Bc250Mailbox.h
+  Include/Bc250PeiResult.h
+
+[Packages]
+  MdePkg/MdePkg.dec
+  bc250-pmfw-pei/Bc250Pkg.dec
+
+[LibraryClasses]
+  BaseLib
+  BaseMemoryLib
+  HobLib
+  IoLib
+  PeimEntryPoint
+  PeiServicesLib
+
+[Guids]
+  gBc250PeiResultHobGuid
+
+[Ppis]
+  gBc250SmuServicesPpiGuid
+  gEfiPeiStallPpiGuid
+
+[Depex]
+  TRUE

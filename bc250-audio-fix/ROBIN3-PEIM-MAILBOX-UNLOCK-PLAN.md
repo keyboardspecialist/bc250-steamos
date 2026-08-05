@@ -149,8 +149,11 @@ The PEI firmware volume has a large PAD file from `0xef8b20` through
 `0xffeae8`. A custom FFS file can use part of this space without moving the SEC
 core or the reset vector.
 
-Physical file order does not by itself specify PEIM execution order. The PEIM
-must have an explicit dependency expression.
+Physical file order does not by itself specify PEIM execution order. PEI
+dependency expressions do not support the `BEFORE` opcode. The ROM integration
+must replace the PEI Apriori file. It must put the larger replacement in the PAD
+region and mark the original Apriori file deleted. The replacement must keep
+the original GUID order and append the custom PEIM GUID.
 
 ## Earliest practical hook
 
@@ -175,11 +178,12 @@ first PEIM must measure this condition with a read-only command.
 The custom PEIM will use this dependency expression:
 
 ```text
-BEFORE 7307bd0f-8b7a-4ba5-9af6-3997d1e32786
+TRUE
 ```
 
 The PEIM entry point will only register the notification callback. It will not
-wait for PMFW and it will not access a mailbox.
+wait for PMFW and it will not access a mailbox. The PEI Apriori list must run
+this entry point before `AmdNbioSmuV10Pei` installs the SMU-services PPI.
 
 ## Planned source layout
 
@@ -405,10 +409,13 @@ The ROM verifier must enforce these requirements:
 6. The main DXE firmware volume does not change.
 7. The SEC core stays at `0xffeae8`.
 8. The reset vector does not change.
-9. All differences are in the original PEI PAD range.
+9. Differences are limited to the original PEI PAD range and the state byte of
+   the original PEI Apriori FFS file.
 10. The new PEIM is IA32 and uses EFI subsystem `11`.
-11. The new PEIM has the required `BEFORE` dependency.
-12. All firmware-volume and FFS checksums are valid.
+11. The new PEIM has a `TRUE` dependency.
+12. The replacement PEI Apriori list keeps all original GUIDs in their original
+    order and appends the new file GUID.
+13. All firmware-volume and FFS checksums are valid.
 
 Generic firmware-volume tools can move existing files. Reject an output image
 if any existing non-PAD file moves.
