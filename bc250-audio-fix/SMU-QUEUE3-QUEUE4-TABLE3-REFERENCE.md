@@ -146,14 +146,3 @@ Table 3 is not an immediate register snapshot. The firmware uses this sequence:
 If the accumulator has no samples, the first request initializes the
 accumulator. The request also installs sampler `0x27528`. The firmware reports
 mailbox success, but it does not do a DMA transfer.
-
-### Why table 6 cannot be used
-
-Standard table 6 contains CPU arrays with six elements. On Cyan Skillfish, the
-firmware writes eight entries when eight cores are enabled. The last two
-entries overwrite adjacent fields. These fields include temperature and GFX
-data.
-
-Table 3 uses arrays with eight elements. Thus, its arrays do not overlap. The
-patch uses the five confirmed ranges in the table. Other table fields contain
-PM status data. The exact meanings of these fields are not known.
