@@ -1,12 +1,12 @@
-# Robin 3 PMFW patch and table 3 alternatives
+# Cyan Skillfish PMFW patch and table 3 alternatives
 
 ## Purpose
 
-This document describes possible changes to the Robin 3 power-management
+This document describes possible changes to the Cyan Skillfish power-management
 firmware (PMFW). It also describes the PMFW table 3 transfer path and the known
 alternatives to message `0x22`.
 
-This document applies to Robin 3 PMFW version `0x00580600` from
+This document applies to Cyan Skillfish PMFW version `0x00580600` from
 `BC250_3.00_CHIPSETMENU.ROM`.
 
 This document uses ASD-STE100 Simplified Technical English principles. Code
@@ -330,9 +330,9 @@ temperature, or C0 ratio.
 
 ### Table 6 partial data
 
-Table 6 has six entries in each published per-core array. Robin 3 writes eight
-entries when all eight cores are active. The last two entries overwrite fields
-that follow each array.
+Table 6 has six entries in each published per-core array. Cyan Skillfish writes
+eight entries when all eight cores are active. The last two entries overwrite
+fields that follow each array.
 
 Some raw fields can possibly be recovered from the overwritten positions. This
 method cannot recover a complete and reliable set of power, temperature,
@@ -385,15 +385,16 @@ system from booting.
 
 The main repository evidence is in these files:
 
-- `ROBIN3-METRICS-ANALYSIS.md`
+- `CYAN-SKILLFISH-METRICS-ANALYSIS.md`
 - `SMU-QUEUE3-QUEUE4-TABLE3-REFERENCE.md`
-- `verify-robin3-firmware.py`
+- `verify-cyan-skillfish-firmware.py`
 - `probe-cyan-skillfish-metrics.py`
 - `bc250-cyan-skillfish-table3-probe.patch`
 - `core-unlock/bc250-unlock-cores-efi.c`
 
-The aligned Ghidra decompilation used for the detailed control flow is:
+The external aligned Ghidra decompilation artifact used for the detailed
+control flow is:
 
 ```text
-/home/deck/tools/bc250-ghidra-analysis/smu-3.00-aligned-decompiled.c
+smu-3.00-aligned-decompiled.c
 ```

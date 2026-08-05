@@ -1,7 +1,7 @@
-# BC-250 Robin 3 early PMFW probe
+# BC-250 Cyan Skillfish early PMFW probe
 
 This directory contains the first implementation stage from
-`bc250-audio-fix/ROBIN3-PEIM-MAILBOX-UNLOCK-PLAN.md`.
+`bc250-audio-fix/CYAN-SKILLFISH-PEIM-MAILBOX-UNLOCK-PLAN.md`.
 
 The IA32 PEIM registers a synchronous callback for the SMU-services PPI. The
 callback sends one queue 4 message `0x27`. It reads PMFW runtime address

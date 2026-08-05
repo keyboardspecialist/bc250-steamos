@@ -1,4 +1,4 @@
-# Robin 3 PEIM mailbox unlock plan
+# Cyan Skillfish PEIM mailbox unlock plan
 
 ## Purpose
 
@@ -8,7 +8,7 @@ message `0x27` available after PMFW initialization.
 This plan does not make the PMFW write messages available at normal runtime.
 Messages `0x28` and `0x29` will stay protected.
 
-This document applies to Robin 3 PMFW version `0x00580600` from
+This document applies to Cyan Skillfish PMFW version `0x00580600` from
 `BC250_3.00_CHIPSETMENU.ROM`.
 
 This document uses ASD-STE100 Simplified Technical English principles. Code
@@ -367,7 +367,7 @@ not patch code.
 
 Linux must not expose message `0x27` as an arbitrary memory reader.
 
-The driver will permit only fixed, aligned addresses for Robin 3 version
+The driver will permit only fixed, aligned addresses for Cyan Skillfish version
 `0x00580600`.
 
 The source-record base is `0xfac4`. Each core record has size `0x178`.
@@ -471,15 +471,15 @@ Stop the experiment when one of these conditions occurs:
 
 Use these files as the primary evidence:
 
-- `ROBIN3-PMFW-PATCH-AND-TABLE3-ALTERNATIVES.md`
-- `ROBIN3-METRICS-ANALYSIS.md`
+- `CYAN-SKILLFISH-PMFW-PATCH-AND-TABLE3-ALTERNATIVES.md`
+- `CYAN-SKILLFISH-METRICS-ANALYSIS.md`
 - `SMU-QUEUE3-QUEUE4-TABLE3-REFERENCE.md`
-- `verify-robin3-firmware.py`
+- `verify-cyan-skillfish-firmware.py`
 - `probe-cyan-skillfish-metrics.py`
 - `core-unlock/bc250-unlock-cores-efi.c`
 
-The aligned PMFW decompilation is:
+The external aligned PMFW decompilation artifact is:
 
 ```text
-/home/deck/tools/bc250-ghidra-analysis/smu-3.00-aligned-decompiled.c
+smu-3.00-aligned-decompiled.c
 ```
