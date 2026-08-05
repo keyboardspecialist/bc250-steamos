@@ -1,8 +1,8 @@
 # SMU queue 3, queue 4, and table 3 reference
 
-## Queue 3 versus queue 4
+## Differences between queue 3 and queue 4
 
-Queue 3 and queue 4 are independent host-to-SMU mailboxes that feed the same
+Queue 3 and queue 4 are separate host-to-SMU mailboxes. They use the same
 firmware message dispatch table.
 
 | Property | Queue 3 | Queue 4 |
@@ -11,64 +11,67 @@ firmware message dispatch table.
 | Response register | `0x03b10a80` | `0x03b10a84` |
 | Argument register | `0x03b10a88` | `0x03b10a8c` |
 | Firmware queue ID | 3 | 4 |
-| Typical use | OC and existing tools | Separate tools channel |
+| Typical use | Overclocking and existing tools | Separate tools channel |
 | Table-3 permission | Allowed | Allowed |
 
-The important distinction for table 3 is the messages used, not only the
-queue:
+For a table-3 transfer, select the correct messages. Queue selection alone is
+not sufficient:
 
-- The current queue-3 patch uses messages `0x3e/0x3f`. These stage and publish
-  the tools address descriptor at `0xcad8`, which table 3 requires.
-- The old queue-3 `0x7a/0x7b` sequence configured the normal driver descriptor
-  at `0xca38` and could not transfer table 3.
-- The queue-4 experiment uses the same `0x3e/0x3f` tools messages.
-- Both paths use message `0x22` to request a table transfer.
+- The current queue-3 patch uses messages `0x3e` and `0x3f`. These messages
+  stage and publish the tools address descriptor at `0xcad8`. Table 3 requires
+  this descriptor.
+- The old queue-3 sequence used messages `0x7a` and `0x7b`. These messages
+  configured the driver descriptor at `0xca38`. This sequence could not
+  transfer table 3.
+- The queue-4 test uses tools messages `0x3e` and `0x3f`.
+- Both queues use message `0x22` to request a table transfer.
 
-Queues 3 and 4 share the correct `0x3e`, `0x3f`, `0x22` dispatch entries.
-Queue 4 provides better isolation from normal queue-3 OC clients, while the
-merged runtime patch uses queue 3 under the kernel SMU message lock.
+Queues 3 and 4 use the correct dispatch entries for messages `0x3e`, `0x3f`,
+and `0x22`. Queue 4 gives more isolation from standard queue-3 overclocking
+clients. The current runtime patch uses queue 3 with the kernel SMU message
+lock.
 
-The mailboxes are separate, but both can modify global SMU address descriptors
-and invoke the same table callback and DMA machinery. Concurrent kernel and
-userspace access can therefore still race.
+The mailboxes are separate. However, both queues can change global SMU address
+descriptors. Both queues also use the same table callback and DMA components.
+Thus, concurrent kernel and user-space access can cause a race condition.
 
-## Functions used through the queues
+## Queue functions
 
-The host performs three operations: publish a 64-bit DMA destination, request
-table 3, and let firmware generate and transfer the snapshot.
+First, the host publishes a 64-bit DMA destination. Then, the host requests
+table 3. The firmware generates the snapshot and transfers it.
 
 | Queue/message | SMU function | Purpose |
 |---|---:|---|
-| Queue 3, `0x7a` | `0x1b998` | Set high half of the driver DMA address |
-| Queue 3, `0x7b` | `0x1b9b4` | Set low half of the driver DMA address |
-| Queue 3 or 4, `0x3e` | `0x1b9f4` | Set high half of the tools DMA address |
-| Queue 3 or 4, `0x3f` | `0x1ba10` | Set low half of the tools DMA address |
-| Queue 3 or 4, `0x22` | `0x1ba5c` | Validate the request and invoke the table callback |
+| Queue 3, `0x7a` | `0x1b998` | Set the high half of the driver DMA address |
+| Queue 3, `0x7b` | `0x1b9b4` | Set the low half of the driver DMA address |
+| Queue 3 or 4, `0x3e` | `0x1b9f4` | Set the high half of the tools DMA address |
+| Queue 3 or 4, `0x3f` | `0x1ba10` | Set the low half of the tools DMA address |
+| Queue 3 or 4, `0x22` | `0x1ba5c` | Validate the request and call the table callback |
 
-For table 3, transfer handler `0x1ba5c` invokes this firmware chain:
+For table 3, transfer handler `0x1ba5c` starts this firmware sequence:
 
-| Function | Role |
+| Function | Function operation |
 |---:|---|
-| `0x276dc` | Table-3 export callback |
+| `0x276dc` | Export table 3 |
 | `0x276cc` | Initialize the accumulator and install the sampler |
-| `0x276b8` | Clear accumulator state |
-| `0x27528` | Periodically collect CPU and L3 values |
-| `0x3a850` | DMA the completed `0x344` snapshot to host memory |
-| `0x286f8` | Optional post-transfer hardware action |
+| `0x276b8` | Clear the accumulator state |
+| `0x27528` | Collect CPU and L3 values at regular intervals |
+| `0x3a850` | Transfer the completed `0x344`-byte snapshot to host memory |
+| `0x286f8` | Do an optional hardware operation after the transfer |
 
-Address and mailbox helpers are:
+The firmware uses these address and mailbox helper functions:
 
-| Function | Role |
+| Function | Function operation |
 |---:|---|
-| `0x0ffc` | Read the active queue's argument register |
-| `0x0fa8` | Write the active queue's response register |
-| `0x398d4` | Store the address high word |
-| `0x398e8` | Store the address low word |
-| `0x398fc` | Check that both address words are valid |
-| `0x1b9d0` | Publish the completed tools address |
+| `0x0ffc` | Read the argument register of the active queue |
+| `0x0fa8` | Write the response register of the active queue |
+| `0x398d4` | Store the high word of the address |
+| `0x398e8` | Store the low word of the address |
+| `0x398fc` | Make sure that the two address words are valid |
+| `0x1b9d0` | Publish the complete tools address |
 | `0x39910` | Copy the staged address descriptor |
 
-The intended sequence is:
+Use this sequence:
 
 ```text
 Queue 3 (current runtime patch):
@@ -83,29 +86,29 @@ Queue 4 can use the same sequence through its separate mailbox registers.
 
 ## Table 3
 
-Table 3 is Robin 3's tool-facing PM status snapshot. It is separate from the
-normal table-6 `SmuMetrics_t`.
+Table 3 contains the Robin 3 PM status data for tools. It is not the standard
+table-6 `SmuMetrics_t` structure.
 
-Table 3 is:
+Table 3 has these properties:
 
-- `0x344` bytes long.
-- Primarily little-endian IEEE-754 `float32` values.
-- Generated by callback `0x276dc`.
-- Averaged over a firmware sampling interval.
-- Transferred through the tools DMA descriptor.
-- Large enough to represent all eight CPU cores.
+- Its length is `0x344` bytes.
+- Most values are little-endian IEEE-754 `float32` values.
+- Callback `0x276dc` generates the table.
+- The firmware averages the data during a sample interval.
+- The firmware uses the tools DMA descriptor for the transfer.
+- The table has data for all eight CPU cores.
 
 ### Confirmed CPU and L3 layout
 
-| Byte range | Elements | Meaning | Unit |
+| Byte range | Elements | Data | Unit |
 |---|---:|---|---|
-| `0x118-0x137` | 8 floats | Average per-core power | Watts |
-| `0x158-0x177` | 8 floats | Average per-core temperature | Celsius |
-| `0x198-0x1b7` | 8 floats | Average per-core frequency | GHz |
+| `0x118-0x137` | 8 floats | Average power for each core | Watts |
+| `0x158-0x177` | 8 floats | Average temperature for each core | Celsius |
+| `0x198-0x1b7` | 8 floats | Average frequency for each core | GHz |
 | `0x2a8-0x2af` | 2 floats | Average L3 temperature | Celsius |
 | `0x2c0-0x2c7` | 2 floats | Average L3 frequency | GHz |
 
-For core `n`, where `n` is `0-7`:
+For core `n`, `n` is in the range `0-7`:
 
 ```text
 core_power[n]       = float32(table + 0x118 + n*4)
@@ -113,14 +116,14 @@ core_temperature[n] = float32(table + 0x158 + n*4)
 core_frequency[n]   = float32(table + 0x198 + n*4)
 ```
 
-For L3 complex `n`, where `n` is `0-1`:
+For L3 complex `n`, `n` is in the range `0-1`:
 
 ```text
 l3_temperature[n] = float32(table + 0x2a8 + n*4)
 l3_frequency[n]   = float32(table + 0x2c0 + n*4)
 ```
 
-The driver converts these fields as follows:
+The driver converts these fields:
 
 ```text
 power W       * 1000 -> milliwatts
@@ -128,28 +131,28 @@ temperature C * 100  -> centi-Celsius
 frequency GHz * 1000 -> MHz
 ```
 
-### Sampling behavior
+### Sample operation
 
-Table 3 is not an immediate register snapshot:
+Table 3 is not an immediate register snapshot. The firmware uses this sequence:
 
-1. Sampler `0x27528` periodically accumulates values.
-2. Firmware maintains a sample counter at accumulator offset `0x2f4`.
-3. Export callback `0x276dc` divides accumulated values by the sample count.
-4. It constructs the `0x344` export buffer.
+1. Sampler `0x27528` collects and adds values at regular intervals.
+2. The firmware stores the sample count at accumulator offset `0x2f4`.
+3. Export callback `0x276dc` divides the accumulated values by the sample
+   count.
+4. The callback builds the `0x344`-byte export buffer.
 5. DMA helper `0x3a850` transfers the buffer to host memory.
-6. Firmware resets the accumulator for the next interval.
+6. The firmware resets the accumulator for the next interval.
 
-If no samples exist, the first request only initializes the accumulator and
-installs sampler `0x27528`. Firmware returns mailbox success but performs no
-DMA.
+If the accumulator has no samples, the first request initializes the
+accumulator. The request also installs sampler `0x27528`. The firmware reports
+mailbox success, but it does not do a DMA transfer.
 
-### Why table 6 is unsuitable
+### Why table 6 cannot be used
 
-Normal table 6 contains six-element CPU arrays. When Robin 3 has eight cores
-enabled, firmware writes eight entries into those six-entry regions and
-overwrites adjacent fields, including temperatures and GFX data.
+Standard table 6 contains CPU arrays with six elements. On Robin 3, the
+firmware writes eight entries when eight cores are enabled. The last two entries
+overwrite adjacent fields. These fields include temperature and GFX data.
 
-Table 3 uses eight-entry arrays and does not have that overlap. The five ranges
-above are the fields currently confirmed and used by the patch. The remaining
-table fields contain additional PM status telemetry whose semantic names have
-not all been established.
+Table 3 uses arrays with eight elements. Thus, its arrays do not overlap. The
+patch uses the five confirmed ranges in the table. Other table fields contain
+PM status data. The exact meanings of these fields are not known.
