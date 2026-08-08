@@ -5,19 +5,12 @@
 # running kernel, extract the dep packages into deps/); this script verifies
 # their results and refuses to continue on any mismatch.
 #
-#   ./build.sh [--cg|--cg-unvalidated] [--prepare-only]
-#              [--allow-missing-symvers] [kernel-tree]
+#   ./build.sh [--prepare-only] [--allow-missing-symvers] [kernel-tree]
 #
 # --prepare-only stops after producing an exact external-module Kbuild tree;
 # AIC8800 uses this when Valve omitted the matching headers package.
 # --allow-missing-symvers is the AIC8800-only fast path. It requires
 # --prepare-only and is safe only when CONFIG_MODVERSIONS is disabled.
-#
-# --cg applies the GFX-only clock-gating patch (bc250-cg-flags.patch, idle
-# power) — navi1x-validated, EXPERIMENTAL, off by default. --cg-unvalidated
-# adds bc250-cg-flags-unvalidated.patch on top (MC/SDMA/ATHUB/HDP/NBIO on
-# unvalidated register maps — can black-screen; bisect with amdgpu.cg_mask).
-#
 # Run on the BC-250 itself, as the normal user: the running kernel's
 # /proc/config.gz and `uname -r` are the ground truth everything is checked
 # against. On success amdgpu.ko.zst here is replaced — but only after the
@@ -30,21 +23,17 @@ REL=$(uname -r)
 die()  { echo "FATAL: $*" >&2; exit 1; }
 step() { echo; echo "==> $*"; }
 
-WITH_CG=0
-WITH_CG_UNVAL=0
 PREPARE_ONLY=0
 ALLOW_MISSING_SYMVERS=0
 ARGS=()
 for a in "$@"; do
     case "$a" in
-        --cg)             WITH_CG=1 ;;
-        --cg-unvalidated) WITH_CG=1; WITH_CG_UNVAL=1 ;;  # implies --cg
         --prepare-only)   PREPARE_ONLY=1 ;;
         --allow-missing-symvers) ALLOW_MISSING_SYMVERS=1 ;;
         *)                ARGS+=("$a") ;;
     esac
 done
-[ "${#ARGS[@]}" -le 1 ] || die "usage: $0 [--cg|--cg-unvalidated] [--prepare-only] [--allow-missing-symvers] [kernel-tree]"
+[ "${#ARGS[@]}" -le 1 ] || die "usage: $0 [--prepare-only] [--allow-missing-symvers] [kernel-tree]"
 [ "$ALLOW_MISSING_SYMVERS" = 0 ] || [ "$PREPARE_ONLY" = 1 ] \
     || die "--allow-missing-symvers requires --prepare-only"
 TREE_ARG=${ARGS[0]:-$HERE/valve-kernel}
@@ -259,42 +248,15 @@ fi
 step "apply Cyan Skillfish GPU metrics patches"
 METRICS_PATCH=$HERE/bc250-cyan-skillfish-gpu-telemetry.patch
 GFXCLK_PATCH=$HERE/bc250-cyan-skillfish-gfxclk.patch
-CORE_METRICS_PATCH=$HERE/bc250-cyan-skillfish-8core-metrics.patch
 
 METRICS_SOURCE=drivers/gpu/drm/amd/pm/swsmu/smu11/cyan_skillfish_ppt.c
-METRICS_HEADER=drivers/gpu/drm/amd/pm/swsmu/inc/pmfw_if/smu11_driver_if_cyan_skillfish.h
-if grep -q 'SmuMetricsTable8_t' "$METRICS_HEADER"; then
-    METRICS_SOURCE_SHA=$(sha256sum "$METRICS_SOURCE" | cut -d' ' -f1)
-    METRICS_HEADER_SHA=$(sha256sum "$METRICS_HEADER" | cut -d' ' -f1)
-    if [ ! -f "$TREE/.bc250-managed-tree" ] \
-       && { [ "$METRICS_SOURCE_SHA" != 38dd736a516a6d70276208d6424b824b63f60dd930af5a05d0f14b1d58d6546d ] \
-            || [ "$METRICS_HEADER_SHA" != 6d1f5373dea43af76aeb25e260ce10c0130a743cb171a5b6149461e62c0a1c4c ]; }; then
-        die "unknown Cyan Skillfish metrics patch found in a custom tree; restore its stock metrics source and header first"
-    fi
-    git --git-dir="$GITDIR" --work-tree="$TREE" checkout -qf "$FULLSHA" -- \
-        "$METRICS_SOURCE" "$METRICS_HEADER"
-    echo "restored invalid topology-sized Cyan Skillfish metrics files from $SHA"
-fi
 
 TELEMETRY_SOURCE_SHA=ab86a4598bf907c6963c0a9b4c43f7a50727ce11993833a0b307d9ae0ae0e017
 GFXCLK_SOURCE_SHA=572014e03cff22fb57f21121e8e8722f11d3d99822ee86e60fbfe50ed6e76f30
-OLD_CORE_METRICS_SOURCE_SHA=d7191ecdd18a34478d7f58de79a149935e2deef73444e996cde6cf5cb596e35c
-OLD_C0_SCALE_SOURCE_SHA=c73a50285bc70e3be3199e70c8717dd0fdf77208cff178bdd75a623ed4d08ceb
-OLD_CPUFREQ_SOURCE_SHA=ac197ddf75abfd4aa491b016a6e4c592333a83f120d14ae1d23a95f33731472f
-CORE_METRICS_SOURCE_SHA=13c0587e7c7020567fb5028e8bf21c295445cb0aaf97180f556bbc2b5940b961
 
 METRICS_SOURCE_SHA=$(sha256sum "$METRICS_SOURCE" | cut -d' ' -f1)
-if [ "$METRICS_SOURCE_SHA" = "$OLD_CORE_METRICS_SOURCE_SHA" ] \
-   || [ "$METRICS_SOURCE_SHA" = "$OLD_C0_SCALE_SOURCE_SHA" ] \
-   || [ "$METRICS_SOURCE_SHA" = "$OLD_CPUFREQ_SOURCE_SHA" ]; then
-    git --git-dir="$GITDIR" --work-tree="$TREE" checkout -qf "$FULLSHA" -- \
-        "$METRICS_SOURCE"
-    echo "restored obsolete Robin 3 core telemetry patch from $SHA"
-    METRICS_SOURCE_SHA=$(sha256sum "$METRICS_SOURCE" | cut -d' ' -f1)
-fi
 if [ "$METRICS_SOURCE_SHA" = "$TELEMETRY_SOURCE_SHA" ] \
-   || [ "$METRICS_SOURCE_SHA" = "$GFXCLK_SOURCE_SHA" ] \
-   || [ "$METRICS_SOURCE_SHA" = "$CORE_METRICS_SOURCE_SHA" ]; then
+   || [ "$METRICS_SOURCE_SHA" = "$GFXCLK_SOURCE_SHA" ]; then
     echo "GPU telemetry patch already applied"
 elif patch -p1 --dry-run -s -f < "$METRICS_PATCH" >/dev/null 2>&1; then
     patch -p1 -s < "$METRICS_PATCH"
@@ -304,74 +266,13 @@ else
 fi
 
 METRICS_SOURCE_SHA=$(sha256sum "$METRICS_SOURCE" | cut -d' ' -f1)
-if [ "$METRICS_SOURCE_SHA" = "$GFXCLK_SOURCE_SHA" ] \
-   || [ "$METRICS_SOURCE_SHA" = "$CORE_METRICS_SOURCE_SHA" ]; then
+if [ "$METRICS_SOURCE_SHA" = "$GFXCLK_SOURCE_SHA" ]; then
     echo "GPU clock query patch already applied"
 elif patch -p1 --dry-run -s -f < "$GFXCLK_PATCH" >/dev/null 2>&1; then
     patch -p1 -s < "$GFXCLK_PATCH"
     echo "GPU clock query patch applied"
 else
     die "GPU clock query patch neither applies nor reverses cleanly — tree has drifted; inspect by hand"
-fi
-
-METRICS_SOURCE_SHA=$(sha256sum "$METRICS_SOURCE" | cut -d' ' -f1)
-if [ "$METRICS_SOURCE_SHA" = "$CORE_METRICS_SOURCE_SHA" ]; then
-    echo "Robin 3 eight-core metrics patch already applied"
-elif patch -p1 --dry-run -s -f < "$CORE_METRICS_PATCH" >/dev/null 2>&1; then
-    patch -p1 -s < "$CORE_METRICS_PATCH"
-    echo "Robin 3 eight-core metrics patch applied"
-else
-    die "Robin 3 eight-core metrics patch neither applies nor reverses cleanly — tree has drifted; inspect by hand"
-fi
-
-step "clock-gating patches (BC-250 idle power) — EXPERIMENTAL, opt-in"
-# Two layers, both off by default (a leftover copy from a previous build is
-# actively reversed, not tolerated):
-#   bc250-cg-flags.patch              --cg              GFX MGCG/CGCG only.
-#                                                       navi1x-validated path.
-#   bc250-cg-flags-unvalidated.patch  --cg-unvalidated  MC/SDMA/ATHUB/HDP/NBIO
-#                                                       on unvalidated register
-#                                                       maps — can black-screen
-#                                                       the box; bisect at boot
-#                                                       with amdgpu.cg_mask.
-# Layer 2's cg_flags hunk sits after external_rev_id (disjoint from layer 1),
-# but to keep the tree self-consistent the order is fixed: apply 1 then 2,
-# reverse 2 then 1. Version-independent code; if a kernel bump makes a hunk
-# fail, they are small — refresh against the new tree.
-CGPATCH=$HERE/bc250-cg-flags.patch
-CGPATCH_UNVAL=$HERE/bc250-cg-flags-unvalidated.patch
-
-apply_patch() {  # $1=patch file  $2=label
-    if patch -p1 -R --dry-run -s -f < "$1" >/dev/null 2>&1; then
-        echo "$2 already applied"
-    elif patch -p1 --dry-run -s -f < "$1" >/dev/null 2>&1; then
-        patch -p1 -s < "$1"; echo "$2 applied"
-    else
-        die "$2 neither applies nor reverses cleanly — tree has drifted; inspect by hand"
-    fi
-}
-reverse_if_present() {  # $1=patch file  $2=label
-    if patch -p1 -R --dry-run -s -f < "$1" >/dev/null 2>&1; then
-        patch -p1 -R -s < "$1"; echo "$2 REVERSED (leftover from a previous build)"
-    elif patch -p1 --dry-run -s -f < "$1" >/dev/null 2>&1; then
-        : # pristine w.r.t. this layer — nothing to do
-    else
-        die "tree in unknown state w.r.t. $2 (neither applied nor pristine) — inspect by hand"
-    fi
-}
-
-if [ "$WITH_CG_UNVAL" = 1 ]; then
-    apply_patch "$CGPATCH"       "cg-flags (GFX)"
-    apply_patch "$CGPATCH_UNVAL" "cg-flags-unvalidated (MC/SDMA/ATHUB/NBIO)"
-    echo "WARNING: unvalidated CG layer applied — if the display goes dark, boot with"
-    echo "         amdgpu.cg_mask=0x5 (GFX-only) and bisect from there; cg_mask=0 = stock."
-elif [ "$WITH_CG" = 1 ]; then
-    reverse_if_present "$CGPATCH_UNVAL" "cg-flags-unvalidated"   # drop layer 2 before touching layer 1
-    apply_patch        "$CGPATCH"       "cg-flags (GFX)"
-else
-    reverse_if_present "$CGPATCH_UNVAL" "cg-flags-unvalidated"   # layer 2 first (it stacks on layer 1)
-    reverse_if_present "$CGPATCH"       "cg-flags (GFX)"
-    echo "clock-gating: not applied (opt in with --cg, or --cg-unvalidated for the experimental MC/SDMA layer)"
 fi
 
 step "modules_prepare + config re-verify (runbook step 7)"

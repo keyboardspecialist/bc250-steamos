@@ -3,20 +3,16 @@
 # SteamOS update. Run as the normal user; sudo is invoked for missing build
 # prerequisites and installation.
 #
-#   ./patch-driver.sh [--cg|--cg-unvalidated] [kernel-tree]  (default: ./valve-kernel)
+#   ./patch-driver.sh [kernel-tree]  (default: ./valve-kernel)
 #   ./patch-driver.sh status
 #   ./patch-driver.sh uninstall
-#
-# --cg / --cg-unvalidated are forwarded to build.sh (EXPERIMENTAL clock-gating
-# patches, see build.sh); fetch-sources.sh doesn't know them, so they're
-# filtered out there.
 set -euo pipefail
 
 HERE=$(cd "$(dirname "$0")" && pwd)
 
 usage() {
     cat <<EOF
-Usage: $0 [--cg|--cg-unvalidated] [kernel-tree]
+Usage: $0 [kernel-tree]
        $0 status
        $0 uninstall
 
@@ -144,16 +140,6 @@ command -v flock >/dev/null || { echo "flock is required" >&2; exit 1; }
 exec 9>"$HERE/.prepare-kernel.lock"
 flock 9
 
-WITH_CG=()
-ARGS=()
-for a in "$@"; do
-    case "$a" in
-        --cg)             WITH_CG=(--cg) ;;
-        --cg-unvalidated) WITH_CG=(--cg-unvalidated) ;;
-        *)                ARGS+=("$a") ;;
-    esac
-done
-
-"$HERE/fetch-sources.sh" "${ARGS[@]}"
-"$HERE/build.sh" "${WITH_CG[@]}" "${ARGS[@]}"
+"$HERE/fetch-sources.sh" "$@"
+"$HERE/build.sh" "$@"
 sudo "$HERE/install.sh"

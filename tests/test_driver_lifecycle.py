@@ -14,9 +14,6 @@ AUDIO_ROLLBACK = ROOT / "bc250-audio-fix/rollback.sh"
 AUDIO_PREREQS = ROOT / "bc250-audio-fix/ensure-build-prereqs.sh"
 METRICS_PATCH = ROOT / "bc250-audio-fix/bc250-cyan-skillfish-gpu-telemetry.patch"
 GFXCLK_PATCH = ROOT / "bc250-audio-fix/bc250-cyan-skillfish-gfxclk.patch"
-CORE_METRICS_PATCH = (
-    ROOT / "bc250-audio-fix/bc250-cyan-skillfish-8core-metrics.patch"
-)
 
 
 class DriverLifecycleTests(unittest.TestCase):
@@ -145,23 +142,14 @@ class DriverLifecycleTests(unittest.TestCase):
         rollback = AUDIO_ROLLBACK.read_text(encoding="utf-8")
         patch = METRICS_PATCH.read_text(encoding="utf-8")
         gfxclk_patch = GFXCLK_PATCH.read_text(encoding="utf-8")
-        core_metrics_patch = CORE_METRICS_PATCH.read_text(encoding="utf-8")
         self.assertIn("bc250-cyan-skillfish-gpu-telemetry.patch", builder)
         self.assertIn("bc250-cyan-skillfish-gfxclk.patch", builder)
-        self.assertIn("bc250-cyan-skillfish-8core-metrics.patch", builder)
         self.assertLess(
             builder.index(str(METRICS_PATCH.name)),
             builder.index(str(GFXCLK_PATCH.name)),
         )
-        self.assertLess(
-            builder.index(str(GFXCLK_PATCH.name)),
-            builder.index(str(CORE_METRICS_PATCH.name)),
-        )
         self.assertNotIn("LEGACY_", builder)
-        self.assertIn("unknown Cyan Skillfish metrics patch found", builder)
         self.assertIn("METRICS_SOURCE_SHA", builder)
-        self.assertIn("METRICS_HEADER_SHA", builder)
-        self.assertIn('git --git-dir="$GITDIR" --work-tree="$TREE"', builder)
         self.assertIn("GRBM_STATUS__GUI_ACTIVE_MASK", patch)
         self.assertIn("AMDGPU_PP_SENSOR_GPU_LOAD", patch)
         self.assertIn("average_gfx_activity", patch)
@@ -170,38 +158,6 @@ class DriverLifecycleTests(unittest.TestCase):
         self.assertIn("cyan_skillfish_get_gfxclk_frequency", gfxclk_patch)
         self.assertIn("return -ERANGE", gfxclk_patch)
         self.assertIn("gpu_metrics->current_gfxclk = gfxclk", gfxclk_patch)
-        self.assertIn("CYAN_SKILLFISH_ROBIN3_SMU_VERSION", core_metrics_patch)
-        self.assertIn("0x00580600", core_metrics_patch)
-        self.assertIn("0x0115a870", core_metrics_patch)
-        self.assertIn("RREG32_PCIE", core_metrics_patch)
-        self.assertNotIn("cpufreq_quick_get", core_metrics_patch)
-        self.assertIn("CYAN_SKILLFISH_ROBIN3_TABLE_SIZE", core_metrics_patch)
-        self.assertIn("0x344", core_metrics_patch)
-        self.assertIn("SMU_TABLE_PMSTATUSLOG", core_metrics_patch)
-        self.assertIn("CYAN_SKILLFISH_ROBIN3_CORE_POWER", core_metrics_patch)
-        self.assertIn("0x118", core_metrics_patch)
-        self.assertIn("CYAN_SKILLFISH_ROBIN3_CORE_TEMP", core_metrics_patch)
-        self.assertIn("0x158", core_metrics_patch)
-        self.assertIn("CYAN_SKILLFISH_ROBIN3_CORE_FREQ", core_metrics_patch)
-        self.assertIn("0x198", core_metrics_patch)
-        self.assertIn("CYAN_SKILLFISH_ROBIN3_SET_ADDR_HIGH", core_metrics_patch)
-        self.assertIn("CYAN_SKILLFISH_ROBIN3_SET_ADDR_LOW", core_metrics_patch)
-        self.assertIn("CYAN_SKILLFISH_ROBIN3_TRANSFER_TABLE", core_metrics_patch)
-        self.assertIn("mutex_lock(&smu->message_lock)", core_metrics_patch)
-        self.assertIn("amdgpu_asic_invalidate_hdp", core_metrics_patch)
-        self.assertIn("get_unaligned_le32", core_metrics_patch)
-        self.assertIn("PPSMC_Result_CmdRejectedBusy", core_metrics_patch)
-        self.assertIn("core_ret == -ENODEV", core_metrics_patch)
-        self.assertNotIn("CYAN_SKILLFISH_CORE_POWER_BASE", core_metrics_patch)
-        self.assertNotIn("SmuMetricsTable8_t", core_metrics_patch)
-        self.assertIn("OLD_CORE_METRICS_SOURCE_SHA", builder)
-        self.assertIn("OLD_C0_SCALE_SOURCE_SHA", builder)
-        self.assertIn("OLD_CPUFREQ_SOURCE_SHA", builder)
-        self.assertIn("CORE_METRICS_SOURCE_SHA", builder)
-        self.assertIn("d7191ecdd18a34478d7f58de79a149935e2deef73444e996cde6cf5cb596e35c", builder)
-        self.assertIn("c73a50285bc70e3be3199e70c8717dd0fdf77208cff178bdd75a623ed4d08ceb", builder)
-        self.assertIn("ac197ddf75abfd4aa491b016a6e4c592333a83f120d14ae1d23a95f33731472f", builder)
-        self.assertIn("13c0587e7c7020567fb5028e8bf21c295445cb0aaf97180f556bbc2b5940b961", builder)
         self.assertIn(".bc250-metrics-fix", installer)
         self.assertIn(".bc250-metrics-fix", rollback)
 

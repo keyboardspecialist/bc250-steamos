@@ -2,10 +2,8 @@
 
 Corrects DisplayPort video/audio timing and Cyan Skillfish GPU telemetry
 through one patched `amdgpu` module. GPU activity comes from GC status sampling
-and GFX clock comes from a validated direct SMU query. Six-core systems retain
-the firmware's published `SmuMetrics_t` layout; unlocked eight-core systems
-running Robin 3 use the firmware's separate PM status table for all eight core
-clocks, powers, and temperatures.
+and GFX clock comes from a validated direct SMU query while retaining the
+firmware's published `SmuMetrics_t` layout.
 
 ## Install
 
@@ -28,8 +26,7 @@ sudo reboot
 
 Both versions also apply the Cyan Skillfish telemetry patches. They preserve
 the firmware's published metrics-table transfer size, query and validate the
-GFX clock through the SMU, sample GPU activity from GC status, and transfer the
-`0x344`-byte PM status table when Robin 3 reports all cores present.
+GFX clock through the SMU, and sample GPU activity from GC status.
 The build selects the display patch from the running kernel and produces
 `amdgpu.ko.zst` for that exact release.
 
@@ -44,7 +41,6 @@ override.
 |---|---|
 | `bc250-cyan-skillfish-gpu-telemetry.patch` | Apply bounded GC activity sampling while retaining `SmuMetrics_t` |
 | `bc250-cyan-skillfish-gfxclk.patch` | Apply range-checked direct SMU GFX-clock reporting |
-| `bc250-cyan-skillfish-8core-metrics.patch` | Apply version-gated Robin 3 PM status telemetry |
 
 ### Runtime Data
 
@@ -55,10 +51,6 @@ override.
 | `METRICS_CURR_GFXCLK` | `PPSMC_MSG_GetGfxFrequency` | Point-in-time MHz |
 | `gpu_metrics_v2_2.current_gfxclk` | `PPSMC_MSG_GetGfxFrequency` | Point-in-time MHz |
 | `gpu_metrics_v2_2.average_gfxclk_frequency` | `PPSMC_MSG_GetGfxFrequency` | Point-in-time MHz |
-| Six-core CPU arrays | Firmware `SmuMetrics_t` | Six per-core entries |
-| Robin 3 `current_coreclk[8]` | PM status table 3 at `0x198` | Firmware average GHz, scaled to MHz |
-| Robin 3 `average_core_power[8]` | PM status table 3 at `0x118` | Firmware average W, scaled to mW |
-| Robin 3 `temperature_core[8]` | PM status table 3 at `0x158` | Firmware average C, scaled to centi-C |
 
 ### Activity Sampling
 
@@ -73,31 +65,6 @@ exports. The `average_gfx_activity` member name follows the
 `PPSMC_MSG_GetGfxFrequency`. One SMU reply populates `METRICS_CURR_GFXCLK`,
 `current_gfxclk`, and `average_gfxclk_frequency`. Query errors and replies
 outside the supported 1000-2000 MHz range propagate to the metrics caller.
-
-### Core Count
-
-The runtime patches always retain the published `SmuMetrics_t` transfer size.
-Stock 6-core/12-thread systems use its six CPU rows. On an unlocked
-8-core/16-thread system, direct telemetry is enabled only when the SMU reports
-Robin 3 version `0x00580600` and the low eight bits of core-presence register
-`0x0115a870` are set.
-
-Robin 3 writes eight entries into arrays sized for six in table 6, permanently
-overwriting core 0 power, core temperatures 0-3, and the GFX clock/temperature
-slot. Its tool-facing PM status table 3 instead exports eight IEEE-754 values
-for each internal per-core field. The driver allocates a dedicated `0x344`-byte
-PM status BO, serializes queue-3 messages `0x7a`, `0x7b`, and `0x22` with the
-normal SMU message lock, invalidates HDP after the firmware DMA, and decodes the
-power, temperature, and frequency arrays without kernel floating point.
-
-Every decoded value is range checked. A Robin 3 mailbox, DMA, or decode failure
-leaves all per-core fields at the `0xffff` ABI sentinel rather than falling back
-to corrupted table 6. Other firmware versions continue to use the published
-table path; Robin 5 is not yet supported. The table-3 layout is confirmed by
-static Robin 3 firmware analysis and still requires validation against live
-transferred bytes. Userspace software that directly accesses queue 3 must not
-run concurrently with a `gpu_metrics` read because its lock cannot coordinate
-with the kernel SMU lock.
 
 ## Commands
 
@@ -131,25 +98,6 @@ Use a custom kernel-tree path as the final argument:
 ## Validation
 
 The build and installer verify the source revision, kernel release, kernel configuration, and stock-module ABI before installation.
-
-## Clock Gating
-
-Clock-gating patches are experimental and opt-in.
-
-| Command | Configuration |
-|---|---|
-| `./patch-driver.sh` | Display clock correction |
-| `./patch-driver.sh --cg` | Display clock correction plus GFX MGCG/CGCG |
-| `./patch-driver.sh --cg-unvalidated` | Display clock correction plus GFX, MC, SDMA, ATHUB, HDP, and NBIO clock gating |
-
-`--cg-unvalidated` applies register programming across additional GPU blocks and carries black-screen risk. Use `amdgpu.cg_mask=0x5` for GFX-only recovery or `amdgpu.cg_mask=0` for the stock clock-gating mask.
-
-The flags also work with `build.sh`:
-
-```bash
-./build.sh --cg
-./build.sh --cg-unvalidated
-```
 
 ## Rollback
 
@@ -208,6 +156,3 @@ The complete fallback remains mandatory for the AMDGPU override. AIC8800 may ins
 | `bc250-dp-audio-clock-6.18.patch` | SteamOS 3.9.x display clock patch |
 | `bc250-cyan-skillfish-gpu-telemetry.patch` | Runtime GPU activity export using the published metrics layout |
 | `bc250-cyan-skillfish-gfxclk.patch` | Runtime GFX clock export using a direct SMU query |
-| `bc250-cyan-skillfish-8core-metrics.patch` | Robin 3 eight-core PM status telemetry |
-| `bc250-cg-flags.patch` | Experimental GFX clock gating |
-| `bc250-cg-flags-unvalidated.patch` | Experimental expanded clock gating |
