@@ -14,6 +14,9 @@ AUDIO_ROLLBACK = ROOT / "bc250-audio-fix/rollback.sh"
 AUDIO_PREREQS = ROOT / "bc250-audio-fix/ensure-build-prereqs.sh"
 METRICS_PATCH = ROOT / "bc250-audio-fix/bc250-cyan-skillfish-gpu-telemetry.patch"
 GFXCLK_PATCH = ROOT / "bc250-audio-fix/bc250-cyan-skillfish-gfxclk.patch"
+GFX1013_ATTESTATION_PATCH = (
+    ROOT / "bc250-audio-fix/bc250-gfx1013-attestation.patch"
+)
 
 
 class DriverLifecycleTests(unittest.TestCase):
@@ -142,6 +145,9 @@ class DriverLifecycleTests(unittest.TestCase):
         rollback = AUDIO_ROLLBACK.read_text(encoding="utf-8")
         patch = METRICS_PATCH.read_text(encoding="utf-8")
         gfxclk_patch = GFXCLK_PATCH.read_text(encoding="utf-8")
+        gfx1013_attestation_patch = GFX1013_ATTESTATION_PATCH.read_text(
+            encoding="utf-8"
+        )
         self.assertIn("bc250-cyan-skillfish-gpu-telemetry.patch", builder)
         self.assertIn("bc250-cyan-skillfish-gfxclk.patch", builder)
         self.assertLess(
@@ -158,8 +164,22 @@ class DriverLifecycleTests(unittest.TestCase):
         self.assertIn("cyan_skillfish_get_gfxclk_frequency", gfxclk_patch)
         self.assertIn("return -ERANGE", gfxclk_patch)
         self.assertIn("gpu_metrics->current_gfxclk = gfxclk", gfxclk_patch)
+        for name in (
+            "0001-gfx1013-mmio-pasid-route.patch",
+            "0002-gfx1013-compute-gfxoff-guard.patch",
+            "0003-gfx1013-scoped-pasid-type0.patch",
+        ):
+            self.assertIn(name, builder)
+        self.assertIn("d3e6dc062c34d2523db0abe5741d1f5b0dea00d9", builder)
+        self.assertIn("DryhoppedIPA/bc250-gfx1013-fix", builder)
+        self.assertIn("bc250-gfx1013-attestation.patch", builder)
+        self.assertIn("bc250_gfx1013_fix", gfx1013_attestation_patch)
         self.assertIn(".bc250-metrics-fix", installer)
         self.assertIn(".bc250-metrics-fix", rollback)
+        self.assertIn(".bc250-gfx1013-fix", installer)
+        self.assertIn(".bc250-gfx1013-fix", rollback)
+        self.assertIn("amdgpu.gfx1013.attestation", builder)
+        self.assertIn("amdgpu.gfx1013.attestation", installer)
 
 
 if __name__ == "__main__":

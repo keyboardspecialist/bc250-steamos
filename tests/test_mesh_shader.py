@@ -4,12 +4,12 @@ import os
 import subprocess
 import tempfile
 import unittest
-import xml.etree.ElementTree as ET
 from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[1]
 MESH = ROOT / "bc250-mesh-shader.sh"
+UPSTREAM_COMMIT = "d3e6dc062c34d2523db0abe5741d1f5b0dea00d9"
 
 
 class MeshShaderTests(unittest.TestCase):
@@ -18,12 +18,15 @@ class MeshShaderTests(unittest.TestCase):
         state = home / ".local" / "share" / "bc250-mesh-shader"
         bindir = root / "bin"
         bindir.mkdir()
-        sudo = bindir / "sudo"
-        sudo.write_text('#!/bin/sh\nexec "$@"\n', encoding="utf-8")
-        sudo.chmod(0o755)
-        flock = bindir / "flock"
-        flock.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
-        flock.chmod(0o755)
+        for name, source in {
+            "sudo": '#!/bin/sh\nexec "$@"\n',
+            "flock": "#!/bin/sh\nexit 0\n",
+            "sync": "#!/bin/sh\nexit 0\n",
+            "journalctl": "#!/bin/sh\necho 'GFX1013/BC-250: PASID-only CPU type-0 invalidation'\n",
+        }.items():
+            path = bindir / name
+            path.write_text(source, encoding="utf-8")
+            path.chmod(0o755)
         install = bindir / "install"
         install.write_text(
             "#!/bin/sh\n"
@@ -34,9 +37,26 @@ class MeshShaderTests(unittest.TestCase):
             encoding="utf-8",
         )
         install.chmod(0o755)
-        sync = bindir / "sync"
-        sync.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
-        sync.chmod(0o755)
+        systemctl = bindir / "systemctl"
+        systemctl.write_text(
+            "#!/bin/sh\n"
+            "if [ \"${1:-}\" = --user ] && [ \"${2:-}\" = show-environment ]; then\n"
+            "  [ \"${BC250_TEST_MANAGER_INACTIVE:-0}\" = 0 ] || exit 0\n"
+            "  [ -f \"$BC250_GFX1013_GENERATOR\" ] || exit 0\n"
+            "  printf 'VK_DRIVER_FILES=%s\\n' \"$BC250_MESH_ICD\"\n"
+            "  printf 'VK_ICD_FILENAMES=%s\\n' \"$BC250_MESH_ICD\"\n"
+            "fi\n",
+            encoding="utf-8",
+        )
+        systemctl.chmod(0o755)
+        sha256sum = bindir / "sha256sum"
+        sha256sum.write_text(
+            '#!/bin/sh\nexec shasum -a 256 "$@"\n', encoding="utf-8"
+        )
+        sha256sum.chmod(0o755)
+        module = root / "modules" / "amdgpu.ko.zst"
+        marker = root / "modules" / ".bc250-gfx1013-fix"
+        active = root / "modules" / "bc250_gfx1013_fix"
         return {
             **os.environ,
             "HOME": str(home),
@@ -45,30 +65,71 @@ class MeshShaderTests(unittest.TestCase):
             "BC250_MESH_DRIVER": str(root / "libvulkan_radeon_driconf.so"),
             "BC250_MESH_ICD": str(home / "radeon_driconf_icd.x86_64.json"),
             "BC250_MESH_DRIRC": str(home / ".drirc"),
+            "BC250_GFX1013_GENERATOR": str(
+                home
+                / ".config/systemd/user-environment-generators/60-bc250-gfx1013"
+            ),
+            "BC250_GFX1013_MODULE": str(module),
+            "BC250_GFX1013_MARKER": str(marker),
+            "BC250_GFX1013_ACTIVE": str(active),
         }
 
-    def install_runtime(self, root: Path, env):
+    def install_runtime(self, env, commit=UPSTREAM_COMMIT):
         driver = Path(env["BC250_MESH_DRIVER"])
         icd = Path(env["BC250_MESH_ICD"])
         state = Path(env["BC250_MESH_STATE_DIR"])
-        driver.parent.mkdir(parents=True, exist_ok=True)
-        icd.parent.mkdir(parents=True, exist_ok=True)
+        module = Path(env["BC250_GFX1013_MODULE"])
+        marker = Path(env["BC250_GFX1013_MARKER"])
+        active = Path(env["BC250_GFX1013_ACTIVE"])
+        generator = Path(env["BC250_GFX1013_GENERATOR"])
+        for path in (driver, icd, module, active, generator):
+            path.parent.mkdir(parents=True, exist_ok=True)
         state.mkdir(parents=True, exist_ok=True)
-        driver.write_bytes(b"driver\n")
-        icd.write_text(
-            '{"ICD":{"library_path":"%s"}}\n' % driver, encoding="utf-8"
-        )
-        digest = lambda path: hashlib.sha256(path.read_bytes()).hexdigest()
-        (state / "install.conf").write_text(
-            "%s %s mesa-26.1.4 b66203e012594204e5e3049856b28a2681112985\n"
-            % (digest(driver), digest(icd)),
+        module.write_bytes(b"patched amdgpu\n")
+        marker.write_text(
+            hashlib.sha256(module.read_bytes()).hexdigest() + "\n",
             encoding="ascii",
         )
+        active.write_text(UPSTREAM_COMMIT + "\n", encoding="ascii")
+        driver.write_bytes(b"driver\n")
+        icd.write_text(
+            '{"ICD": {"library_path": "%s"}}\n' % driver,
+            encoding="utf-8",
+        )
+        subprocess.run(
+            [
+                "bash",
+                "-c",
+                'script=$1; output=$2; set -- help; source "$script" >/dev/null; render_generator > "$output"',
+                "_",
+                str(MESH),
+                str(generator),
+            ],
+            check=True,
+            env=env,
+        )
+        generator.chmod(0o755)
+        digest = lambda path: hashlib.sha256(path.read_bytes()).hexdigest()
+        (state / "install.conf").write_text(
+            f"{digest(driver)} {digest(icd)} mesa-26.2.0-rc3 {commit}\n",
+            encoding="ascii",
+        )
+        env["VK_DRIVER_FILES"] = str(icd)
+        env["VK_ICD_FILENAMES"] = str(icd)
+
+    def run_status_json(self, env):
+        result = subprocess.run(
+            ["bash", str(MESH), "status-json"],
+            check=True,
+            capture_output=True,
+            text=True,
+            env=env,
+        )
+        return json.loads(result.stdout)
 
     def test_status_is_read_only_when_not_installed(self):
         with tempfile.TemporaryDirectory() as directory:
-            root = Path(directory)
-            env = self.environment(root)
+            env = self.environment(Path(directory))
             result = subprocess.run(
                 ["bash", str(MESH), "status"],
                 capture_output=True,
@@ -78,157 +139,96 @@ class MeshShaderTests(unittest.TestCase):
             self.assertEqual(result.returncode, 1)
             self.assertIn("not installed", result.stdout)
             self.assertFalse(Path(env["BC250_MESH_STATE_DIR"]).exists())
-            self.assertFalse(Path(env["BC250_MESH_DRIRC"]).exists())
+            self.assertFalse(Path(env["BC250_GFX1013_GENERATOR"]).exists())
 
-    def test_status_json_is_structured_and_read_only_when_not_installed(self):
+    def test_status_json_reports_global_runtime(self):
         with tempfile.TemporaryDirectory() as directory:
-            root = Path(directory)
-            env = self.environment(root)
-            result = subprocess.run(
-                ["bash", str(MESH), "status-json"],
-                check=True,
-                capture_output=True,
-                text=True,
-                env=env,
-            )
-            status = json.loads(result.stdout)
-            self.assertTrue(status["scriptAvailable"])
-            self.assertEqual(status["runtimeState"], "not-installed")
-            self.assertTrue(status["configValid"])
-            self.assertEqual(status["games"], [])
-            self.assertFalse(Path(env["BC250_MESH_STATE_DIR"]).exists())
-            self.assertFalse(Path(env["BC250_MESH_DRIRC"]).exists())
-
-    def test_status_json_lists_appid_alias_and_enable_prints_override(self):
-        with tempfile.TemporaryDirectory() as directory:
-            root = Path(directory)
-            env = self.environment(root)
-            self.install_runtime(root, env)
-            enabled = subprocess.run(
-                [
-                    "bash",
-                    str(MESH),
-                    "game",
-                    "enable",
-                    "bc250-steam-1462040",
-                    "Final Fantasy VII Rebirth",
-                ],
-                check=True,
-                capture_output=True,
-                text=True,
-                env=env,
-            )
-            self.assertIn(
-                "MESA_DRICONF_EXECUTABLE_OVERRIDE='bc250-steam-1462040'",
-                enabled.stdout,
-            )
-            status_result = subprocess.run(
-                ["bash", str(MESH), "status-json"],
-                check=True,
-                capture_output=True,
-                text=True,
-                env=env,
-            )
-            status = json.loads(status_result.stdout)
+            env = self.environment(Path(directory))
+            self.install_runtime(env)
+            status = self.run_status_json(env)
             self.assertEqual(status["runtimeState"], "ready")
-            self.assertEqual(status["mesaVersion"], "mesa-26.1.4")
-            self.assertEqual(
-                status["games"],
-                [
-                    {
-                        "executable": "bc250-steam-1462040",
-                        "name": "Final Fantasy VII Rebirth",
-                    }
-                ],
-            )
-
-    def test_enable_shell_quotes_printed_launch_option(self):
-        with tempfile.TemporaryDirectory() as directory:
-            root = Path(directory)
-            env = self.environment(root)
-            self.install_runtime(root, env)
-            result = subprocess.run(
-                ["bash", str(MESH), "game", "enable", "game'$(touch nope).exe"],
-                check=True,
-                capture_output=True,
-                text=True,
-                env=env,
-                cwd=root,
-            )
-            self.assertIn(
-                "MESA_DRICONF_EXECUTABLE_OVERRIDE='game'\"'\"'$(touch nope).exe'",
-                result.stdout,
-            )
-            self.assertFalse((root / "nope").exists())
-
-    def test_status_json_reports_invalid_drirc_without_failing_transport(self):
-        with tempfile.TemporaryDirectory() as directory:
-            root = Path(directory)
-            env = self.environment(root)
-            self.install_runtime(root, env)
-            Path(env["BC250_MESH_DRIRC"]).write_text("<not-closed>", encoding="utf-8")
-            result = subprocess.run(
-                ["bash", str(MESH), "status-json"],
-                check=True,
-                capture_output=True,
-                text=True,
-                env=env,
-            )
-            status = json.loads(result.stdout)
-            self.assertEqual(status["runtimeState"], "ready")
-            self.assertFalse(status["configValid"])
-            self.assertIn("not valid XML", status["error"])
+            self.assertEqual(status["mesaVersion"], "mesa-26.2.0-rc3")
+            self.assertTrue(status["kernelReady"])
+            self.assertTrue(status["globalEnabled"])
+            self.assertFalse(status["restartRequired"])
             self.assertEqual(status["games"], [])
-
-    def test_per_game_toggle_preserves_unrelated_drirc_content(self):
-        with tempfile.TemporaryDirectory() as directory:
-            root = Path(directory)
-            env = self.environment(root)
-            self.install_runtime(root, env)
-            drirc = Path(env["BC250_MESH_DRIRC"])
-            drirc.write_text(
-                '<driconf>\n  <device driver="other" />\n</driconf>\n',
-                encoding="utf-8",
-            )
-
-            subprocess.run(
-                ["bash", str(MESH), "game", "enable", "game.exe", "Test Game"],
+            generated = subprocess.run(
+                ["bash", env["BC250_GFX1013_GENERATOR"]],
                 check=True,
                 capture_output=True,
                 text=True,
                 env=env,
             )
-            enabled = drirc.read_text(encoding="utf-8")
-            ET.fromstring(enabled)
-            self.assertIn('<device driver="other" />', enabled)
-            self.assertIn("BEGIN BC250 MESH SHADER MANAGED", enabled)
-            self.assertIn('executable="game.exe"', enabled)
+            self.assertIn("VK_DRIVER_FILES=", generated.stdout)
+            self.assertIn("VK_ICD_FILENAMES=", generated.stdout)
 
-            subprocess.run(
-                ["bash", str(MESH), "game", "disable", "game.exe"],
+    def test_global_activation_stops_when_kernel_gate_is_missing(self):
+        with tempfile.TemporaryDirectory() as directory:
+            env = self.environment(Path(directory))
+            self.install_runtime(env)
+            Path(env["BC250_GFX1013_MARKER"]).unlink()
+            status = self.run_status_json(env)
+            self.assertEqual(status["runtimeState"], "ready")
+            self.assertFalse(status["kernelReady"])
+            self.assertFalse(status["globalEnabled"])
+            self.assertFalse(status["restartRequired"])
+            generated = subprocess.run(
+                ["bash", env["BC250_GFX1013_GENERATOR"]],
                 check=True,
                 capture_output=True,
                 text=True,
                 env=env,
             )
-            disabled = drirc.read_text(encoding="utf-8")
-            ET.fromstring(disabled)
-            self.assertIn('<device driver="other" />', disabled)
-            self.assertNotIn("BC250 MESH SHADER MANAGED", disabled)
+            self.assertEqual(generated.stdout, "")
 
-    def test_malformed_managed_block_is_not_rewritten(self):
+    def test_configured_runtime_requires_new_session_environment(self):
         with tempfile.TemporaryDirectory() as directory:
-            root = Path(directory)
-            env = self.environment(root)
-            self.install_runtime(root, env)
-            drirc = Path(env["BC250_MESH_DRIRC"])
-            original = (
-                "<driconf>\n"
-                "<!-- END BC250 MESH SHADER MANAGED -->\n"
-                "<!-- BEGIN BC250 MESH SHADER MANAGED -->\n"
-                "</driconf>\n"
+            env = self.environment(Path(directory))
+            self.install_runtime(env)
+            env["BC250_TEST_MANAGER_INACTIVE"] = "1"
+            status = self.run_status_json(env)
+            self.assertFalse(status["globalEnabled"])
+            self.assertTrue(status["restartRequired"])
+
+    def test_legacy_runtime_requires_upgrade(self):
+        with tempfile.TemporaryDirectory() as directory:
+            env = self.environment(Path(directory))
+            self.install_runtime(env, "b66203e012594204e5e3049856b28a2681112985")
+            self.assertEqual(self.run_status_json(env)["runtimeState"], "invalid")
+
+    def test_tampered_generator_invalidates_runtime(self):
+        with tempfile.TemporaryDirectory() as directory:
+            env = self.environment(Path(directory))
+            self.install_runtime(env)
+            Path(env["BC250_GFX1013_GENERATOR"]).write_text(
+                "#!/bin/sh\necho unsafe\n", encoding="utf-8"
             )
-            drirc.write_text(original, encoding="utf-8")
+            self.assertEqual(self.run_status_json(env)["runtimeState"], "invalid")
+
+    def test_generator_rejects_tampered_runtime_attestations(self):
+        for target in ("driver", "icd", "manifest", "active"):
+            with self.subTest(target=target), tempfile.TemporaryDirectory() as directory:
+                env = self.environment(Path(directory))
+                self.install_runtime(env)
+                paths = {
+                    "driver": Path(env["BC250_MESH_DRIVER"]),
+                    "icd": Path(env["BC250_MESH_ICD"]),
+                    "manifest": Path(env["BC250_MESH_STATE_DIR"]) / "install.conf",
+                    "active": Path(env["BC250_GFX1013_ACTIVE"]),
+                }
+                paths[target].write_text("tampered\n", encoding="utf-8")
+                generated = subprocess.run(
+                    ["bash", env["BC250_GFX1013_GENERATOR"]],
+                    check=True,
+                    capture_output=True,
+                    text=True,
+                    env=env,
+                )
+                self.assertEqual(generated.stdout, "")
+
+    def test_per_game_commands_are_rejected(self):
+        with tempfile.TemporaryDirectory() as directory:
+            env = self.environment(Path(directory))
             result = subprocess.run(
                 ["bash", str(MESH), "game", "enable", "game.exe"],
                 capture_output=True,
@@ -236,15 +236,29 @@ class MeshShaderTests(unittest.TestCase):
                 env=env,
             )
             self.assertNotEqual(result.returncode, 0)
-            self.assertEqual(drirc.read_text(encoding="utf-8"), original)
+            self.assertIn("global", result.stderr)
 
-    def test_uninstall_removes_only_owned_runtime_and_managed_block(self):
+    def test_uninstall_removes_global_runtime_and_legacy_entries(self):
         with tempfile.TemporaryDirectory() as directory:
-            root = Path(directory)
-            env = self.environment(root)
-            self.install_runtime(root, env)
+            env = self.environment(Path(directory))
+            self.install_runtime(env)
+            drirc = Path(env["BC250_MESH_DRIRC"])
+            drirc.write_text(
+                "<driconf>\n<!-- BEGIN BC250 MESH SHADER MANAGED -->\n"
+                '<device driver="radv"><application name="Old" executable="old.exe" /></device>\n'
+                "<!-- END BC250 MESH SHADER MANAGED -->\n</driconf>\n",
+                encoding="utf-8",
+            )
+            blocked = subprocess.run(
+                ["bash", str(MESH), "uninstall"],
+                capture_output=True,
+                text=True,
+                env=env,
+            )
+            self.assertNotEqual(blocked.returncode, 0)
+            self.assertIn("legacy-clear", blocked.stderr)
             subprocess.run(
-                ["bash", str(MESH), "game", "enable", "game.exe"],
+                ["bash", str(MESH), "legacy-clear"],
                 check=True,
                 capture_output=True,
                 text=True,
@@ -259,67 +273,32 @@ class MeshShaderTests(unittest.TestCase):
             )
             self.assertFalse(Path(env["BC250_MESH_DRIVER"]).exists())
             self.assertFalse(Path(env["BC250_MESH_ICD"]).exists())
-            self.assertNotIn(
-                "BC250 MESH SHADER MANAGED",
-                Path(env["BC250_MESH_DRIRC"]).read_text(encoding="utf-8"),
-            )
+            self.assertFalse(Path(env["BC250_GFX1013_GENERATOR"]).exists())
+            self.assertNotIn("BC250 MESH SHADER MANAGED", drirc.read_text())
 
-    def test_uninstall_repairs_root_side_file_lost_after_update(self):
+    def test_uninstall_recovers_generator_transaction(self):
         with tempfile.TemporaryDirectory() as directory:
-            root = Path(directory)
-            env = self.environment(root)
-            self.install_runtime(root, env)
-            Path(env["BC250_MESH_DRIVER"]).unlink()
-            result = subprocess.run(
-                ["bash", str(MESH), "status"],
-                capture_output=True,
-                text=True,
-                env=env,
-            )
-            self.assertNotEqual(result.returncode, 0)
-            self.assertIn("incomplete", result.stdout)
-            subprocess.run(
-                ["bash", str(MESH), "uninstall"],
-                check=True,
-                capture_output=True,
-                text=True,
-                env=env,
-            )
-            self.assertFalse(Path(env["BC250_MESH_ICD"]).exists())
-            self.assertFalse(
-                (Path(env["BC250_MESH_STATE_DIR"]) / "install.conf").exists()
-            )
-
-    def test_uninstall_recovers_interrupted_install_transaction(self):
-        with tempfile.TemporaryDirectory() as directory:
-            root = Path(directory)
-            env = self.environment(root)
-            self.install_runtime(root, env)
+            env = self.environment(Path(directory))
+            self.install_runtime(env)
             state = Path(env["BC250_MESH_STATE_DIR"])
-            driver = Path(env["BC250_MESH_DRIVER"])
-            icd = Path(env["BC250_MESH_ICD"])
-            manifest = state / "install.conf"
             transaction = state / "install-transaction"
             transaction.mkdir()
-            for source, name in (
-                (driver, "driver"),
-                (icd, "icd"),
-                (manifest, "manifest"),
-            ):
-                (transaction / name).write_bytes(source.read_bytes())
-            digest = lambda path: hashlib.sha256(path.read_bytes()).hexdigest()
+            originals = {
+                "driver": Path(env["BC250_MESH_DRIVER"]),
+                "icd": Path(env["BC250_MESH_ICD"]),
+                "manifest": state / "install.conf",
+                "generator": Path(env["BC250_GFX1013_GENERATOR"]),
+            }
+            hashes = []
+            for name, source in originals.items():
+                backup = transaction / name
+                backup.write_bytes(source.read_bytes())
+                hashes.append(hashlib.sha256(backup.read_bytes()).hexdigest())
+                source.write_text("interrupted\n", encoding="utf-8")
             (transaction / "transaction.conf").write_text(
-                "1 1 %s 1 %s 1 %s\n"
-                % (
-                    digest(transaction / "driver"),
-                    digest(transaction / "icd"),
-                    digest(transaction / "manifest"),
-                ),
+                "2 1 %s 1 %s 1 %s 1 %s\n" % tuple(hashes),
                 encoding="ascii",
             )
-            driver.write_bytes(b"interrupted-new-driver\n")
-            icd.write_text("interrupted\n", encoding="utf-8")
-            manifest.write_text("interrupted\n", encoding="utf-8")
 
             subprocess.run(
                 ["bash", str(MESH), "uninstall"],
@@ -328,20 +307,18 @@ class MeshShaderTests(unittest.TestCase):
                 text=True,
                 env=env,
             )
+
             self.assertFalse(transaction.exists())
-            self.assertFalse(driver.exists())
-            self.assertFalse(icd.exists())
+            self.assertFalse(Path(env["BC250_GFX1013_GENERATOR"]).exists())
 
-    def test_script_parses(self):
+    def test_script_parses_and_menu_is_global(self):
         subprocess.run(["bash", "-n", str(MESH)], check=True)
-
-    def test_menu_uses_toolkit_navigation_pattern(self):
         source = MESH.read_text(encoding="utf-8")
         self.assertIn("menu_select()", source)
-        self.assertIn("up/down move - Enter select - q back", source)
-        self.assertIn("press any key to return to the menu", source)
-        self.assertIn("BC-250 mesh shaders", source)
-        self.assertNotIn("  1) Status", source)
+        self.assertIn("global user RADV", source)
+        self.assertNotIn("Enable one executable|", source)
+        self.assertIn("DryhoppedIPA/bc250-gfx1013-fix", source)
+        self.assertIn("/usr/lib/systemd/user-environment-generators", source)
 
 
 if __name__ == "__main__":

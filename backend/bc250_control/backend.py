@@ -2247,6 +2247,9 @@ class ToolkitBackend:
                     self.user_home / "radeon_driconf_icd.x86_64.json"
                 ),
                 "configValid": True,
+                "kernelReady": False,
+                "globalEnabled": False,
+                "restartRequired": False,
                 "error": None,
                 "games": [],
             }
@@ -2282,6 +2285,9 @@ class ToolkitBackend:
         mesa_version = status.get("mesaVersion")
         icd_path = status.get("icdPath")
         config_valid = status.get("configValid")
+        kernel_ready = status.get("kernelReady", False)
+        global_enabled = status.get("globalEnabled", False)
+        restart_required = status.get("restartRequired", False)
         status_error = status.get("error")
         if mesa_version is not None and not isinstance(mesa_version, str):
             raise CommandError("Mesh-shader status returned an invalid Mesa version.")
@@ -2294,6 +2300,12 @@ class ToolkitBackend:
             raise CommandError("Mesh-shader status returned an invalid ICD path.")
         if type(config_valid) is not bool:
             raise CommandError("Mesh-shader status returned invalid configuration state.")
+        if type(kernel_ready) is not bool:
+            raise CommandError("Mesh-shader status returned invalid kernel state.")
+        if type(global_enabled) is not bool:
+            raise CommandError("Mesh-shader status returned invalid global state.")
+        if type(restart_required) is not bool:
+            raise CommandError("Mesh-shader status returned invalid restart state.")
         if status_error is not None and not isinstance(status_error, str):
             raise CommandError("Mesh-shader status returned an invalid error message.")
         return {
@@ -2302,6 +2314,9 @@ class ToolkitBackend:
             "mesaVersion": mesa_version,
             "icdPath": icd_path,
             "configValid": config_valid,
+            "kernelReady": kernel_ready,
+            "globalEnabled": global_enabled,
+            "restartRequired": restart_required,
             "error": status_error,
             "games": normalized_games,
         }
@@ -2357,36 +2372,9 @@ class ToolkitBackend:
     async def set_mesh_game_enabled(
         self, app_id: int, friendly_name: str, enabled: bool
     ) -> None:
-        if type(app_id) is not int or not 1 <= app_id <= 0xFFFFFFFF:
-            raise CommandError("Steam AppID must be a positive 32-bit integer.")
-        if type(enabled) is not bool:
-            raise CommandError("Mesh-shader game state must be a boolean.")
-        if enabled:
-            if type(friendly_name) is not str:
-                raise CommandError("Steam game name must be text.")
-            try:
-                byte_length = len(friendly_name.encode("utf-8"))
-            except UnicodeEncodeError as error:
-                raise CommandError("Steam game name contains invalid text.") from error
-            if (
-                not friendly_name.strip()
-                or byte_length > 256
-                or not friendly_name.isprintable()
-            ):
-                raise CommandError(
-                    "Steam game name must be printable and at most 256 bytes."
-                )
-
-        async def action() -> None:
-            alias = f"bc250-steam-{app_id}"
-            arguments = ["game", "enable" if enabled else "disable", alias]
-            if enabled:
-                arguments.append(friendly_name)
-            await self._user_tool(
-                "bc250-mesh-shader.sh", *arguments, timeout=30
-            )
-
-        return await self._mutate(action)
+        raise CommandError(
+            "Per-game mesh controls were removed; GFX1013 RADV is global."
+        )
 
     async def set_cu_wgp(
         self, se: int, sh: int, wgp: int, enabled: bool

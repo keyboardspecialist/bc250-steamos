@@ -79,7 +79,8 @@ if [ "${1:-}" = --all ]; then
     fi
     for candidate in /usr/lib/modules/*/updates/amdgpu.ko.zst \
                      /usr/lib/modules/*/updates/.bc250-audio-fix \
-                     /usr/lib/modules/*/updates/.bc250-metrics-fix; do
+                     /usr/lib/modules/*/updates/.bc250-metrics-fix \
+                     /usr/lib/modules/*/updates/.bc250-gfx1013-fix; do
         [ -e "$candidate" ] || [ -L "$candidate" ] || continue
         rel=${candidate#/usr/lib/modules/}
         rel=${rel%%/*}
@@ -118,9 +119,11 @@ for rel in "${TARGETS[@]}"; do
     module="/usr/lib/modules/$rel/updates/amdgpu.ko.zst"
     marker="/usr/lib/modules/$rel/updates/.bc250-audio-fix"
     metrics_marker="/usr/lib/modules/$rel/updates/.bc250-metrics-fix"
+    gfx1013_marker="/usr/lib/modules/$rel/updates/.bc250-gfx1013-fix"
     if [ ! -e "$module" ] && [ ! -L "$module" ] \
        && [ ! -e "$marker" ] && [ ! -L "$marker" ] \
-       && [ ! -e "$metrics_marker" ] && [ ! -L "$metrics_marker" ]; then
+       && [ ! -e "$metrics_marker" ] && [ ! -L "$metrics_marker" ] \
+       && [ ! -e "$gfx1013_marker" ] && [ ! -L "$gfx1013_marker" ]; then
         echo "amdgpu override is not installed for $rel"
         continue
     fi
@@ -130,6 +133,8 @@ for rel in "${TARGETS[@]}"; do
         ownership_marker=$marker
         [ -e "$ownership_marker" ] || [ -L "$ownership_marker" ] \
             || ownership_marker=$metrics_marker
+        [ -e "$ownership_marker" ] || [ -L "$ownership_marker" ] \
+            || ownership_marker=$gfx1013_marker
         module_owned "$module" "$ownership_marker" || {
             echo "ERROR: refusing unrecognized AMDGPU override: $module" >&2
             echo "Re-run with --adopt-legacy only after confirming this is an older BC-250 patch." >&2
@@ -140,9 +145,14 @@ for rel in "${TARGETS[@]}"; do
             module_owned "$module" "$metrics_marker" \
                 || { echo "ERROR: invalid metrics marker: $metrics_marker" >&2; exit 1; }
         fi
+        if [ -e "$gfx1013_marker" ] || [ -L "$gfx1013_marker" ]; then
+            module_owned "$module" "$gfx1013_marker" \
+                || { echo "ERROR: invalid GFX1013 marker: $gfx1013_marker" >&2; exit 1; }
+        fi
     else
         rollback_marker=$marker
         [ -e "$rollback_marker" ] || rollback_marker=$metrics_marker
+        [ -e "$rollback_marker" ] || rollback_marker=$gfx1013_marker
         [ -f "$rollback_marker" ] && [ ! -L "$rollback_marker" ] \
             || { echo "ERROR: refusing unsafe rollback marker: $rollback_marker" >&2; exit 1; }
         read -r expected < "$rollback_marker" || { echo "ERROR: unreadable rollback marker: $rollback_marker" >&2; exit 1; }
@@ -235,7 +245,8 @@ for index in "${!PRESENT[@]}"; do
         || { echo "ERROR: override still selected for '$rel'" >&2; exit 1; }
     mkinitcpio -p "$preset"
     rm -f "/usr/lib/modules/$rel/updates/.bc250-audio-fix" \
-        "/usr/lib/modules/$rel/updates/.bc250-metrics-fix"
+        "/usr/lib/modules/$rel/updates/.bc250-metrics-fix" \
+        "/usr/lib/modules/$rel/updates/.bc250-gfx1013-fix"
     rmdir "/usr/lib/modules/$rel/updates" 2>/dev/null || true
 done
 

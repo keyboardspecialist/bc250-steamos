@@ -275,6 +275,81 @@ else
     die "GPU clock query patch neither applies nor reverses cleanly — tree has drifted; inspect by hand"
 fi
 
+step "apply GFX1013 compute-queue lifecycle patches"
+GFX1013_UPSTREAM=https://raw.githubusercontent.com/DryhoppedIPA/bc250-gfx1013-fix
+GFX1013_COMMIT=d3e6dc062c34d2523db0abe5741d1f5b0dea00d9
+GFX1013_CACHE=$HERE/downloads/gfx1013-$GFX1013_COMMIT
+mkdir -p "$GFX1013_CACHE"
+[ ! -L "$GFX1013_CACHE" ] || die "refusing symlinked GFX1013 patch cache: $GFX1013_CACHE"
+
+fetch_gfx1013_patch() {
+    local name=$1 expected=$2 remote=${3:-patches/kernel/v33/$1}
+    local target=$GFX1013_CACHE/$1 actual tmp
+    if [ -f "$target" ] && [ ! -L "$target" ]; then
+        actual=$(sha256sum "$target" | awk '{print $1}')
+        [ "$actual" = "$expected" ] && return
+    fi
+    tmp=$(mktemp "$GFX1013_CACHE/.${name}.XXXXXX")
+    curl --retry 3 --retry-all-errors -fsSL \
+        "$GFX1013_UPSTREAM/$GFX1013_COMMIT/$remote" -o "$tmp" \
+        || { rm -f "$tmp"; die "could not fetch GFX1013 patch $name"; }
+    actual=$(sha256sum "$tmp" | awk '{print $1}')
+    [ "$actual" = "$expected" ] \
+        || { rm -f "$tmp"; die "checksum mismatch for GFX1013 patch $name"; }
+    chmod 0644 "$tmp"
+    mv -f "$tmp" "$target"
+}
+
+apply_gfx1013_patch() {
+    local name=$1 label=$2 marker=$3 source_file=$4 patch_file=$GFX1013_CACHE/$1
+    if grep -qF "$marker" "$source_file"; then
+        echo "$label already applied"
+    elif patch -p1 --dry-run -s -f < "$patch_file" >/dev/null 2>&1; then
+        patch -p1 -s < "$patch_file"
+        rm -f "$source_file.orig"
+        echo "$label applied"
+    else
+        die "$label neither applies nor reverses cleanly — tree has drifted; inspect by hand"
+    fi
+}
+
+fetch_gfx1013_patch upstream-MIT-LICENSE \
+    ddf5d9be5c762bcc5237e36235a1c5f00be521cfc92d8c264dfcce392e2c1313 LICENSE
+fetch_gfx1013_patch GPL-2.0-only.txt \
+    8780e78a1a737e127f25a65f6d95269bffd36158dc261114de7859b490bfc5aa \
+    LICENSES/GPL-2.0-only.txt
+fetch_gfx1013_patch upstream-NOTICE.md \
+    ccf962b0b8aca2b9a67a2e2081d4edf6a66f8403fdf66a54d08a1ef10367f3eb NOTICE.md
+fetch_gfx1013_patch 0001-gfx1013-mmio-pasid-route.patch \
+    0f1103241c38c0e81eb453e3c8eecf5b2a60d82ce2b128eef14edff93c3c463b
+fetch_gfx1013_patch 0002-gfx1013-compute-gfxoff-guard.patch \
+    f44fa410667531a346abc4f45f2886c268b06136b351a10d1cf4581090878bc1
+fetch_gfx1013_patch 0003-gfx1013-scoped-pasid-type0.patch \
+    64751ed16e09ae4e4248bfbf7a59c3219be26411faea210e53129dc2df7830e3
+apply_gfx1013_patch 0001-gfx1013-mmio-pasid-route.patch \
+    "GFX1013 MMIO PASID routing" "using MMIO PASID TLB flushes" \
+    drivers/gpu/drm/amd/amdgpu/gmc_v10_0.c
+apply_gfx1013_patch 0002-gfx1013-compute-gfxoff-guard.patch \
+    "GFX1013 compute GFXOFF guard" "GFX1013 COMPUTE_GFXOFF_GUARD" \
+    drivers/gpu/drm/amd/amdgpu/amdgpu_amdkfd.c
+apply_gfx1013_patch 0003-gfx1013-scoped-pasid-type0.patch \
+    "GFX1013 scoped PASID invalidation" "PASID-only CPU type-0 invalidation" \
+    drivers/gpu/drm/amd/amdgpu/gmc_v10_0.c
+if grep -qF "bc250_gfx1013_fix" drivers/gpu/drm/amd/amdgpu/amdgpu_drv.c; then
+    echo "GFX1013 loaded-module attestation already applied"
+elif patch -p1 --dry-run -s -f < "$HERE/bc250-gfx1013-attestation.patch" >/dev/null 2>&1; then
+    patch -p1 -s < "$HERE/bc250-gfx1013-attestation.patch"
+    rm -f drivers/gpu/drm/amd/amdgpu/amdgpu_drv.c.orig
+    echo "GFX1013 loaded-module attestation applied"
+else
+    die "GFX1013 loaded-module attestation neither applies nor is present — tree has drifted"
+fi
+grep -qF "using MMIO PASID TLB flushes" drivers/gpu/drm/amd/amdgpu/gmc_v10_0.c \
+    && grep -qF "GFX1013 COMPUTE_GFXOFF_GUARD" drivers/gpu/drm/amd/amdgpu/amdgpu_amdkfd.c \
+    && grep -qF "PASID-only CPU type-0 invalidation" drivers/gpu/drm/amd/amdgpu/gmc_v10_0.c \
+    && grep -qF "bc250_gfx1013_fix" drivers/gpu/drm/amd/amdgpu/amdgpu_drv.c \
+    || die "GFX1013 compute-queue patch postcondition failed"
+
 step "modules_prepare + config re-verify (runbook step 7)"
 make -j"$(nproc)" modules_prepare
 grep -q '^#define CONFIG_SCHED_CLASS_EXT 1' include/generated/autoconf.h \
@@ -304,7 +379,10 @@ zstd -19 -q -f "$OUT/amdgpu.ko" -o "$OUT/amdgpu.ko.zst"
 "$HERE/check-module.sh" "$OUT/amdgpu.ko.zst" "$REL" \
     || die "module failed guard checks — NOT replacing $HERE/amdgpu.ko.zst"
 
+MODULE_SHA=$(sha256sum "$OUT/amdgpu.ko.zst" | awk '{print $1}')
+printf '%s %s\n' "$GFX1013_COMMIT" "$MODULE_SHA" > "$OUT/amdgpu.gfx1013.attestation"
 mv -f "$OUT/amdgpu.ko.zst" "$HERE/amdgpu.ko.zst"
+mv -f "$OUT/amdgpu.gfx1013.attestation" "$HERE/amdgpu.gfx1013.attestation"
 echo
 echo "OK — $HERE/amdgpu.ko.zst built and verified for $REL."
 echo "Next: sudo $HERE/install.sh"

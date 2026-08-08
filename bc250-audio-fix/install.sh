@@ -1,17 +1,29 @@
 #!/bin/bash
-# Install the patched amdgpu.ko (BC-250 display clock and metrics fixes) via the
+# Install the patched amdgpu.ko (display, metrics, and compute-queue fixes) via the
 # modules updates/ override. Run as: sudo ./install.sh
 set -euo pipefail
 
 REL=$(uname -r)
 HERE=$(cd "$(dirname "$0")" && pwd)
 SRC=$HERE/amdgpu.ko.zst
+ATTESTATION=$HERE/amdgpu.gfx1013.attestation
 DST=/usr/lib/modules/$REL/updates/amdgpu.ko.zst
 MARKER=/usr/lib/modules/$REL/updates/.bc250-audio-fix
 METRICS_MARKER=/usr/lib/modules/$REL/updates/.bc250-metrics-fix
+GFX1013_MARKER=/usr/lib/modules/$REL/updates/.bc250-gfx1013-fix
 
 [ -f "$SRC" ] || { echo "missing $SRC — the module is not shipped in the repo; build it against your running kernel first: ./fetch-sources.sh && ./build.sh"; exit 1; }
+[ -f "$ATTESTATION" ] && [ ! -L "$ATTESTATION" ] \
+    || { echo "missing GFX1013 build attestation — rebuild with ./build.sh"; exit 1; }
 [ "$(id -u)" = 0 ] || { echo "run with sudo"; exit 1; }
+
+read -r ATTESTED_COMMIT ATTESTED_SHA < "$ATTESTATION" \
+    || { echo "invalid GFX1013 build attestation — rebuild with ./build.sh"; exit 1; }
+ACTUAL_SHA=$(sha256sum "$SRC" | awk '{print $1}')
+[ "$ATTESTED_COMMIT" = d3e6dc062c34d2523db0abe5741d1f5b0dea00d9 ] \
+    && [[ "$ATTESTED_SHA" =~ ^[0-9a-f]{64}$ ]] \
+    && [ "$ATTESTED_SHA" = "$ACTUAL_SHA" ] \
+    || { echo "GFX1013 build attestation does not match amdgpu.ko.zst — rebuild with ./build.sh"; exit 1; }
 
 [[ "$REL" =~ neptune-[0-9]+ ]] && PRESET=linux-${BASH_REMATCH[0]} || PRESET=
 [ -n "$PRESET" ] && [ -f "/etc/mkinitcpio.d/$PRESET.preset" ] || {
@@ -54,6 +66,11 @@ cleanup() {
         else
             rm -f "$METRICS_MARKER"
         fi
+        if [ -f "$TMPD/original-gfx1013-marker" ]; then
+            install -D -m644 "$TMPD/original-gfx1013-marker" "$GFX1013_MARKER"
+        else
+            rm -f "$GFX1013_MARKER"
+        fi
         if [ -f "$TMPD/original-priority.conf" ]; then
             install -D -m644 "$TMPD/original-priority.conf" "$PRIORITY_FILE"
         else
@@ -69,6 +86,7 @@ trap cleanup EXIT
 if [ -f "$DST" ]; then cp -a "$DST" "$TMPD/original.ko.zst"; fi
 if [ -f "$MARKER" ]; then cp -a "$MARKER" "$TMPD/original-marker"; fi
 if [ -f "$METRICS_MARKER" ]; then cp -a "$METRICS_MARKER" "$TMPD/original-metrics-marker"; fi
+if [ -f "$GFX1013_MARKER" ]; then cp -a "$GFX1013_MARKER" "$TMPD/original-gfx1013-marker"; fi
 if [ -f "$PRIORITY_FILE" ]; then cp -a "$PRIORITY_FILE" "$TMPD/original-priority.conf"; fi
 if steamos-readonly status 2>/dev/null | grep -qi enabled; then
     steamos-readonly disable
@@ -80,6 +98,7 @@ install -D -m644 "$SRC" "$DST"
 sha256sum "$DST" | awk '{print $1}' > "$MARKER"
 chmod 644 "$MARKER"
 install -m644 "$MARKER" "$METRICS_MARKER"
+install -m644 "$MARKER" "$GFX1013_MARKER"
 depmod "$REL"
 
 RESOLVED=$(modinfo -k "$REL" -F filename amdgpu)
@@ -99,4 +118,4 @@ fi
 
 mkinitcpio -p "$PRESET"
 INSTALL_OK=1
-echo "OK — display clock and GPU telemetry corrections installed. Reboot to activate."
+echo "OK — display, GPU telemetry, and GFX1013 compute-queue corrections installed. Reboot to activate."

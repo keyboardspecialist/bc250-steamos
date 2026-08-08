@@ -23,7 +23,7 @@ EOF
 }
 
 show_status() {
-    local module rel resolved marker metrics_marker expected actual found=0 failed=0
+    local module rel resolved marker metrics_marker gfx1013_marker expected gfx1013_expected actual found=0 failed=0
 
     for module in /usr/lib/modules/*/updates/amdgpu.ko.zst; do
         [ -e "$module" ] || [ -L "$module" ] || continue
@@ -32,6 +32,7 @@ show_status() {
         rel=${rel%%/*}
         marker="/usr/lib/modules/$rel/updates/.bc250-audio-fix"
         metrics_marker="/usr/lib/modules/$rel/updates/.bc250-metrics-fix"
+        gfx1013_marker="/usr/lib/modules/$rel/updates/.bc250-gfx1013-fix"
         if [ ! -f "$module" ] || [ -L "$module" ]; then
             echo "[bc250-audio] $rel: unsafe or incomplete override ($module)"
             failed=1
@@ -44,13 +45,16 @@ show_status() {
         fi
         if resolved=$(modinfo -k "$rel" -F filename amdgpu 2>/dev/null) \
            && [[ "$resolved" == */updates/amdgpu.ko* ]]; then
-            if [ -f "$metrics_marker" ] && [ ! -L "$metrics_marker" ]; then
+            if [ -f "$metrics_marker" ] && [ ! -L "$metrics_marker" ] \
+               && [ -f "$gfx1013_marker" ] && [ ! -L "$gfx1013_marker" ]; then
                 read -r expected < "$metrics_marker" || expected=
                 actual=$(sha256sum "$module" | awk '{print $1}')
-                if [[ "$expected" =~ ^[0-9a-f]{64}$ ]] && [ "$actual" = "$expected" ]; then
-                    echo "[bc250-audio] $rel: installed, metrics-aware ($resolved)"
+                read -r gfx1013_expected < "$gfx1013_marker" || gfx1013_expected=
+                if [[ "$expected" =~ ^[0-9a-f]{64}$ ]] && [ "$actual" = "$expected" ] \
+                   && [ "$gfx1013_expected" = "$actual" ]; then
+                    echo "[bc250-audio] $rel: installed, metrics and compute aware ($resolved)"
                 else
-                    echo "[bc250-audio] $rel: invalid metrics marker"
+                    echo "[bc250-audio] $rel: invalid metrics or compute marker"
                     failed=1
                 fi
             else
@@ -63,10 +67,10 @@ show_status() {
         fi
     done
     for marker in /usr/lib/modules/*/updates/.bc250-audio-fix \
-                  /usr/lib/modules/*/updates/.bc250-metrics-fix; do
+                  /usr/lib/modules/*/updates/.bc250-metrics-fix \
+                  /usr/lib/modules/*/updates/.bc250-gfx1013-fix; do
         [ -e "$marker" ] || [ -L "$marker" ] || continue
-        module=${marker%/.bc250-audio-fix}
-        module="${module%/.bc250-metrics-fix}/amdgpu.ko.zst"
+        module=${marker%/*}/amdgpu.ko.zst
         [ -e "$module" ] || { found=1; failed=1; echo "[bc250-audio] pending rollback marker: $marker"; }
     done
     if [ "$found" = 0 ]; then

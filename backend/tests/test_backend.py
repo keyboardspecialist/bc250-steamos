@@ -591,6 +591,9 @@ class BackendMutationTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertFalse(status["scriptAvailable"])
         self.assertEqual(status["runtimeState"], "not-installed")
+        self.assertFalse(status["kernelReady"])
+        self.assertFalse(status["globalEnabled"])
+        self.assertFalse(status["restartRequired"])
         self.assertEqual(
             status["icdPath"], "/home/deck/radeon_driconf_icd.x86_64.json"
         )
@@ -604,9 +607,12 @@ class BackendMutationTests(unittest.IsolatedAsyncioTestCase):
                 {
                     "scriptAvailable": True,
                     "runtimeState": "ready",
-                    "mesaVersion": "mesa-26.1.4",
+                    "mesaVersion": "mesa-26.2.0-rc3",
                     "icdPath": "/home/deck/radeon_driconf_icd.x86_64.json",
                     "configValid": True,
+                    "kernelReady": True,
+                    "globalEnabled": True,
+                    "restartRequired": False,
                     "error": None,
                     "games": [
                         {
@@ -621,6 +627,9 @@ class BackendMutationTests(unittest.IsolatedAsyncioTestCase):
         status = await backend.get_mesh_status()
 
         self.assertEqual(status["runtimeState"], "ready")
+        self.assertTrue(status["kernelReady"])
+        self.assertTrue(status["globalEnabled"])
+        self.assertFalse(status["restartRequired"])
         self.assertEqual(status["games"][0]["executable"], "bc250-steam-1462040")
         backend._user_tool.assert_awaited_once_with(
             "bc250-mesh-shader.sh", "status-json", timeout=30
@@ -635,44 +644,16 @@ class BackendMutationTests(unittest.IsolatedAsyncioTestCase):
         with self.assertRaisesRegex(CommandError, "invalid JSON"):
             await backend.get_mesh_status()
 
-    async def test_mesh_game_toggle_uses_appid_alias(self):
+    async def test_mesh_game_toggle_rejects_removed_per_game_mode(self):
         backend = object.__new__(ToolkitBackend)
         prepare_mutation_backend(backend)
         backend._user_tool = AsyncMock(return_value="")
 
-        await backend.set_mesh_game_enabled(1462040, "Final Fantasy VII Rebirth", True)
-        backend._user_tool.assert_awaited_once_with(
-            "bc250-mesh-shader.sh",
-            "game",
-            "enable",
-            "bc250-steam-1462040",
-            "Final Fantasy VII Rebirth",
-            timeout=30,
-        )
-
-        backend._user_tool.reset_mock()
-        await backend.set_mesh_game_enabled(1462040, "Final Fantasy VII Rebirth", False)
-        backend._user_tool.assert_awaited_once_with(
-            "bc250-mesh-shader.sh",
-            "game",
-            "disable",
-            "bc250-steam-1462040",
-            timeout=30,
-        )
-
-    async def test_mesh_game_toggle_rejects_invalid_input(self):
-        backend = object.__new__(ToolkitBackend)
-        prepare_mutation_backend(backend)
-        backend._user_tool = AsyncMock(return_value="")
-        for app_id in (True, 0, -1, 0x100000000):
-            with self.subTest(app_id=app_id), self.assertRaises(CommandError):
-                await backend.set_mesh_game_enabled(app_id, "Game", True)
-        for name in ("", "bad\nname", "x" * 257):
-            with self.subTest(name=name), self.assertRaises(CommandError):
-                await backend.set_mesh_game_enabled(1, name, True)
-        await backend.set_mesh_game_enabled(1, "", False)
-        with self.assertRaises(CommandError):
-            await backend.set_mesh_game_enabled(1, "Game", "true")
+        with self.assertRaisesRegex(CommandError, "global"):
+            await backend.set_mesh_game_enabled(
+                1462040, "Final Fantasy VII Rebirth", True
+            )
+        backend._user_tool.assert_not_awaited()
 
     async def test_custom_load_target_rejects_inverted_range(self):
         backend = object.__new__(ToolkitBackend)

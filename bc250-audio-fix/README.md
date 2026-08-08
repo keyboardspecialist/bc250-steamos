@@ -1,9 +1,10 @@
 # AMDGPU corrections
 
-Corrects DisplayPort video/audio timing and Cyan Skillfish GPU telemetry
-through one patched `amdgpu` module. GPU activity comes from GC status sampling
-and GFX clock comes from a validated direct SMU query while retaining the
-firmware's published `SmuMetrics_t` layout.
+Corrects DisplayPort video/audio timing, Cyan Skillfish GPU telemetry, and the
+GFX1013 compute-queue lifecycle through one patched `amdgpu` module. GPU
+activity comes from GC status sampling and GFX clock comes from a validated
+direct SMU query while retaining the firmware's published `SmuMetrics_t`
+layout.
 
 ## Install
 
@@ -26,7 +27,8 @@ sudo reboot
 
 Both versions also apply the Cyan Skillfish telemetry patches. They preserve
 the firmware's published metrics-table transfer size, query and validate the
-GFX clock through the SMU, and sample GPU activity from GC status.
+GFX clock through the SMU, sample GPU activity from GC status, and apply the
+three-part GFX1013 PASID/GFXOFF compute-queue repair.
 The build selects the display patch from the running kernel and produces
 `amdgpu.ko.zst` for that exact release.
 
@@ -41,6 +43,18 @@ override.
 |---|---|
 | `bc250-cyan-skillfish-gpu-telemetry.patch` | Apply bounded GC activity sampling while retaining `SmuMetrics_t` |
 | `bc250-cyan-skillfish-gfxclk.patch` | Apply range-checked direct SMU GFX-clock reporting |
+| `0001-gfx1013-mmio-pasid-route.patch` | Route GFX1013 PASID invalidation through MMIO |
+| `0002-gfx1013-compute-gfxoff-guard.patch` | Manage GFXOFF across the BC-250 compute lifecycle |
+| `0003-gfx1013-scoped-pasid-type0.patch` | Scope type-0 invalidation to the GFX1013 PASID path |
+| `bc250-gfx1013-attestation.patch` | Expose the loaded repair commit as a read-only module parameter |
+
+The GFX1013 series is fetched from
+[`DryhoppedIPA/bc250-gfx1013-fix`](https://github.com/DryhoppedIPA/bc250-gfx1013-fix)
+at commit
+[`d3e6dc0`](https://github.com/DryhoppedIPA/bc250-gfx1013-fix/commit/d3e6dc062c34d2523db0abe5741d1f5b0dea00d9)
+and verified by SHA-256 before application. DryhoppedIPA developed the scoped
+V33 kernel repair through direct BC-250 hardware testing. The fetched kernel
+patches are `GPL-2.0-only`; they are not relicensed by this toolkit.
 
 ### Runtime Data
 
@@ -65,6 +79,19 @@ exports. The `average_gfx_activity` member name follows the
 `PPSMC_MSG_GetGfxFrequency`. One SMU reply populates `METRICS_CURR_GFXCLK`,
 `current_gfxclk`, and `average_gfxclk_frequency`. Query errors and replies
 outside the supported 1000-2000 MHz range propagate to the metrics caller.
+
+### Compute Queues
+
+The GFX1013 repair keeps PASID TLB invalidation off the KIQ path, guards GFXOFF
+during KFD compute activity, and uses the GFXHUB semaphore/type-0 transaction
+only for BC-250 PASID invalidation. The three patches are mandatory and applied
+in upstream order.
+
+The kernel repair does not expose compute queues by itself. The optional
+`bc250-mesh-shader.sh` workflow builds the matching Mesa/RADV half and enables
+it globally for the logged-in user through a kernel-gated environment
+generator. Never point an application at that alternate ICD while a stock
+kernel module is active; upstream reports that combination can hang the GPU.
 
 ## Commands
 
@@ -156,3 +183,4 @@ The complete fallback remains mandatory for the AMDGPU override. AIC8800 may ins
 | `bc250-dp-audio-clock-6.18.patch` | SteamOS 3.9.x display clock patch |
 | `bc250-cyan-skillfish-gpu-telemetry.patch` | Runtime GPU activity export using the published metrics layout |
 | `bc250-cyan-skillfish-gfxclk.patch` | Runtime GFX clock export using a direct SMU query |
+| `bc250-gfx1013-attestation.patch` | Read-only loaded-module identity for safe global RADV activation |

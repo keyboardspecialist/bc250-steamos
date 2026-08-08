@@ -1,16 +1,17 @@
 #!/usr/bin/env bash
-# Build and manage lonewolf0622's alternate Mesa/RADV mesh-shader ICD.
-# The upstream patch is fetched only after explicit opt-in because that
-# repository currently has no declared license.
+# Build and manage DryhoppedIPA's alternate GFX1013 Mesa/RADV ICD.
+# Its compute queues require the matching kernel repair from bc250-audio-fix.
 set -euo pipefail
 
 SELF="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/$(basename "${BASH_SOURCE[0]}")"
-UPSTREAM_REPO="https://github.com/lonewolf0622/BC-250-Mesh-Shader-Patch---driconf-Edition-opt-in-per-application-"
-UPSTREAM_COMMIT="b66203e012594204e5e3049856b28a2681112985"
-RAW_BASE="https://raw.githubusercontent.com/lonewolf0622/BC-250-Mesh-Shader-Patch---driconf-Edition-opt-in-per-application-/$UPSTREAM_COMMIT"
-DEFAULT_MESA_TAG="mesa-26.1.4"
-MESA_COMMIT="6dfbc555b4128ee51139c5f78c5aba2594c9701b"
-MESA_REPO="https://gitlab.freedesktop.org/mesa/mesa.git"
+UPSTREAM_REPO="https://github.com/DryhoppedIPA/bc250-gfx1013-fix"
+UPSTREAM_COMMIT="d3e6dc062c34d2523db0abe5741d1f5b0dea00d9"
+LEGACY_UPSTREAM_COMMIT="b66203e012594204e5e3049856b28a2681112985"
+RAW_BASE="https://raw.githubusercontent.com/DryhoppedIPA/bc250-gfx1013-fix/$UPSTREAM_COMMIT"
+DEFAULT_MESA_TAG="mesa-26.2.0-rc3"
+MESA_TARBALL="mesa-26.2.0-rc3.tar.xz"
+MESA_URL="https://archive.mesa3d.org/$MESA_TARBALL"
+MESA_SHA256="f733c005660d342a51c6727d1ad481f43d05b4c601ac72247fa641e1d73a8ad1"
 
 STATE_DIR="${BC250_MESH_STATE_DIR:-$HOME/.local/share/bc250-mesh-shader}"
 CACHE_DIR="$STATE_DIR/upstream-$UPSTREAM_COMMIT"
@@ -19,8 +20,12 @@ TRANSACTION_DIR="$STATE_DIR/install-transaction"
 DRIRC="${BC250_MESH_DRIRC:-$HOME/.drirc}"
 DRIVER="${BC250_MESH_DRIVER:-/usr/lib/libvulkan_radeon_driconf.so}"
 ICD="${BC250_MESH_ICD:-$HOME/radeon_driconf_icd.x86_64.json}"
+GENERATOR="${BC250_GFX1013_GENERATOR:-/usr/lib/systemd/user-environment-generators/60-bc250-gfx1013}"
 BUILD_ROOT="$STATE_DIR/build"
 LOCK_FILE="${BC250_MESH_LOCK_FILE:-$HOME/.cache/bc250-mesh-shader.lock}"
+COMPUTE_MARKER="${BC250_GFX1013_MARKER:-/usr/lib/modules/$(uname -r)/updates/.bc250-gfx1013-fix}"
+COMPUTE_MODULE="${BC250_GFX1013_MODULE:-${COMPUTE_MARKER%/*}/amdgpu.ko.zst}"
+COMPUTE_ACTIVE="${BC250_GFX1013_ACTIVE:-/sys/module/amdgpu/parameters/bc250_gfx1013_fix}"
 
 C0=$'\033[0m'; CB=$'\033[1m'; CD=$'\033[2m'; CI=$'\033[7m'
 CG=$'\033[32m'; CY=$'\033[33m'; CR=$'\033[31m'; CC=$'\033[36m'
@@ -74,15 +79,16 @@ sha256_file() {
 }
 
 fetch_verified() {
-    local name="$1" expected="$2" target="$CACHE_DIR/$1" actual tmp
+    local name="$1" expected="$2" url="${3:-$RAW_BASE/$1}" target="$CACHE_DIR/$1" actual tmp
     if [[ -f "$target" && ! -L "$target" ]] \
         && [[ "$(sha256_file "$target")" == "$expected" ]]; then
         return 0
     fi
+    [[ ! -L "$CACHE_DIR" ]] || die "Refusing symlinked upstream cache: $CACHE_DIR"
     mkdir -p "$CACHE_DIR"
     tmp=$(mktemp "$CACHE_DIR/.${name}.XXXXXX")
-    curl --retry 3 --retry-all-errors -fsSL "$RAW_BASE/$name" -o "$tmp" \
-        || { rm -f "$tmp"; die "Could not fetch $RAW_BASE/$name"; }
+    curl --retry 3 --retry-all-errors -fsSL "$url" -o "$tmp" \
+        || { rm -f "$tmp"; die "Could not fetch $url"; }
     actual=$(sha256_file "$tmp")
     [[ "$actual" == "$expected" ]] \
         || { rm -f "$tmp"; die "Checksum mismatch for upstream $name"; }
@@ -91,8 +97,51 @@ fetch_verified() {
 }
 
 stage_upstream() {
-    fetch_verified bc250_driconf_fix.patch \
-        56acd8c992025feff14d0105a158096fe69dfe74184c340e03ba9af4b45e91db
+    fetch_verified upstream-MIT-LICENSE \
+        ddf5d9be5c762bcc5237e36235a1c5f00be521cfc92d8c264dfcce392e2c1313 \
+        "$RAW_BASE/LICENSE"
+    fetch_verified GPL-2.0-only.txt \
+        8780e78a1a737e127f25a65f6d95269bffd36158dc261114de7859b490bfc5aa \
+        "$RAW_BASE/LICENSES/GPL-2.0-only.txt"
+    fetch_verified upstream-NOTICE.md \
+        ccf962b0b8aca2b9a67a2e2081d4edf6a66f8403fdf66a54d08a1ef10367f3eb \
+        "$RAW_BASE/NOTICE.md"
+    fetch_verified 0001-gfx1013-compute-queue-fix.patch \
+        78bccb8022955b3e4e11ab76d8373e95e5cd0b4e8b09f5a9abbe87dce8d92484 \
+        "$RAW_BASE/patches/mesa/0001-gfx1013-compute-queue-fix.patch"
+    fetch_verified 0002-gfx1013-mesh-task-shaders.patch \
+        f01fea1aa7c639ede8289059fe6ec0fde30ffecd13f4c3c3f50c14ef6a7aea47 \
+        "$RAW_BASE/patches/mesa/0002-gfx1013-mesh-task-shaders.patch"
+    fetch_verified 0003-gfx1013-taskmesh-queries.patch \
+        8056be93d6f15358275cffe8798b13f90e41c228a8832c563dc30116372d2995 \
+        "$RAW_BASE/patches/mesa/0003-gfx1013-taskmesh-queries.patch"
+    fetch_verified "$MESA_TARBALL" "$MESA_SHA256" "$MESA_URL"
+}
+
+verify_compute_kernel() {
+    local expected actual active
+    [[ -f "$COMPUTE_MARKER" && ! -L "$COMPUTE_MARKER" \
+        && -f "$COMPUTE_MODULE" && ! -L "$COMPUTE_MODULE" ]] || return 1
+    read -r expected < "$COMPUTE_MARKER" || return 1
+    [[ "$expected" =~ ^[0-9a-f]{64}$ ]] || return 1
+    actual=$(sha256_file "$COMPUTE_MODULE")
+    [[ "$actual" == "$expected" ]] || return 1
+    [[ -r "$COMPUTE_ACTIVE" && ! -L "$COMPUTE_ACTIVE" ]] || return 1
+    active=$(<"$COMPUTE_ACTIVE")
+    [[ "$active" == "$UPSTREAM_COMMIT" ]]
+}
+
+require_compute_kernel() {
+    verify_compute_kernel || die "The active amdgpu lacks the GFX1013 compute repair. Run bc250-audio-fix/patch-driver.sh, reboot, and retry."
+}
+
+manager_environment_active() {
+    local environment
+    verify_compute_kernel && verify_current_runtime || return 1
+    command -v systemctl >/dev/null 2>&1 || return 1
+    environment=$(systemctl --user show-environment 2>/dev/null) || return 1
+    grep -qxF "VK_DRIVER_FILES=$ICD" <<< "$environment" \
+        && grep -qxF "VK_ICD_FILENAMES=$ICD" <<< "$environment"
 }
 
 read_manifest() {
@@ -103,7 +152,8 @@ read_manifest() {
     [[ "$STORED_DRIVER_SHA" =~ ^[0-9a-f]{64}$ \
         && "$STORED_ICD_SHA" =~ ^[0-9a-f]{64}$ \
         && "$STORED_MESA_TAG" =~ ^mesa-[0-9][0-9A-Za-z._-]*$ \
-        && "$STORED_COMMIT" == "$UPSTREAM_COMMIT" ]]
+        && ( "$STORED_COMMIT" == "$UPSTREAM_COMMIT" \
+            || "$STORED_COMMIT" == "$LEGACY_UPSTREAM_COMMIT" ) ]]
 }
 
 verify_owned_runtime() {
@@ -114,6 +164,54 @@ verify_owned_runtime() {
     [[ "$actual" == "$STORED_DRIVER_SHA" ]] || return 1
     actual=$(sha256_file "$ICD")
     [[ "$actual" == "$STORED_ICD_SHA" ]] || return 1
+}
+
+render_generator() {
+    local marker_q module_q active_q driver_q commit_q
+    marker_q=$(shell_word "$COMPUTE_MARKER")
+    module_q=$(shell_word "$COMPUTE_MODULE")
+    active_q=$(shell_word "$COMPUTE_ACTIVE")
+    driver_q=$(shell_word "$DRIVER")
+    commit_q=$(shell_word "$UPSTREAM_COMMIT")
+    cat <<EOF
+#!/usr/bin/env bash
+set -u
+MARKER=$marker_q
+MODULE=$module_q
+ACTIVE=$active_q
+DRIVER=$driver_q
+COMMIT=$commit_q
+ICD="\$HOME/radeon_driconf_icd.x86_64.json"
+MANIFEST="\$HOME/.local/share/bc250-mesh-shader/install.conf"
+[ -f "\$MARKER" ] && [ ! -L "\$MARKER" ] && [ -f "\$MODULE" ] \
+    && [ ! -L "\$MODULE" ] && [ -f "\$DRIVER" ] && [ ! -L "\$DRIVER" ] \
+    && [ -f "\$ICD" ] && [ ! -L "\$ICD" ] \
+    && [ -f "\$MANIFEST" ] && [ ! -L "\$MANIFEST" ] \
+    && [ -r "\$ACTIVE" ] && [ ! -L "\$ACTIVE" ] || exit 0
+read -r expected < "\$MARKER" || exit 0
+[[ "\$expected" =~ ^[0-9a-f]{64}\$ ]] || exit 0
+actual=\$(sha256sum "\$MODULE" | awk '{print \$1}')
+[ "\$actual" = "\$expected" ] || exit 0
+[ "\$(cat "\$ACTIVE")" = "\$COMMIT" ] || exit 0
+read -r driver_sha icd_sha mesa_version commit < "\$MANIFEST" || exit 0
+[[ "\$driver_sha" =~ ^[0-9a-f]{64}\$ && "\$icd_sha" =~ ^[0-9a-f]{64}\$ \
+    && "\$commit" = "\$COMMIT" ]] || exit 0
+[ "\$(sha256sum "\$DRIVER" | awk '{print \$1}')" = "\$driver_sha" ] || exit 0
+[ "\$(sha256sum "\$ICD" | awk '{print \$1}')" = "\$icd_sha" ] || exit 0
+grep -qF "\"library_path\": \"\$DRIVER\"" "\$ICD" || exit 0
+printf 'VK_DRIVER_FILES=%s\n' "\$ICD"
+printf 'VK_ICD_FILENAMES=%s\n' "\$ICD"
+EOF
+}
+
+generator_owned() {
+    [[ -f "$GENERATOR" && ! -L "$GENERATOR" && -x "$GENERATOR" ]] \
+        && cmp -s "$GENERATOR" <(render_generator)
+}
+
+verify_current_runtime() {
+    verify_owned_runtime && [[ "$STORED_COMMIT" == "$UPSTREAM_COMMIT" ]] \
+        && generator_owned
 }
 
 verify_recorded_parts() {
@@ -129,10 +227,14 @@ verify_recorded_parts() {
         actual=$(sha256_file "$ICD")
         [[ "$actual" == "$STORED_ICD_SHA" ]] || return 1
     fi
+    if [[ -e "$GENERATOR" || -L "$GENERATOR" ]]; then
+        generator_owned || return 1
+    fi
 }
 
 preflight_runtime_ownership() {
-    if [[ -e "$DRIVER" || -L "$DRIVER" || -e "$ICD" || -L "$ICD" ]]; then
+    if [[ -e "$DRIVER" || -L "$DRIVER" || -e "$ICD" || -L "$ICD" \
+        || -e "$GENERATOR" || -L "$GENERATOR" ]]; then
         verify_recorded_parts \
             || die "Existing alternate driver/ICD is not a recorded toolkit install; refusing replacement."
     elif [[ -e "$MANIFEST" || -L "$MANIFEST" ]]; then
@@ -143,7 +245,7 @@ preflight_runtime_ownership() {
 recover_install_transaction() (
     [[ -d "$TRANSACTION_DIR" && ! -L "$TRANSACTION_DIR" ]] || return 0
     local conf="$TRANSACTION_DIR/transaction.conf" version old_driver driver_sha
-    local old_icd icd_sha old_manifest manifest_sha ro_restore=0
+    local old_icd icd_sha old_manifest manifest_sha old_generator=0 generator_sha=- ro_restore=0 environment
     finish_recovery() {
         local rc=$?
         trap - EXIT INT TERM HUP
@@ -155,10 +257,16 @@ recover_install_transaction() (
         rm -rf "$TRANSACTION_DIR"
         return 0
     fi
-    read -r version old_driver driver_sha old_icd icd_sha old_manifest manifest_sha < "$conf" \
+    read -r version old_driver driver_sha old_icd icd_sha old_manifest manifest_sha \
+        old_generator generator_sha < "$conf" \
         || die "Malformed mesh-shader install transaction; manual recovery required."
-    [[ "$version" == 1 && "$old_driver" =~ ^[01]$ && "$old_icd" =~ ^[01]$ \
-        && "$old_manifest" =~ ^[01]$ ]] \
+    if [[ "$version" == 1 ]]; then
+        old_generator=0
+        generator_sha=-
+    fi
+    [[ ( "$version" == 1 || "$version" == 2 ) \
+        && "$old_driver" =~ ^[01]$ && "$old_icd" =~ ^[01]$ \
+        && "$old_manifest" =~ ^[01]$ && "$old_generator" =~ ^[01]$ ]] \
         || die "Invalid mesh-shader install transaction; manual recovery required."
     if [[ "$old_driver" == 1 ]]; then
         [[ -f "$TRANSACTION_DIR/driver" && ! -L "$TRANSACTION_DIR/driver" \
@@ -174,6 +282,11 @@ recover_install_transaction() (
         [[ -f "$TRANSACTION_DIR/manifest" && ! -L "$TRANSACTION_DIR/manifest" \
             && "$(sha256_file "$TRANSACTION_DIR/manifest")" == "$manifest_sha" ]] \
             || die "Manifest transaction backup failed verification; manual recovery required."
+    fi
+    if [[ "$old_generator" == 1 ]]; then
+        [[ -f "$TRANSACTION_DIR/generator" && ! -L "$TRANSACTION_DIR/generator" \
+            && "$(sha256_file "$TRANSACTION_DIR/generator")" == "$generator_sha" ]] \
+            || die "Generator transaction backup failed verification; manual recovery required."
     fi
 
     if command -v steamos-readonly >/dev/null 2>&1 \
@@ -193,9 +306,15 @@ recover_install_transaction() (
     else
         rm -f "$MANIFEST"
     fi
+    if [[ "$old_generator" == 1 ]]; then
+        as_root mkdir -p "${GENERATOR%/*}"
+        as_root install -m 0755 "$TRANSACTION_DIR/generator" "$GENERATOR"
+    else
+        as_root rm -f "$GENERATOR"
+    fi
     if [[ -f "$DRIVER" ]]; then as_root sync -f "$DRIVER"; fi
     as_root sync -d "${DRIVER%/*}"
-    python3 - "$ICD" "$MANIFEST" "${ICD%/*}" "$STATE_DIR" <<'PY'
+    python3 - "$ICD" "$MANIFEST" "$GENERATOR" "${ICD%/*}" "${GENERATOR%/*}" "$STATE_DIR" <<'PY'
 import os
 from pathlib import Path
 import sys
@@ -210,6 +329,14 @@ for value in sys.argv[1:]:
         os.close(descriptor)
 PY
     if [[ $ro_restore -eq 1 ]]; then as_root steamos-readonly enable; ro_restore=0; fi
+    if [[ "$old_generator" == 0 ]] && command -v systemctl >/dev/null 2>&1; then
+        systemctl --user daemon-reload >/dev/null 2>&1 \
+            || die "Could not reload the restored user environment; retry recovery."
+        environment=$(systemctl --user show-environment 2>/dev/null) || environment=
+        ! grep -qxF "VK_DRIVER_FILES=$ICD" <<< "$environment" \
+            && ! grep -qxF "VK_ICD_FILENAMES=$ICD" <<< "$environment" \
+            || die "Interrupted global Vulkan environment remains active; sign out and retry recovery."
+    fi
     rm -rf "$TRANSACTION_DIR"
     python3 - "$STATE_DIR" <<'PY'
 import os
@@ -224,7 +351,8 @@ PY
 )
 
 arm_install_transaction() {
-    local old_driver=0 old_icd=0 old_manifest=0 driver_sha=- icd_sha=- manifest_sha=- tmp
+    local old_driver=0 old_icd=0 old_manifest=0 old_generator=0
+    local driver_sha=- icd_sha=- manifest_sha=- generator_sha=- tmp
     rm -rf "$TRANSACTION_DIR"
     mkdir -m 0700 "$TRANSACTION_DIR"
     if [[ -f "$DRIVER" && ! -L "$DRIVER" ]]; then
@@ -242,9 +370,15 @@ arm_install_transaction() {
         manifest_sha=$(sha256_file "$TRANSACTION_DIR/manifest")
         old_manifest=1
     fi
+    if [[ -f "$GENERATOR" && ! -L "$GENERATOR" ]]; then
+        as_root cat "$GENERATOR" > "$TRANSACTION_DIR/generator"
+        generator_sha=$(sha256_file "$TRANSACTION_DIR/generator")
+        old_generator=1
+    fi
     tmp="$TRANSACTION_DIR/.transaction.conf"
-    printf '1 %s %s %s %s %s %s\n' \
-        "$old_driver" "$driver_sha" "$old_icd" "$icd_sha" "$old_manifest" "$manifest_sha" > "$tmp"
+    printf '2 %s %s %s %s %s %s %s %s\n' \
+        "$old_driver" "$driver_sha" "$old_icd" "$icd_sha" "$old_manifest" "$manifest_sha" \
+        "$old_generator" "$generator_sha" > "$tmp"
     chmod 0600 "$tmp"
     mv -f "$tmp" "$TRANSACTION_DIR/transaction.conf"
     python3 - "$TRANSACTION_DIR" <<'PY'
@@ -288,11 +422,13 @@ cmd_setup() (
     command -v curl >/dev/null 2>&1 || die "curl is required"
     command -v python3 >/dev/null 2>&1 || die "python3 is required"
     command -v flock >/dev/null 2>&1 || die "flock is required"
+    command -v systemctl >/dev/null 2>&1 || die "systemctl is required for global RADV activation"
     ensure_state_dir
     exec 9> "$LOCK_FILE"
     flock 9
     recover_install_transaction
     preflight_runtime_ownership
+    require_compute_kernel
     stage_upstream
 
     work=$(mktemp -d "$STATE_DIR/.setup.XXXXXX")
@@ -337,7 +473,7 @@ cmd_setup() (
         ro_was_enabled=1
     fi
 
-    local required_commands=(git gcc g++ meson ninja patch pkg-config vulkaninfo)
+    local required_commands=(gcc g++ meson ninja patch pkg-config tar vulkaninfo glslangValidator spirv-as)
     local command
     for command in "${required_commands[@]}"; do
         command -v "$command" >/dev/null 2>&1 || need_packages=1
@@ -351,7 +487,8 @@ cmd_setup() (
         as_root pacman-key --init
         as_root pacman-key --populate archlinux holo 2>/dev/null || as_root pacman-key --populate
         as_root pacman -S --needed --noconfirm \
-            base-devel git meson ninja python-mako python-yaml pkgconf vulkan-tools \
+            base-devel meson ninja python-mako python-yaml pkgconf vulkan-tools \
+            glslang spirv-tools \
             libdrm expat libelf zlib zstd wayland wayland-protocols \
             libffi libxau libxdmcp xorgproto libxcb xcb-util xcb-util-wm \
             xcb-util-keysyms xcb-util-renderutil xcb-util-image libx11 libxext \
@@ -370,26 +507,27 @@ cmd_setup() (
             || die "Signed SteamOS packages did not provide development metadata: $command"
     done
 
-    source="$BUILD_ROOT/mesa-$MESA_COMMIT"
+    source="$BUILD_ROOT/$DEFAULT_MESA_TAG"
     build="$source/build"
     rm -rf "$source"
-    mkdir -p "$source"
-    git -C "$source" init -q
-    git -C "$source" remote add origin "$MESA_REPO"
-    git -C "$source" fetch --depth 1 origin "$MESA_COMMIT"
-    git -C "$source" checkout -q --detach FETCH_HEAD
-    [[ "$(git -C "$source" rev-parse HEAD)" == "$MESA_COMMIT" ]] \
-        || die "Mesa source commit verification failed"
-    patch -d "$source" -p1 --fuzz=0 --dry-run -i "$CACHE_DIR/bc250_driconf_fix.patch"
-    patch -d "$source" -p1 --fuzz=0 -i "$CACHE_DIR/bc250_driconf_fix.patch"
-    grep -qF spoof_gfx1013_as_gfx10_3 "$source/src/amd/vulkan/radv_physical_device.c" \
-        || die "Patched Mesa source is missing the mesh-shader marker"
+    tar -C "$BUILD_ROOT" -xf "$CACHE_DIR/$MESA_TARBALL"
+    local patch_name
+    for patch_name in \
+        0001-gfx1013-compute-queue-fix.patch \
+        0002-gfx1013-mesh-task-shaders.patch \
+        0003-gfx1013-taskmesh-queries.patch; do
+        patch -d "$source" -p1 --fuzz=0 --dry-run -i "$CACHE_DIR/$patch_name"
+        patch -d "$source" -p1 --fuzz=0 -i "$CACHE_DIR/$patch_name"
+    done
+    grep -qF has_async_compute_threadgroup_bug "$source/src/amd/common/ac_gpu_info.c" \
+        && grep -qF has_gfx1013_mesh_queries "$source/src/amd/common/ac_gpu_info.c" \
+        || die "Patched Mesa source is missing the GFX1013 compute/mesh markers"
 
     export TMPDIR="$STATE_DIR/tmp"
     mkdir -p "$TMPDIR"
     meson setup "$build" "$source" \
-        -Dvulkan-drivers=amd -Dgallium-drivers=zink \
-        -Dglx=disabled -Degl=disabled -Dgles2=disabled \
+        -Dvulkan-drivers=amd -Dgallium-drivers= -Dplatforms=x11,wayland \
+        -Dglx=disabled -Degl=disabled -Dgles2=disabled -Dvideo-codecs= \
         -Dshared-llvm=disabled -Dllvm=disabled -Dxmlconfig=enabled \
         -Dlmsensors=disabled -Dvalgrind=disabled
     ninja -C "$build" src/amd/vulkan/libvulkan_radeon.so
@@ -399,11 +537,11 @@ cmd_setup() (
     cat > "$work/test-icd.json" <<EOF
 {"file_format_version":"1.0.0","ICD":{"library_path":"$output","api_version":"1.4.309"}}
 EOF
-    VK_ICD_FILENAMES="$work/test-icd.json" vulkaninfo --summary >/dev/null \
+    VK_DRIVER_FILES="$work/test-icd.json" vulkaninfo --summary >/dev/null \
         || die "Staged alternate RADV driver failed vulkaninfo"
 
-    log "Installing audited Mesa $mesa_tag ($MESA_COMMIT) with upstream patch ${UPSTREAM_COMMIT:0:7}."
-    log "The alternate ICD is not registered globally; games remain opt-in."
+    log "Installing audited $mesa_tag with DryhoppedIPA's patch series ${UPSTREAM_COMMIT:0:7}."
+    log "The alternate ICD will become global for this user after the user manager reloads."
     arm_install_transaction
     unlock_root
     as_root install -o root -g root -m 0755 "$output" "$staged_driver"
@@ -434,8 +572,17 @@ PY
     [[ -f "$ICD" && ! -L "$ICD" ]] || die "Upstream build did not create $ICD"
     grep -qF "\"library_path\": \"$DRIVER\"" "$ICD" \
         || die "Generated ICD does not reference the expected alternate driver"
-    VK_ICD_FILENAMES="$ICD" vulkaninfo --summary >/dev/null \
+    VK_DRIVER_FILES="$ICD" vulkaninfo --summary >/dev/null \
         || die "Installed alternate RADV ICD failed vulkaninfo"
+    [[ ! -L "$GENERATOR" ]] || die "Refusing symlinked environment generator: $GENERATOR"
+    render_generator > "$work/generator"
+    chmod 0755 "$work/generator"
+    unlock_root
+    as_root install -D -o root -g root -m 0755 "$work/generator" "$GENERATOR"
+    as_root sync -f "$GENERATOR"
+    as_root sync -d "${GENERATOR%/*}"
+    relock_root
+    generator_owned || die "Installed GFX1013 environment generator failed verification"
     write_manifest "$mesa_tag"
     rm -rf "$TRANSACTION_DIR"
     python3 - "$STATE_DIR" <<'PY'
@@ -448,8 +595,8 @@ finally:
     os.close(descriptor)
 PY
     committed=1
-    log "Alternate RADV ICD installed and ownership-recorded."
-    log "It remains inactive until a game is enabled and given the launch option printed by 'game enable'."
+    log "Alternate RADV ICD installed and enabled globally for this user."
+    log "Sign out and back in so the complete graphical session inherits the new Vulkan environment."
 )
 
 manage_games() {
@@ -531,7 +678,6 @@ if games:
         lines.extend([
             '    <application name="%s" executable="%s">' %
             (escape(game["name"], quote=True), escape(game["executable"], quote=True)),
-            '      <option name="radv_spoof_gfx1013_as_gfx10_3" value="true" />',
             '    </application>',
         ])
     lines.extend(['  </device>', end])
@@ -553,71 +699,74 @@ PY
 }
 
 cmd_game() {
+    die "Per-game controls were removed; the GFX1013 RADV runtime is global for the user session."
+}
+
+cmd_legacy_clear() {
     require_normal_user
-    local action="${1:-}" executable="${2:-}" name="${3:-}"
-    if [[ "$action" != list ]]; then
-        command -v flock >/dev/null 2>&1 || die "flock is required"
-        ensure_state_dir
-        exec 9> "$LOCK_FILE"
-        flock 9
-    fi
-    case "$action" in
-        enable)
-            [[ $# -ge 2 && $# -le 3 ]] || die "Usage: $0 game enable <executable> [friendly-name]"
-            verify_owned_runtime || die "Install the alternate ICD first with '$0 setup'."
-            manage_games enable "$executable" "$name"
-            log "Enabled mesh-shader spoof for process: $executable"
-            printf 'Steam launch option: MESA_DRICONF_EXECUTABLE_OVERRIDE=%s VK_ICD_FILENAMES=%s %%command%%\n' \
-                "$(shell_word "$executable")" "$(shell_word "$ICD")"
-            ;;
-        disable)
-            [[ $# -eq 2 ]] || die "Usage: $0 game disable <executable>"
-            manage_games disable "$executable"
-            log "Disabled mesh-shader spoof for process: $executable"
-            log "Also remove its MESA_DRICONF_EXECUTABLE_OVERRIDE and VK_ICD_FILENAMES launch option in Steam."
-            ;;
-        list)
-            [[ $# -eq 1 ]] || die "Usage: $0 game list"
-            manage_games list
-            ;;
-        *) die "Usage: $0 game {enable <executable> [friendly-name]|disable <executable>|list}" ;;
-    esac
+    command -v flock >/dev/null 2>&1 || die "flock is required"
+    ensure_state_dir
+    exec 9> "$LOCK_FILE"
+    flock 9
+    manage_games clear
+    log "Cleared legacy per-game records. Confirm their old Steam launch options were removed separately."
 }
 
 cmd_status() {
     local failed=0
-    echo "BC-250 mesh-shader alternate RADV ICD"
-    echo "  upstream: $UPSTREAM_REPO/tree/Steam-OS @ ${UPSTREAM_COMMIT:0:7}"
-    if verify_owned_runtime; then
+    echo "BC-250 GFX1013 compute/mesh RADV ICD"
+    echo "  upstream: $UPSTREAM_REPO @ ${UPSTREAM_COMMIT:0:7}"
+    if verify_compute_kernel; then
+        echo "  kernel:  active GFX1013 compute repair"
+    else
+        echo "  kernel:  repair not active"
+        failed=2
+    fi
+    if verify_current_runtime; then
         echo "  runtime: installed ($STORED_MESA_TAG)"
         echo "  driver:  $DRIVER"
         echo "  ICD:     $ICD"
+    elif verify_owned_runtime; then
+        echo "  runtime: legacy install requires '$0 setup'"
+        failed=2
     elif [[ -e "$DRIVER" || -L "$DRIVER" || -e "$ICD" || -L "$ICD" \
-        || -e "$MANIFEST" || -e "$TRANSACTION_DIR" ]]; then
+        || -e "$GENERATOR" || -L "$GENERATOR" || -e "$MANIFEST" || -e "$TRANSACTION_DIR" ]]; then
         echo "  runtime: incomplete or ownership mismatch"
         failed=2
     else
         echo "  runtime: not installed"
         return 1
     fi
-    echo "  globally registered: no"
-    echo "  enabled games:"
-    local games
-    if ! games=$(manage_games list); then
-        echo "    configuration invalid"
+    echo "  activation: global user environment"
+    echo "  generator:  $GENERATOR"
+    local legacy_games
+    if ! legacy_games=$(manage_games list); then
+        echo "  legacy games: configuration invalid"
         return 2
+    elif [[ -n "$legacy_games" ]]; then
+        echo "  legacy games requiring Steam launch-option cleanup:"
+        printf '%s\n' "$legacy_games" | sed 's/^/    /'
     fi
-    if [[ -n "$games" ]]; then printf '%s\n' "$games" | sed 's/^/    /'; else echo "    none"; fi
     return "$failed"
 }
 
 cmd_status_json() {
-    local runtime_state="not-installed" mesa_version="" config_valid=1 games="[]" error=""
-    if verify_owned_runtime; then
+    local runtime_state="not-installed" mesa_version="" config_valid=1 error="" games="[]" kernel_ready=0
+    local global_enabled=0 restart_required=0
+    verify_compute_kernel && kernel_ready=1
+    if verify_current_runtime; then
         runtime_state="ready"
         mesa_version="$STORED_MESA_TAG"
+        if manager_environment_active; then
+            global_enabled=1
+        elif [[ $kernel_ready == 1 ]]; then
+            restart_required=1
+        fi
+    elif verify_owned_runtime; then
+        runtime_state="invalid"
+        mesa_version="$STORED_MESA_TAG"
     elif [[ -e "$DRIVER" || -L "$DRIVER" || -e "$ICD" || -L "$ICD" \
-        || -e "$MANIFEST" || -e "$TRANSACTION_DIR" ]]; then
+        || -e "$GENERATOR" || -L "$GENERATOR" || -e "$MANIFEST" || -e "$TRANSACTION_DIR" ]]; then
         runtime_state="invalid"
         if read_manifest; then mesa_version="$STORED_MESA_TAG"; fi
     fi
@@ -626,11 +775,11 @@ cmd_status_json() {
         error="$games"
         games="[]"
     fi
-    python3 - "$runtime_state" "$mesa_version" "$ICD" "$config_valid" "$error" "$games" <<'PY'
+    python3 - "$runtime_state" "$mesa_version" "$ICD" "$config_valid" "$error" "$games" "$kernel_ready" "$global_enabled" "$restart_required" <<'PY'
 import json
 import sys
 
-runtime_state, mesa_version, icd_path, config_valid, error, games = sys.argv[1:]
+runtime_state, mesa_version, icd_path, config_valid, error, games, kernel_ready, global_enabled, restart_required = sys.argv[1:]
 print(json.dumps({
     "scriptAvailable": True,
     "runtimeState": runtime_state,
@@ -639,15 +788,19 @@ print(json.dumps({
     "configValid": config_valid == "1",
     "error": error or None,
     "games": json.loads(games),
+    "kernelReady": kernel_ready == "1",
+    "globalEnabled": global_enabled == "1",
+    "restartRequired": restart_required == "1",
 }, ensure_ascii=True, separators=(",", ":")))
 PY
 }
 
 cmd_uninstall() (
     require_normal_user
-    local ro_was_enabled=0
+    local ro_was_enabled=0 legacy_games environment
     ensure_state_dir
     command -v flock >/dev/null 2>&1 || die "flock is required"
+    command -v systemctl >/dev/null 2>&1 || die "systemctl is required for global RADV removal"
     exec 9> "$LOCK_FILE"
     flock 9
     recover_install_transaction
@@ -658,13 +811,38 @@ cmd_uninstall() (
         exit "$rc"
     }
     trap restore_readonly EXIT INT TERM HUP
-    if [[ -e "$DRIVER" || -L "$DRIVER" || -e "$ICD" || -L "$ICD" || -e "$MANIFEST" ]]; then
+    if [[ -e "$DRIVER" || -L "$DRIVER" || -e "$ICD" || -L "$ICD" \
+        || -e "$GENERATOR" || -L "$GENERATOR" || -e "$MANIFEST" ]]; then
         verify_recorded_parts \
             || die "Alternate runtime is not a recorded toolkit install; refusing removal."
     fi
+    legacy_games=$(manage_games list) \
+        || die "Legacy game configuration is invalid; repair it before uninstall."
+    [[ -z "$legacy_games" ]] \
+        || die "Legacy per-game records remain. Remove their Steam launch options, run '$0 legacy-clear', then uninstall."
     # Clean user configuration first. If this fails, leave the runtime intact
     # so uninstall can be retried without creating a half-removed component.
     manage_games clear
+    if [[ -e "$GENERATOR" || -L "$GENERATOR" ]]; then
+        if command -v steamos-readonly >/dev/null 2>&1 \
+            && steamos-readonly status 2>/dev/null | grep -qi enabled; then
+            ro_was_enabled=1
+            as_root steamos-readonly disable
+        fi
+        as_root rm -f "$GENERATOR"
+        if [[ $ro_was_enabled == 1 ]]; then
+            as_root steamos-readonly enable
+            ro_was_enabled=0
+        fi
+    fi
+    if command -v systemctl >/dev/null 2>&1; then
+        systemctl --user daemon-reload >/dev/null 2>&1 \
+            || die "Could not deactivate the global Vulkan environment; retry uninstall."
+        environment=$(systemctl --user show-environment 2>/dev/null) || environment=
+        ! grep -qxF "VK_DRIVER_FILES=$ICD" <<< "$environment" \
+            && ! grep -qxF "VK_ICD_FILENAMES=$ICD" <<< "$environment" \
+            || die "Global Vulkan environment remains active; sign out and retry uninstall."
+    fi
     if [[ -e "$DRIVER" || -L "$DRIVER" ]]; then
         if command -v steamos-readonly >/dev/null 2>&1 \
             && steamos-readonly status 2>/dev/null | grep -qi enabled; then
@@ -674,8 +852,8 @@ cmd_uninstall() (
         as_root rm -f "$DRIVER"
     fi
     rm -f "$ICD" "$MANIFEST"
-    log "Removed the alternate RADV driver, ICD, and all toolkit-managed game toggles."
-    log "Remove MESA_DRICONF_EXECUTABLE_OVERRIDE and VK_ICD_FILENAMES from each game's Steam launch options."
+    log "Removed the alternate RADV driver, ICD, global environment generator, and legacy game entries."
+    log "Sign out and back in to clear the inherited Vulkan environment."
     log "Downloaded upstream patch and Mesa build output were preserved for rebuilds."
 )
 
@@ -687,6 +865,7 @@ cmd_purge() (
     exec 9> "$LOCK_FILE"
     flock 9
     [[ ! -e "$DRIVER" && ! -L "$DRIVER" && ! -e "$ICD" && ! -L "$ICD" \
+        && ! -e "$GENERATOR" && ! -L "$GENERATOR" \
         && ! -e "$MANIFEST" && ! -e "$TRANSACTION_DIR" ]] \
         || die "Mesh-shader runtime remains; run '$0 uninstall' before purge."
     if grep -qF '<!-- BEGIN BC250 MESH SHADER MANAGED -->' "$DRIRC" 2>/dev/null; then
@@ -742,29 +921,16 @@ pause_key() {
 }
 
 runtime_badge() {
-    if verify_owned_runtime; then
+    if verify_current_runtime; then
         printf '%s' "${CG}[ready]${C0}"
+    elif verify_owned_runtime; then
+        printf '%s' "${CY}[upgrade]${C0}"
     elif [[ -e "$DRIVER" || -L "$DRIVER" || -e "$ICD" || -L "$ICD" \
-        || -e "$MANIFEST" || -e "$TRANSACTION_DIR" ]]; then
+        || -e "$GENERATOR" || -L "$GENERATOR" || -e "$MANIFEST" || -e "$TRANSACTION_DIR" ]]; then
         printf '%s' "${CR}[repair]${C0}"
     else
         printf '%s' "${CY}[setup]${C0}"
     fi
-}
-
-games_badge() {
-    local games count
-    if ! games=$(manage_games list 2>/dev/null); then
-        printf '%s' "${CR}[invalid]${C0}"
-        return
-    fi
-    if [[ -z "$games" ]]; then
-        printf '%s' "${CD}[none]${C0}"
-        return
-    fi
-    count=$(printf '%s\n' "$games" | wc -l)
-    count=${count//[[:space:]]/}
-    printf '%s' "${CG}[${count} enabled]${C0}"
 }
 
 run_menu_action() {
@@ -787,20 +953,6 @@ show_menu_status() {
     pause_key
 }
 
-show_menu_games() {
-    local games rc=0
-    echo
-    games=$(manage_games list) || rc=$?
-    if [[ $rc -ne 0 ]]; then
-        printf '%s\n' "${CR}${CB}[bc250-mesh]${C0} game configuration is invalid (exit $rc)"
-    elif [[ -n "$games" ]]; then
-        printf '%s\n' "$games"
-    else
-        echo "No games are enabled."
-    fi
-    pause_key
-}
-
 confirm_menu_action() {
     local prompt="$1" answer
     shift
@@ -817,63 +969,50 @@ cmd_menu() {
     [[ -t 0 && -t 1 ]] \
         || die "The menu needs an interactive terminal. Use '$0 help' for CLI commands."
     while true; do
-        local runtime_state games_state
+        local runtime_state
         runtime_state=$(runtime_badge)
-        games_state=$(games_badge)
         local items=(
-            "Status overview|${runtime_state}|Verify the alternate RADV runtime and show every enabled game."
-            "Build / install alternate RADV|${runtime_state}|Build audited Mesa $DEFAULT_MESA_TAG. May install signed dependencies and take 20-40+ minutes."
-            "Enable one executable|${games_state}|Add a process name to the managed driconf block and print its launch option."
-            "Disable one executable|${games_state}|Remove one process name. Its Steam launch option must also be removed."
-            "List enabled games|${games_state}|Show toolkit-managed executable names and friendly names."
-            "Uninstall mesh runtime|${runtime_state}|Remove the alternate driver, ICD, and managed game entries; preserve build caches."
-            "Full help||Show CLI commands, launch-option format, and upstream source."
+            "Status overview|${runtime_state}|Verify the kernel gate, alternate RADV runtime, and global user activation."
+            "Build / install alternate RADV|${runtime_state}|Build audited Mesa $DEFAULT_MESA_TAG and enable it globally. May take 20-40+ minutes."
+            "Clear legacy game records||After manually removing old Steam launch options, clear their migration records."
+            "Uninstall GFX1013 runtime|${runtime_state}|Remove the alternate driver, ICD, and user environment generator; preserve build caches."
+            "Full help||Show CLI commands, activation behavior, and upstream source."
         )
-        menu_select "BC-250 mesh shaders  ${CD}(per-game RADV opt-in)${C0}" "${items[@]}" \
+        menu_select "BC-250 GFX1013 compute + mesh  ${CD}(global user RADV)${C0}" "${items[@]}" \
             || { echo; break; }
         case $MENU_CHOICE in
             0) show_menu_status ;;
             1) confirm_menu_action \
                 "Build and install the alternate RADV runtime?" setup ;;
-            2) local executable name
-               printf '%s' "${CB}Game executable/process name (for example ff7rebirth_.exe): ${C0}"
-               IFS= read -r executable
-               if [[ -z "$executable" ]]; then log "Cancelled."; pause_key; continue; fi
-               printf '%s' "${CB}Friendly name [${executable}]: ${C0}"
-               IFS= read -r name
-               run_menu_action game enable "$executable" "${name:-$executable}" ;;
-            3) local executable
-               printf '%s' "${CB}Game executable/process name: ${C0}"
-               IFS= read -r executable
-               if [[ -z "$executable" ]]; then log "Cancelled."; pause_key; continue; fi
-               run_menu_action game disable "$executable" ;;
-            4) show_menu_games ;;
-            5) confirm_menu_action \
-                "Remove the alternate driver and all managed game toggles?" uninstall ;;
-            6) echo; cmd_help; pause_key ;;
+            2) confirm_menu_action \
+                "Have you removed the old per-game Steam launch options?" legacy-clear ;;
+            3) confirm_menu_action \
+                "Remove the global alternate RADV runtime?" uninstall ;;
+            4) echo; cmd_help; pause_key ;;
         esac
     done
 }
 
 cmd_help() {
     cat <<EOF
-Usage: $0 [menu|setup|status|status-json|game ACTION|uninstall|purge|help]
+Usage: $0 [menu|setup|status|status-json|legacy-clear|uninstall|purge|help]
 
-  setup                        Fetch the verified upstream patch, build the
-                               audited Mesa commit, and install a separate ICD.
-  game enable EXE [NAME]       Opt one executable into the mesh-shader spoof.
-  game disable EXE             Remove one executable from the managed .drirc block.
-  game list                    List opted-in executables.
-  status                       Verify runtime ownership and list enabled games.
-  status-json                  Print machine-readable runtime and game status.
-  uninstall                    Remove the alternate ICD and managed game entries.
+  setup                        Fetch the verified upstream series, build the
+                               audited Mesa release, install a separate ICD, and
+                               enable it globally for this user session.
+  status                       Verify the kernel gate and global runtime ownership.
+  status-json                  Print machine-readable runtime status.
+  legacy-clear                Clear old per-game records after manually
+                               removing their Steam launch options.
+  uninstall                    Remove the alternate ICD and global activation.
   purge                        After uninstall, remove patch/source/build caches.
 
-The alternate ICD is never registered globally. Each enabled game also needs:
-  MESA_DRICONF_EXECUTABLE_OVERRIDE='EXE' VK_ICD_FILENAMES=$(shell_word "$ICD") %command%
+The environment generator exports VK_DRIVER_FILES and VK_ICD_FILENAMES only
+when the patched AMDGPU module is active. Sign out and back in after setup or
+uninstall so the complete graphical session inherits the changed environment.
 
 Upstream (pinned to $UPSTREAM_COMMIT):
-  $UPSTREAM_REPO/tree/Steam-OS
+  $UPSTREAM_REPO
 EOF
 }
 
@@ -883,6 +1022,7 @@ case "${1:-menu}" in
     status) (($# == 1)) || die "Usage: $0 status"; cmd_status ;;
     status-json) (($# == 1)) || die "Usage: $0 status-json"; cmd_status_json ;;
     game) shift; cmd_game "$@" ;;
+    legacy-clear) (($# == 1)) || die "Usage: $0 legacy-clear"; cmd_legacy_clear ;;
     uninstall) (($# == 1)) || die "Usage: $0 uninstall"; cmd_uninstall ;;
     purge) (($# == 1)) || die "Usage: $0 purge"; cmd_purge ;;
     help|-h|--help) (($# == 1)) || die "Usage: $0 help"; cmd_help ;;

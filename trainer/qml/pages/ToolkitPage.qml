@@ -57,7 +57,7 @@ ColumnLayout {
         ListElement { componentId: "persistence"; categoryName: "SYSTEM"; title: "UPDATE PERSISTENCE"; description: "Retain toolkit integration across SteamOS updates."; primary: "persistence-install"; repair: ""; remove: "persistence-remove" }
         ListElement { componentId: "aic"; categoryName: "DRIVERS"; title: "AIC8800 WIRELESS"; description: "Build matching WiFi and Bluetooth modules."; primary: "aic-install"; repair: ""; remove: "aic-remove" }
         ListElement { componentId: "audio"; categoryName: "DRIVERS"; title: "PATCHED AMDGPU"; description: "Display-clock audio and metrics fixes."; primary: "audio-build"; repair: ""; remove: "audio-remove" }
-        ListElement { componentId: "mesh"; categoryName: "DRIVERS"; title: "MESH-SHADER RADV"; description: "Alternate per-game RADV build."; primary: "mesh-setup"; repair: ""; remove: "mesh-remove" }
+        ListElement { componentId: "mesh"; categoryName: "DRIVERS"; title: "GFX1013 RADV"; description: "Global compute and mesh driver."; primary: "mesh-setup"; repair: ""; remove: "mesh-remove" }
         ListElement { componentId: "decky"; categoryName: "INTERFACES"; title: "DECKY PLUGIN"; description: "Gaming-mode BC-250 controls."; primary: "decky-install"; repair: ""; remove: "decky-remove" }
         ListElement { componentId: "desktop"; categoryName: "INTERFACES"; title: "PLASMA CONTROL"; description: "Desktop applet and shared system service."; primary: "desktop-install"; repair: ""; remove: "desktop-remove" }
     }

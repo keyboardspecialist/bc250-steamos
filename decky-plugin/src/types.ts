@@ -132,6 +132,9 @@ export interface MeshStatus {
   mesaVersion: string | null;
   icdPath: string;
   configValid: boolean;
+  kernelReady: boolean;
+  globalEnabled: boolean;
+  restartRequired: boolean;
   error: string | null;
   games: MeshGame[];
 }

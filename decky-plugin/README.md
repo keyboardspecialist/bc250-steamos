@@ -13,7 +13,7 @@ CEC quick controls. Select
 - GPU frequency, load target, and ramp behavior
 - CPU overclock detection, apply, boot replay, and stock restore controls
 - HDMI-CEC controls
-- Per-game mesh-shader opt-in synchronized with installed Steam games
+- Global GFX1013 compute/mesh RADV status
 
 GPU voltage editing and saving WGP routing for boot remain in the toolkit CLI.
 
@@ -117,8 +117,8 @@ copied into the Decky artifact at build time; the installed plugin never imports
 or calls the Plasma desktop utility. Hardware mutations are serialized and
 validated. Privileged GPU changes use fixed D-Bus, configuration interfaces, or
 the trusted CU manager. CEC commands invoke a toolkit script after dropping to
-the logged-in Deck user. Mesh status and AppID-based game toggles use the same
-user boundary; Steam launch options are managed by Steam's frontend API and
-custom options are never overwritten.
+the logged-in Deck user. GFX1013 runtime status uses the same user boundary;
+global activation is managed by the toolkit's systemd user-environment
+generator.
 
 `tomli` is vendored under `py_modules/` for the Python 3.8 runtime shipped by older SteamOS releases.

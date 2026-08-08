@@ -18,5 +18,6 @@ deps/
 amdgpu-*.ko
 amdgpu-*.ko.zst
 summary.txt
+amdgpu.gfx1013.attestation
 
 # The one tracked artifact is amdgpu.ko.zst (kept, not matched above)

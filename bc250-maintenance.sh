@@ -24,6 +24,7 @@ COMPONENTS=(trainer desktop decky cec power ram compute mesh audio aic)
 UNINSTALL_ORDER=(trainer desktop decky cec power ram compute mesh audio aic)
 MESH_STATE_DIR="${BC250_MESH_STATE_DIR:-$HOME/.local/share/bc250-mesh-shader}"
 MESH_LOCK_FILE="${BC250_MESH_LOCK_FILE:-$HOME/.cache/bc250-mesh-shader.lock}"
+MESH_GENERATOR="${BC250_GFX1013_GENERATOR:-/usr/lib/systemd/user-environment-generators/60-bc250-gfx1013}"
 
 C0=$'\033[0m'; CB=$'\033[1m'; CD=$'\033[2m'; CI=$'\033[7m'
 CG=$'\033[32m'; CY=$'\033[33m'; CR=$'\033[31m'; CC=$'\033[36m'
@@ -46,7 +47,7 @@ component_label() {
         power) echo "Power management" ;;
         ram) echo "RAM / VRAM split" ;;
         compute) echo "Compute-unit manager" ;;
-        mesh) echo "Per-game mesh shaders" ;;
+        mesh) echo "Global GFX1013 RADV" ;;
         audio) echo "AMDGPU fixes" ;;
         aic) echo "AIC8800 WiFi / Bluetooth" ;;
         storage) echo "Persistent infrastructure" ;;
@@ -144,6 +145,7 @@ component_has_artifacts() {
             [[ -e "$MESH_STATE_DIR/install.conf" \
                 || -e "$MESH_STATE_DIR/install-transaction" \
                 || -e "$HOME/radeon_driconf_icd.x86_64.json" \
+                || -e "$MESH_GENERATOR" || -L "$MESH_GENERATOR" \
                 || -e /usr/lib/libvulkan_radeon_driconf.so ]] \
                 || grep -qF '<!-- BEGIN BC250 MESH SHADER MANAGED -->' "$HOME/.drirc" 2>/dev/null
             ;;
@@ -151,6 +153,7 @@ component_has_artifacts() {
             compgen -G '/usr/lib/modules/*/updates/amdgpu.ko.zst' >/dev/null \
                 || compgen -G '/usr/lib/modules/*/updates/.bc250-audio-fix' >/dev/null \
                 || compgen -G '/usr/lib/modules/*/updates/.bc250-metrics-fix' >/dev/null \
+                || compgen -G '/usr/lib/modules/*/updates/.bc250-gfx1013-fix' >/dev/null \
                 || [[ -e /usr/lib/depmod.d/10-bc250-audio-fix.conf \
                     || -e /usr/lib/depmod.d/10-updates.conf ]]
             ;;
@@ -251,7 +254,7 @@ plan_component() {
         power) echo "  Restore stock CPU state, disable tuning services, and remove the ACPI override on next boot." ;;
         ram) echo "  Remove the memory utility and TTM boot limit; preserve the profile. The CMOS split is unchanged." ;;
         compute) echo "  Restore stock CU dispatch when possible and remove boot integration; preserve the WGP profile and UMR." ;;
-        mesh) echo "  Remove the alternate RADV ICD and toolkit-managed per-game toggles; preserve build caches." ;;
+        mesh) echo "  Remove the alternate RADV ICD and global user environment generator; preserve build caches." ;;
         audio) echo "  Restore stock AMDGPU modules for every patched kernel; preserve source and build caches." ;;
         aic) echo "  Disable module repair, unload drivers when possible, and remove installed modules, firmware, and device rules." ;;
         storage) echo "  Remove the bind mount and recovery infrastructure; preserve the backing directory." ;;

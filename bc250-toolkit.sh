@@ -171,7 +171,7 @@ show_status() {
     status_section "CEC" "$CEC_SH" status || failed=1
     status_section "SteamOS update persistence" "$PERSISTENCE_SH" status \
         || failed=1
-    printf '\n%s\n' "${CB}${CC}-- Per-game mesh shaders --${C0}"
+    printf '\n%s\n' "${CB}${CC}-- Global GFX1013 compute + mesh --${C0}"
     if [[ -f "$MESH_SHADER_SH" && ! -L "$MESH_SHADER_SH" ]]; then
         bash "$MESH_SHADER_SH" status || mesh_rc=$?
         [[ $mesh_rc -le 1 ]] || failed=1
@@ -313,7 +313,7 @@ Commands:
   persistence            Open the SteamOS Update Persistence menu
   wifi                   Confirm and run the AIC8800 installer
   audio                  Confirm and run the AMDGPU clock/metrics builder
-  mesh                   Open per-game mesh-shader setup and toggles
+  mesh                   Open global GFX1013 compute/mesh setup
   decky                  Confirm and run the Decky plugin installer
   desktop                Confirm and run the Plasma desktop-control installer
   trainer                Confirm and run the BC250 Trainer installer

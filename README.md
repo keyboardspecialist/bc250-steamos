@@ -79,8 +79,8 @@ sudo ./bc250-power.sh status
 | [`decky-plugin/`](#big-picture-plugin) | Quick Access interface for daily controls |
 | [`desktop-control/`](#plasma-desktop-control) | Plasma system-tray and windowed controls |
 | [`trainer/`](#bc250-trainer) | Standalone native Qt control application |
-| [`bc250-audio-fix/`](#amdgpu-driver) | DisplayPort clock and GPU telemetry corrections |
-| [`bc250-mesh-shader.sh`](#mesh-shaders-optional) | Separate RADV ICD with per-game mesh-shader opt-in |
+| [`bc250-audio-fix/`](#amdgpu-driver) | DisplayPort clock, GPU telemetry, and GFX1013 compute repair |
+| [`bc250-mesh-shader.sh`](#compute-queues-and-mesh-shaders-optional) | Separate GFX1013 RADV ICD enabled globally for the user session |
 | [`aic8800/`](#wifi-and-bluetooth) | AIC8800D80 USB WiFi and Bluetooth driver |
 
 The unified launcher and individual component scripts remain independently usable. Use the child scripts directly for command-line automation.
@@ -101,7 +101,7 @@ Each child requests administrator access only when needed.
 | `./bc250-toolkit.sh action OPERATION_ID` | Run one fixed dashboard action without opening a TUI |
 | `./bc250-toolkit.sh power` | Open a component menu directly |
 | `./bc250-toolkit.sh ram` | Open RAM / VRAM split settings |
-| `./bc250-toolkit.sh mesh` | Open per-game mesh-shader setup and toggles |
+| `./bc250-toolkit.sh mesh` | Open global GFX1013 compute/mesh setup |
 | `./bc250-toolkit.sh trainer` | Install or upgrade BC250 Trainer |
 | `./bc250-toolkit.sh manage` | Review and remove installed components |
 | `./bc250-toolkit.sh help` | List launcher commands and components |
@@ -425,7 +425,8 @@ cd bc250-audio-fix
 
 The patches restore the DisplayPort pixel/audio reference clock, preserve the
 Cyan Skillfish firmware metrics layout, query GFX frequency directly from the
-SMU, and add GPU utilization reporting.
+SMU, add GPU utilization reporting, and repair the GFX1013 compute-queue
+lifecycle.
 Builds are matched to the running kernel and checked for vermagic and ABI compatibility
 before installation. If Valve omitted the matching headers, the toolkit can
 generate the required symbols with a complete exact-source kernel build.
@@ -438,12 +439,14 @@ sudo ./rollback.sh
 
 See [`bc250-audio-fix/README.md`](bc250-audio-fix/README.md) for kernel support and build controls.
 
-## Mesh Shaders (Optional)
+## Compute Queues and Mesh Shaders (Optional)
 
-This is separate from the patched `amdgpu` kernel module. It builds an
-alternate Mesa/RADV Vulkan ICD from
-[`lonewolf0622/BC-250-Mesh-Shader-Patch`](https://github.com/lonewolf0622/BC-250-Mesh-Shader-Patch---driconf-Edition-opt-in-per-application-/tree/Steam-OS)
-and leaves the stock Vulkan driver as the system default.
+This builds the Mesa/RADV half of
+[`DryhoppedIPA/bc250-gfx1013-fix`](https://github.com/DryhoppedIPA/bc250-gfx1013-fix)
+as a separate Vulkan ICD and leaves the stock Vulkan driver as the system
+default until setup enables the alternate driver globally for the logged-in
+user. The matching `bc250-audio-fix` kernel module must be installed and active
+first.
 
 Open the menu as the logged-in user:
 
@@ -455,51 +458,50 @@ Or use the CLI:
 
 ```bash
 ./bc250-mesh-shader.sh setup
-./bc250-mesh-shader.sh game enable ff7rebirth_.exe "FF7 Rebirth"
 ./bc250-mesh-shader.sh status
 ```
 
-The game also needs the launch option printed by the enable command:
+Setup installs a systemd user-environment generator that exports
+`VK_DRIVER_FILES` and `VK_ICD_FILENAMES` for the complete user session. Sign
+out and back in after setup so the graphical session inherits the alternate
+driver. The generator exports nothing unless the installed module hash and the
+loaded module's read-only GFX1013 repair attestation both validate.
 
-```text
-MESA_DRICONF_EXECUTABLE_OVERRIDE='ff7rebirth_.exe' VK_ICD_FILENAMES='/home/deck/radeon_driconf_icd.x86_64.json' %command%
-```
+Do not use this ICD with the stock kernel module. The alternate driver exposes
+dedicated compute queues that require the kernel lifecycle repair, and upstream
+reports that the mismatched combination can hang the GPU.
 
-Replace `/home/deck` if the logged-in user's home differs. Two independent
-conditions keep this opt-in: only the named executable receives the driconf
-capability spoof, and only a game with that launch option loads the alternate
-ICD. The toolkit never creates a global Vulkan environment override.
-
-The Decky plugin can synchronize installed Steam games and uses stable
-`bc250-steam-APPID` aliases for them. This avoids depending on a Proton game's
-final executable name. Existing executable-based entries remain supported.
-
-Disable or remove it:
+Remove it:
 
 ```bash
-./bc250-mesh-shader.sh game disable ff7rebirth_.exe
 ./bc250-mesh-shader.sh uninstall
 ```
 
-Disabling a game removes its managed driconf entry; remove its Steam launch
-option as well. Uninstall verifies recorded hashes before removing the
-alternate driver and preserves unrelated `~/.drirc` content.
+Uninstall verifies recorded hashes before removing the alternate driver and
+environment generator. Sign out and back in afterward to clear
+the inherited Vulkan environment. Legacy toolkit-managed `~/.drirc` entries
+are retained during migration so their old Steam launch options can be found.
+Remove those launch options, run `./bc250-mesh-shader.sh legacy-clear`, and then
+uninstall; unrelated `~/.drirc` content is preserved.
 
-The upstream SteamOS branch is pinned to commit
-[`b66203e`](https://github.com/lonewolf0622/BC-250-Mesh-Shader-Patch---driconf-Edition-opt-in-per-application-/commit/b66203e012594204e5e3049856b28a2681112985).
-Because that repository currently declares no license, its patch is not
-redistributed here. Explicit setup downloads that patch from the pinned commit
-and verifies its SHA-256 hash. Toolkit-owned code then fetches audited Mesa
-`mesa-26.1.4` commit `6dfbc555b4128ee51139c5f78c5aba2594c9701b`, requires
-zero-fuzz patch application, and uses only signed SteamOS packages for build
-prerequisites. It restores the previous alternate ICD after build failure,
-restores SteamOS read-only-root state, records installed hashes, and confines
-`.drirc` edits to a marked block.
+The upstream alpha build is x86-64 only. Globally overriding RADV can prevent
+32-bit Vulkan applications from finding a compatible ICD; i686 support remains
+an upstream follow-up. Do not enable the global runtime if you rely on 32-bit
+Vulkan titles.
 
-Mesh shaders are experimental on GFX1013. Async compute remains unavailable,
-and ray tracing and VRS are untested. A Mesa update can require a rebuild; if
-the pinned patch no longer applies exactly, setup aborts instead of installing
-a partial build.
+The upstream series is pinned to commit
+[`d3e6dc0`](https://github.com/DryhoppedIPA/bc250-gfx1013-fix/commit/d3e6dc062c34d2523db0abe5741d1f5b0dea00d9),
+tagged `v0.2.0-alpha`. DryhoppedIPA developed the scoped V33 kernel repair and
+the narrow GFX1013 compute, mesh, and task implementation through direct
+hardware testing. Setup downloads all three Mesa patches and the pristine
+`mesa-26.2.0-rc3` archive, verifies their SHA-256 hashes, and requires zero-fuzz
+patch application. The Mesa patches retain their upstream MIT license; the
+kernel patches are `GPL-2.0-only`.
+
+This remains alpha hardware research tested upstream on one board, not a full
+Vulkan conformance result. The toolkit restores the previous alternate ICD
+after build failure, restores SteamOS read-only-root state, records installed
+hashes, and transactionally restores the prior global environment generator.
 
 ## AIC8800 Class WiFi and Bluetooth Driver
 
@@ -519,8 +521,8 @@ The installer snapshots driver source, firmware, and verified per-kernel modules
 | Power management | The keep list retains tuning and GRUB defaults; the ACPI service validates and restores the `/boot` override and EFI GRUB config |
 | RAM / VRAM split | CMOS persists independently; the keep list retains the TTM GRUB drop-in |
 | CEC | Home configuration and allowlisted system integration carry forward |
-| Display clock module | Run `bc250-audio-fix/patch-driver.sh` after each kernel update |
-| Mesh-shader RADV ICD | Per-game configuration remains in `/home`; rerun `bc250-mesh-shader.sh setup` after a Mesa update if the alternate ICD stops loading |
+| Patched AMDGPU module | Run `bc250-audio-fix/patch-driver.sh` after each kernel update |
+| GFX1013 RADV ICD | Rerun `bc250-mesh-shader.sh setup` after a SteamOS update to restore the root-owned driver and environment generator, then sign out and back in |
 | AIC8800 modules | The boot helper reuses staged modules or published headers; rerun setup if it requests interactive source preparation |
 
 Current installers preserve their configuration across normal atomic updates.
@@ -600,7 +602,7 @@ Run the normal component setup commands afterward to regenerate services for the
 | BC-250 SMU OC | [Repository](https://github.com/bc250-collective/bc250_smu_oc) | `bc250-power.sh` |
 | BC-250 CPU Core Unlock | [Linux helper](https://github.com/rw-r-r-0644/bc250-core-unlock) · [EFI source](https://github.com/Hexxeh/bc250-efi-core-unlock) · [EFI headers](https://github.com/yoppeh/efi) | Original SMU method and the optional pre-boot implementation adapted by `bc250-power.sh` |
 | BC-250 Memory Config | [Repository](https://github.com/fanoush/bc250_memcfg) · [VRAM guide](https://elektricm.github.io/amd-bc250-docs/bios/vram/) | CMOS UMA utility fetched by `bc250-ram-split.sh` |
-| BC-250 Mesh Shader Patch | [SteamOS branch](https://github.com/lonewolf0622/BC-250-Mesh-Shader-Patch---driconf-Edition-opt-in-per-application-/tree/Steam-OS) | Pinned alternate RADV build fetched by `bc250-mesh-shader.sh` |
+| BC-250 GFX1013 Fix | [Repository](https://github.com/DryhoppedIPA/bc250-gfx1013-fix) · [integrated commit](https://github.com/DryhoppedIPA/bc250-gfx1013-fix/commit/d3e6dc062c34d2523db0abe5741d1f5b0dea00d9) | Kernel compute lifecycle repair and pinned alternate RADV build by DryhoppedIPA |
 | Valve kernel mirror | [Repository](https://github.com/Evlav/linux-integration) | `bc250-audio-fix/fetch-sources.sh` |
 | SteamOS package mirror | [Package index](https://steamdeck-packages.steamos.cloud/archlinux-mirror/) | Audio-driver and AIC8800 build scripts; stable channels are discovered automatically |
 | SteamOS atomic-update keep list | [Defaults](https://github.com/evlaV/steamos-customizations/blob/master/atomic-update/rauc/atomic-update-keep.conf.in) · [Drop-in example](https://github.com/evlaV/steamos-customizations/blob/master/atomic-update/rauc/example-additional-keep-list.conf.in) | `bc250-update-persistence.sh` |
