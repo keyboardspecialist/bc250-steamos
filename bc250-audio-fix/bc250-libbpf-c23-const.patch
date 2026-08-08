@@ -1,0 +1,46 @@
+From fda2bfcb7af08d6c99ce59f6b9546c95423cfb40 Mon Sep 17 00:00:00 2001
+From: Mikhail Gavrilov <mikhail.v.gavrilov@gmail.com>
+Date: Sat, 6 Dec 2025 14:28:25 +0500
+Subject: [PATCH] libbpf: Fix -Wdiscarded-qualifiers under C23
+
+Backport the upstream libbpf fix to the in-kernel copy. GCC 15 with newer
+string headers preserves the const qualifier of strstr() and strchr()
+results, and the host-tool build treats the resulting warnings as errors.
+
+Upstream: fda2bfcb7af08d6c99ce59f6b9546c95423cfb40
+Signed-off-by: Mikhail Gavrilov <mikhail.v.gavrilov@gmail.com>
+---
+ tools/lib/bpf/libbpf.c | 7 ++++---
+ 1 file changed, 4 insertions(+), 3 deletions(-)
+
+diff --git a/tools/lib/bpf/libbpf.c b/tools/lib/bpf/libbpf.c
+--- a/tools/lib/bpf/libbpf.c
++++ b/tools/lib/bpf/libbpf.c
+@@ -8192,7 +8192,7 @@ static int kallsyms_cb(unsigned long long sym_addr, char sym_type,
+ 	struct bpf_object *obj = ctx;
+ 	const struct btf_type *t;
+ 	struct extern_desc *ext;
+-	char *res;
++	const char *res;
+
+ 	res = strstr(sym_name, ".llvm.");
+ 	if (sym_type == 'd' && res)
+@@ -11497,7 +11497,8 @@ static int avail_kallsyms_cb(unsigned long long sym_addr, char sym_type,
+ 		 *
+ 		 *   [0] fb6a421fb615 ("kallsyms: Match symbols exactly with CONFIG_LTO_CLANG")
+ 		 */
+-		char sym_trim[256], *psym_trim = sym_trim, *sym_sfx;
++		char sym_trim[256], *psym_trim = sym_trim;
++		const char *sym_sfx;
+
+ 		if (!(sym_sfx = strstr(sym_name, ".llvm.")))
+ 			return 0;
+@@ -12082,7 +12083,7 @@ static int resolve_full_path(const char *file, char *result, size_t result_sz)
+ 		if (!search_paths[i])
+ 			continue;
+ 		for (s = search_paths[i]; s != NULL; s = strchr(s, ':')) {
+-			char *next_path;
++			const char *next_path;
+ 			int seg_len;
+
+ 			if (s[0] == ':')

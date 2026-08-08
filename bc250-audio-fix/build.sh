@@ -96,6 +96,18 @@ fi
 
 step "configure from the running kernel (runbook step 4)"
 cd "$TREE"
+
+step "apply host-tool compatibility patches"
+LIBBPF_PATCH=$HERE/bc250-libbpf-c23-const.patch
+if patch -p1 -R --dry-run -s -f < "$LIBBPF_PATCH" >/dev/null 2>&1; then
+    echo "libbpf C23 const-correctness patch already applied"
+elif patch -p1 --dry-run -s -f < "$LIBBPF_PATCH" >/dev/null 2>&1; then
+    patch -p1 -s < "$LIBBPF_PATCH"
+    echo "libbpf C23 const-correctness patch applied"
+else
+    die "libbpf C23 const-correctness patch neither applies nor reverses cleanly — tree has drifted; inspect by hand"
+fi
+
 zcat /proc/config.gz > .config.running
 cp .config.running .config
 make olddefconfig
