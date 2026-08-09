@@ -2705,7 +2705,7 @@ core_unlock_enable() {
     log "Eight-core unlock enabled at boot (before CPU OC and the GPU governor)."
     log "Persistence enabled only after verifying this boot already has eight cores."
     if [[ "$(core_unlock_metrics_state)" != compatible ]]; then
-        warn "Install the toolkit AMDGPU fixes to correct eight-core GPU metrics: ./bc250-toolkit.sh audio"
+        warn "Install the toolkit AMDGPU fixes to correct eight-core GPU metrics: ./bc250-toolkit.sh amdgpu"
     fi
     warn "After later cold boots, the service automatically requests one guarded warm reboot."
 }
@@ -2735,7 +2735,7 @@ core_unlock_status() {
     echo "  AMDGPU telemetry patch: $metrics_state"
     if [[ "$cores" == 8 && "$metrics_state" != compatible ]]; then
         warn "AMDGPU GPU-utilization correction is not installed for this kernel."
-        warn "Run './bc250-toolkit.sh audio' as the logged-in user, then reboot."
+        warn "Run './bc250-toolkit.sh amdgpu' as the logged-in user, then reboot."
     fi
 }
 
@@ -2805,8 +2805,9 @@ core_unlock_uninstall() {
 cmd_cpu_unlock() {
     local sub="${1:-status}"
     shift || true
-    (($# == 0)) || die "Usage: $0 cpu-unlock {topology|status|test|enable|efi-enable|off|uninstall}"
+    (($# == 0)) || die "Usage: $0 cpu-unlock {menu|topology|status|test|enable|efi-enable|off|uninstall}"
     case "$sub" in
+        menu)      menu_cpu_unlock ;;
         topology)  core_unlock_topology ;;
         status)    core_unlock_status ;;
         test)      core_unlock_test ;;
@@ -2814,7 +2815,7 @@ cmd_cpu_unlock() {
         efi-enable) core_unlock_efi_enable ;;
         off)       core_unlock_off ;;
         uninstall) core_unlock_uninstall ;;
-        *) die "Usage: $0 cpu-unlock {topology|status|test|enable|efi-enable|off|uninstall}" ;;
+        *) die "Usage: $0 cpu-unlock {menu|topology|status|test|enable|efi-enable|off|uninstall}" ;;
     esac
 }
 
@@ -3208,6 +3209,13 @@ menu_cpu_oc() {
 }
 
 menu_cpu_unlock() {
+    [[ -t 0 && -t 1 ]] || die "The menu needs an interactive terminal. See '$0 help' for CLI commands."
+    if [[ $EUID -ne 0 ]]; then
+        warn "Not running as root -- setup actions will fail."
+        ask "Restart with sudo? [Y/n]" "Y"
+        if [[ "$REPLY" =~ ^[Yy] ]]; then exec sudo "$0" cpu-unlock menu; fi
+        echo
+    fi
     while true; do
         local items=(
             "Show core-unlock status||Report service state, physical cores, and reboot-loop guard."
@@ -3249,7 +3257,6 @@ cmd_menu() {
             "GPU load targets|$(badge_load_target)|When to clock up/down. Fixes light games stuck at idle clocks."
             "GPU ramp behavior|$(badge_ramp)|How fast + how granular clocks move. One number, rest derived."
             "CPU overclock / undervolt|$(badge_oc)|bc250_smu_oc: ~200 mV undervolt even at stock clocks."
-            "CPU core unlock||Linux replay recommended; experimental EFI mode removes the extra Linux boot."
             "Reinstall D-Bus helpers||Fixes 'name is not activatable' errors from freq control."
             "Full help||The complete manual for every CLI command."
         )
@@ -3263,9 +3270,8 @@ cmd_menu() {
             5) menu_load_target ;;
             6) menu_ramp ;;
             7) menu_cpu_oc ;;
-            8) menu_cpu_unlock ;;
-            9) run_action cmd_helpers ;;
-            10) cmd_help; pause_key ;;
+            8) run_action cmd_helpers ;;
+            9) cmd_help; pause_key ;;
         esac
     done
 }
@@ -3350,6 +3356,7 @@ CPU OVERCLOCK / UNDERVOLT (bc250-collective/bc250_smu_oc, CPU only)
                     detect/apply/enable fetches automatically (network).
 
 CPU CORE UNLOCK (experimental; Linux/systemd mode is recommended)
+  cpu-unlock menu      Open the dedicated guided CPU core-unlock menu.
   cpu-unlock topology  Show active and unavailable CPU cores grouped by CCX.
   cpu-unlock test      Write the fixed 0xff mask ONCE without installing boot
                        persistence. Manually reboot, confirm 8c/16t, then

@@ -85,7 +85,7 @@ install_audio_fix() {
     require_normal_user
     require_script "$AUDIO_FIX_SH"
     confirm_action \
-        "Build and install the matching AMDGPU display clock and metrics fixes?" \
+        "Build and install the matching AMDGPU kernel fixes?" \
         bash "$AUDIO_FIX_SH"
 }
 
@@ -164,22 +164,34 @@ status_section() {
 
 show_status() {
     require_normal_user
-    local failed=0 mesh_rc=0
+    local failed=0 amdgpu_rc=0 amdgpu_status="" radv_rc=0
     status_section "Persistent storage" "$STORAGE_SH" status || failed=1
     status_section "Power management" "$POWER_SH" status || failed=1
     status_section "RAM / VRAM split" "$RAM_SPLIT_SH" status || failed=1
     status_section "CEC" "$CEC_SH" status || failed=1
     status_section "SteamOS update persistence" "$PERSISTENCE_SH" status \
         || failed=1
-    printf '\n%s\n' "${CB}${CC}-- Global GFX1013 compute + mesh --${C0}"
+    printf '\n%s\n' "${CB}${CC}-- AMDGPU kernel fixes --${C0}"
+    if [[ -f "$AUDIO_FIX_SH" && ! -L "$AUDIO_FIX_SH" ]]; then
+        amdgpu_status=$(bash "$AUDIO_FIX_SH" status) || amdgpu_rc=$?
+        printf '%s\n' "$amdgpu_status"
+        if [[ $amdgpu_rc -ne 0 ]] \
+            && ! grep -qxF '[bc250-amdgpu] state: not-installed' <<< "$amdgpu_status"; then
+            failed=1
+        fi
+    else
+        log "Component is missing or unsafe: $AUDIO_FIX_SH"
+        failed=1
+    fi
+    printf '\n%s\n' "${CB}${CC}-- Mesa / RADV performance patch --${C0}"
     if [[ -f "$MESH_SHADER_SH" && ! -L "$MESH_SHADER_SH" ]]; then
-        bash "$MESH_SHADER_SH" status || mesh_rc=$?
-        [[ $mesh_rc -le 1 ]] || failed=1
+        bash "$MESH_SHADER_SH" status || radv_rc=$?
+        [[ $radv_rc -le 1 ]] || failed=1
     else
         log "Component is missing or unsafe: $MESH_SHADER_SH"
         failed=1
     fi
-    printf '\n%s\n' "${CB}${CC}-- Compute units --${C0}"
+    printf '\n%s\n' "${CB}${CC}-- GPU compute units --${C0}"
     if [[ -f "$CU_STATUS_SH" && ! -L "$CU_STATUS_SH" ]]; then
         printf '%s\n' "Run 'sudo bash $CU_STATUS_SH' for register status."
     else
@@ -253,49 +265,107 @@ run_menu_action() {
     pause_key
 }
 
+cmd_drivers_menu() {
+    require_terminal
+    require_normal_user
+    while true; do
+        local items=(
+            "AMDGPU kernel fixes|${CY}[build]${C0}|Install first: display/audio clocks, telemetry, and GFX1013 compute queues. Reboot afterward."
+            "Mesa / RADV performance patch (optional)|${CG}[menu]${C0}|Highly recommended for performance. Requires the active AMDGPU fixes and applies globally to this user."
+            "AIC8800 WiFi / Bluetooth|${CY}[installer]${C0}|Install only when the system uses the AIC8800 wireless adapter."
+        )
+        menu_select "BC-250 drivers" "${items[@]}" || { echo; break; }
+        case $MENU_CHOICE in
+            0) run_menu_action amdgpu ;;
+            1) run_menu_child radv ;;
+            2) run_menu_action wifi ;;
+        esac
+    done
+}
+
+cmd_unlocks_menu() {
+    require_terminal
+    require_normal_user
+    while true; do
+        local items=(
+            "GPU compute-unit unlock|${CG}[menu]${C0}|Configure GPU CU/WGP routing from the factory 24 CU toward the board's stable maximum."
+            "CPU core unlock|${CG}[menu]${C0}|Test and configure the experimental CPU topology change from 6c/12t to 8c/16t."
+        )
+        menu_select "BC-250 hardware unlocks" "${items[@]}" || { echo; break; }
+        case $MENU_CHOICE in
+            0) run_menu_child compute ;;
+            1) run_menu_child cpu-unlock ;;
+        esac
+    done
+}
+
+cmd_storage_updates_menu() {
+    require_terminal
+    require_normal_user
+    while true; do
+        local items=(
+            "Persistent storage & boot recovery|${CG}[menu]${C0}|Install, inspect, or repair the toolkit's persistent privileged storage."
+            "SteamOS update persistence|${CG}[menu]${C0}|Protect and recover supported component configuration across SteamOS updates."
+        )
+        menu_select "BC-250 storage & SteamOS updates" "${items[@]}" || { echo; break; }
+        case $MENU_CHOICE in
+            0) run_menu_child storage ;;
+            1) run_menu_child persistence ;;
+        esac
+    done
+}
+
+cmd_interfaces_menu() {
+    require_terminal
+    require_normal_user
+    while true; do
+        local items=(
+            "Decky plugin|${CY}[installer]${C0}|Install the BC-250 controls for Gaming Mode and Quick Access."
+            "Plasma desktop control|${CY}[installer]${C0}|Install the system service and Plasma system-tray control."
+            "BC250 Trainer|${CY}[installer]${C0}|Install the standalone native Qt control application."
+        )
+        menu_select "BC-250 control interfaces" "${items[@]}" || { echo; break; }
+        case $MENU_CHOICE in
+            0) run_menu_action decky ;;
+            1) run_menu_action desktop ;;
+            2) run_menu_action trainer ;;
+        esac
+    done
+}
+
 cmd_menu() {
     require_terminal
     require_normal_user
     while true; do
         local items=(
-            "System status|${CD}[read only]${C0}|Show storage, power, CEC, update, and CU status paths."
+            "System status|${CD}[read only]${C0}|Show system integration, graphics-driver, and GPU compute-unit status."
+            "Drivers|${CG}[menu]${C0}|Install the related AMDGPU and Mesa / RADV graphics fixes or AIC8800 wireless support."
+            "Hardware unlocks|${CG}[menu]${C0}|Configure GPU compute units or CPU cores without confusing the two workflows."
             "Power management|${CG}[menu]${C0}|Configure power states, GPU tuning, and CPU overclocking."
             "RAM / VRAM split|${CG}[menu]${C0}|Configure the CMOS UMA minimum and Linux dynamic TTM VRAM limit."
-            "Compute units|${CG}[menu]${C0}|Prepare UMR, configure CU routing, and manage persistence."
             "CEC / HDMI control|${CG}[menu]${C0}|Configure and control TVs, receivers, and active source."
-            "Persistent storage|${CG}[menu]${C0}|Install, inspect, or repair privileged persistent storage."
-            "SteamOS update persistence|${CG}[menu]${C0}|Protect or recover component configuration across updates."
-            "WiFi and Bluetooth|${CY}[installer]${C0}|Build and install the AIC8800 kernel modules and firmware."
-            "Patch AMDGPU Driver|${CY}[build]${C0}|Build and install the matching patched AMDGPU module."
-            "Mesh shaders (per game)|${CY}[optional]${C0}|Build a separate RADV ICD and opt individual games into it."
-            "Decky plugin|${CY}[installer]${C0}|Build and install the BC-250 Quick Access plugin."
-            "Plasma desktop control|${CY}[installer]${C0}|Install the system service and Plasma system-tray control."
-            "BC250 Trainer|${CY}[installer]${C0}|Install the standalone native Qt control application."
-            "Manage installed components|${CR}[maintenance]${C0}|Review uninstall plans, remove components, or purge preserved data."
+            "Storage & SteamOS updates|${CG}[menu]${C0}|Manage persistent storage, boot recovery, and update protection."
+            "Control interfaces|${CG}[menu]${C0}|Install Decky, Plasma, or the standalone BC250 Trainer."
+            "Manage installed components|${CG}[menu]${C0}|Review uninstall plans, remove components, or purge preserved data."
         )
         menu_select "BC-250 SteamOS toolkit" "${items[@]}" || { echo; break; }
         case $MENU_CHOICE in
             0) run_menu_action status ;;
-            1) run_menu_child power ;;
-            2) run_menu_child ram ;;
-            3) run_menu_child compute ;;
-            4) run_menu_child cec ;;
-            5) run_menu_child storage ;;
-            6) run_menu_child persistence ;;
-            7) run_menu_action wifi ;;
-            8) run_menu_action audio ;;
-            9) run_menu_child mesh ;;
-            10) run_menu_action decky ;;
-            11) run_menu_action desktop ;;
-            12) run_menu_action trainer ;;
-            13) run_menu_child manage ;;
+            1) cmd_drivers_menu ;;
+            2) cmd_unlocks_menu ;;
+            3) run_menu_child power ;;
+            4) run_menu_child ram ;;
+            5) run_menu_child cec ;;
+            6) cmd_storage_updates_menu ;;
+            7) cmd_interfaces_menu ;;
+            8) run_menu_child manage ;;
         esac
     done
 }
 
 cmd_help() {
     cat << EOF
-Usage: $0 [menu|status|inventory-json|action OPERATION_ID|power|ram|compute|cec|storage|persistence|wifi|audio|mesh|decky|desktop|trainer|manage|help]
+Usage: $0 [menu|status|inventory-json|action OPERATION_ID|drivers|unlocks|storage-updates|interfaces|power|ram|compute|cpu-unlock|cec|storage|persistence|wifi|amdgpu|radv|decky|desktop|trainer|manage|help]
 
 Run without arguments in a terminal to open the unified toolkit menu.
 Run the toolkit as the logged-in Deck user, not with sudo; child tools request
@@ -305,19 +375,26 @@ Commands:
   status                 Show a read-only component status overview
   inventory-json         Emit versioned JSON component inventory for automation
   action OPERATION_ID    Run one fixed, noninteractive dashboard operation
+  drivers                Open AMDGPU, Mesa / RADV, and wireless drivers
+  unlocks                Open GPU compute-unit and CPU core unlocks
+  storage-updates        Open persistent storage and update protection
+  interfaces             Open Decky, Plasma, and Trainer installers
   power                  Open the Power Management menu
   ram                    Open the RAM / VRAM Split menu
-  compute                Open the Compute Units menu
+  compute                Open the GPU Compute-Unit Unlock menu
+  cpu-unlock             Open the CPU Core Unlock menu
   cec                    Open the CEC / HDMI Control menu
   storage                Open the Persistent Storage menu
   persistence            Open the SteamOS Update Persistence menu
   wifi                   Confirm and run the AIC8800 installer
-  audio                  Confirm and run the AMDGPU clock/metrics builder
-  mesh                   Open global GFX1013 compute/mesh setup
+  amdgpu                 Confirm and build the AMDGPU kernel fixes
+  radv                   Open the global Mesa / RADV performance patch
   decky                  Confirm and run the Decky plugin installer
   desktop                Confirm and run the Plasma desktop-control installer
   trainer                Confirm and run the BC250 Trainer installer
   manage                 Open installed-component maintenance and cleanup
+
+Compatibility aliases: audio (amdgpu), mesh (radv)
 
 Action operation IDs:
   storage-install        power-install          ram-install
@@ -348,15 +425,20 @@ case "$command_name" in
     status) (($# == 0)) || die "Usage: $0 status"; show_status ;;
     inventory-json) (($# == 0)) || die "Usage: $0 inventory-json"; show_inventory_json ;;
     action) run_machine_action "$@" ;;
+    drivers) (($# == 0)) || die "Usage: $0 drivers"; cmd_drivers_menu ;;
+    unlocks) (($# == 0)) || die "Usage: $0 unlocks"; cmd_unlocks_menu ;;
+    storage-updates) (($# == 0)) || die "Usage: $0 storage-updates"; cmd_storage_updates_menu ;;
+    interfaces) (($# == 0)) || die "Usage: $0 interfaces"; cmd_interfaces_menu ;;
     power) (($# == 0)) || die "Usage: $0 power"; run_script "$POWER_SH" menu ;;
     ram) (($# == 0)) || die "Usage: $0 ram"; run_script "$RAM_SPLIT_SH" menu ;;
     compute) (($# == 0)) || die "Usage: $0 compute"; run_script "$COMPUTE_SH" menu ;;
+    cpu-unlock) (($# == 0)) || die "Usage: $0 cpu-unlock"; run_script "$POWER_SH" cpu-unlock menu ;;
     cec) (($# == 0)) || die "Usage: $0 cec"; require_normal_user; run_script "$CEC_SH" menu ;;
     storage) (($# == 0)) || die "Usage: $0 storage"; run_script "$STORAGE_SH" menu ;;
     persistence) (($# == 0)) || die "Usage: $0 persistence"; run_script "$PERSISTENCE_SH" menu ;;
     wifi) (($# == 0)) || die "Usage: $0 wifi"; install_wifi ;;
-    audio) (($# == 0)) || die "Usage: $0 audio"; install_audio_fix ;;
-    mesh) (($# == 0)) || die "Usage: $0 mesh"; require_normal_user; run_script "$MESH_SHADER_SH" menu ;;
+    amdgpu|audio) (($# == 0)) || die "Usage: $0 amdgpu"; install_audio_fix ;;
+    radv|mesh) (($# == 0)) || die "Usage: $0 radv"; require_normal_user; run_script "$MESH_SHADER_SH" menu ;;
     decky) (($# == 0)) || die "Usage: $0 decky"; install_decky ;;
     desktop) (($# == 0)) || die "Usage: $0 desktop"; install_desktop ;;
     trainer) (($# == 0)) || die "Usage: $0 trainer"; install_trainer ;;

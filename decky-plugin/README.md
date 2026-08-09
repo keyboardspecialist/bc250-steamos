@@ -13,7 +13,7 @@ CEC quick controls. Select
 - GPU frequency, load target, and ramp behavior
 - CPU overclock detection, apply, boot replay, and stock restore controls
 - HDMI-CEC controls
-- Global GFX1013 compute/mesh RADV status
+- Global Mesa / RADV performance-patch status and AMDGPU prerequisite
 
 GPU voltage editing and saving WGP routing for boot remain in the toolkit CLI.
 
@@ -69,7 +69,7 @@ Access actions.
 - Toolkit checkout at `~/.local/share/bc250-fixes/bc250-steamos`
 - Installed toolkit components for the controls being used
 
-The plugin backend runs with Decky's `root` flag. CEC and mesh-shader commands
+The plugin backend runs with Decky's `root` flag. CEC and Mesa / RADV commands
 are delegated to the logged-in Deck user session.
 
 ### Privileged operations

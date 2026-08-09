@@ -803,7 +803,7 @@ PY
 }
 
 cmd_game() {
-    die "Per-game controls were removed; the GFX1013 RADV runtime is global for the user session."
+    die "Per-game controls were removed; the Mesa / RADV performance patch is global for the user session."
 }
 
 cmd_legacy_clear() {
@@ -818,7 +818,7 @@ cmd_legacy_clear() {
 
 cmd_status() {
     local failed=0
-    echo "BC-250 GFX1013 compute/mesh RADV ICD"
+    echo "BC-250 Mesa / RADV performance patch"
     echo "  upstream: $UPSTREAM_REPO @ ${UPSTREAM_COMMIT:0:7}"
     if verify_compute_kernel; then
         echo "  kernel:  active GFX1013 compute repair"
@@ -971,7 +971,7 @@ cmd_purge() (
     [[ ! -e "$DRIVER" && ! -L "$DRIVER" && ! -e "$ICD" && ! -L "$ICD" \
         && ! -e "$GENERATOR" && ! -L "$GENERATOR" \
         && ! -e "$MANIFEST" && ! -e "$TRANSACTION_DIR" ]] \
-        || die "Mesh-shader runtime remains; run '$0 uninstall' before purge."
+        || die "Mesa / RADV runtime remains; run '$0 uninstall' before purge."
     if grep -qF '<!-- BEGIN BC250 MESH SHADER MANAGED -->' "$DRIRC" 2>/dev/null; then
         die "Managed game entries remain; run '$0 uninstall' before purge."
     fi
@@ -1076,22 +1076,22 @@ cmd_menu() {
         local runtime_state
         runtime_state=$(runtime_badge)
         local items=(
-            "Status overview|${runtime_state}|Verify the kernel gate, alternate RADV runtime, and global user activation."
-            "Build / install alternate RADV|${runtime_state}|Build audited Mesa $DEFAULT_MESA_TAG and enable it globally. May take 20-40+ minutes."
-            "Clear legacy game records||After manually removing old Steam launch options, clear their migration records."
-            "Uninstall GFX1013 runtime|${runtime_state}|Remove the alternate driver, ICD, and user environment generator; preserve build caches."
+            "Status overview|${runtime_state}|Verify the required AMDGPU kernel fixes, Mesa / RADV runtime, and global user activation."
+            "Build / install Mesa / RADV patch|${runtime_state}|Optional but highly recommended: build audited Mesa $DEFAULT_MESA_TAG and enable it globally. May take 20-40+ minutes."
+            "Clear legacy per-game records||After manually removing old Steam launch options, clear their migration records."
+            "Uninstall Mesa / RADV runtime|${runtime_state}|Remove the alternate driver, ICD, and user environment generator; preserve build caches."
             "Full help||Show CLI commands, activation behavior, and upstream source."
         )
-        menu_select "BC-250 GFX1013 compute + mesh  ${CD}(global user RADV)${C0}" "${items[@]}" \
+        menu_select "BC-250 Mesa / RADV performance patch  ${CD}(global user driver)${C0}" "${items[@]}" \
             || { echo; break; }
         case $MENU_CHOICE in
             0) show_menu_status ;;
             1) confirm_menu_action \
-                "Build and install the alternate RADV runtime?" setup ;;
+                "Build and install the global Mesa / RADV performance patch?" setup ;;
             2) confirm_menu_action \
                 "Have you removed the old per-game Steam launch options?" legacy-clear ;;
             3) confirm_menu_action \
-                "Remove the global alternate RADV runtime?" uninstall ;;
+                "Remove the global Mesa / RADV runtime?" uninstall ;;
             4) echo; cmd_help; pause_key ;;
         esac
     done

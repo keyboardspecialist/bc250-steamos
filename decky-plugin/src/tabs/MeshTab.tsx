@@ -46,7 +46,7 @@ export function MeshTab() {
   if (!status) {
     return (
       <>
-        <EmptyState>{error || "Unable to load GFX1013 runtime status."}</EmptyState>
+        <EmptyState>{error || "Unable to load Mesa / RADV runtime status."}</EmptyState>
         <PanelSection><PanelSectionRow><ButtonItem layout="below" onClick={() => void refresh()}>Retry</ButtonItem></PanelSectionRow></PanelSection>
       </>
     );
@@ -54,8 +54,8 @@ export function MeshTab() {
 
   return (
     <>
-      <PanelSection title="GFX1013 Compute + Mesh">
-        <StatusRow label="Kernel repair" value={status.kernelReady ? "Active" : "Not active"} good={status.kernelReady} />
+      <PanelSection title="Mesa / RADV Performance Patch">
+        <StatusRow label="AMDGPU fixes" value={status.kernelReady ? "Active" : "Not active"} good={status.kernelReady} />
         <StatusRow label="RADV runtime" value={status.runtimeState} good={status.runtimeState === "ready"} />
         <StatusRow label="Global activation" value={status.globalEnabled ? "Enabled" : "Disabled"} good={status.globalEnabled} />
         <StatusRow label="Mesa" value={status.mesaVersion ?? "Not installed"} />
@@ -63,9 +63,9 @@ export function MeshTab() {
       </PanelSection>
 
       {error && <EmptyState>{error}</EmptyState>}
-      {!status.scriptAvailable && <EmptyState>The GFX1013 toolkit script is unavailable.</EmptyState>}
-      {!status.kernelReady && <EmptyState>Patch AMDGPU and reboot before installing the global alternate RADV runtime.</EmptyState>}
-      {status.runtimeState === "not-installed" && <EmptyState>Run the GFX1013 setup from the toolkit menu. It enables the alternate ICD for the complete user session.</EmptyState>}
+      {!status.scriptAvailable && <EmptyState>The Mesa / RADV toolkit script is unavailable.</EmptyState>}
+      {!status.kernelReady && <EmptyState>Install the AMDGPU kernel fixes and reboot before installing the Mesa / RADV performance patch.</EmptyState>}
+      {status.runtimeState === "not-installed" && <EmptyState>The optional Mesa / RADV patch is highly recommended for performance. Install it from Drivers in the toolkit; it applies to the complete user session.</EmptyState>}
       {status.runtimeState === "invalid" && <EmptyState>The alternate runtime failed validation or requires migration. Run setup again from the toolkit menu.</EmptyState>}
       {status.globalEnabled && <EmptyState>The patched RADV ICD is active across this user session.</EmptyState>}
       {status.restartRequired && <EmptyState>The global driver is configured but this graphical session has not inherited it. Sign out and back in.</EmptyState>}

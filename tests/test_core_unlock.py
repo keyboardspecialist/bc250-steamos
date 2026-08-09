@@ -22,6 +22,27 @@ def load_helper():
 
 
 class CoreUnlockTests(unittest.TestCase):
+    def test_cpu_unlock_command_exposes_the_guided_menu(self):
+        result = subprocess.run(
+            [
+                "bash",
+                "-c",
+                'script=$1; set -- help; source "$script" >/dev/null; '
+                'menu_cpu_unlock() { printf menu; }; cmd_cpu_unlock menu',
+                "_",
+                str(POWER),
+            ],
+            check=True,
+            capture_output=True,
+            text=True,
+            env={
+                **os.environ,
+                "REAL_USER": "core-unlock-test",
+                "REAL_HOME": str(ROOT),
+            },
+        )
+        self.assertEqual(result.stdout, "menu")
+
     def test_release_build_check_uses_pinned_headers_and_efi_subsystem(self):
         source = EFI_BUILD_CHECK.read_text(encoding="utf-8")
         self.assertIn("761b114e3b186adb82516d5fa8e7a4c559f56ba5", source)

@@ -21,15 +21,16 @@ Open the unified toolkit menu as the logged-in Deck user:
 
 | Component | Setup command |
 |---|---|
+| AMDGPU kernel fixes | `./bc250-toolkit.sh amdgpu`, then reboot |
+| Mesa / RADV performance patch (optional, highly recommended) | `./bc250-toolkit.sh radv`, then sign out and back in |
 | Power management | `sudo ./bc250-power.sh all`, then `sudo ./bc250-power.sh enable` |
 | RAM / VRAM split | `./bc250-ram-split.sh` |
-| Compute-unit manager | `sudo ./bc250-40cu.sh` |
+| GPU compute-unit unlock | `sudo ./bc250-40cu.sh` |
 | CEC | `./bc250-cec.sh setup` |
 | AIC8800 | `sudo bash ./aic8800/steamdeck-setup.sh` |
 | Decky plugin | `bash ./decky-plugin/install.sh` |
 | Plasma desktop control | `bash ./desktop-control/install.sh install` |
 | BC250 Trainer | `bash ./trainer/install.sh install` (release artifact or after building from source) |
-| Mesh shaders (optional) | `./bc250-mesh-shader.sh` |
 | Persistent storage and recovery | Automatic with each setup workflow; `./bc250-storage.sh` opens its menu |
 | Verification | `sudo ./bc250-storage.sh status` |
 
@@ -53,7 +54,7 @@ sudo ./bc250-storage.sh install
 |---|---|
 | GPU governor | `sudo ./bc250-power.sh enable` |
 | ACPI and CPU frequency | `sudo ./bc250-power.sh acpi` |
-| Compute-unit manager | `sudo ./bc250-40cu.sh persist` |
+| GPU compute-unit unlock | `sudo ./bc250-40cu.sh persist` |
 | CEC shutdown integration | `./bc250-cec.sh shutdown-standby install` |
 | AIC8800 | `sudo bash ./aic8800/steamdeck-setup.sh` |
 | Plasma desktop control | `bash ./desktop-control/install.sh install` |
@@ -69,8 +70,8 @@ sudo ./bc250-power.sh status
 | Tool | Purpose |
 |---|---|
 | [`bc250-toolkit.sh`](#toolkit-menu) | Unified menu and read-only status overview for all toolkit components |
-| [`bc250-40cu.sh`](#compute-units) | Runtime 40 CU configuration and boot persistence |
-| [`bc250-cu-status.sh`](#compute-units) | CU dispatch status |
+| [`bc250-40cu.sh`](#gpu-compute-unit-unlock) | Runtime GPU CU/WGP configuration and boot persistence |
+| [`bc250-cu-status.sh`](#gpu-compute-unit-unlock) | CU dispatch status |
 | [`bc250-power.sh`](#power-management) | CPU power states, GPU governor, clock and voltage tuning, CPU overclocking |
 | [`bc250-ram-split.sh`](#ram--vram-split) | CMOS minimum VRAM and dynamic TTM VRAM limit |
 | [`bc250-cec.sh`](#cec) | TV, receiver, input, and power control over HDMI-CEC |
@@ -80,17 +81,18 @@ sudo ./bc250-power.sh status
 | [`desktop-control/`](#plasma-desktop-control) | Plasma system-tray and windowed controls |
 | [`trainer/`](#bc250-trainer) | Standalone native Qt control application |
 | [`bc250-audio-fix/`](#amdgpu-driver) | DisplayPort clock, GPU telemetry, and GFX1013 compute repair |
-| [`bc250-mesh-shader.sh`](#compute-queues-and-mesh-shaders-optional) | Separate GFX1013 RADV ICD enabled globally for the user session |
+| [`bc250-mesh-shader.sh`](#mesa--radv-performance-patch-optional-recommended) | Optional, recommended Mesa / RADV performance driver enabled globally for the user session |
 | [`aic8800/`](#wifi-and-bluetooth) | AIC8800D80 USB WiFi and Bluetooth driver |
 
 The unified launcher and individual component scripts remain independently usable. Use the child scripts directly for command-line automation.
 
 ## Toolkit Menu
 
-Run `./bc250-toolkit.sh` without `sudo`. It opens Power, RAM / VRAM Split,
-Compute Units, CEC, Storage, Update Persistence, and Mesh Shaders as child menus, then returns to the toolkit
-when they exit. WiFi, display/audio, Decky, Plasma, and BC250 Trainer installation
-entries require confirmation before starting their longer setup workflows.
+Run `./bc250-toolkit.sh` without `sudo`. The main menu groups drivers, hardware
+unlocks, power, memory, CEC, storage/update integration, control interfaces,
+and installed-component maintenance. Child menus return to the toolkit when
+they exit. Installer and build entries require confirmation before starting
+their longer setup workflows.
 Each child requests administrator access only when needed.
 
 | Command | Action |
@@ -99,9 +101,12 @@ Each child requests administrator access only when needed.
 | `./bc250-toolkit.sh status` | Show the read-only component status overview |
 | `./bc250-toolkit.sh inventory-json` | Emit versioned lifecycle state for the native Trainer dashboard |
 | `./bc250-toolkit.sh action OPERATION_ID` | Run one fixed dashboard action without opening a TUI |
+| `./bc250-toolkit.sh drivers` | Open AMDGPU, Mesa / RADV, and AIC8800 driver setup |
+| `./bc250-toolkit.sh unlocks` | Open GPU compute-unit and CPU core unlock setup |
 | `./bc250-toolkit.sh power` | Open a component menu directly |
 | `./bc250-toolkit.sh ram` | Open RAM / VRAM split settings |
-| `./bc250-toolkit.sh mesh` | Open global GFX1013 compute/mesh setup |
+| `./bc250-toolkit.sh amdgpu` | Build the AMDGPU kernel fixes |
+| `./bc250-toolkit.sh radv` | Open the global Mesa / RADV performance-patch menu |
 | `./bc250-toolkit.sh trainer` | Install or upgrade BC250 Trainer |
 | `./bc250-toolkit.sh manage` | Review and remove installed components |
 | `./bc250-toolkit.sh help` | List launcher commands and components |
@@ -132,7 +137,7 @@ AMDGPU, and loaded AIC8800 rollback may require a reboot. After every
 component is removed, permanently delete retained data with
 `./bc250-maintenance.sh purge`.
 
-## Compute Units
+## GPU Compute-Unit Unlock
 
 Open the setup menu:
 
@@ -263,14 +268,25 @@ sudo ./bc250-power.sh cpu-oc off
 
 `cpu-oc detect` stress-tests each frequency step. Keep the VID limit at or below 1325 mV.
 
-### Experimental CPU Core Unlock
+## Experimental CPU Core Unlock
 
 [`rw-r-r-0644/bc250-core-unlock`](https://github.com/rw-r-r-0644/bc250-core-unlock)
 discovered the SMU command that changes the BC-250 core-presence mask from
 `0x77` to `0xff`, allowing AGESA to enumerate 8 cores and 16 threads.
 
+Open **Hardware unlocks**, then **CPU core unlock** for the guided workflow:
+
 ```bash
-./bc250-toolkit.sh audio
+./bc250-toolkit.sh unlocks
+```
+
+The same dedicated menu is available directly with
+`sudo ./bc250-power.sh cpu-unlock menu`. The implementation shares its service
+lifecycle with Power management, so removing the Power component also removes
+CPU core-unlock boot persistence.
+
+```bash
+./bc250-toolkit.sh amdgpu
 sudo ./bc250-power.sh cpu-unlock test
 sudo reboot
 sudo ./bc250-power.sh cpu-unlock status
@@ -306,6 +322,8 @@ running kernel.
 
 | Command | Action |
 |---|---|
+| `./bc250-toolkit.sh unlocks` | Open the GPU and CPU hardware-unlock menu |
+| `sudo ./bc250-power.sh cpu-unlock menu` | Open the dedicated guided CPU core-unlock menu |
 | `./bc250-power.sh cpu-unlock topology` | Show active CPU cores grouped by CCX |
 | `sudo ./bc250-power.sh cpu-unlock test` | Apply the volatile mask once without installing boot persistence; reboot manually |
 | `sudo ./bc250-power.sh cpu-unlock enable` | After testing, verify eight cores are already active and install boot replay |
@@ -439,14 +457,15 @@ sudo ./rollback.sh
 
 See [`bc250-audio-fix/README.md`](bc250-audio-fix/README.md) for kernel support and build controls.
 
-## Compute Queues and Mesh Shaders (Optional)
+## Mesa / RADV Performance Patch (Optional, Recommended)
 
-This builds the Mesa/RADV half of
+This optional but highly recommended performance patch builds the Mesa/RADV half of
 [`DryhoppedIPA/bc250-gfx1013-fix`](https://github.com/DryhoppedIPA/bc250-gfx1013-fix)
 as a separate Vulkan ICD and leaves the stock Vulkan driver as the system
 default until setup enables the alternate driver globally for the logged-in
-user. The matching `bc250-audio-fix` kernel module must be installed and active
-first.
+user. The matching `bc250-audio-fix` AMDGPU kernel module must be installed and
+active first. Use the toolkit's **Drivers** menu: install **AMDGPU kernel
+fixes**, reboot, and then open **Mesa / RADV performance patch**.
 
 Open the menu as the logged-in user:
 
@@ -521,12 +540,12 @@ The installer snapshots driver source, firmware, and verified per-kernel modules
 
 | Component | Update action |
 |---|---|
-| Compute-unit manager | Run `sudo ./bc250-40cu.sh verify` after an update |
+| GPU compute-unit unlock | Run `sudo ./bc250-40cu.sh verify` after an update |
 | Power management | The keep list retains tuning and GRUB defaults; the ACPI service validates and restores the `/boot` override and EFI GRUB config |
 | RAM / VRAM split | CMOS persists independently; the keep list retains the TTM GRUB drop-in |
 | CEC | Home configuration and allowlisted system integration carry forward |
 | Patched AMDGPU module | Run `bc250-audio-fix/patch-driver.sh` after each kernel update |
-| GFX1013 RADV ICD | Rerun `bc250-mesh-shader.sh setup` after a SteamOS update to restore the root-owned driver and environment generator, then sign out and back in |
+| Mesa / RADV performance patch | Rerun `bc250-mesh-shader.sh setup` after a SteamOS update to restore the root-owned driver and environment generator, then sign out and back in |
 | AIC8800 modules | The boot helper reuses staged modules or published headers; rerun setup if it requests interactive source preparation |
 
 Current installers preserve their configuration across normal atomic updates.

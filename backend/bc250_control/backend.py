@@ -2262,24 +2262,24 @@ class ToolkitBackend:
         try:
             status = json.loads(output)
         except (TypeError, ValueError) as error:
-            raise CommandError("Mesh-shader status returned invalid JSON.") from error
+            raise CommandError("Mesa / RADV status returned invalid JSON.") from error
         if not isinstance(status, dict):
-            raise CommandError("Mesh-shader status returned invalid data.")
+            raise CommandError("Mesa / RADV status returned invalid data.")
 
         runtime_state = status.get("runtimeState")
         games = status.get("games")
         if runtime_state not in {"ready", "not-installed", "invalid"} or not isinstance(
             games, list
         ):
-            raise CommandError("Mesh-shader status returned invalid data.")
+            raise CommandError("Mesa / RADV status returned invalid data.")
         normalized_games = []
         for game in games:
             if not isinstance(game, dict):
-                raise CommandError("Mesh-shader game status returned invalid data.")
+                raise CommandError("Mesa / RADV legacy-game status returned invalid data.")
             executable = game.get("executable")
             name = game.get("name")
             if not isinstance(executable, str) or not isinstance(name, str):
-                raise CommandError("Mesh-shader game status returned invalid data.")
+                raise CommandError("Mesa / RADV legacy-game status returned invalid data.")
             normalized_games.append({"executable": executable, "name": name})
 
         mesa_version = status.get("mesaVersion")
@@ -2290,24 +2290,24 @@ class ToolkitBackend:
         restart_required = status.get("restartRequired", False)
         status_error = status.get("error")
         if mesa_version is not None and not isinstance(mesa_version, str):
-            raise CommandError("Mesh-shader status returned an invalid Mesa version.")
+            raise CommandError("Mesa / RADV status returned an invalid Mesa version.")
         if (
             not isinstance(icd_path, str)
             or not icd_path.startswith("/")
             or len(icd_path) > 4096
             or not icd_path.isprintable()
         ):
-            raise CommandError("Mesh-shader status returned an invalid ICD path.")
+            raise CommandError("Mesa / RADV status returned an invalid ICD path.")
         if type(config_valid) is not bool:
-            raise CommandError("Mesh-shader status returned invalid configuration state.")
+            raise CommandError("Mesa / RADV status returned invalid configuration state.")
         if type(kernel_ready) is not bool:
-            raise CommandError("Mesh-shader status returned invalid kernel state.")
+            raise CommandError("Mesa / RADV status returned invalid kernel state.")
         if type(global_enabled) is not bool:
-            raise CommandError("Mesh-shader status returned invalid global state.")
+            raise CommandError("Mesa / RADV status returned invalid global state.")
         if type(restart_required) is not bool:
-            raise CommandError("Mesh-shader status returned invalid restart state.")
+            raise CommandError("Mesa / RADV status returned invalid restart state.")
         if status_error is not None and not isinstance(status_error, str):
-            raise CommandError("Mesh-shader status returned an invalid error message.")
+            raise CommandError("Mesa / RADV status returned an invalid error message.")
         return {
             "scriptAvailable": True,
             "runtimeState": runtime_state,
@@ -2373,7 +2373,7 @@ class ToolkitBackend:
         self, app_id: int, friendly_name: str, enabled: bool
     ) -> None:
         raise CommandError(
-            "Per-game mesh controls were removed; GFX1013 RADV is global."
+            "Per-game controls were removed; the Mesa / RADV performance patch is global."
         )
 
     async def set_cu_wgp(

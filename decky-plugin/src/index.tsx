@@ -307,7 +307,7 @@ function FullControl() {
     },
     {
       id: "mesh",
-      label: "Mesh",
+      label: "RADV",
       icon: <FaProjectDiagram />,
       content: <MeshTab />,
     },

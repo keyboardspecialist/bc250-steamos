@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# bc250-40cu.sh  (40 CU unlock, v2 battle-tested)
+# bc250-40cu.sh  (GPU compute-unit unlock, v2 battle-tested)
 #
-# All-in-one BC-250 40 CU unlock for SteamOS 3.8.x via the runtime UMR route.
+# BC-250 GPU compute-unit unlock for SteamOS 3.8.x via the runtime UMR route.
 #
 # Runtime assets are split between the home-backed source tree and root storage:
 #   ~/.local/share/bc250-fixes/bc250-steamos  source/build tree
@@ -681,8 +681,8 @@ cmd_uninstall() {
 # ================================ help ====================================
 cmd_help() {
     cat << 'EOF'
-bc250-40cu.sh -- BC-250 40 CU unlock for SteamOS
-============================================================
+bc250-40cu.sh -- BC-250 GPU compute-unit unlock for SteamOS
+====================================================================
 Re-enables the factory-harvested compute units at RUNTIME (no kernel
 rebuild) by writing the CC/SPI/RLC dispatch registers via umr, using
 WinnieLV's bc250-cu-live-manager. A boot service replays the saved WGP
@@ -796,7 +796,7 @@ cmd_menu() {
             "Revert to stock 24 CU||Disable the boot service; stock dispatch after reboot."
             "Full help||Complete walkthrough, including the harvest-map guide."
         )
-        menu_select "BC-250 40 CU unlock  ${CD}(SteamOS)${C0}" "${items[@]}" || { echo; break; }
+        menu_select "BC-250 GPU compute-unit unlock  ${CD}(24 CU to stable maximum)${C0}" "${items[@]}" || { echo; break; }
         case $MENU_CHOICE in
             0) run_action cmd_check ;;
             1) run_action cmd_prep ;;

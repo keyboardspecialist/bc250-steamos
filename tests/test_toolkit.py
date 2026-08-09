@@ -21,13 +21,20 @@ class ToolkitTests(unittest.TestCase):
         )
         for command in (
             "status",
+            "drivers",
+            "unlocks",
+            "storage-updates",
+            "interfaces",
             "power",
             "ram",
             "compute",
+            "cpu-unlock",
             "cec",
             "storage",
             "persistence",
             "wifi",
+            "amdgpu",
+            "radv",
             "audio",
             "mesh",
             "decky",
@@ -37,6 +44,55 @@ class ToolkitTests(unittest.TestCase):
         ):
             self.assertIn(command, result.stdout)
         self.assertIn("logged-in Deck user, not with sudo", result.stdout)
+        self.assertIn("Compatibility aliases: audio (amdgpu), mesh (radv)", result.stdout)
+
+    def test_main_menu_groups_related_workflows(self):
+        source = TOOLKIT.read_text(encoding="utf-8")
+        main_menu = source[source.index("cmd_menu() {") : source.index("cmd_help() {")]
+        drivers_menu = source[
+            source.index("cmd_drivers_menu() {") : source.index("cmd_unlocks_menu() {")
+        ]
+        unlocks_menu = source[
+            source.index("cmd_unlocks_menu() {") : source.index("cmd_storage_updates_menu() {")
+        ]
+
+        for label in (
+            "System status",
+            "Drivers",
+            "Hardware unlocks",
+            "Power management",
+            "RAM / VRAM split",
+            "CEC / HDMI control",
+            "Storage & SteamOS updates",
+            "Control interfaces",
+            "Manage installed components",
+        ):
+            self.assertIn(f'"{label}|', main_menu)
+        self.assertNotIn("Mesh shaders (per game)", source)
+        self.assertNotIn("[optional]", drivers_menu)
+        self.assertIn("Mesa / RADV performance patch (optional)", drivers_menu)
+        self.assertIn("[menu]", drivers_menu)
+        self.assertLess(
+            drivers_menu.index("AMDGPU kernel fixes"),
+            drivers_menu.index("Mesa / RADV performance patch"),
+        )
+        self.assertLess(
+            drivers_menu.index("Mesa / RADV performance patch"),
+            drivers_menu.index("AIC8800 WiFi / Bluetooth"),
+        )
+        self.assertIn("0) run_menu_action amdgpu", drivers_menu)
+        self.assertIn("1) run_menu_child radv", drivers_menu)
+        self.assertIn("GPU compute-unit unlock", unlocks_menu)
+        self.assertIn("CPU core unlock", unlocks_menu)
+        self.assertIn("0) run_menu_child compute", unlocks_menu)
+        self.assertIn("1) run_menu_child cpu-unlock", unlocks_menu)
+        self.assertIn("amdgpu|audio)", source)
+        self.assertIn("radv|mesh)", source)
+
+        power = (ROOT / "bc250-power.sh").read_text(encoding="utf-8")
+        power_menu = power[power.index("cmd_menu() {") : power.index("cmd_help() {")]
+        self.assertNotIn('"CPU core unlock|', power_menu)
+        self.assertIn("menu)      menu_cpu_unlock", power)
 
     def make_action_environment(self, root):
         toolkit = root / TOOLKIT.name
@@ -121,6 +177,35 @@ class ToolkitTests(unittest.TestCase):
         env["HOME"] = str(home)
         return toolkit, env
 
+    def make_status_environment(self, root, amdgpu_status, amdgpu_result):
+        toolkit = root / TOOLKIT.name
+        shutil.copy2(TOOLKIT, toolkit)
+        scripts = (
+            "bc250-storage.sh",
+            "bc250-power.sh",
+            "bc250-ram-split.sh",
+            "bc250-cec.sh",
+            "bc250-update-persistence.sh",
+        )
+        for relative in scripts:
+            script = root / relative
+            script.write_text("#!/usr/bin/env bash\nexit 0\n", encoding="utf-8")
+        audio = root / "bc250-audio-fix/patch-driver.sh"
+        audio.parent.mkdir(parents=True)
+        audio.write_text(
+            "#!/usr/bin/env bash\n"
+            f"printf '%s\\n' {json.dumps(amdgpu_status)}\n"
+            f"exit {amdgpu_result}\n",
+            encoding="utf-8",
+        )
+        mesh = root / "bc250-mesh-shader.sh"
+        mesh.write_text(
+            "#!/usr/bin/env bash\nprintf '%s\\n' 'runtime: not installed'\nexit 1\n",
+            encoding="utf-8",
+        )
+        (root / "bc250-cu-status.sh").touch()
+        return toolkit
+
     def test_without_terminal_prints_help(self):
         result = subprocess.run(
             ["bash", str(TOOLKIT)],
@@ -129,6 +214,24 @@ class ToolkitTests(unittest.TestCase):
         )
         self.assertEqual(result.returncode, 1)
         self.assertIn("Usage:", result.stderr)
+
+    def test_status_accepts_missing_amdgpu_but_rejects_incomplete_integration(self):
+        cases = (
+            ("[bc250-amdgpu] state: not-installed", 1, 0),
+            ("[bc250-amdgpu] state: incomplete", 1, 1),
+        )
+        for status, component_result, expected in cases:
+            with self.subTest(status=status), tempfile.TemporaryDirectory() as directory:
+                toolkit = self.make_status_environment(
+                    Path(directory), status, component_result
+                )
+                result = subprocess.run(
+                    ["bash", str(toolkit), "status"],
+                    capture_output=True,
+                    text=True,
+                )
+                self.assertEqual(result.returncode, expected)
+                self.assertIn(status, result.stdout)
 
     def test_component_dispatch_opens_menu_and_rejects_arguments(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -156,6 +259,30 @@ class ToolkitTests(unittest.TestCase):
             self.assertEqual(default.stdout.strip(), "menu")
             self.assertNotEqual(rejected.returncode, 0)
             self.assertIn("Usage:", rejected.stderr)
+
+    def test_new_component_names_and_compatibility_aliases_dispatch(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            toolkit, call_log, env = self.make_action_environment(root)
+            mappings = {
+                "radv": ("bc250-mesh-shader.sh", "menu"),
+                "mesh": ("bc250-mesh-shader.sh", "menu"),
+                "cpu-unlock": ("bc250-power.sh", "cpu-unlock", "menu"),
+            }
+            for command, expected in mappings.items():
+                with self.subTest(command=command):
+                    call_log.unlink(missing_ok=True)
+                    subprocess.run(
+                        ["bash", str(toolkit), command],
+                        check=True,
+                        capture_output=True,
+                        text=True,
+                        env=env,
+                    )
+                    self.assertEqual(
+                        call_log.read_text(encoding="utf-8").strip(),
+                        "|".join(expected) + "|machine=",
+                    )
 
     def test_action_dispatch_is_a_fixed_allowlist(self):
         with tempfile.TemporaryDirectory() as directory:

@@ -34,12 +34,12 @@ show_status() {
         metrics_marker="/usr/lib/modules/$rel/updates/.bc250-metrics-fix"
         gfx1013_marker="/usr/lib/modules/$rel/updates/.bc250-gfx1013-fix"
         if [ ! -f "$module" ] || [ -L "$module" ]; then
-            echo "[bc250-audio] $rel: unsafe or incomplete override ($module)"
+            echo "[bc250-amdgpu] $rel: unsafe or incomplete override ($module)"
             failed=1
             continue
         fi
         if [ ! -f "$marker" ] || [ -L "$marker" ]; then
-            echo "[bc250-audio] $rel: unmarked override requires ownership review"
+            echo "[bc250-amdgpu] $rel: unmarked override requires ownership review"
             failed=1
             continue
         fi
@@ -52,17 +52,17 @@ show_status() {
                 read -r gfx1013_expected < "$gfx1013_marker" || gfx1013_expected=
                 if [[ "$expected" =~ ^[0-9a-f]{64}$ ]] && [ "$actual" = "$expected" ] \
                    && [ "$gfx1013_expected" = "$actual" ]; then
-                    echo "[bc250-audio] $rel: installed, metrics and compute aware ($resolved)"
+                    echo "[bc250-amdgpu] $rel: installed, metrics and compute aware ($resolved)"
                 else
-                    echo "[bc250-audio] $rel: invalid metrics or compute marker"
+                    echo "[bc250-amdgpu] $rel: invalid metrics or compute marker"
                     failed=1
                 fi
             else
-                echo "[bc250-audio] $rel: installed, legacy audio-only build"
+                echo "[bc250-amdgpu] $rel: installed, legacy audio-only build"
                 failed=1
             fi
         else
-            echo "[bc250-audio] $rel: override present but not selected"
+            echo "[bc250-amdgpu] $rel: override present but not selected"
             failed=1
         fi
     done
@@ -71,15 +71,15 @@ show_status() {
                   /usr/lib/modules/*/updates/.bc250-gfx1013-fix; do
         [ -e "$marker" ] || [ -L "$marker" ] || continue
         module=${marker%/*}/amdgpu.ko.zst
-        [ -e "$module" ] || { found=1; failed=1; echo "[bc250-audio] pending rollback marker: $marker"; }
+        [ -e "$module" ] || { found=1; failed=1; echo "[bc250-amdgpu] pending rollback marker: $marker"; }
     done
     if [ "$found" = 0 ]; then
-        echo "[bc250-audio] state: not-installed"
+        echo "[bc250-amdgpu] state: not-installed"
         return 1
     fi
     [ "$failed" = 0 ] \
-        && echo "[bc250-audio] state: installed" \
-        || echo "[bc250-audio] state: incomplete"
+        && echo "[bc250-amdgpu] state: installed" \
+        || echo "[bc250-amdgpu] state: incomplete"
     return "$failed"
 }
 
@@ -129,7 +129,7 @@ case "${1:-}" in
         exec 9>"$HERE/.prepare-kernel.lock"
         flock 9
         run_audio_rollback
-        echo "[bc250-audio] source, downloads, and build output were preserved"
+        echo "[bc250-amdgpu] source, downloads, and build output were preserved"
         exit
         ;;
     help|-h|--help)

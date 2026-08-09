@@ -23,7 +23,7 @@ class DriverLifecycleTests(unittest.TestCase):
     def test_status_entrypoints_are_read_only_and_do_not_require_sudo(self):
         for script, prefix in (
             (AIC_INSTALLER, "[aic8800]"),
-            (AUDIO_INSTALLER, "[bc250-audio]"),
+            (AUDIO_INSTALLER, "[bc250-amdgpu]"),
         ):
             result = subprocess.run(
                 ["bash", str(script), "status"],

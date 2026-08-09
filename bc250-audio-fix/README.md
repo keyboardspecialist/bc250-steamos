@@ -87,11 +87,12 @@ during KFD compute activity, and uses the GFXHUB semaphore/type-0 transaction
 only for BC-250 PASID invalidation. The three patches are mandatory and applied
 in upstream order.
 
-The kernel repair does not expose compute queues by itself. The optional
-`bc250-mesh-shader.sh` workflow builds the matching Mesa/RADV half and enables
-it globally for the logged-in user through a kernel-gated environment
-generator. Never point an application at that alternate ICD while a stock
-kernel module is active; upstream reports that combination can hang the GPU.
+The kernel repair does not expose compute queues by itself. The optional,
+recommended Mesa / RADV performance-patch workflow in `bc250-mesh-shader.sh`
+builds the matching userspace half and enables it globally for the logged-in
+user through a kernel-gated environment generator. Never point an application
+at that alternate ICD while a stock kernel module is active; upstream reports
+that combination can hang the GPU.
 
 ## Commands
 

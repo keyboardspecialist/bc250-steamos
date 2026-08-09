@@ -44,11 +44,11 @@ component_label() {
         desktop) echo "Plasma desktop control" ;;
         decky) echo "Decky plugin" ;;
         cec) echo "CEC integration" ;;
-        power) echo "Power management" ;;
+        power) echo "Power management / CPU core unlock" ;;
         ram) echo "RAM / VRAM split" ;;
-        compute) echo "Compute-unit manager" ;;
-        mesh) echo "Global GFX1013 RADV" ;;
-        audio) echo "AMDGPU fixes" ;;
+        compute) echo "GPU compute-unit unlock" ;;
+        mesh) echo "Mesa / RADV performance patch" ;;
+        audio) echo "AMDGPU kernel fixes" ;;
         aic) echo "AIC8800 WiFi / Bluetooth" ;;
         storage) echo "Persistent infrastructure" ;;
         *) die "Unknown component: $1" ;;
@@ -251,7 +251,7 @@ plan_component() {
         desktop) echo "  Remove the Plasma applet and its registration; remove the shared service only if no frontend remains." ;;
         decky) echo "  Remove the Decky plugin and restart plugin_loader; shared hardware helpers remain." ;;
         cec) echo "  Remove CEC boot, shutdown, and sleep integrations; preserve CEC preferences." ;;
-        power) echo "  Restore stock CPU state, disable tuning services, and remove the ACPI override on next boot." ;;
+        power) echo "  Restore stock CPU state, disable tuning and CPU core-unlock persistence, and remove the ACPI override on next boot." ;;
         ram) echo "  Remove the memory utility and TTM boot limit; preserve the profile. The CMOS split is unchanged." ;;
         compute) echo "  Restore stock CU dispatch when possible and remove boot integration; preserve the WGP profile and UMR." ;;
         mesh) echo "  Remove the alternate RADV ICD and global user environment generator; preserve build caches." ;;
@@ -551,7 +551,7 @@ Purge permanently deletes preserved BC-250 data:
   - CEC preferences under $HOME/.config
   - persistent backing data under /home/.steamos/offload/var/lib/bc250-control
   - reproducible AMDGPU and Decky build caches in this checkout
-  - toolkit-created mesh-shader Mesa build and downloaded upstream patch
+  - toolkit-created Mesa / RADV build and downloaded upstream patch
 
 The toolkit checkout and shared pnpm installation are retained. Purge is only
 allowed after every installed or partial component has been removed.
