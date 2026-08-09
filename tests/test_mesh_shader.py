@@ -137,6 +137,40 @@ class MeshShaderTests(unittest.TestCase):
         env["VK_DRIVER_FILES"] = driver_files
         env["VK_ICD_FILENAMES"] = driver_files
 
+    def install_legacy_runtime(self, env):
+        self.install_runtime(env)
+        icd = Path(env["BC250_MESH_ICD"])
+        driver = Path(env["BC250_MESH_DRIVER"])
+        state = Path(env["BC250_MESH_STATE_DIR"])
+        generator = Path(env["BC250_GFX1013_GENERATOR"])
+        icd.write_text(
+            '{\n  "file_format_version": "1.0.0",\n'
+            '  "ICD": {"library_path": "%s", "api_version": "1.4.309"}\n}\n'
+            % driver,
+            encoding="utf-8",
+        )
+        digest = lambda path: hashlib.sha256(path.read_bytes()).hexdigest()
+        (state / "install.conf").write_text(
+            f"{digest(driver)} {digest(icd)} mesa-26.2.0-rc3 {UPSTREAM_COMMIT}\n",
+            encoding="ascii",
+        )
+        subprocess.run(
+            [
+                "bash",
+                "-c",
+                'script=$1; output=$2; set -- help; source "$script" >/dev/null; '
+                'render_legacy_generator > "$output"',
+                "_",
+                str(MESH),
+                str(generator),
+            ],
+            check=True,
+            env=env,
+        )
+        generator.chmod(0o755)
+        env["VK_DRIVER_FILES"] = str(icd)
+        env["VK_ICD_FILENAMES"] = str(icd)
+
     def run_status_json(self, env):
         result = subprocess.run(
             ["bash", str(MESH), "status-json"],
@@ -271,6 +305,65 @@ class MeshShaderTests(unittest.TestCase):
             env = self.environment(Path(directory))
             self.install_runtime(env, "b66203e012594204e5e3049856b28a2681112985")
             self.assertEqual(self.run_status_json(env)["runtimeState"], "invalid")
+
+    def test_previous_global_runtime_can_be_uninstalled(self):
+        with tempfile.TemporaryDirectory() as directory:
+            env = self.environment(Path(directory))
+            self.install_legacy_runtime(env)
+            result = subprocess.run(
+                ["bash", str(MESH), "uninstall"],
+                capture_output=True,
+                text=True,
+                env=env,
+            )
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertFalse(Path(env["BC250_MESH_DRIVER"]).exists())
+            self.assertFalse(Path(env["BC250_MESH_ICD"]).exists())
+            self.assertFalse(Path(env["BC250_GFX1013_GENERATOR"]).exists())
+
+    def test_previous_global_runtime_passes_setup_ownership_preflight(self):
+        with tempfile.TemporaryDirectory() as directory:
+            env = self.environment(Path(directory))
+            self.install_legacy_runtime(env)
+            result = subprocess.run(
+                [
+                    "bash",
+                    "-c",
+                    'script=$1; set -- help; source "$script" >/dev/null; '
+                    "preflight_runtime_ownership",
+                    "_",
+                    str(MESH),
+                ],
+                capture_output=True,
+                text=True,
+                env=env,
+            )
+            self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_tampered_previous_generator_still_fails_ownership(self):
+        with tempfile.TemporaryDirectory() as directory:
+            env = self.environment(Path(directory))
+            self.install_legacy_runtime(env)
+            generator = Path(env["BC250_GFX1013_GENERATOR"])
+            generator.write_text(
+                generator.read_text(encoding="utf-8") + "echo tampered\n",
+                encoding="utf-8",
+            )
+            result = subprocess.run(
+                [
+                    "bash",
+                    "-c",
+                    'script=$1; set -- help; source "$script" >/dev/null; '
+                    "preflight_runtime_ownership",
+                    "_",
+                    str(MESH),
+                ],
+                capture_output=True,
+                text=True,
+                env=env,
+            )
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("not a recorded toolkit install", result.stderr)
 
     def test_tampered_generator_invalidates_runtime(self):
         with tempfile.TemporaryDirectory() as directory:

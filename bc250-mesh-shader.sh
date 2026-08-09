@@ -246,9 +246,54 @@ printf 'VK_ICD_FILENAMES=%s:%s\n' "\$ICD" "\$FALLBACK_ICD"
 EOF
 }
 
+render_legacy_generator() {
+    local marker_q module_q active_q driver_q commit_q
+    marker_q=$(shell_word "$COMPUTE_MARKER")
+    module_q=$(shell_word "$COMPUTE_MODULE")
+    active_q=$(shell_word "$COMPUTE_ACTIVE")
+    driver_q=$(shell_word "$DRIVER")
+    commit_q=$(shell_word "$UPSTREAM_COMMIT")
+    cat <<EOF
+#!/usr/bin/env bash
+set -u
+MARKER=$marker_q
+MODULE=$module_q
+ACTIVE=$active_q
+DRIVER=$driver_q
+COMMIT=$commit_q
+ICD="\$HOME/radeon_driconf_icd.x86_64.json"
+MANIFEST="\$HOME/.local/share/bc250-mesh-shader/install.conf"
+[ -f "\$MARKER" ] && [ ! -L "\$MARKER" ] && [ -f "\$MODULE" ] \
+    && [ ! -L "\$MODULE" ] && [ -f "\$DRIVER" ] && [ ! -L "\$DRIVER" ] \
+    && [ -f "\$ICD" ] && [ ! -L "\$ICD" ] \
+    && [ -f "\$MANIFEST" ] && [ ! -L "\$MANIFEST" ] \
+    && [ -r "\$ACTIVE" ] && [ ! -L "\$ACTIVE" ] || exit 0
+read -r expected < "\$MARKER" || exit 0
+[[ "\$expected" =~ ^[0-9a-f]{64}\$ ]] || exit 0
+actual=\$(sha256sum "\$MODULE" | awk '{print \$1}')
+[ "\$actual" = "\$expected" ] || exit 0
+[ "\$(cat "\$ACTIVE")" = "\$COMMIT" ] || exit 0
+read -r driver_sha icd_sha mesa_version commit < "\$MANIFEST" || exit 0
+[[ "\$driver_sha" =~ ^[0-9a-f]{64}\$ && "\$icd_sha" =~ ^[0-9a-f]{64}\$ \
+    && "\$commit" = "\$COMMIT" ]] || exit 0
+[ "\$(sha256sum "\$DRIVER" | awk '{print \$1}')" = "\$driver_sha" ] || exit 0
+[ "\$(sha256sum "\$ICD" | awk '{print \$1}')" = "\$icd_sha" ] || exit 0
+grep -qF "\"library_path\": \"\$DRIVER\"" "\$ICD" || exit 0
+printf 'VK_DRIVER_FILES=%s\n' "\$ICD"
+printf 'VK_ICD_FILENAMES=%s\n' "\$ICD"
+EOF
+}
+
 generator_owned() {
     [[ -f "$GENERATOR" && ! -L "$GENERATOR" && -x "$GENERATOR" ]] \
         && cmp -s "$GENERATOR" <(render_generator)
+}
+
+generator_recorded() {
+    generator_owned || {
+        [[ -f "$GENERATOR" && ! -L "$GENERATOR" && -x "$GENERATOR" ]] \
+            && cmp -s "$GENERATOR" <(render_legacy_generator)
+    }
 }
 
 verify_current_runtime() {
@@ -270,7 +315,7 @@ verify_recorded_parts() {
         [[ "$actual" == "$STORED_ICD_SHA" ]] || return 1
     fi
     if [[ -e "$GENERATOR" || -L "$GENERATOR" ]]; then
-        generator_owned || return 1
+        generator_recorded || return 1
     fi
 }
 
