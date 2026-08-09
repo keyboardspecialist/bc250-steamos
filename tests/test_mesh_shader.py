@@ -320,6 +320,38 @@ class MeshShaderTests(unittest.TestCase):
         self.assertIn("DryhoppedIPA/bc250-gfx1013-fix", source)
         self.assertIn("/usr/lib/systemd/user-environment-generators", source)
 
+    def test_setup_force_reinstalls_development_metadata_packages(self):
+        source = MESH.read_text(encoding="utf-8")
+        package_block = source.split("local development_packages=(", 1)[1].split(
+            ")", 1
+        )[0]
+        for package in (
+            "glibc",
+            "linux-api-headers",
+            "libdrm",
+            "libffi",
+            "libxau",
+            "libxdmcp",
+            "xorgproto",
+            "libxcb",
+            "wayland",
+        ):
+            self.assertIn(package, package_block.split())
+        self.assertIn(
+            'pacman -S --noconfirm "${development_packages[@]}"', source
+        )
+        self.assertIn("python-mako python-packaging python-yaml", source)
+        self.assertEqual(source.count("import mako, packaging, yaml"), 2)
+        self.assertEqual(source.count("#include <errno.h>"), 2)
+        self.assertIn('LIBDRM_TARBALL="libdrm-2.4.133.tar.xz"', source)
+        self.assertIn(
+            'fetch_verified "$LIBDRM_TARBALL" "$LIBDRM_SHA256" "$LIBDRM_URL"',
+            source,
+        )
+        self.assertIn('"$source/subprojects/packagecache/"', source)
+        self.assertIn("-Dallow-fallback-for=libdrm", source)
+        self.assertIn("-Dlibdrm:default_library=static", source)
+
 
 if __name__ == "__main__":
     unittest.main()

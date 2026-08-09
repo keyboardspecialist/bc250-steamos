@@ -12,6 +12,9 @@ DEFAULT_MESA_TAG="mesa-26.2.0-rc3"
 MESA_TARBALL="mesa-26.2.0-rc3.tar.xz"
 MESA_URL="https://archive.mesa3d.org/$MESA_TARBALL"
 MESA_SHA256="f733c005660d342a51c6727d1ad481f43d05b4c601ac72247fa641e1d73a8ad1"
+LIBDRM_TARBALL="libdrm-2.4.133.tar.xz"
+LIBDRM_URL="https://dri.freedesktop.org/libdrm/$LIBDRM_TARBALL"
+LIBDRM_SHA256="fc68f9d0ba2ea63c9432a299e14fea09fad7a8a66e8039fcd7802ca59f77b4f5"
 
 STATE_DIR="${BC250_MESH_STATE_DIR:-$HOME/.local/share/bc250-mesh-shader}"
 CACHE_DIR="$STATE_DIR/upstream-$UPSTREAM_COMMIT"
@@ -116,6 +119,7 @@ stage_upstream() {
         8056be93d6f15358275cffe8798b13f90e41c228a8832c563dc30116372d2995 \
         "$RAW_BASE/patches/mesa/0003-gfx1013-taskmesh-queries.patch"
     fetch_verified "$MESA_TARBALL" "$MESA_SHA256" "$MESA_URL"
+    fetch_verified "$LIBDRM_TARBALL" "$LIBDRM_SHA256" "$LIBDRM_URL"
 }
 
 verify_compute_kernel() {
@@ -474,10 +478,19 @@ cmd_setup() (
     fi
 
     local required_commands=(gcc g++ meson ninja patch pkg-config tar vulkaninfo glslangValidator spirv-as)
+    local development_packages=(
+        glibc linux-api-headers libdrm expat libelf zlib zstd wayland wayland-protocols
+        libffi libxau libxdmcp xorgproto libxcb xcb-util xcb-util-wm
+        xcb-util-keysyms xcb-util-renderutil xcb-util-image libx11 libxext
+        libxdamage libxfixes libxrandr libxshmfence libxxf86vm libxrender
+    )
     local command
     for command in "${required_commands[@]}"; do
         command -v "$command" >/dev/null 2>&1 || need_packages=1
     done
+    printf '#include <errno.h>\nint main(void) { return ETIME; }\n' \
+        | gcc -x c -fsyntax-only - >/dev/null 2>&1 || need_packages=1
+    python3 -c 'import mako, packaging, yaml' >/dev/null 2>&1 || need_packages=1
     for command in libdrm_amdgpu expat zlib libzstd libelf wayland-client xcb; do
         pkg-config --exists "$command" 2>/dev/null || need_packages=1
     done
@@ -487,21 +500,23 @@ cmd_setup() (
         as_root pacman-key --init
         as_root pacman-key --populate archlinux holo 2>/dev/null || as_root pacman-key --populate
         as_root pacman -S --needed --noconfirm \
-            base-devel meson ninja python-mako python-yaml pkgconf vulkan-tools \
+            base-devel meson ninja python-mako python-packaging python-yaml pkgconf vulkan-tools \
             glslang spirv-tools \
-            libdrm expat libelf zlib zstd wayland wayland-protocols \
-            libffi libxau libxdmcp xorgproto libxcb xcb-util xcb-util-wm \
-            xcb-util-keysyms xcb-util-renderutil xcb-util-image libx11 libxext \
-            libxdamage libxfixes libxrandr libxshmfence libxxf86vm libxrender
+            "${development_packages[@]}"
         # SteamOS images can record these packages while omitting development
         # files, so force a signed reinstall instead of trusting --needed.
-        as_root pacman -S --noconfirm libelf zlib zstd
+        as_root pacman -S --noconfirm "${development_packages[@]}"
         relock_root
     fi
     for command in "${required_commands[@]}"; do
         command -v "$command" >/dev/null 2>&1 \
             || die "Signed SteamOS packages did not provide required tool: $command"
     done
+    printf '#include <errno.h>\nint main(void) { return ETIME; }\n' \
+        | gcc -x c -fsyntax-only - >/dev/null 2>&1 \
+        || die "Signed SteamOS packages did not provide required C development headers"
+    python3 -c 'import mako, packaging, yaml' >/dev/null 2>&1 \
+        || die "Signed SteamOS packages did not provide required Python build modules"
     for command in libdrm_amdgpu expat zlib libzstd libelf wayland-client xcb; do
         pkg-config --exists "$command" 2>/dev/null \
             || die "Signed SteamOS packages did not provide development metadata: $command"
@@ -511,6 +526,8 @@ cmd_setup() (
     build="$source/build"
     rm -rf "$source"
     tar -C "$BUILD_ROOT" -xf "$CACHE_DIR/$MESA_TARBALL"
+    mkdir -p "$source/subprojects/packagecache"
+    cp "$CACHE_DIR/$LIBDRM_TARBALL" "$source/subprojects/packagecache/"
     local patch_name
     for patch_name in \
         0001-gfx1013-compute-queue-fix.patch \
@@ -529,7 +546,8 @@ cmd_setup() (
         -Dvulkan-drivers=amd -Dgallium-drivers= -Dplatforms=x11,wayland \
         -Dglx=disabled -Degl=disabled -Dgles2=disabled -Dvideo-codecs= \
         -Dshared-llvm=disabled -Dllvm=disabled -Dxmlconfig=enabled \
-        -Dlmsensors=disabled -Dvalgrind=disabled
+        -Dlmsensors=disabled -Dvalgrind=disabled \
+        -Dallow-fallback-for=libdrm -Dlibdrm:default_library=static
     ninja -C "$build" src/amd/vulkan/libvulkan_radeon.so
     output="$build/src/amd/vulkan/libvulkan_radeon.so"
     [[ -s "$output" && ! -L "$output" ]] || die "Mesa build did not produce the alternate RADV driver"
