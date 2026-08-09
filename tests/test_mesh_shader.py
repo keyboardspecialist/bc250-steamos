@@ -43,8 +43,8 @@ class MeshShaderTests(unittest.TestCase):
             "if [ \"${1:-}\" = --user ] && [ \"${2:-}\" = show-environment ]; then\n"
             "  [ \"${BC250_TEST_MANAGER_INACTIVE:-0}\" = 0 ] || exit 0\n"
             "  [ -f \"$BC250_GFX1013_GENERATOR\" ] || exit 0\n"
-            "  printf 'VK_DRIVER_FILES=%s\\n' \"$BC250_MESH_ICD\"\n"
-            "  printf 'VK_ICD_FILENAMES=%s\\n' \"$BC250_MESH_ICD\"\n"
+            "  printf 'VK_DRIVER_FILES=%s:%s\\n' \"$BC250_MESH_ICD\" \"$BC250_MESH_32BIT_ICD\"\n"
+            "  printf 'VK_ICD_FILENAMES=%s:%s\\n' \"$BC250_MESH_ICD\" \"$BC250_MESH_32BIT_ICD\"\n"
             "fi\n",
             encoding="utf-8",
         )
@@ -64,6 +64,7 @@ class MeshShaderTests(unittest.TestCase):
             "BC250_MESH_STATE_DIR": str(state),
             "BC250_MESH_DRIVER": str(root / "libvulkan_radeon_driconf.so"),
             "BC250_MESH_ICD": str(home / "radeon_driconf_icd.x86_64.json"),
+            "BC250_MESH_32BIT_ICD": str(root / "radeon_icd.i686.json"),
             "BC250_MESH_DRIRC": str(home / ".drirc"),
             "BC250_GFX1013_GENERATOR": str(
                 home
@@ -82,6 +83,8 @@ class MeshShaderTests(unittest.TestCase):
         marker = Path(env["BC250_GFX1013_MARKER"])
         active = Path(env["BC250_GFX1013_ACTIVE"])
         generator = Path(env["BC250_GFX1013_GENERATOR"])
+        fallback_icd = Path(env["BC250_MESH_32BIT_ICD"])
+        fallback_driver = fallback_icd.parent / "libvulkan_radeon.i686.so"
         for path in (driver, icd, module, active, generator):
             path.parent.mkdir(parents=True, exist_ok=True)
         state.mkdir(parents=True, exist_ok=True)
@@ -92,8 +95,24 @@ class MeshShaderTests(unittest.TestCase):
         )
         active.write_text(UPSTREAM_COMMIT + "\n", encoding="ascii")
         driver.write_bytes(b"driver\n")
+        fallback_driver.write_bytes(b"\x7fELF\x01stock 32-bit driver\n")
+        fallback_icd.write_text(
+            json.dumps(
+                {
+                    "file_format_version": "1.0.1",
+                    "ICD": {
+                        "library_path": str(fallback_driver),
+                        "api_version": "1.4.330",
+                        "library_arch": "32",
+                    },
+                }
+            )
+            + "\n",
+            encoding="utf-8",
+        )
         icd.write_text(
-            '{"ICD": {"library_path": "%s"}}\n' % driver,
+            '{"file_format_version": "1.0.1", "ICD": '
+            '{"library_path": "%s", "library_arch": "64"}}\n' % driver,
             encoding="utf-8",
         )
         subprocess.run(
@@ -114,8 +133,9 @@ class MeshShaderTests(unittest.TestCase):
             f"{digest(driver)} {digest(icd)} mesa-26.2.0-rc3 {commit}\n",
             encoding="ascii",
         )
-        env["VK_DRIVER_FILES"] = str(icd)
-        env["VK_ICD_FILENAMES"] = str(icd)
+        driver_files = f'{icd}:{env["BC250_MESH_32BIT_ICD"]}'
+        env["VK_DRIVER_FILES"] = driver_files
+        env["VK_ICD_FILENAMES"] = driver_files
 
     def run_status_json(self, env):
         result = subprocess.run(
@@ -161,6 +181,62 @@ class MeshShaderTests(unittest.TestCase):
             )
             self.assertIn("VK_DRIVER_FILES=", generated.stdout)
             self.assertIn("VK_ICD_FILENAMES=", generated.stdout)
+            self.assertIn(env["BC250_MESH_32BIT_ICD"], generated.stdout)
+
+    def test_missing_32bit_fallback_invalidates_global_runtime(self):
+        with tempfile.TemporaryDirectory() as directory:
+            env = self.environment(Path(directory))
+            self.install_runtime(env)
+            Path(env["BC250_MESH_32BIT_ICD"]).unlink()
+            status = self.run_status_json(env)
+            self.assertEqual(status["runtimeState"], "invalid")
+            generated = subprocess.run(
+                ["bash", env["BC250_GFX1013_GENERATOR"]],
+                check=True,
+                capture_output=True,
+                text=True,
+                env=env,
+            )
+            self.assertEqual(generated.stdout, "")
+
+    def test_non_32bit_fallback_invalidates_global_runtime(self):
+        with tempfile.TemporaryDirectory() as directory:
+            env = self.environment(Path(directory))
+            self.install_runtime(env)
+            fallback = Path(env["BC250_MESH_32BIT_ICD"])
+            fallback.write_text(
+                fallback.read_text(encoding="utf-8").replace('"32"', '"64"'),
+                encoding="utf-8",
+            )
+            self.assertEqual(self.run_status_json(env)["runtimeState"], "invalid")
+
+    def test_generator_rejects_unqualified_64bit_icd(self):
+        with tempfile.TemporaryDirectory() as directory:
+            env = self.environment(Path(directory))
+            self.install_runtime(env)
+            icd = Path(env["BC250_MESH_ICD"])
+            icd.write_text(
+                icd.read_text(encoding="utf-8").replace(
+                    ', "library_arch": "64"', ""
+                ),
+                encoding="utf-8",
+            )
+            state = Path(env["BC250_MESH_STATE_DIR"])
+            driver = Path(env["BC250_MESH_DRIVER"])
+            digest = lambda path: hashlib.sha256(path.read_bytes()).hexdigest()
+            (state / "install.conf").write_text(
+                f"{digest(driver)} {digest(icd)} mesa-26.2.0-rc3 {UPSTREAM_COMMIT}\n",
+                encoding="ascii",
+            )
+            generated = subprocess.run(
+                ["bash", env["BC250_GFX1013_GENERATOR"]],
+                check=True,
+                capture_output=True,
+                text=True,
+                env=env,
+            )
+            self.assertEqual(self.run_status_json(env)["runtimeState"], "invalid")
+            self.assertEqual(generated.stdout, "")
 
     def test_global_activation_stops_when_kernel_gate_is_missing(self):
         with tempfile.TemporaryDirectory() as directory:

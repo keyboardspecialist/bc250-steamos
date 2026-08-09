@@ -23,6 +23,8 @@ TRANSACTION_DIR="$STATE_DIR/install-transaction"
 DRIRC="${BC250_MESH_DRIRC:-$HOME/.drirc}"
 DRIVER="${BC250_MESH_DRIVER:-/usr/lib/libvulkan_radeon_driconf.so}"
 ICD="${BC250_MESH_ICD:-$HOME/radeon_driconf_icd.x86_64.json}"
+FALLBACK_ICD="${BC250_MESH_32BIT_ICD:-/usr/share/vulkan/icd.d/radeon_icd.i686.json}"
+GLOBAL_ICDS="$ICD:$FALLBACK_ICD"
 GENERATOR="${BC250_GFX1013_GENERATOR:-/usr/lib/systemd/user-environment-generators/60-bc250-gfx1013}"
 BUILD_ROOT="$STATE_DIR/build"
 LOCK_FILE="${BC250_MESH_LOCK_FILE:-$HOME/.cache/bc250-mesh-shader.lock}"
@@ -144,8 +146,37 @@ manager_environment_active() {
     verify_compute_kernel && verify_current_runtime || return 1
     command -v systemctl >/dev/null 2>&1 || return 1
     environment=$(systemctl --user show-environment 2>/dev/null) || return 1
-    grep -qxF "VK_DRIVER_FILES=$ICD" <<< "$environment" \
-        && grep -qxF "VK_ICD_FILENAMES=$ICD" <<< "$environment"
+    grep -qxF "VK_DRIVER_FILES=$GLOBAL_ICDS" <<< "$environment" \
+        && grep -qxF "VK_ICD_FILENAMES=$GLOBAL_ICDS" <<< "$environment"
+}
+
+verify_32bit_fallback() {
+    [[ -f "$FALLBACK_ICD" && ! -L "$FALLBACK_ICD" ]] || return 1
+    python3 - "$FALLBACK_ICD" <<'PY'
+import json
+from pathlib import Path
+import sys
+
+manifest = Path(sys.argv[1])
+try:
+    data = json.loads(manifest.read_text(encoding="utf-8"))
+    icd = data["ICD"]
+    library = Path(icd["library_path"])
+    if not library.is_absolute():
+        library = manifest.parent / library
+    valid = (
+        data.get("file_format_version") == "1.0.1"
+        and icd.get("library_arch") == "32"
+        and library.is_file()
+        and not library.is_symlink()
+    )
+    if valid:
+        with library.open("rb") as stream:
+            valid = stream.read(5) == b"\x7fELF\x01"
+except (KeyError, OSError, TypeError, ValueError):
+    valid = False
+raise SystemExit(0 if valid else 1)
+PY
 }
 
 read_manifest() {
@@ -167,15 +198,18 @@ verify_owned_runtime() {
     actual=$(sha256_file "$DRIVER")
     [[ "$actual" == "$STORED_DRIVER_SHA" ]] || return 1
     actual=$(sha256_file "$ICD")
-    [[ "$actual" == "$STORED_ICD_SHA" ]] || return 1
+    [[ "$actual" == "$STORED_ICD_SHA" ]] \
+        && grep -qF "\"library_path\": \"$DRIVER\"" "$ICD" \
+        && grep -Eq '"library_arch"[[:space:]]*:[[:space:]]*"64"' "$ICD"
 }
 
 render_generator() {
-    local marker_q module_q active_q driver_q commit_q
+    local marker_q module_q active_q driver_q fallback_icd_q commit_q
     marker_q=$(shell_word "$COMPUTE_MARKER")
     module_q=$(shell_word "$COMPUTE_MODULE")
     active_q=$(shell_word "$COMPUTE_ACTIVE")
     driver_q=$(shell_word "$DRIVER")
+    fallback_icd_q=$(shell_word "$FALLBACK_ICD")
     commit_q=$(shell_word "$UPSTREAM_COMMIT")
     cat <<EOF
 #!/usr/bin/env bash
@@ -184,12 +218,14 @@ MARKER=$marker_q
 MODULE=$module_q
 ACTIVE=$active_q
 DRIVER=$driver_q
+FALLBACK_ICD=$fallback_icd_q
 COMMIT=$commit_q
 ICD="\$HOME/radeon_driconf_icd.x86_64.json"
 MANIFEST="\$HOME/.local/share/bc250-mesh-shader/install.conf"
 [ -f "\$MARKER" ] && [ ! -L "\$MARKER" ] && [ -f "\$MODULE" ] \
     && [ ! -L "\$MODULE" ] && [ -f "\$DRIVER" ] && [ ! -L "\$DRIVER" ] \
     && [ -f "\$ICD" ] && [ ! -L "\$ICD" ] \
+    && [ -f "\$FALLBACK_ICD" ] && [ ! -L "\$FALLBACK_ICD" ] \
     && [ -f "\$MANIFEST" ] && [ ! -L "\$MANIFEST" ] \
     && [ -r "\$ACTIVE" ] && [ ! -L "\$ACTIVE" ] || exit 0
 read -r expected < "\$MARKER" || exit 0
@@ -203,8 +239,10 @@ read -r driver_sha icd_sha mesa_version commit < "\$MANIFEST" || exit 0
 [ "\$(sha256sum "\$DRIVER" | awk '{print \$1}')" = "\$driver_sha" ] || exit 0
 [ "\$(sha256sum "\$ICD" | awk '{print \$1}')" = "\$icd_sha" ] || exit 0
 grep -qF "\"library_path\": \"\$DRIVER\"" "\$ICD" || exit 0
-printf 'VK_DRIVER_FILES=%s\n' "\$ICD"
-printf 'VK_ICD_FILENAMES=%s\n' "\$ICD"
+grep -Eq '"library_arch"[[:space:]]*:[[:space:]]*"64"' "\$ICD" || exit 0
+grep -Eq '"library_arch"[[:space:]]*:[[:space:]]*"32"' "\$FALLBACK_ICD" || exit 0
+printf 'VK_DRIVER_FILES=%s:%s\n' "\$ICD" "\$FALLBACK_ICD"
+printf 'VK_ICD_FILENAMES=%s:%s\n' "\$ICD" "\$FALLBACK_ICD"
 EOF
 }
 
@@ -215,7 +253,7 @@ generator_owned() {
 
 verify_current_runtime() {
     verify_owned_runtime && [[ "$STORED_COMMIT" == "$UPSTREAM_COMMIT" ]] \
-        && generator_owned
+        && generator_owned && verify_32bit_fallback
 }
 
 verify_recorded_parts() {
@@ -337,8 +375,8 @@ PY
         systemctl --user daemon-reload >/dev/null 2>&1 \
             || die "Could not reload the restored user environment; retry recovery."
         environment=$(systemctl --user show-environment 2>/dev/null) || environment=
-        ! grep -qxF "VK_DRIVER_FILES=$ICD" <<< "$environment" \
-            && ! grep -qxF "VK_ICD_FILENAMES=$ICD" <<< "$environment" \
+        ! grep -qxF "VK_DRIVER_FILES=$GLOBAL_ICDS" <<< "$environment" \
+            && ! grep -qxF "VK_ICD_FILENAMES=$GLOBAL_ICDS" <<< "$environment" \
             || die "Interrupted global Vulkan environment remains active; sign out and retry recovery."
     fi
     rm -rf "$TRANSACTION_DIR"
@@ -433,6 +471,8 @@ cmd_setup() (
     recover_install_transaction
     preflight_runtime_ownership
     require_compute_kernel
+    verify_32bit_fallback \
+        || die "SteamOS's 32-bit RADV ICD is unavailable or invalid. Install lib32-vulkan-radeon and retry."
     stage_upstream
 
     work=$(mktemp -d "$STATE_DIR/.setup.XXXXXX")
@@ -553,7 +593,7 @@ cmd_setup() (
     [[ -s "$output" && ! -L "$output" ]] || die "Mesa build did not produce the alternate RADV driver"
 
     cat > "$work/test-icd.json" <<EOF
-{"file_format_version":"1.0.0","ICD":{"library_path":"$output","api_version":"1.4.309"}}
+{"file_format_version":"1.0.1","ICD":{"library_path":"$output","api_version":"1.4.309","library_arch":"64"}}
 EOF
     VK_DRIVER_FILES="$work/test-icd.json" vulkaninfo --summary >/dev/null \
         || die "Staged alternate RADV driver failed vulkaninfo"
@@ -569,8 +609,8 @@ EOF
     relock_root
     cat > "$work/icd" <<EOF
 {
-  "file_format_version": "1.0.0",
-  "ICD": {"library_path": "$DRIVER", "api_version": "1.4.309"}
+  "file_format_version": "1.0.1",
+  "ICD": {"library_path": "$DRIVER", "api_version": "1.4.309", "library_arch": "64"}
 }
 EOF
     chmod 0644 "$work/icd"
@@ -857,8 +897,8 @@ cmd_uninstall() (
         systemctl --user daemon-reload >/dev/null 2>&1 \
             || die "Could not deactivate the global Vulkan environment; retry uninstall."
         environment=$(systemctl --user show-environment 2>/dev/null) || environment=
-        ! grep -qxF "VK_DRIVER_FILES=$ICD" <<< "$environment" \
-            && ! grep -qxF "VK_ICD_FILENAMES=$ICD" <<< "$environment" \
+        ! grep -qxF "VK_DRIVER_FILES=$GLOBAL_ICDS" <<< "$environment" \
+            && ! grep -qxF "VK_ICD_FILENAMES=$GLOBAL_ICDS" <<< "$environment" \
             || die "Global Vulkan environment remains active; sign out and retry uninstall."
     fi
     if [[ -e "$DRIVER" || -L "$DRIVER" ]]; then
@@ -1028,6 +1068,8 @@ Usage: $0 [menu|setup|status|status-json|legacy-clear|uninstall|purge|help]
 The environment generator exports VK_DRIVER_FILES and VK_ICD_FILENAMES only
 when the patched AMDGPU module is active. Sign out and back in after setup or
 uninstall so the complete graphical session inherits the changed environment.
+The patched ICD serves 64-bit processes; SteamOS's stock RADV serves 32-bit
+processes through the same global driver list.
 
 Upstream (pinned to $UPSTREAM_COMMIT):
   $UPSTREAM_REPO

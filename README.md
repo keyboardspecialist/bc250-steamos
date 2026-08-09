@@ -467,6 +467,11 @@ out and back in after setup so the graphical session inherits the alternate
 driver. The generator exports nothing unless the installed module hash and the
 loaded module's read-only GFX1013 repair attestation both validate.
 
+The global driver list is architecture-qualified. Native 64-bit processes use
+the patched GFX1013 RADV ICD, while 32-bit processes fall back to SteamOS's
+stock `radeon_icd.i686.json` and `lib32-vulkan-radeon`. This also supports games
+that launch a mixture of 64-bit and 32-bit Vulkan processes.
+
 Do not use this ICD with the stock kernel module. The alternate driver exposes
 dedicated compute queues that require the kernel lifecycle repair, and upstream
 reports that the mismatched combination can hang the GPU.
@@ -484,10 +489,9 @@ are retained during migration so their old Steam launch options can be found.
 Remove those launch options, run `./bc250-mesh-shader.sh legacy-clear`, and then
 uninstall; unrelated `~/.drirc` content is preserved.
 
-The upstream alpha build is x86-64 only. Globally overriding RADV can prevent
-32-bit Vulkan applications from finding a compatible ICD; i686 support remains
-an upstream follow-up. Do not enable the global runtime if you rely on 32-bit
-Vulkan titles.
+The upstream alpha build itself remains x86-64 only. Its compute and mesh
+changes therefore do not apply to 32-bit processes; those processes use the
+stock SteamOS RADV fallback instead.
 
 The upstream series is pinned to commit
 [`d3e6dc0`](https://github.com/DryhoppedIPA/bc250-gfx1013-fix/commit/d3e6dc062c34d2523db0abe5741d1f5b0dea00d9),
