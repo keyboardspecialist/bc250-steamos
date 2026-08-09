@@ -520,6 +520,7 @@ class MeshShaderTests(unittest.TestCase):
         self.assertIn('"$source/subprojects/packagecache/"', source)
         self.assertIn("-Dallow-fallback-for=libdrm", source)
         self.assertIn("-Dlibdrm:default_library=static", source)
+        self.assertIn("-Dbuildtype=release", source)
 
 
 if __name__ == "__main__":

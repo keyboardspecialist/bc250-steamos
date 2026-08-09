@@ -628,6 +628,7 @@ cmd_setup() (
     export TMPDIR="$STATE_DIR/tmp"
     mkdir -p "$TMPDIR"
     meson setup "$build" "$source" \
+        -Dbuildtype=release \
         -Dvulkan-drivers=amd -Dgallium-drivers= -Dplatforms=x11,wayland \
         -Dglx=disabled -Degl=disabled -Dgles2=disabled -Dvideo-codecs= \
         -Dshared-llvm=disabled -Dllvm=disabled -Dxmlconfig=enabled \
