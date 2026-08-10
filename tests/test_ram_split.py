@@ -158,6 +158,7 @@ class RamSplitTests(unittest.TestCase):
                 'TTM_CONFIG=$1; GRUB_CFG=$2; PROC_CMDLINE=$3; '
                 'require_root() { :; }; install_storage() { :; }; '
                 'install_update_persistence() { :; }; chown() { :; }; '
+                'lock_grub_config() { :; }; unlock_grub_config() { :; }; '
                 'preflight_no_foreign_ttm() { :; }; preflight_grub_target() { :; }; '
                 'regenerate_grub() { printf "%s\\n" "linux ttm.pages_limit=3014656" > "$GRUB_CFG"; }; '
                 'cmd_ttm_set 3014656 --yes; '
@@ -191,6 +192,7 @@ class RamSplitTests(unittest.TestCase):
             result = run_sourced(
                 'TTM_CONFIG=$1; GRUB_CFG=$2; '
                 'require_root() { :; }; install_storage() { :; }; chown() { :; }; '
+                'lock_grub_config() { :; }; unlock_grub_config() { :; }; '
                 'preflight_no_foreign_ttm() { :; }; preflight_grub_target() { :; }; '
                 'regenerate_grub() { printf "partial\\n" > "$GRUB_CFG"; return 1; }; '
                 'cmd_ttm_set 3014656 --yes',

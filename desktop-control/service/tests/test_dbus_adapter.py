@@ -67,6 +67,10 @@ class FakeControl:
         self.senders.append((sender, action))
         return "operation"
 
+    async def set_cpu_mitigations(self, sender, enabled):
+        self.senders.append((sender, enabled))
+        return "operation"
+
 
 class IdentityResolverTests(unittest.IsolatedAsyncioTestCase):
     async def test_resolves_pid_and_validated_audit_session(self):
@@ -132,6 +136,13 @@ class AdapterHandlerTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn('<method name="SetUmaSize">', INTROSPECTION_XML)
         self.assertIn('<method name="SetTtmPages">', INTROSPECTION_XML)
         self.assertIn('<method name="RemoveTtmOverride">', INTROSPECTION_XML)
+
+    def test_cpu_mitigations_dbus_signature_is_declared(self):
+        self.assertEqual(
+            DbusAdapter._METHODS["SetCpuMitigations"],
+            ("b", "s", "set_cpu_mitigations"),
+        )
+        self.assertIn('<method name="SetCpuMitigations">', INTROSPECTION_XML)
 
     async def test_rejects_calls_above_dispatch_limit(self):
         adapter = DbusAdapter(HandlerBus(), FakeControl(), dispatch_limit=0)

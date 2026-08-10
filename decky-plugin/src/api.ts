@@ -23,6 +23,9 @@ export const cpuOcAction = callable<
   [action: string, frequency: number, voltage: number, temperature: number],
   void
 >("cpu_oc_action");
+export const setCpuMitigations = callable<[enabled: boolean], void>(
+  "set_cpu_mitigations",
+);
 export const cecAction = callable<[action: string], void>("cec_action");
 export const setCecToggle = callable<
   [key: string, enabled: boolean],

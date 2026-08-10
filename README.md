@@ -264,9 +264,19 @@ sudo ./bc250-power.sh cpu-oc enable
 sudo ./bc250-power.sh cpu-oc status
 sudo ./bc250-power.sh cpu-oc apply
 sudo ./bc250-power.sh cpu-oc off
+
+sudo ./bc250-power.sh cpu-mitigations status
+sudo ./bc250-power.sh cpu-mitigations disable
+sudo ./bc250-power.sh cpu-mitigations enable
 ```
 
 `cpu-oc detect` stress-tests each frequency step. Keep the VID limit at or below 1325 mV.
+
+The CPU menu also exposes a security-mitigations toggle. Disabling writes
+`mitigations=off` through a toolkit-owned GRUB drop-in and may improve
+performance, but reduces protection against processor vulnerabilities.
+Enabling removes that argument and returns to kernel defaults. Both changes
+require a reboot; the configured state persists through SteamOS updates.
 
 ## Experimental CPU Core Unlock
 
@@ -553,7 +563,7 @@ The installer snapshots driver source, firmware, and verified per-kernel modules
 | Power management | The keep list retains tuning and GRUB defaults; the ACPI service validates and restores the `/boot` override and EFI GRUB config |
 | RAM / VRAM split | CMOS persists independently; the keep list retains the TTM GRUB drop-in |
 | CEC | Home configuration and allowlisted system integration carry forward |
-| Patched AMDGPU module | Run `bc250-audio-fix/patch-driver.sh` after each kernel update |
+| Patched AMDGPU module | `amdgpu.sched_policy=2` persists through the atomic-update keep list; run `bc250-audio-fix/patch-driver.sh` after each kernel update to rebuild the kernel-specific module |
 | Mesa / RADV performance patch | Rerun `bc250-mesh-shader.sh setup` after a SteamOS update to restore the root-owned driver and environment generator, then sign out and back in |
 | AIC8800 modules | The boot helper reuses staged modules or published headers; rerun setup if it requests interactive source preparation |
 

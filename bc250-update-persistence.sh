@@ -7,7 +7,7 @@ KEEP_DIR=/etc/atomic-update.conf.d
 LEGACY_KEEP_FILE="$KEEP_DIR/bc250-steamos.conf"
 PREVIOUS_ETC=/etc/previous
 BACKUP_DIR=/var/lib/steamos-atomupd/etc_backup
-COMPONENTS=(compute power ram cec aic desktop)
+COMPONENTS=(compute power ram cec aic desktop amdgpu)
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 STORAGE_SH="$SCRIPT_DIR/bc250-storage.sh"
 STORAGE_UNIT='/etc/systemd/system/var-lib-bc250\x2dcontrol.mount'
@@ -80,7 +80,7 @@ print_storage_paths() {
 write_keep_file() {
     local component="$1" target="$KEEP_DIR/bc250-$1.conf" tmp
     case "$component" in
-        compute|power|ram|cec|aic|desktop) ;;
+        compute|power|ram|cec|aic|desktop|amdgpu) ;;
         *) die "Unknown component: $component" ;;
     esac
     if [[ -e "$target" || -L "$target" ]]; then
@@ -104,6 +104,7 @@ EOF
             power)
                 cat << EOF
 /etc/default/grub.d/bc250-acpi.cfg
+/etc/default/grub.d/bc250-cpu-mitigations.cfg
 /etc/bc250-smu-oc.conf
 /etc/cyan-skillfish-governor-smu/config.toml
 /etc/dbus-1/system.d/com.cyan.SkillFishGovernor.conf
@@ -168,6 +169,10 @@ EOF
 EOF
                 print_storage_paths
                 ;;
+            amdgpu)
+                printf '%s\n' /etc/default/grub.d/bc250-amdgpu.cfg
+                print_storage_paths
+                ;;
         esac
     } > "$tmp"
     chmod 644 "$tmp"
@@ -188,6 +193,7 @@ component_has_state() {
         cec)     [[ -e "$ROOT_DATA_DIR/helper/bc250-cec-poweroff-standby" || -e /etc/systemd/system-sleep/bc250-cec-amp.sh ]] ;;
         aic)     [[ -e "$ROOT_DATA_DIR/aic8800/source" || -e /etc/systemd/system/aic8800-modules.service ]] ;;
         desktop) [[ -e "$ROOT_DATA_DIR/desktop" || -e /etc/systemd/system/bc250-control.service ]] ;;
+        amdgpu)  [[ -e /etc/default/grub.d/bc250-amdgpu.cfg ]] ;;
         *)       return 1 ;;
     esac
 }
@@ -212,7 +218,7 @@ install_keep_list() {
                 write_keep_file "$component"
             done
             ;;
-        compute|power|ram|cec|aic|desktop) write_keep_file "$requested" ;;
+        compute|power|ram|cec|aic|desktop|amdgpu) write_keep_file "$requested" ;;
         *) die "Unknown component: $requested" ;;
     esac
 }
@@ -223,7 +229,7 @@ remove_keep_list() {
     local -a selected=()
     case "$requested" in
         all) selected=("${COMPONENTS[@]}") ;;
-        compute|power|ram|cec|aic|desktop) selected=("$requested") ;;
+        compute|power|ram|cec|aic|desktop|amdgpu) selected=("$requested") ;;
         *) die "Unknown component: $requested" ;;
     esac
 
@@ -500,6 +506,7 @@ cmd_menu() {
             "Protect CEC|$(keep_badge cec)|Preserve CEC poweroff and sleep integration."
             "Protect AIC8800|$(keep_badge aic)|Preserve AIC8800 service and device configuration."
             "Protect desktop control|$(keep_badge desktop)|Preserve the desktop service and repair integration after updates."
+            "Protect patched AMDGPU|$(keep_badge amdgpu)|Preserve the async-compute scheduler boot policy."
             "Protect all components||Install every component keep list."
             "Recover compute settings||Restore CU routing from the newest atomupd snapshot."
             "Recover power settings||Restore GPU and CPU tuning from the newest atomupd snapshot."
@@ -514,23 +521,24 @@ cmd_menu() {
             3) run_menu_action install cec ;;
             4) run_menu_action install aic ;;
             5) run_menu_action install desktop ;;
-            6) run_menu_action install all ;;
-            7) run_menu_action recover compute ;;
-            8) run_menu_action recover power ;;
-            9) run_menu_action recover all ;;
-            10) show_menu_status ;;
+            6) run_menu_action install amdgpu ;;
+            7) run_menu_action install all ;;
+            8) run_menu_action recover compute ;;
+            9) run_menu_action recover power ;;
+            10) run_menu_action recover all ;;
+            11) show_menu_status ;;
         esac
     done
 }
 
 cmd_help() {
     cat << EOF
-Usage: $0 {install|remove} [compute|power|ram|cec|aic|desktop|all]
+Usage: $0 {install|remove} [compute|power|ram|cec|aic|desktop|amdgpu|all]
        $0 recover [compute|power|all] [--force]
        $0 {status|menu|help}
 
   remove COMPONENT     Remove only this helper's matching component keep list.
-                       COMPONENT is compute, power, ram, cec, aic, desktop, or all.
+                       COMPONENT is compute, power, ram, cec, aic, desktop, amdgpu, or all.
 
 Run with no arguments in a terminal to open the interactive menu.
 EOF
@@ -546,7 +554,7 @@ case "$1" in
     remove)
         shift
         [[ $# -eq 1 ]] \
-            || die "Usage: $0 remove {compute|power|ram|cec|aic|desktop|all}"
+            || die "Usage: $0 remove {compute|power|ram|cec|aic|desktop|amdgpu|all}"
         remove_keep_list "$1"
         ;;
     recover) shift; recover_settings "${1:-all}" "${2:-}" ;;

@@ -55,7 +55,9 @@ QtObject {
         cpu: {
             service: { enabled: "enabled", active: "active" },
             installed: { values: { frequency: "4000", voltage: "1275" }, detected: "4000 MHz @ 1275 mV" },
-            staged: null, toolAvailable: true
+            staged: null, toolAvailable: true,
+            mitigations: { schemaVersion: 1, available: true, state: "enabled",
+                configuredEnabled: true, bootEnabled: true, rebootRequired: false, protected: true }
         },
         cec: {
             devicePresent: true, service: { enabled: "enabled", active: "active" },
@@ -83,6 +85,7 @@ QtObject {
     function setCustomLoadTarget() { start("Applying custom load target"); }
     function setRamp() { start("Applying GPU ramp time"); }
     function cpuOcAction() { start("Running CPU operation"); }
+    function setCpuMitigations() { start("Updating CPU mitigations"); }
     function cecAction() { start("Sending CEC command"); }
     function setCecToggle() { start("Updating CEC behavior"); }
     function setCecName() { start("Updating CEC name"); }

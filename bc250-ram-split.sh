@@ -15,6 +15,7 @@ ASSET_NAME=bc250_memcfg.zip
 TTM_CONFIG="${TTM_CONFIG:-/etc/default/grub.d/bc250-ttm.cfg}"
 GRUB_DEFAULT="${GRUB_DEFAULT:-/etc/default/grub}"
 GRUB_CFG="${GRUB_CFG:-/efi/EFI/steamos/grub.cfg}"
+GRUB_CONFIG_LOCK="${GRUB_CONFIG_LOCK:-/run/lock/bc250-grub-config.lock}"
 TTM_SYS_PARAM="${TTM_SYS_PARAM:-/sys/module/ttm/parameters/pages_limit}"
 PROC_CMDLINE="${PROC_CMDLINE:-/proc/cmdline}"
 KEEP_FILE="${RAM_KEEP_FILE:-/etc/atomic-update.conf.d/bc250-ram.conf}"
@@ -25,6 +26,7 @@ C0=$'\033[0m'; CB=$'\033[1m'; CD=$'\033[2m'; CI=$'\033[7m'
 CG=$'\033[32m'; CY=$'\033[33m'; CR=$'\033[31m'; CC=$'\033[36m'
 TUI_CURSOR_HIDDEN=0
 TEMP_DIRS=()
+GRUB_LOCK_HELD=0
 
 log() { echo "[bc250-ram] $*"; }
 die() { echo "[bc250-ram] $*" >&2; exit 1; }
@@ -48,6 +50,11 @@ cleanup() {
         [[ -n "$directory" ]] || continue
         rm -rf "$directory"
     done
+    if [[ $GRUB_LOCK_HELD -eq 1 ]]; then
+        flock -u 6 2>/dev/null || true
+        exec 6>&-
+        GRUB_LOCK_HELD=0
+    fi
 }
 trap cleanup EXIT
 
@@ -450,6 +457,21 @@ restore_ttm_state() {
     fi
 }
 
+lock_grub_config() {
+    command -v flock >/dev/null 2>&1 \
+        || die "flock is required for safe GRUB changes."
+    exec 6> "$GRUB_CONFIG_LOCK" || die "Could not open $GRUB_CONFIG_LOCK"
+    flock 6 || die "Could not lock $GRUB_CONFIG_LOCK"
+    GRUB_LOCK_HELD=1
+}
+
+unlock_grub_config() {
+    [[ $GRUB_LOCK_HELD -eq 1 ]] || return 0
+    flock -u 6 2>/dev/null || true
+    exec 6>&-
+    GRUB_LOCK_HELD=0
+}
+
 atomic_restore_file() {
     local source="$1" target="$2" tmp
     mkdir -p "${target%/*}"
@@ -468,6 +490,7 @@ cmd_ttm_set() {
     [[ -n "$pages" && "$consent" == --yes && $# -eq 2 ]] \
         || die "Usage: $0 ttm-set PAGES --yes"
     validate_ttm_pages "$pages"
+    lock_grub_config
     preflight_ttm_ownership
     preflight_no_foreign_ttm
     preflight_grub_target
@@ -491,6 +514,7 @@ cmd_ttm_set() {
         restore_ttm_state "$config_backup" "$had_config" "$grub_backup" "$had_grub"
         die "Update persistence failed; the prior TTM configuration was restored."
     fi
+    unlock_grub_config
     log "Configured ttm.pages_limit=$pages ($(pages_to_gib "$pages") GiB dynamic limit)."
     log "Reboot is required before the new TTM limit is active."
 }
@@ -503,6 +527,7 @@ cmd_ttm_remove() {
         remove_update_persistence
         return 0
     fi
+    lock_grub_config
     preflight_ttm_ownership
     preflight_no_foreign_ttm
     preflight_grub_target
@@ -521,6 +546,7 @@ cmd_ttm_remove() {
         restore_ttm_state "$config_backup" 1 "$grub_backup" "$had_grub"
         die "Update persistence cleanup failed; the TTM configuration was restored."
     fi
+    unlock_grub_config
     log "Removed the toolkit-managed TTM override. Reboot to return to the default limit."
 }
 

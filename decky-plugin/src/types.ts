@@ -103,6 +103,15 @@ export interface CpuStatus {
   installed: CpuConfig | null;
   staged: CpuConfig | null;
   toolAvailable: boolean;
+  mitigations: {
+    schemaVersion: 1;
+    available: boolean;
+    state: "enabled" | "disabled" | "foreign" | "incomplete" | "unavailable";
+    configuredEnabled: boolean | null;
+    bootEnabled: boolean | null;
+    rebootRequired: boolean;
+    protected: boolean;
+  };
 }
 
 export interface CecStatus {

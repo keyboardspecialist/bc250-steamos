@@ -206,6 +206,30 @@ class PersistenceUnitTests(unittest.TestCase):
             self.assertIn("/etc/default/grub.d/bc250-ttm.cfg", payload)
             self.assertIn("bc250-persistence-recovery.service", payload)
 
+    def test_amdgpu_keep_list_contains_scheduler_fragment(self):
+        with tempfile.TemporaryDirectory() as directory:
+            keep = Path(directory)
+            result = subprocess.run(
+                [
+                    "bash",
+                    "-c",
+                    'script=$1; keep=$2; set -- help; source "$script" >/dev/null; '
+                    'require_root() { :; }; install_storage() { :; }; KEEP_DIR=$keep; '
+                    'LEGACY_KEEP_FILE="$keep/bc250-steamos.conf"; '
+                    "install_keep_list amdgpu",
+                    "_",
+                    str(PERSISTENCE),
+                    str(keep),
+                ],
+                check=True,
+                capture_output=True,
+                text=True,
+            )
+            payload = (keep / "bc250-amdgpu.conf").read_text(encoding="utf-8")
+
+            self.assertIn("Atomic-update keep list installed", result.stdout)
+            self.assertIn("/etc/default/grub.d/bc250-amdgpu.cfg", payload)
+
     def test_storage_uninstall_preserves_backing_and_stops_recovery(self):
         with tempfile.TemporaryDirectory() as directory:
             result = subprocess.run(
@@ -403,6 +427,7 @@ grep -Fxq "daemon-reload" "$SYSTEMCTL_LOG"
         )
         self.assertNotIn("/boot/grub/grub.cfg", source)
         self.assertIn("/etc/default/grub.d/bc250-acpi.cfg", persistence)
+        self.assertIn("/etc/default/grub.d/bc250-cpu-mitigations.cfg", persistence)
         self.assertIn("current_os_build > \"\\$READY_MARKER\"", source)
         self.assertIn("installed - boot repair needed", source)
         self.assertIn(
@@ -577,7 +602,7 @@ grep -Fxq "daemon-reload" "$SYSTEMCTL_LOG"
         )
         storage = STORAGE.read_text(encoding="utf-8")
         for expected in (
-            "COMPONENTS=(compute power ram cec aic desktop)",
+            "COMPONENTS=(compute power ram cec aic desktop amdgpu)",
             "/etc/systemd/system/bc250-control.service",
             "/etc/systemd/system/bc250-desktop-control-repair.service",
             "/etc/dbus-1/system.d/io.github.keyboardspecialist.BC250Control1.conf",
@@ -637,6 +662,7 @@ grep -Fxq "daemon-reload" "$SYSTEMCTL_LOG"
             "bc250-audio-fix/build.sh",
             "bc250-audio-fix/prepare-kernel.sh",
             "bc250-audio-fix/patch-driver.sh",
+            "bc250-audio-fix/boot-config.sh",
             "decky-plugin/install.sh",
             "desktop-control/install.sh",
             "desktop-control/shared-service-install.sh",

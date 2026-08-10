@@ -23,11 +23,12 @@ EOF
 }
 
 show_status() {
-    local module rel resolved marker metrics_marker gfx1013_marker expected gfx1013_expected actual found=0 failed=0
+    local module rel resolved marker metrics_marker gfx1013_marker expected gfx1013_expected actual found=0 failed=0 module_found=0
 
     for module in /usr/lib/modules/*/updates/amdgpu.ko.zst; do
         [ -e "$module" ] || [ -L "$module" ] || continue
         found=1
+        module_found=1
         rel=${module#/usr/lib/modules/}
         rel=${rel%%/*}
         marker="/usr/lib/modules/$rel/updates/.bc250-audio-fix"
@@ -66,6 +67,14 @@ show_status() {
             failed=1
         fi
     done
+    if [ "$module_found" = 1 ] || "$HERE/boot-config.sh" present; then
+        found=1
+        "$HERE/boot-config.sh" status || failed=1
+        if [ "$module_found" = 0 ]; then
+            echo "[bc250-amdgpu] scheduler policy is present without a module override"
+            failed=1
+        fi
+    fi
     for marker in /usr/lib/modules/*/updates/.bc250-audio-fix \
                   /usr/lib/modules/*/updates/.bc250-metrics-fix \
                   /usr/lib/modules/*/updates/.bc250-gfx1013-fix; do
@@ -93,11 +102,13 @@ confirm_legacy_adoption() {
 
 run_audio_rollback() {
     local rc=0 adopted=0
-    sudo "$HERE/rollback.sh" --all || rc=$?
+    sudo env BC250_PRESERVE_AMDGPU_BOOT_CONFIG=1 \
+        "$HERE/rollback.sh" --all || rc=$?
     if [ "$rc" = 3 ]; then
         confirm_legacy_adoption || return "$rc"
         adopted=1
-        sudo "$HERE/rollback.sh" --all --adopt-legacy
+        sudo env BC250_PRESERVE_AMDGPU_BOOT_CONFIG=1 \
+            "$HERE/rollback.sh" --all --adopt-legacy
     elif [ "$rc" != 0 ]; then
         return "$rc"
     fi
@@ -114,6 +125,7 @@ run_audio_rollback() {
     elif [ "$rc" != 0 ]; then
         return "$rc"
     fi
+    sudo env BC250_FORCE_GRUB_REGEN=1 "$HERE/boot-config.sh" remove
 }
 
 case "${1:-}" in

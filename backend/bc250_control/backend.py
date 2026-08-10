@@ -2050,6 +2050,58 @@ class ToolkitBackend:
         service = await self._service("bc250-smu-oc.service")
         installed_path = Path("/etc/bc250-smu-oc.conf")
         staged_path = CPU_STATE_DIR / "overclock.conf"
+        mitigations = {
+            "schemaVersion": 1,
+            "available": False,
+            "state": "unavailable",
+            "configuredEnabled": None,
+            "bootEnabled": None,
+            "rebootRequired": False,
+            "protected": False,
+        }
+        if self._cpu_helper_available():
+            try:
+                value = json.loads(
+                    await self._cpu_tool("cpu-mitigations", "status-json")
+                )
+            except (CommandError, json.JSONDecodeError):
+                value = None
+            if (
+                isinstance(value, dict)
+                and {
+                    "schemaVersion",
+                    "available",
+                    "state",
+                    "configuredEnabled",
+                    "bootEnabled",
+                    "rebootRequired",
+                    "protected",
+                }.issubset(value)
+                and type(value.get("schemaVersion")) is int
+                and value.get("schemaVersion") == 1
+                and value.get("available") is True
+                and value.get("state")
+                in {"enabled", "disabled", "foreign", "incomplete"}
+                and type(value.get("rebootRequired")) is bool
+                and type(value.get("protected")) is bool
+                and (
+                    value.get("configuredEnabled") is None
+                    or type(value.get("configuredEnabled")) is bool
+                )
+                and (
+                    value.get("bootEnabled") is None
+                    or type(value.get("bootEnabled")) is bool
+                )
+                and (
+                    (value.get("state") == "enabled" and value.get("configuredEnabled") is True)
+                    or (value.get("state") == "disabled" and value.get("configuredEnabled") is False)
+                    or (
+                        value.get("state") in {"foreign", "incomplete"}
+                        and value.get("configuredEnabled") is None
+                    )
+                )
+            ):
+                mitigations = value
         return {
             "service": service,
             "installed": self._cpu_config(installed_path)
@@ -2061,6 +2113,7 @@ class ToolkitBackend:
             "toolAvailable": self._trusted_root_file(
                 CPU_STATE_DIR / "bc250_apply.py"
             ),
+            "mitigations": mitigations,
         }
 
     @staticmethod
@@ -2645,6 +2698,17 @@ class ToolkitBackend:
             await self._cpu_tool(
                 *args,
                 timeout=1800 if action_name == "detect" else 180,
+            )
+
+        return await self._mutate(action)
+
+    async def set_cpu_mitigations(self, enabled: bool) -> None:
+        if type(enabled) is not bool:
+            raise CommandError("CPU mitigations state must be a boolean.")
+
+        async def action() -> None:
+            await self._cpu_tool(
+                "cpu-mitigations", "enable" if enabled else "disable", timeout=180
             )
 
         return await self._mutate(action)

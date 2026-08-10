@@ -9,6 +9,7 @@ set -euo pipefail
 PRIORITY_FILE=/usr/lib/depmod.d/10-bc250-audio-fix.conf
 LEGACY_PRIORITY_FILE=/usr/lib/depmod.d/10-updates.conf
 HERE=$(cd "$(dirname "$0")" && pwd)
+BOOT_CONFIG=$HERE/boot-config.sh
 ROOTFS_WAS_READONLY=0
 PRIORITY_REMOVED=0
 TARGETS=()
@@ -171,7 +172,7 @@ for rel in "${TARGETS[@]}"; do
 done
 
 if [ "${#PRESENT[@]}" = 0 ] && [ ! -e "$PRIORITY_FILE" ] \
-   && [ ! -e "$LEGACY_PRIORITY_FILE" ]; then
+   && [ ! -e "$LEGACY_PRIORITY_FILE" ] && ! "$BOOT_CONFIG" present; then
     echo "OK - BC-250 amdgpu patch is not installed; nothing to remove."
     exit 0
 fi
@@ -249,6 +250,10 @@ for index in "${!PRESENT[@]}"; do
         "/usr/lib/modules/$rel/updates/.bc250-gfx1013-fix"
     rmdir "/usr/lib/modules/$rel/updates" 2>/dev/null || true
 done
+
+if [ "$remaining" = 0 ] && [ "${BC250_PRESERVE_AMDGPU_BOOT_CONFIG:-0}" != 1 ]; then
+    "$BOOT_CONFIG" remove
+fi
 
 if [ "${#PRESENT[@]}" = 0 ]; then
     if [ "$PRIORITY_REMOVED" = 1 ]; then

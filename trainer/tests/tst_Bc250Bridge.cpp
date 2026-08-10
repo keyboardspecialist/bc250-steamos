@@ -127,6 +127,16 @@ private slots:
         QVERIFY(!bridge.busy());
     }
 
+    void acceptsCpuMitigationsToggle()
+    {
+        Bc250Bridge bridge(true);
+        bridge.setCpuMitigations(false);
+        QVERIFY2(bridge.error().isEmpty(), qPrintable(bridge.error()));
+        QVERIFY(bridge.busy());
+        QVERIFY(bridge.busyLabel().contains(QStringLiteral("Disabling CPU mitigations")));
+        QVERIFY(!bridge.operationCancellable());
+    }
+
     void mockRamSchemaMatchesService()
     {
         Bc250Bridge bridge(true);

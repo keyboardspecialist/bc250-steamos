@@ -15,6 +15,7 @@ set -euo pipefail
 REL=$(uname -r)
 HERE=$(cd "$(dirname "$0")" && pwd)
 ROLLBACK="$HERE/rollback.sh"
+BOOT_CONFIG="$HERE/boot-config.sh"
 SKIP_CURRENT=0
 ADOPT_ARGS=()
 for argument in "$@"; do
@@ -29,11 +30,18 @@ done
 
 echo "== current slot: $(findmnt -no SOURCE /) =="
 if [ "$SKIP_CURRENT" = 0 ]; then
-    "$ROLLBACK" --all "${ADOPT_ARGS[@]}"
+    BC250_PRESERVE_AMDGPU_BOOT_CONFIG=1 \
+        "$ROLLBACK" --all "${ADOPT_ARGS[@]}"
 fi
 
 echo "== entering other slot chroot =="
-steamos-chroot --partset other -- /bin/bash "$ROLLBACK" --all "${ADOPT_ARGS[@]}"
+steamos-chroot --partset other -- /usr/bin/env BC250_PRESERVE_AMDGPU_BOOT_CONFIG=1 \
+    /bin/bash "$ROLLBACK" --all "${ADOPT_ARGS[@]}"
+steamos-chroot --partset other -- /usr/bin/env BC250_SKIP_GRUB_REGEN=1 \
+    /bin/bash "$BOOT_CONFIG" remove
+if [ "$SKIP_CURRENT" = 0 ]; then
+    BC250_FORCE_GRUB_REGEN=1 "$BOOT_CONFIG" remove
+fi
 
 echo "== verifying other slot initramfs is fresh =="
 OTHER_ROOT=$(readlink -f /dev/disk/by-partsets/other/rootfs)

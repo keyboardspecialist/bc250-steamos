@@ -57,11 +57,15 @@ TestCase {
     QtObject {
         id: backend
         property bool busy: false
-        property var snapshot: ({"toolkit": {"cpuControlAvailable": true}, "cpu": {}})
+        property var snapshot: ({"toolkit": {"cpuControlAvailable": true}, "cpu": {
+            "mitigations": {"available": true, "state": "enabled", "configuredEnabled": true,
+                "bootEnabled": true, "rebootRequired": false, "protected": true}}})
         property var cpuUnlockStatus: testCase.status({}, "none")
         property string lastUnlockAction: ""
+        property var lastMitigationsEnabled: null
         function cpuUnlockAction(action) { lastUnlockAction = action }
         function cpuOcAction(action, frequency, voltage, temperature) {}
+        function setCpuMitigations(enabled) { lastMitigationsEnabled = enabled }
     }
 
     Pages.CpuPage {
@@ -73,6 +77,7 @@ TestCase {
     function init() {
         backend.busy = false
         backend.lastUnlockAction = ""
+        backend.lastMitigationsEnabled = null
         backend.cpuUnlockStatus = status({
             "test": {"available": true, "blockers": []},
             "enable": {"available": true, "blockers": []},
@@ -264,5 +269,20 @@ TestCase {
         verify(dialog.detail.indexOf("disabling or removing") >= 0)
         dialog.accept()
         compare(backend.lastUnlockAction, "efi-enable")
+    }
+
+    function test_disablingMitigationsRequiresConfirmation() {
+        var toggle = findChild(page, "cpuMitigationsSwitch")
+        var dialog = findChild(page, "cpuConfirmDialog")
+        verify(toggle !== null)
+        verify(dialog !== null)
+        compare(toggle.checked, true)
+        toggle.checked = false
+        toggle.clicked()
+        compare(backend.lastMitigationsEnabled, null)
+        verify(dialog.opened)
+        verify(dialog.detail.indexOf("reduces protection") >= 0)
+        dialog.accept()
+        compare(backend.lastMitigationsEnabled, false)
     }
 }

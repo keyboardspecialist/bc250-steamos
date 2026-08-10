@@ -80,11 +80,11 @@ QtObject {
     function _command(method, signature, argumentsList) {
         method = Utils.allowed(method, ["GetSnapshot", "GetTelemetry", "GetOperation",
             "SetCuWgp", "SetGpuFrequency", "SetLoadTarget", "SetCustomLoadTarget",
-            "SetRamp", "CpuOcAction", "CecAction", "SetCecToggle", "SetCecName",
+            "SetRamp", "CpuOcAction", "SetCpuMitigations", "CecAction", "SetCecToggle", "SetCecName",
             "CancelOperation"]);
-        signature = Utils.allowed(signature, ["", "s", "u", "yy", "suu", "yyyb", "suuu", "sb"]);
+        signature = Utils.allowed(signature, ["", "b", "s", "u", "yy", "suu", "yyyb", "suuu", "sb"]);
         var interactive = ["SetCuWgp", "SetGpuFrequency", "SetLoadTarget",
-            "SetCustomLoadTarget", "SetRamp", "CpuOcAction"].indexOf(method) >= 0;
+            "SetCustomLoadTarget", "SetRamp", "CpuOcAction", "SetCpuMitigations"].indexOf(method) >= 0;
         var command = "/usr/bin/busctl --system --json=short --timeout="
             + (interactive ? "130" : "15") + " call " + service + " "
             + objectPath + " " + serviceInterface + " " + method;
@@ -166,6 +166,11 @@ QtObject {
         _startMutation("CpuOcAction", "suuu", [safeAction,
             Utils.integer(frequency, 3500, 4500), Utils.integer(voltage, 950, 1325),
             Utils.integer(temperature, 50, 100)], "Running CPU " + safeAction);
+    }
+
+    function setCpuMitigations(enabled) {
+        _startMutation("SetCpuMitigations", "b", [Utils.booleanToken(enabled)],
+            (enabled ? "Enabling" : "Disabling") + " CPU mitigations");
     }
 
     function cecAction(action) {

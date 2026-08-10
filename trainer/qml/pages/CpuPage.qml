@@ -1,4 +1,5 @@
 import QtQuick 2.15
+import QtQuick.Controls 2.15
 import QtQuick.Layouts 1.15
 import "../components" as C
 
@@ -8,6 +9,7 @@ ColumnLayout {
     spacing: 8
     readonly property var snap: backend.snapshot || ({})
     readonly property var cpu: snap.cpu || ({})
+    readonly property var mitigations: cpu.mitigations || ({})
     readonly property var unlock: backend.cpuUnlockStatus || ({})
     readonly property var guard: unlock.guard || ({})
     readonly property var actions: unlock.actions || ({})
@@ -105,6 +107,43 @@ ColumnLayout {
     }
 
     C.ConfirmDialog { id: confirm; objectName: "cpuConfirmDialog" }
+    C.SectionHeader { text: "CPU security mitigations" }
+    Switch {
+        id: mitigationSwitch
+        objectName: "cpuMitigationsSwitch"
+        text: "ENABLE KERNEL SECURITY MITIGATIONS"
+        checked: root.mitigations.configuredEnabled === true
+        enabled: root.cpuControls && root.mitigations.available === true
+            && typeof root.mitigations.configuredEnabled === "boolean"
+        onClicked: {
+            var nextEnabled = checked;
+            checked = Qt.binding(function() { return root.mitigations.configuredEnabled === true; });
+            if (nextEnabled) {
+                root.backend.setCpuMitigations(true);
+            } else {
+                confirm.ask("Disable CPU security mitigations?",
+                    "This may improve performance, but reduces protection against processor security vulnerabilities. A reboot is required.", true,
+                    function() { root.backend.setCpuMitigations(false); });
+            }
+        }
+    }
+    C.StatusRow {
+        objectName: "cpuMitigationsBootStatus"
+        label: "Current boot"
+        value: root.mitigations.bootEnabled === null || root.mitigations.bootEnabled === undefined
+            ? "Unknown" : root.mitigations.bootEnabled ? "Enabled" : "Disabled"
+        health: root.mitigations.bootEnabled === false ? -1 : 1
+    }
+    Text {
+        visible: root.mitigations.rebootRequired === true || root.mitigations.state === "foreign"
+            || root.mitigations.state === "incomplete"
+        text: root.mitigations.state === "foreign"
+            ? "A non-toolkit GRUB source controls mitigations; remove it manually before using this toggle."
+            : root.mitigations.state === "incomplete"
+            ? "The GRUB source and generated boot configuration disagree. Reapply the setting from the terminal."
+            : "Reboot required to apply the configured mitigation state."
+        color: "#ffb06a"; font.family: "monospace"; font.pixelSize: 9; wrapMode: Text.Wrap; Layout.fillWidth: true
+    }
     C.SectionHeader { text: "CPU topology and core unlock" }
     RowLayout {
         Layout.fillWidth: true

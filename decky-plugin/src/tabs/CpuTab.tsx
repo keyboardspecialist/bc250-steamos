@@ -1,6 +1,6 @@
-import { PanelSection, SliderField } from "@decky/ui";
+import { PanelSection, SliderField, ToggleField } from "@decky/ui";
 import { useEffect, useState } from "react";
-import { cpuOcAction } from "../api";
+import { cpuOcAction, setCpuMitigations } from "../api";
 import { ActionButton, EmptyState, StatusRow } from "../components/Common";
 import type { TabProps } from "./shared";
 
@@ -17,6 +17,15 @@ export function CpuTab({ snapshot, busy, runMutation }: TabProps) {
     !snapshot.toolkit.privileged ||
     !snapshot.toolkit.cpuControlAvailable;
   const profileAvailable = Boolean(cpu.installed || cpu.staged);
+  const mitigations = cpu.mitigations || {
+    schemaVersion: 1 as const,
+    available: false,
+    state: "unavailable" as const,
+    configuredEnabled: null,
+    bootEnabled: null,
+    rebootRequired: false,
+    protected: false,
+  };
 
   useEffect(() => {
     if (!detectedValues) return;
@@ -41,6 +50,38 @@ export function CpuTab({ snapshot, busy, runMutation }: TabProps) {
           value={detected || "Unavailable"}
           good={Boolean(detected)}
         />
+      </PanelSection>
+
+      <PanelSection title="CPU Security">
+        <ToggleField
+          label="CPU security mitigations"
+          description={
+            mitigations.rebootRequired
+              ? `Configured ${mitigations.configuredEnabled ? "enabled" : "disabled"}; reboot required.`
+              : `Current boot: ${mitigations.bootEnabled === null ? "unknown" : mitigations.bootEnabled ? "enabled" : "disabled"}.`
+          }
+          checked={mitigations.configuredEnabled === true}
+          disabled={controlsDisabled || !mitigations.available || typeof mitigations.configuredEnabled !== "boolean"}
+          onChange={(nextEnabled) =>
+            runMutation(
+              `CPU mitigations ${nextEnabled ? "enabled" : "disabled"}; reboot required`,
+              () => setCpuMitigations(nextEnabled),
+              nextEnabled
+                ? undefined
+                : {
+                    title: "Disable CPU security mitigations?",
+                    description:
+                      "This may improve performance, but reduces protection against processor security vulnerabilities. A reboot is required.",
+                    destructive: true,
+                  },
+            )
+          }
+        />
+        {(mitigations.state === "foreign" || mitigations.state === "incomplete") && (
+          <EmptyState>{mitigations.state === "foreign"
+            ? "A non-toolkit GRUB source controls mitigations. Remove it manually before using this toggle."
+            : "The GRUB source and generated boot configuration disagree. Reapply the setting from the terminal."}</EmptyState>
+        )}
       </PanelSection>
 
       {!snapshot.toolkit.privileged ? (

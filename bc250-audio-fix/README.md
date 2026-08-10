@@ -4,7 +4,9 @@ Corrects DisplayPort video/audio timing, Cyan Skillfish GPU telemetry, and the
 GFX1013 compute-queue lifecycle through one patched `amdgpu` module. GPU
 activity comes from GC status sampling and GFX clock comes from a validated
 direct SMU query while retaining the firmware's published `SmuMetrics_t`
-layout.
+layout. The GFX1013 async-compute repair also requires
+`amdgpu.sched_policy=2`; installation adds it through a toolkit-owned GRUB
+drop-in and retains that drop-in across SteamOS atomic updates.
 
 ## Install
 
@@ -85,7 +87,12 @@ outside the supported 1000-2000 MHz range propagate to the metrics caller.
 The GFX1013 repair keeps PASID TLB invalidation off the KIQ path, guards GFXOFF
 during KFD compute activity, and uses the GFXHUB semaphore/type-0 transaction
 only for BC-250 PASID invalidation. The three patches are mandatory and applied
-in upstream order.
+in upstream order. The installer writes
+`/etc/default/grub.d/bc250-amdgpu.cfg`, regenerates
+`/efi/EFI/steamos/grub.cfg`, verifies that every generated Linux boot line has
+exactly one `amdgpu.sched_policy=2`, and registers the drop-in with SteamOS's
+atomic-update keep list. The setting therefore survives reboots and atomic OS
+updates; rollback removes it after the last patched module is removed.
 
 The kernel repair does not expose compute queues by itself. The optional,
 recommended Mesa / RADV performance-patch workflow in `bc250-mesh-shader.sh`
@@ -99,7 +106,7 @@ that combination can hang the GPU.
 | Command | Action |
 |---|---|
 | `./patch-driver.sh` | Fetch, build, validate, and install |
-| `./patch-driver.sh status` | Report installed per-kernel module overrides |
+| `./patch-driver.sh status` | Report module overrides and scheduler-policy state |
 | `./patch-driver.sh uninstall` | Noninteractively restore stock modules for all installed kernels |
 | `./fetch-sources.sh` | Fetch the matching kernel source, symbols, and dependencies |
 | `./ensure-build-prereqs.sh` | Restore a missing SteamOS host build toolchain |
@@ -177,6 +184,7 @@ The complete fallback remains mandatory for the AMDGPU override. AIC8800 may ins
 | `bc250-libbpf-c23-const.patch` | GCC 15/C23 const-correctness backport for the kernel's libbpf host tool |
 | `check-module.sh` | Vermagic and ABI validation |
 | `install.sh` | Module override installation and initramfs generation |
+| `boot-config.sh` | Persistent `amdgpu.sched_policy=2` GRUB configuration |
 | `rollback.sh` | Stock-module restoration |
 | `cleanup-other-slot.sh` | Alternate-slot restoration |
 | `clean.sh` | Generated-state cleanup |

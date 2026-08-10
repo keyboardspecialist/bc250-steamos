@@ -14,11 +14,11 @@ Dialog {
     property string detail: ""
     property string acknowledgementText: "I understand the hardware and stability risk."
 
-    function ask(titleText, detailText, dangerous, action, acknowledgement) {
+    function ask(titleText, detailText, dangerous, action, acknowledgementOverride) {
         title = titleText
         detail = detailText
         highRisk = dangerous
-        acknowledgementText = acknowledgement || "I understand the hardware and stability risk."
+        acknowledgementText = acknowledgementOverride || "I understand the hardware and stability risk."
         acceptedAction = action
         acknowledgement.checked = false
         open()

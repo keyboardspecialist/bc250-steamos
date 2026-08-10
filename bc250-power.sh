@@ -57,9 +57,13 @@ ACPI_PAYLOAD_MARKER="$ACPI_DIR/payload-version"
 ACPI_PAYLOAD_VERSION="universal-6c8c-v1"
 ACPI_TABLE_DIR="${BC250_ACPI_TABLE_DIR:-$SCRIPT_DIR/acpi-tables}"
 ACPI_LIFECYCLE_LOCK="/run/lock/bc250-acpi.lock"
+GRUB_CONFIG_LOCK="${GRUB_CONFIG_LOCK:-/run/lock/bc250-grub-config.lock}"
 PCI_DEVICES_ROOT="${BC250_PCI_DEVICES_ROOT:-/sys/bus/pci/devices}"
 GRUB_CFG="/efi/EFI/steamos/grub.cfg"
 GRUB_ACPI_DEFAULT="/etc/default/grub.d/bc250-acpi.cfg"
+GRUB_DEFAULT="${GRUB_DEFAULT:-/etc/default/grub}"
+CPU_MITIGATIONS_CONFIG="${CPU_MITIGATIONS_CONFIG:-/etc/default/grub.d/bc250-cpu-mitigations.cfg}"
+PROC_CMDLINE="${PROC_CMDLINE:-/proc/cmdline}"
 
 GOV_BIN="$BIN_DIR/cyan-skillfish-governor-smu"
 PERF_BIN="$BIN_DIR/cyan-skillfish-performance-mode"
@@ -259,6 +263,12 @@ resume_governor() {
 
 TEMP_DIRS=()
 TEMP_FILES=()
+GRUB_LOCK_HELD=0
+CPU_MITIGATIONS_TRANSACTION_ACTIVE=0
+CPU_MITIGATIONS_TRANSACTION_CONFIG_BACKUP=""
+CPU_MITIGATIONS_TRANSACTION_GRUB_BACKUP=""
+CPU_MITIGATIONS_TRANSACTION_HAD_CONFIG=0
+CPU_MITIGATIONS_TRANSACTION_HAD_GRUB=0
 EFI_TRANSACTION_ACTIVE=0
 EFI_TRANSACTION_BOOTNUM=""
 efi_transaction_rollback() {
@@ -310,6 +320,7 @@ efi_transaction_rollback() {
 cleanup() {
     local temp_dir temp_file
     tui_show_cursor
+    cpu_mitigations_rollback || true
     efi_transaction_rollback || true
     resume_governor || true
     for temp_dir in "${TEMP_DIRS[@]-}"; do
@@ -319,6 +330,7 @@ cleanup() {
         [[ -z "$temp_file" ]] || rm -f "$temp_file"
     done
     relock_rootfs || true
+    grub_config_unlock || true
 }
 trap cleanup EXIT
 
@@ -515,6 +527,17 @@ badge_oc_live() {   # live CPU voltage, for the status row
     if [[ -n "$mv_" ]]; then b_ok "CPU now: ${mv_} mV"; else b_off "live mV: root only"; fi
     return 0
 }
+badge_cpu_mitigations() {
+    local configured boot
+    configured=$(cpu_mitigations_configured_state)
+    boot=$(cpu_mitigations_boot_state)
+    case "$configured:$boot" in
+        enabled:enabled) b_ok "enabled" ;;
+        disabled:disabled) b_mid "disabled" ;;
+        enabled:disabled|disabled:enabled) b_mid "reboot needed" ;;
+        *) b_mid "$configured" ;;
+    esac
+}
 
 # ============================== ACPI fix ==================================
 bc250_platform_present() {
@@ -539,17 +562,37 @@ acpi_source_digest() {
 }
 
 acpi_lifecycle_lock() {
+    grub_config_lock || return 1
     command -v flock >/dev/null 2>&1 \
-        || { warn "flock is required for safe ACPI lifecycle changes."; return 1; }
+        || { warn "flock is required for safe ACPI lifecycle changes."; grub_config_unlock; return 1; }
     exec 7> "$ACPI_LIFECYCLE_LOCK" \
-        || { warn "Could not open $ACPI_LIFECYCLE_LOCK"; return 1; }
+        || { warn "Could not open $ACPI_LIFECYCLE_LOCK"; grub_config_unlock; return 1; }
     flock 7 \
-        || { exec 7>&-; warn "Could not lock $ACPI_LIFECYCLE_LOCK"; return 1; }
+        || { exec 7>&-; warn "Could not lock $ACPI_LIFECYCLE_LOCK"; grub_config_unlock; return 1; }
 }
 
 acpi_lifecycle_unlock() {
     flock -u 7 2>/dev/null || true
     exec 7>&-
+    grub_config_unlock
+}
+
+grub_config_lock() {
+    [[ $GRUB_LOCK_HELD -eq 0 ]] || return 0
+    command -v flock >/dev/null 2>&1 \
+        || { warn "flock is required for safe GRUB changes."; return 1; }
+    exec 6> "$GRUB_CONFIG_LOCK" \
+        || { warn "Could not open $GRUB_CONFIG_LOCK"; return 1; }
+    flock 6 \
+        || { exec 6>&-; warn "Could not lock $GRUB_CONFIG_LOCK"; return 1; }
+    GRUB_LOCK_HELD=1
+}
+
+grub_config_unlock() {
+    [[ $GRUB_LOCK_HELD -eq 1 ]] || return 0
+    flock -u 6 2>/dev/null || true
+    exec 6>&-
+    GRUB_LOCK_HELD=0
 }
 
 acpi_payload_current() {
@@ -736,6 +779,7 @@ BOOT_TMP=""
 READY_MARKER="$ACPI_READY"
 GRUB_CFG="$GRUB_CFG"
 GRUB_ACPI_DEFAULT="$GRUB_ACPI_DEFAULT"
+GRUB_CONFIG_LOCK="$GRUB_CONFIG_LOCK"
 PAYLOAD_MARKER="$ACPI_PAYLOAD_MARKER"
 MASTER_CPIO="$CPIO_MASTER"
 LIFECYCLE_LOCK="$ACPI_LIFECYCLE_LOCK"
@@ -759,6 +803,8 @@ trap relock EXIT
 if [[ "\${BC250_ACPI_LOCK_HELD:-0}" != 1 ]]; then
     command -v flock >/dev/null 2>&1 \
         || { echo "bc250: flock is required for ACPI self-healing" | systemd-cat -p err; exit 1; }
+    exec 6> "\$GRUB_CONFIG_LOCK"
+    flock 6
     exec 7> "\$LIFECYCLE_LOCK"
     flock 7
 fi
@@ -1702,6 +1748,7 @@ other_power_payload_is_installed() {
         || -e "$HEAL_HELPER" || -e "$GOV_BIN" || -e "$PERF_BIN" \
         || -e "$RESTORE_BIN" || -e "$OC_DIR/bc250_apply.py" \
         || -e "$OC_DIR/bc250_smu" || -e "$LEGACY_HEAL_HELPER" \
+        || -e "$CPU_MITIGATIONS_CONFIG" \
         || -L "$SYSTEMD_WANTS_DIR/bc250-acpi-heal.service" \
         || -L "$SYSTEMD_WANTS_DIR/bc250-cpufreq.service" \
         || -L "$SYSTEMD_WANTS_DIR/$GOV_SVC" \
@@ -2191,6 +2238,9 @@ cmd_uninstall() {
     trap relock_rootfs EXIT
     acpi_lifecycle_lock || return $?
     remove_acpi_boot_override && acpi_reverted=1 || true
+    if [[ -e "$CPU_MITIGATIONS_CONFIG" || -L "$CPU_MITIGATIONS_CONFIG" ]]; then
+        cpu_mitigations_set enabled
+    fi
 
     if [[ $acpi_reverted -eq 1 ]]; then
         remove_power_unit "$HEAL_UNIT"
@@ -2819,6 +2869,274 @@ cmd_cpu_unlock() {
     esac
 }
 
+# =========================== CPU mitigations ==============================
+render_cpu_mitigations_config() {
+    cat <<'EOF'
+# BC-250 CPU security policy managed by bc250-power.sh.
+# Remove with: bc250-power.sh cpu-mitigations enable
+GRUB_CMDLINE_LINUX_DEFAULT="${GRUB_CMDLINE_LINUX_DEFAULT:-} mitigations=off"
+EOF
+}
+
+cpu_mitigations_config_owned() {
+    [[ -f "$CPU_MITIGATIONS_CONFIG" && ! -L "$CPU_MITIGATIONS_CONFIG" ]] || return 1
+    cmp -s "$CPU_MITIGATIONS_CONFIG" <(render_cpu_mitigations_config)
+}
+
+foreign_cpu_mitigations_source() {
+    local candidate
+    for candidate in "$GRUB_DEFAULT" "${CPU_MITIGATIONS_CONFIG%/*}"/*; do
+        [[ "$candidate" != "$CPU_MITIGATIONS_CONFIG" && -f "$candidate" && ! -L "$candidate" ]] \
+            || continue
+        if grep -Eq "(^|[[:space:]\"'])mitigations=" "$candidate"; then
+            printf '%s\n' "$candidate"
+            return 0
+        fi
+    done
+    return 1
+}
+
+cpu_mitigations_configured_state() {
+    if foreign_cpu_mitigations_source >/dev/null; then
+        printf '%s\n' foreign
+    elif [[ -e "$CPU_MITIGATIONS_CONFIG" || -L "$CPU_MITIGATIONS_CONFIG" ]]; then
+        if cpu_mitigations_config_owned; then
+            if validate_cpu_mitigations_grub "$GRUB_CFG" off; then printf '%s\n' disabled
+            else printf '%s\n' incomplete
+            fi
+        else
+            printf '%s\n' foreign
+        fi
+    else
+        if validate_cpu_mitigations_grub "$GRUB_CFG" ""; then printf '%s\n' enabled
+        else printf '%s\n' incomplete
+        fi
+    fi
+}
+
+cpu_mitigations_boot_state() {
+    local token state=enabled
+    [[ -r "$PROC_CMDLINE" ]] || { printf '%s\n' unknown; return; }
+    for token in $(< "$PROC_CMDLINE"); do
+        [[ "$token" == mitigations=* ]] || continue
+        if [[ "$token" == mitigations=off ]]; then state=disabled
+        else state=enabled
+        fi
+    done
+    printf '%s\n' "$state"
+}
+
+validate_cpu_mitigations_grub() {
+    local path=$1 expected=$2
+    [[ -f "$path" && ! -L "$path" ]] || return 1
+    awk -v expected="$expected" '
+        $1 ~ /^linux/ || ($1 == "steamenv_boot" && $2 ~ /^linux/) {
+            lines++
+            on_line = 0
+            for (i = 1; i <= NF; i++) {
+                if ($i ~ /^mitigations=/) {
+                    on_line++
+                    if (expected == "" || $i != "mitigations=" expected)
+                        bad = 1
+                }
+            }
+            if ((expected == "" && on_line != 0) || (expected != "" && on_line != 1))
+                bad = 1
+        }
+        END { exit(lines > 0 && !bad ? 0 : 1) }
+    ' "$path"
+}
+
+preflight_cpu_mitigations() {
+    local source
+    if [[ -e "$CPU_MITIGATIONS_CONFIG" || -L "$CPU_MITIGATIONS_CONFIG" ]]; then
+        cpu_mitigations_config_owned \
+            || die "Existing CPU mitigations configuration is not toolkit-owned: $CPU_MITIGATIONS_CONFIG"
+    fi
+    if source=$(foreign_cpu_mitigations_source); then
+        die "Another GRUB source already sets mitigations=: $source"
+    fi
+    command -v grub-mkconfig >/dev/null 2>&1 \
+        || command -v update-grub >/dev/null 2>&1 \
+        || die "Neither update-grub nor grub-mkconfig is available."
+    if [[ -e "$GRUB_CFG" || -L "$GRUB_CFG" ]]; then
+        [[ -f "$GRUB_CFG" && ! -L "$GRUB_CFG" ]] \
+            || die "Refusing unsafe generated GRUB path: $GRUB_CFG"
+    fi
+}
+
+regenerate_cpu_mitigations_grub() {
+    local expected=$1 tmp
+    mkdir -p "${GRUB_CFG%/*}"
+    if command -v grub-mkconfig >/dev/null 2>&1; then
+        tmp=$(mktemp "${GRUB_CFG%/*}/.bc250-grub.XXXXXX") || return 1
+        if ! grub-mkconfig -o "$tmp" \
+            || ! validate_cpu_mitigations_grub "$tmp" "$expected"; then
+            rm -f "$tmp"
+            return 1
+        fi
+        chmod 0644 "$tmp"
+        mv -f "$tmp" "$GRUB_CFG"
+    else
+        update-grub || return 1
+        validate_cpu_mitigations_grub "$GRUB_CFG" "$expected"
+    fi
+}
+
+restore_cpu_mitigations_file() {
+    local backup=$1 target=$2 tmp
+    if [[ -f "$backup" ]]; then
+        mkdir -p "${target%/*}"
+        tmp=$(mktemp "${target%/*}/.bc250-restore.XXXXXX") || return 1
+        cp -p "$backup" "$tmp" || { rm -f "$tmp"; return 1; }
+        mv -f "$tmp" "$target"
+    else
+        rm -f "$target"
+    fi
+}
+
+cpu_mitigations_rollback() {
+    local rc=0
+    [[ $CPU_MITIGATIONS_TRANSACTION_ACTIVE -eq 1 ]] || return 0
+    if [[ $CPU_MITIGATIONS_TRANSACTION_HAD_CONFIG -eq 1 ]]; then
+        restore_cpu_mitigations_file "$CPU_MITIGATIONS_TRANSACTION_CONFIG_BACKUP" \
+            "$CPU_MITIGATIONS_CONFIG" || rc=1
+    else
+        rm -f "$CPU_MITIGATIONS_CONFIG" || rc=1
+    fi
+    if [[ $CPU_MITIGATIONS_TRANSACTION_HAD_GRUB -eq 1 ]]; then
+        restore_cpu_mitigations_file "$CPU_MITIGATIONS_TRANSACTION_GRUB_BACKUP" \
+            "$GRUB_CFG" || rc=1
+    else
+        rm -f "$GRUB_CFG" || rc=1
+    fi
+    CPU_MITIGATIONS_TRANSACTION_ACTIVE=0
+    [[ $rc -eq 0 ]] || warn "CPU mitigations rollback could not restore every boot file."
+    return "$rc"
+}
+
+cpu_mitigations_set() {
+    require_root
+    local requested=$1 expected="" work config_backup grub_backup relock_after=0 unlock_grub_after=0
+    [[ "$requested" == enabled || "$requested" == disabled ]] \
+        || die "CPU mitigations state must be enabled or disabled."
+    if [[ $GRUB_LOCK_HELD -eq 0 ]]; then
+        grub_config_lock || die "Could not serialize the GRUB update."
+        unlock_grub_after=1
+    fi
+    preflight_cpu_mitigations
+    work=$(mktemp -d /tmp/bc250-cpu-mitigations.XXXXXX)
+    TEMP_DIRS+=("$work")
+    config_backup="$work/config"; grub_backup="$work/grub.cfg"
+    CPU_MITIGATIONS_TRANSACTION_HAD_CONFIG=0
+    CPU_MITIGATIONS_TRANSACTION_HAD_GRUB=0
+    if [[ -f "$CPU_MITIGATIONS_CONFIG" ]]; then
+        cp -p "$CPU_MITIGATIONS_CONFIG" "$config_backup"
+        CPU_MITIGATIONS_TRANSACTION_HAD_CONFIG=1
+    fi
+    if [[ -f "$GRUB_CFG" ]]; then
+        cp -p "$GRUB_CFG" "$grub_backup"
+        CPU_MITIGATIONS_TRANSACTION_HAD_GRUB=1
+    fi
+    CPU_MITIGATIONS_TRANSACTION_CONFIG_BACKUP=$config_backup
+    CPU_MITIGATIONS_TRANSACTION_GRUB_BACKUP=$grub_backup
+    CPU_MITIGATIONS_TRANSACTION_ACTIVE=1
+    if [[ $RO_WAS_DISABLED -eq 0 ]]; then unlock_rootfs; relock_after=1; fi
+    if [[ "$requested" == disabled ]]; then
+        mkdir -p "${CPU_MITIGATIONS_CONFIG%/*}"
+        render_cpu_mitigations_config > "$CPU_MITIGATIONS_CONFIG.new.$$"
+        chown root:root "$CPU_MITIGATIONS_CONFIG.new.$$"
+        chmod 0644 "$CPU_MITIGATIONS_CONFIG.new.$$"
+        mv -f "$CPU_MITIGATIONS_CONFIG.new.$$" "$CPU_MITIGATIONS_CONFIG"
+        expected=off
+    else
+        rm -f "$CPU_MITIGATIONS_CONFIG"
+    fi
+    if ! regenerate_cpu_mitigations_grub "$expected" \
+        || { [[ "$requested" != disabled ]] || ! install_update_persistence; }; then
+        cpu_mitigations_rollback || true
+        die "Could not update CPU mitigations; previous boot configuration restored."
+    fi
+    CPU_MITIGATIONS_TRANSACTION_ACTIVE=0
+    [[ $relock_after -eq 0 ]] || relock_rootfs
+    [[ $unlock_grub_after -eq 0 ]] || grub_config_unlock
+    log "CPU security mitigations will be $requested after reboot."
+}
+
+power_keep_has_cpu_mitigations() {
+    local first second
+    [[ -f "$POWER_KEEP_FILE" && ! -L "$POWER_KEEP_FILE" ]] || return 1
+    IFS= read -r first < "$POWER_KEEP_FILE" || return 1
+    IFS= read -r second < <(sed -n '2p' "$POWER_KEEP_FILE") || return 1
+    [[ "$first" == '# Toolkit state preserved by SteamOS atomic updates.' \
+        && "$second" == '# Generated by bc250-update-persistence.sh.' ]] \
+        && grep -Fxq /etc/default/grub.d/bc250-cpu-mitigations.cfg "$POWER_KEEP_FILE"
+}
+
+cpu_mitigations_status_json() {
+    local configured boot reboot=false protected=false configured_json
+    configured=$(cpu_mitigations_configured_state)
+    boot=$(cpu_mitigations_boot_state)
+    [[ "$configured" == "$boot" || "$configured" == foreign \
+        || "$configured" == incomplete || "$boot" == unknown ]] || reboot=true
+    power_keep_has_cpu_mitigations && protected=true
+    case "$configured" in
+        enabled) configured_json=true ;;
+        disabled) configured_json=false ;;
+        *) configured_json=null ;;
+    esac
+    printf '{"schemaVersion":1,"available":true,"state":"%s","configuredEnabled":%s,' \
+        "$configured" "$configured_json"
+    case "$boot" in
+        enabled) printf '"bootEnabled":true' ;;
+        disabled) printf '"bootEnabled":false' ;;
+        *) printf '"bootEnabled":null' ;;
+    esac
+    printf ',"rebootRequired":%s,"protected":%s}\n' "$reboot" "$protected"
+}
+
+cpu_mitigations_status() {
+    local configured boot
+    configured=$(cpu_mitigations_configured_state)
+    boot=$(cpu_mitigations_boot_state)
+    echo "CPU security mitigations:"
+    printf '  %-22s %s\n' "Configured:" "$configured"
+    printf '  %-22s %s%s\n' "Current boot:" "$boot" \
+        "$([[ "$configured" != "$boot" && "$configured" != foreign \
+            && "$configured" != incomplete && "$boot" != unknown ]] && printf ' (reboot needed)' || true)"
+}
+
+cmd_cpu_mitigations() {
+    local sub=${1:-status}
+    shift || true
+    (($# == 0)) || die "Usage: $0 cpu-mitigations {enable|disable|status|status-json}"
+    case "$sub" in
+        enable) cpu_mitigations_set enabled ;;
+        disable) cpu_mitigations_set disabled ;;
+        status) cpu_mitigations_status ;;
+        status-json) cpu_mitigations_status_json ;;
+        *) die "Usage: $0 cpu-mitigations {enable|disable|status|status-json}" ;;
+    esac
+}
+
+menu_toggle_cpu_mitigations() {
+    local configured
+    configured=$(cpu_mitigations_configured_state)
+    if [[ "$configured" == disabled ]]; then
+        run_action cpu_mitigations_set enabled
+        return
+    fi
+    if [[ "$configured" == foreign ]]; then
+        run_action cpu_mitigations_status
+        return
+    fi
+    echo
+    warn "Disabling CPU mitigations reduces protection against processor security vulnerabilities."
+    ask "Type DISABLE to continue" "cancel"
+    [[ "$REPLY" == DISABLE ]] || { warn "CPU mitigations unchanged."; return; }
+    run_action cpu_mitigations_set disabled
+}
+
 # ============================ CPU overclock ===============================
 # Wraps bc250-collective/bc250_smu_oc: CPU max boost clock + vid-curve
 # undervolt via SMU mailbox messages (queue 3). CPU only -- it never touches
@@ -3084,6 +3402,7 @@ cmd_status() {
     cat /sys/class/drm/card*/device/pp_dpm_sclk 2>/dev/null || echo "  pp_dpm_sclk not exposed"
     echo
     echo "=== CPU (ACPI fix active if these exist) ==="
+    cpu_mitigations_status
     if compgen -G /sys/devices/system/cpu/cpu0/cpufreq >/dev/null; then
         echo "  governor: $(cat /sys/devices/system/cpu/cpu0/cpufreq/scaling_governor)"
         echo "  current:  $(cat /sys/devices/system/cpu/cpu0/cpufreq/scaling_cur_freq) kHz"
@@ -3257,6 +3576,7 @@ cmd_menu() {
             "GPU load targets|$(badge_load_target)|When to clock up/down. Fixes light games stuck at idle clocks."
             "GPU ramp behavior|$(badge_ramp)|How fast + how granular clocks move. One number, rest derived."
             "CPU overclock / undervolt|$(badge_oc)|bc250_smu_oc: ~200 mV undervolt even at stock clocks."
+            "CPU security mitigations (toggle)|$(badge_cpu_mitigations)|Disable for performance or restore secure kernel defaults. Reboot required."
             "Reinstall D-Bus helpers||Fixes 'name is not activatable' errors from freq control."
             "Full help||The complete manual for every CLI command."
         )
@@ -3270,8 +3590,9 @@ cmd_menu() {
             5) menu_load_target ;;
             6) menu_ramp ;;
             7) menu_cpu_oc ;;
-            8) run_action cmd_helpers ;;
-            9) cmd_help; pause_key ;;
+            8) menu_toggle_cpu_mitigations ;;
+            9) run_action cmd_helpers ;;
+            10) cmd_help; pause_key ;;
         esac
     done
 }
@@ -3354,6 +3675,20 @@ CPU OVERCLOCK / UNDERVOLT (bc250-collective/bc250_smu_oc, CPU only)
                     with our patches overlaid from smu-oc-patches/ --
                     no local clone, no pip, no git needed. The first
                     detect/apply/enable fetches automatically (network).
+
+CPU SECURITY MITIGATIONS
+  cpu-mitigations status
+                     Show the configured next-boot state, current-boot state,
+                     and whether a reboot is required.
+  cpu-mitigations disable
+                     Add mitigations=off through a toolkit-owned GRUB drop-in.
+                     This may improve performance but reduces protection from
+                     processor security vulnerabilities. REBOOT REQUIRED.
+  cpu-mitigations enable
+                     Remove only the toolkit-owned drop-in and return to secure
+                     kernel defaults. REBOOT REQUIRED after a disabled boot.
+                     Any mitigations= setting in another GRUB source is treated
+                     as foreign and must be resolved manually.
 
 CPU CORE UNLOCK (experimental; Linux/systemd mode is recommended)
   cpu-unlock menu      Open the dedicated guided CPU core-unlock menu.
@@ -3477,6 +3812,8 @@ FILE MAP
   /efi/EFI/bc250/bc250-core-unlock.efi
                                namespaced unsigned EFI boot image
   /etc/bc250-smu-oc.conf       CPU OC config       (atomic-update keep list)
+  /etc/default/grub.d/bc250-cpu-mitigations.cfg
+                               optional mitigations=off (atomic-update keep list)
   /etc/cyan-skillfish-governor-smu/config.toml     (atomic-update keep list)
   /var/lib/bc250-control/governor/freq-state  last 'freq' setting,
                                replayed at boot by bc250-gpu-freq-restore
@@ -3505,6 +3842,7 @@ case "${1:-}" in
     ramp)         shift; cmd_ramp "$@" ;;
     cpu-oc)       shift; cmd_cpu_oc "$@" ;;
     cpu-unlock)   shift; cmd_cpu_unlock "$@" ;;
+    cpu-mitigations) shift; cmd_cpu_mitigations "$@" ;;
     enable)       cmd_enable ;;
     installed)    (($# == 1)) || die "Usage: $0 installed"; cmd_installed ;;
     uninstall)    (($# == 1)) || die "Usage: $0 uninstall"; cmd_uninstall ;;
@@ -3512,7 +3850,7 @@ case "${1:-}" in
     all)          cmd_acpi; cmd_governor ;;
     menu)         cmd_menu ;;
     help|-h|--help) cmd_help ;;
-    *) echo "Usage: $0 {acpi|governor|helpers|freq|gpu-volt|load-target|ramp|cpu-oc|cpu-unlock|enable|installed|uninstall|status|all|menu|help}"
+    *) echo "Usage: $0 {acpi|governor|helpers|freq|gpu-volt|load-target|ramp|cpu-oc|cpu-unlock|cpu-mitigations|enable|installed|uninstall|status|all|menu|help}"
        echo "  (no arguments on a terminal opens the guided menu)"
        echo "  freq                 show performance-mode state"
        echo "  freq 1800            pin GPU at 1800 MHz (perf mode)"

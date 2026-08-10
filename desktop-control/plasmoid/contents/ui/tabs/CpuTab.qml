@@ -14,6 +14,7 @@ ColumnLayout {
     readonly property bool controlsEnabled: snapshot.toolkit.privileged
         && snapshot.toolkit.cpuControlAvailable && !backend.busy
     readonly property bool profileAvailable: Boolean(cpu.installed || cpu.staged)
+    readonly property var mitigations: cpu.mitigations || ({})
     readonly property string disabledReason: backend.busy ? backend.busyLabel
         : !snapshot.toolkit.privileged ? "The system service is not privileged."
         : !snapshot.toolkit.cpuControlAvailable ? "Install the root-owned CPU tuning helper."
@@ -39,6 +40,42 @@ ColumnLayout {
     onDetectedChanged: if (!backend.busy) syncDetected()
 
     Components.ConfirmationDialog { id: confirmation }
+
+    Components.Section {
+        title: "CPU Security"
+        QQC2.Switch {
+            id: mitigationSwitch
+            text: "CPU security mitigations"
+            checked: root.mitigations.configuredEnabled === true
+            enabled: root.controlsEnabled && root.mitigations.available === true
+                && typeof root.mitigations.configuredEnabled === "boolean"
+            onClicked: {
+                var nextEnabled = checked;
+                checked = Qt.binding(function() { return root.mitigations.configuredEnabled === true; });
+                if (nextEnabled) {
+                    root.backend.setCpuMitigations(true);
+                } else {
+                    confirmation.ask("Disable CPU security mitigations?",
+                        "This may improve performance, but reduces protection against processor security vulnerabilities. A reboot is required.",
+                        true, function() { root.backend.setCpuMitigations(false); });
+                }
+            }
+        }
+        Components.StatusRow {
+            label: "Current boot"
+            value: root.mitigations.bootEnabled === null || root.mitigations.bootEnabled === undefined
+                ? "Unknown" : root.mitigations.bootEnabled ? "Enabled" : "Disabled"
+            health: root.mitigations.bootEnabled === false ? -1 : 1
+        }
+        Components.StatusRow {
+            label: "Boot change"
+            value: root.mitigations.state === "foreign" ? "Foreign GRUB configuration"
+                : root.mitigations.state === "incomplete" ? "GRUB repair required"
+                : root.mitigations.rebootRequired ? "Reboot required" : "Applied"
+            health: root.mitigations.state === "foreign" || root.mitigations.state === "incomplete"
+                ? -1 : root.mitigations.rebootRequired ? 0 : 1
+        }
+    }
 
     Components.Section {
         title: "CPU Overclock"

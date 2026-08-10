@@ -57,6 +57,9 @@ class Plugin:
             action, frequency, voltage, temperature
         )
 
+    async def set_cpu_mitigations(self, enabled: bool):
+        return await self.backend.set_cpu_mitigations(enabled)
+
     async def cec_action(self, action: str):
         return await self.backend.cec_action(action)
 
