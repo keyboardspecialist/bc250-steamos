@@ -16,7 +16,7 @@
 #define PCI_CONFIG_DATA 0x0cfc
 #define BC250_PCI_ID 0x13fe1002U
 #define MASK_REG 0x0115A870U
-#define LOCKED_MASK 0x00000077U
+//#define LOCKED_MASK 0x00000077U
 #define UNLOCKED_MASK 0x000000ffU
 #define MSG_WRITE_FF 0x98U
 #define Q3_CMD 0x03b10a20U
@@ -158,12 +158,6 @@ EFI_STATUS efi_main(EFI_HANDLE image_handle, EFI_SYSTEM_TABLE *system_table) {
         }
         print(system_table, L"BC-250 core unlock: mask is exactly 0x000000FF; returning EFI_ABORTED for next BootOrder entry\r\n");
         return EFI_ERROR_STATUS(EFI_ABORTED);
-    }
-    if (mask != LOCKED_MASK) {
-        print(system_table, L"BC-250 core unlock: unexpected full mask ");
-        print_hex(system_table, mask);
-        print(system_table, L"; refusing SMU write\r\n");
-        return EFI_ERROR_STATUS(EFI_COMPROMISED_DATA);
     }
 
     status = system_table->RuntimeServices->GetVariable(

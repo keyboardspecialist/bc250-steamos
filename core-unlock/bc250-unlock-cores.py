@@ -125,11 +125,6 @@ def read_or_apply_mask():
         if before == 0x000000FF:
             print("core presence mask is already 0xff")
             return False
-        if before != 0x00000077:
-            raise RuntimeError(
-                "unexpected mask 0x%08X, expected exactly 0x00000077; refusing to write"
-                % before
-            )
 
         status = smu.send(MSG_WRITE_FF, MASK_REG)
         if status != 0x01:
