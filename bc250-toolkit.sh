@@ -29,6 +29,7 @@ fi
 C0=$'\033[0m'; CB=$'\033[1m'; CD=$'\033[2m'; CI=$'\033[7m'
 CG=$'\033[32m'; CY=$'\033[33m'; CR=$'\033[31m'; CC=$'\033[36m'
 TUI_CURSOR_HIDDEN=0
+SUDO_KEEPALIVE_PID=0
 
 log() { echo "[bc250-toolkit] $*"; }
 die() { echo "[bc250-toolkit] $*" >&2; exit 1; }
@@ -39,7 +40,17 @@ tui_show_cursor() {
         TUI_CURSOR_HIDDEN=0
     fi
 }
-trap tui_show_cursor EXIT
+
+toolkit_cleanup() {
+    tui_show_cursor
+    if [[ $SUDO_KEEPALIVE_PID -gt 0 ]]; then
+        kill "$SUDO_KEEPALIVE_PID" 2>/dev/null || true
+        wait "$SUDO_KEEPALIVE_PID" 2>/dev/null || true
+        sudo -n -k >/dev/null 2>&1 || true
+        SUDO_KEEPALIVE_PID=0
+    fi
+}
+trap toolkit_cleanup EXIT
 
 require_terminal() {
     [[ -t 0 && -t 1 ]] || die "This action requires an interactive terminal."
@@ -48,6 +59,20 @@ require_terminal() {
 require_normal_user() {
     [[ $EUID -ne 0 ]] \
         || die "Run the toolkit as the logged-in Deck user, not with sudo. Child tools request administrator access when needed."
+}
+
+start_sudo_session() {
+    [[ $SUDO_KEEPALIVE_PID -eq 0 ]] || return 0
+    sudo -v
+    local toolkit_pid=$$
+    (
+        while true; do
+            sleep 45
+            kill -0 "$toolkit_pid" 2>/dev/null || exit 0
+            sudo -n -v >/dev/null 2>&1 || exit 0
+        done
+    ) </dev/null >/dev/null 2>&1 &
+    SUDO_KEEPALIVE_PID=$!
 }
 
 require_script() {
@@ -398,6 +423,7 @@ cmd_interfaces_menu() {
 cmd_menu() {
     require_terminal
     require_normal_user
+    start_sudo_session
     while true; do
         local items=(
             "System status|${CD}[read only]${C0}|Show system integration, graphics-driver, and GPU compute-unit status."
@@ -492,10 +518,10 @@ case "$command_name" in
     unlocks) (($# == 0)) || die "Usage: $0 unlocks"; cmd_unlocks_menu ;;
     storage-updates) (($# == 0)) || die "Usage: $0 storage-updates"; cmd_storage_updates_menu ;;
     interfaces) (($# == 0)) || die "Usage: $0 interfaces"; cmd_interfaces_menu ;;
-    power) (($# == 0)) || die "Usage: $0 power"; run_script "$POWER_SH" menu ;;
+    power) (($# == 0)) || die "Usage: $0 power"; run_sudo_script "$POWER_SH" menu ;;
     ram) (($# == 0)) || die "Usage: $0 ram"; run_script "$RAM_SPLIT_SH" menu ;;
-    compute) (($# == 0)) || die "Usage: $0 compute"; run_script "$COMPUTE_SH" menu ;;
-    cpu-unlock) (($# == 0)) || die "Usage: $0 cpu-unlock"; run_script "$POWER_SH" cpu-unlock menu ;;
+    compute) (($# == 0)) || die "Usage: $0 compute"; run_sudo_script "$COMPUTE_SH" menu ;;
+    cpu-unlock) (($# == 0)) || die "Usage: $0 cpu-unlock"; run_sudo_script "$POWER_SH" cpu-unlock menu ;;
     cec) (($# == 0)) || die "Usage: $0 cec"; require_normal_user; run_script "$CEC_SH" menu ;;
     storage) (($# == 0)) || die "Usage: $0 storage"; run_script "$STORAGE_SH" menu ;;
     persistence) (($# == 0)) || die "Usage: $0 persistence"; run_script "$PERSISTENCE_SH" menu ;;

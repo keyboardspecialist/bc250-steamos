@@ -113,6 +113,21 @@ class ToolkitTests(unittest.TestCase):
         self.assertNotIn('"CPU core unlock|', power_menu)
         self.assertIn("menu)      menu_cpu_unlock", power)
 
+    def test_main_menu_keeps_sudo_alive_and_revokes_it_on_exit(self):
+        source = TOOLKIT.read_text(encoding="utf-8")
+        sudo_session = source[
+            source.index("toolkit_cleanup() {") : source.index("require_script() {")
+        ]
+        main_menu = source[source.index("cmd_menu() {") : source.index("cmd_help() {")]
+
+        self.assertIn("trap toolkit_cleanup EXIT", sudo_session)
+        self.assertIn("sudo -v", sudo_session)
+        self.assertIn("sudo -n -v", sudo_session)
+        self.assertIn("sudo -n -k", sudo_session)
+        self.assertIn('kill "$SUDO_KEEPALIVE_PID"', sudo_session)
+        self.assertIn('wait "$SUDO_KEEPALIVE_PID"', sudo_session)
+        self.assertIn("start_sudo_session", main_menu)
+
     def test_scheduler_policy_toggle_uses_guarded_boot_config_lifecycle(self):
         source = TOOLKIT.read_text(encoding="utf-8")
         toggle = source[
@@ -328,22 +343,31 @@ class ToolkitTests(unittest.TestCase):
             root = Path(directory)
             toolkit = root / TOOLKIT.name
             power = root / "bc250-power.sh"
+            bindir = root / "bin"
+            bindir.mkdir()
             shutil.copy2(TOOLKIT, toolkit)
             power.write_text(
                 "#!/usr/bin/env bash\nprintf '%s\\n' \"$*\"\n",
                 encoding="utf-8",
             )
+            sudo = bindir / "sudo"
+            sudo.write_text("#!/usr/bin/env bash\nexec \"$@\"\n", encoding="utf-8")
+            sudo.chmod(0o755)
+            env = os.environ.copy()
+            env["PATH"] = f"{bindir}:{env['PATH']}"
 
             default = subprocess.run(
                 ["bash", str(toolkit), "power"],
                 check=True,
                 capture_output=True,
                 text=True,
+                env=env,
             )
             rejected = subprocess.run(
                 ["bash", str(toolkit), "power", "freq", "status"],
                 capture_output=True,
                 text=True,
+                env=env,
             )
 
             self.assertEqual(default.stdout.strip(), "menu")
@@ -357,7 +381,15 @@ class ToolkitTests(unittest.TestCase):
             mappings = {
                 "radv": ("bc250-mesh-shader.sh", "menu"),
                 "mesh": ("bc250-mesh-shader.sh", "menu"),
-                "cpu-unlock": ("bc250-power.sh", "cpu-unlock", "menu"),
+                "power": ("sudo", "bash", str(root / "bc250-power.sh"), "menu"),
+                "compute": ("sudo", "bash", str(root / "bc250-40cu.sh"), "menu"),
+                "cpu-unlock": (
+                    "sudo",
+                    "bash",
+                    str(root / "bc250-power.sh"),
+                    "cpu-unlock",
+                    "menu",
+                ),
             }
             for command, expected in mappings.items():
                 with self.subTest(command=command):
