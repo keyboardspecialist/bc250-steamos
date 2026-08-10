@@ -19,7 +19,6 @@ jobs:
     env:
       DECKY_ARTIFACT_BASENAME: bc250-decky-control-${{ github.ref_name }}
       DESKTOP_ARTIFACT_BASENAME: bc250-desktop-control-${{ github.ref_name }}
-      TRAINER_ARTIFACT_BASENAME: bc250-trainer-${{ github.ref_name }}
       TOOLKIT_ARTIFACT_BASENAME: bc250-steamos-toolkit-${{ github.ref_name }}
 
     steps:
@@ -52,25 +51,11 @@ jobs:
         with:
           python-version: "3.8"
 
-      - name: Install native and ACPI build dependencies
+      - name: Install EFI and ACPI build dependencies
         run: |
           sudo apt-get update
           sudo apt-get install -y \
-            acpica-tools cpio cmake ninja-build g++ flatpak flatpak-builder \
-            clang lld file \
-            qt6-base-dev qt6-base-dev-tools \
-            qt6-declarative-dev qt6-declarative-dev-tools \
-            qt6-multimedia-dev qt6-tools-dev-tools \
-            qml6-module-qt-labs-settings qml6-module-qtmultimedia \
-            qml6-module-qtqml-workerscript \
-            qml6-module-qt5compat-graphicaleffects \
-            qml6-module-qtquick qml6-module-qtquick-controls \
-            qml6-module-qtquick-dialogs \
-            qml6-module-qtquick-templates \
-            qml6-module-qtquick-layouts qml6-module-qtquick-window \
-            qml6-module-qttest \
-            gstreamer1.0-plugins-base gstreamer1.0-plugins-good \
-            gstreamer1.0-pulseaudio
+            acpica-tools cpio clang lld file
 
       - name: Build hardened EFI core unlock
         run: bash scripts/check-efi-core-unlock-build.sh
@@ -98,26 +83,6 @@ jobs:
       - name: Build frontend
         working-directory: decky-plugin
         run: pnpm run build
-
-      - name: Configure BC250 Trainer
-        run: cmake -S trainer -B build/trainer -G Ninja -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=ON -DTRAINER_PROJECT_VERSION="$VERSION"
-
-      - name: Build BC250 Trainer
-        run: cmake --build build/trainer --parallel
-
-      - name: Run BC250 Trainer C++ and QML tests
-        env:
-          QT_QPA_PLATFORM: offscreen
-          QT_QUICK_BACKEND: software
-        run: |
-          ctest --test-dir build/trainer --output-on-failure
-          cmake --build build/trainer --target qml-lint
-
-      - name: Smoke-test BC250 Trainer offscreen
-        shell: bash
-        run: |
-          QT_QPA_PLATFORM=offscreen QT_QUICK_BACKEND=software \
-            build/trainer/bc250-trainer --mock --smoke-test
 
       - name: Run backend tests
         run: PYTHONPATH=backend:backend/vendor python3 -m unittest discover -s backend/tests
@@ -148,53 +113,23 @@ jobs:
             --archive "${DESKTOP_ARTIFACT_BASENAME}.zip"
           sha256sum "${DESKTOP_ARTIFACT_BASENAME}.zip" > "${DESKTOP_ARTIFACT_BASENAME}.zip.sha256"
 
-      - name: Package BC250 Trainer
-        shell: bash
-        run: |
-          set -euo pipefail
-          if grep -q '^Do not publish either asset in a release' trainer/ASSETS.md; then
-            echo "BC250 Trainer asset redistribution is not yet cleared; see trainer/ASSETS.md." >&2
-            exit 1
-          fi
-          python3 scripts/stage-trainer-runtime.py \
-            --binary build/trainer/bc250-trainer \
-            --output "release/bc250-trainer" \
-            --archive "${TRAINER_ARTIFACT_BASENAME}.zip" \
-            --sha256 "${TRAINER_ARTIFACT_BASENAME}.zip.sha256"
-
-      - name: Build BC250 Trainer Flatpak
-        shell: bash
-        run: |
-          set -euo pipefail
-          flatpak remote-add --user --if-not-exists flathub \
-            https://flathub.org/repo/flathub.flatpakrepo
-          TRAINER_PROJECT_VERSION="$VERSION" \
-            flatpak-builder --user --install-deps-from=flathub --force-clean \
-            --repo=flatpak-repo flatpak-build \
-            trainer/packaging/io.github.keyboardspecialist.bc250trainer.yml
-          flatpak build-bundle \
-            --runtime-repo=https://flathub.org/repo/flathub.flatpakrepo \
-            flatpak-repo "${TRAINER_ARTIFACT_BASENAME}.flatpak" \
-            io.github.keyboardspecialist.bc250trainer stable
-          python3 scripts/stage-trainer-runtime.py \
-            --flatpak "${TRAINER_ARTIFACT_BASENAME}.flatpak" \
-            --output release/bc250-trainer-flatpak-installer \
-            --archive "${TRAINER_ARTIFACT_BASENAME}-flatpak-installer.zip" \
-            --sha256 "${TRAINER_ARTIFACT_BASENAME}-flatpak-installer.zip.sha256"
-
       - name: Package toolkit and driver resources
         shell: bash
         run: |
           set -euo pipefail
           package_dir="release-toolkit/bc250-steamos"
           mkdir -p "$package_dir/aic8800/debian" \
-            "$package_dir/aic8800/src/USB/driver_fw/fw"
+            "$package_dir/aic8800/src/USB/driver_fw/fw" \
+            "$package_dir/trainer/lib"
           cp README.md bc250-*.sh fetch-steamos-package.sh "$package_dir/"
           git archive --format=tar HEAD \
-            acpi-tables decky-plugin desktop-control trainer core-unlock backend scripts topology.sh \
+            acpi-tables decky-plugin desktop-control core-unlock backend scripts topology.sh \
             | tar -xf - -C "$package_dir"
-          install -m 0755 build/trainer/bc250-trainer \
-            "$package_dir/trainer/bc250-trainer"
+          install -m 0755 \
+            trainer/install-release.py trainer/install.sh trainer/install-flatpak.sh \
+            "$package_dir/trainer/"
+          install -m 0644 trainer/lib/shared-service.sh "$package_dir/trainer/lib/"
+          rm "$package_dir/scripts/stage-trainer-runtime.py"
           rsync -a --exclude=".gitignore" smu-oc-patches/ "$package_dir/smu-oc-patches/"
           rsync -a --exclude=".gitignore" bc250-audio-fix/ "$package_dir/bc250-audio-fix/"
           cp aic8800/README.md aic8800/LICENSE "$package_dir/aic8800/"
@@ -245,18 +180,6 @@ jobs:
           if-no-files-found: error
           retention-days: 90
 
-      - name: Upload BC250 Trainer artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: ${{ env.TRAINER_ARTIFACT_BASENAME }}
-          path: |
-            ${{ env.TRAINER_ARTIFACT_BASENAME }}.zip
-            ${{ env.TRAINER_ARTIFACT_BASENAME }}.zip.sha256
-            ${{ env.TRAINER_ARTIFACT_BASENAME }}-flatpak-installer.zip
-            ${{ env.TRAINER_ARTIFACT_BASENAME }}-flatpak-installer.zip.sha256
-          if-no-files-found: error
-          retention-days: 90
-
   publish:
     name: Publish artifacts
     needs: build
@@ -267,7 +190,6 @@ jobs:
     env:
       DECKY_ARTIFACT_BASENAME: bc250-decky-control-${{ github.ref_name }}
       DESKTOP_ARTIFACT_BASENAME: bc250-desktop-control-${{ github.ref_name }}
-      TRAINER_ARTIFACT_BASENAME: bc250-trainer-${{ github.ref_name }}
       TOOLKIT_ARTIFACT_BASENAME: bc250-steamos-toolkit-${{ github.ref_name }}
     steps:
       - name: Attach artifacts to GitHub release
@@ -279,7 +201,6 @@ jobs:
           set -euo pipefail
           gh run download "$GITHUB_RUN_ID" --name "$DECKY_ARTIFACT_BASENAME" --dir .
           gh run download "$GITHUB_RUN_ID" --name "$DESKTOP_ARTIFACT_BASENAME" --dir .
-          gh run download "$GITHUB_RUN_ID" --name "$TRAINER_ARTIFACT_BASENAME" --dir .
           gh run download "$GITHUB_RUN_ID" --name "$TOOLKIT_ARTIFACT_BASENAME" --dir .
           if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
             gh release upload "$GITHUB_REF_NAME" \
@@ -287,10 +208,6 @@ jobs:
               "${DECKY_ARTIFACT_BASENAME}.zip.sha256" \
               "${DESKTOP_ARTIFACT_BASENAME}.zip" \
               "${DESKTOP_ARTIFACT_BASENAME}.zip.sha256" \
-              "${TRAINER_ARTIFACT_BASENAME}.zip" \
-              "${TRAINER_ARTIFACT_BASENAME}.zip.sha256" \
-              "${TRAINER_ARTIFACT_BASENAME}-flatpak-installer.zip" \
-              "${TRAINER_ARTIFACT_BASENAME}-flatpak-installer.zip.sha256" \
               "${TOOLKIT_ARTIFACT_BASENAME}.zip" \
               "${TOOLKIT_ARTIFACT_BASENAME}.zip.sha256" \
               --clobber
@@ -300,10 +217,6 @@ jobs:
               "${DECKY_ARTIFACT_BASENAME}.zip.sha256" \
               "${DESKTOP_ARTIFACT_BASENAME}.zip" \
               "${DESKTOP_ARTIFACT_BASENAME}.zip.sha256" \
-              "${TRAINER_ARTIFACT_BASENAME}.zip" \
-              "${TRAINER_ARTIFACT_BASENAME}.zip.sha256" \
-              "${TRAINER_ARTIFACT_BASENAME}-flatpak-installer.zip" \
-              "${TRAINER_ARTIFACT_BASENAME}-flatpak-installer.zip.sha256" \
               "${TOOLKIT_ARTIFACT_BASENAME}.zip" \
               "${TOOLKIT_ARTIFACT_BASENAME}.zip.sha256" \
               --verify-tag \

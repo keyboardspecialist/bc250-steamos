@@ -414,35 +414,36 @@ class TrainerReleaseTests(unittest.TestCase):
             self.assertFalse((registry / f"plasma.{uid}").exists())
             self.assertTrue(payload.exists())
 
-    def test_release_workflow_builds_tests_stages_and_gates_assets(self):
+    def test_main_release_uses_only_trainer_bootstrap_and_lifecycle_files(self):
         workflow = (ROOT / ".github/workflows/release-artifacts.yml").read_text(
             encoding="utf-8"
         )
         for expected in (
+            "Main release tags must point to commits on master",
+            "trainer/install-release.py trainer/install.sh trainer/install-flatpak.sh",
+            'trainer/lib/shared-service.sh "$package_dir/trainer/lib/"',
+            'rm "$package_dir/scripts/stage-trainer-runtime.py"',
+        ):
+            self.assertIn(expected, workflow)
+        for removed in (
             "qt6-base-dev",
             "qt6-declarative-dev",
             "qt6-multimedia-dev",
-            "qml6-module-qtquick-dialogs",
             "gstreamer1.0-plugins-good",
             "ctest --test-dir build/trainer --output-on-failure",
             "--target qml-lint",
             "--mock --smoke-test",
-            "scripts/stage-trainer-runtime.py",
             "TRAINER_ARTIFACT_BASENAME",
-            "trainer core-unlock backend scripts topology.sh",
             "install -m 0755 build/trainer/bc250-trainer",
-            "BC250 Trainer asset redistribution is not yet cleared",
-            "Main release tags must point to commits on master",
             "flatpak-builder",
             'TRAINER_PROJECT_VERSION="$VERSION"',
-            "--flatpak",
             "-flatpak-installer.zip",
         ):
-            self.assertIn(expected, workflow)
-        self.assertLess(
-            workflow.index("git archive --format=tar HEAD"),
-            workflow.index('"$package_dir/trainer/bc250-trainer"'),
-        )
+            self.assertNotIn(removed, workflow)
+
+        archive_line = workflow[workflow.index("git archive --format=tar HEAD") :]
+        archive_line = archive_line[: archive_line.index("| tar -xf")]
+        self.assertNotIn(" trainer ", archive_line)
 
     def test_trainer_release_has_isolated_tag_namespace(self):
         workflow = (ROOT / ".github/workflows/trainer-release.yml").read_text(

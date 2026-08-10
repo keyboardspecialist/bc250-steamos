@@ -88,6 +88,8 @@ class ToolkitTests(unittest.TestCase):
         self.assertIn("1) run_menu_child cpu-unlock", unlocks_menu)
         self.assertIn("amdgpu|audio)", source)
         self.assertIn("radv|mesh)", source)
+        self.assertIn('python3 "$TRAINER_RELEASE_INSTALLER"', source)
+        self.assertNotIn('bash "$TRAINER_INSTALL_SH" install', source)
 
         power = (ROOT / "bc250-power.sh").read_text(encoding="utf-8")
         power_menu = power[power.index("cmd_menu() {") : power.index("cmd_help() {")]

@@ -30,7 +30,7 @@ Open the unified toolkit menu as the logged-in Deck user:
 | AIC8800 | `sudo bash ./aic8800/steamdeck-setup.sh` |
 | Decky plugin | `bash ./decky-plugin/install.sh` |
 | Plasma desktop control | `bash ./desktop-control/install.sh install` |
-| BC250 Trainer | `bash ./trainer/install.sh install` (release artifact or after building from source) |
+| BC250 Trainer | `./bc250-toolkit.sh trainer` |
 | Persistent storage and recovery | Automatic with each setup workflow; `./bc250-storage.sh` opens its menu |
 | Verification | `sudo ./bc250-storage.sh status` |
 
@@ -58,7 +58,7 @@ sudo ./bc250-storage.sh install
 | CEC shutdown integration | `./bc250-cec.sh shutdown-standby install` |
 | AIC8800 | `sudo bash ./aic8800/steamdeck-setup.sh` |
 | Plasma desktop control | `bash ./desktop-control/install.sh install` |
-| BC250 Trainer | `bash ./trainer/install.sh install` |
+| BC250 Trainer | `./bc250-toolkit.sh trainer` |
 
 ```bash
 sudo ./bc250-storage.sh status
@@ -107,7 +107,7 @@ Each child requests administrator access only when needed.
 | `./bc250-toolkit.sh ram` | Open RAM / VRAM split settings |
 | `./bc250-toolkit.sh amdgpu` | Build the AMDGPU kernel fixes |
 | `./bc250-toolkit.sh radv` | Open the global Mesa / RADV performance-patch menu |
-| `./bc250-toolkit.sh trainer` | Install or upgrade BC250 Trainer |
+| `./bc250-toolkit.sh trainer` | Download, verify, and install the latest native BC250 Trainer release |
 | `./bc250-toolkit.sh manage` | Review and remove installed components |
 | `./bc250-toolkit.sh help` | List launcher commands and components |
 
@@ -408,12 +408,21 @@ and a folder-backed music deck with synchronized waveform and beat visualizer.
 Install the prebuilt release artifact as the logged-in desktop user:
 
 ```bash
+./bc250-toolkit.sh trainer
+```
+
+The toolkit selects the highest published `trainer-vMAJOR.MINOR.PATCH`
+prerelease, downloads its native ZIP and SHA-256 file, validates the release
+metadata and archive paths, and runs the packaged installer. To install a
+downloaded artifact manually instead:
+
+```bash
 unzip bc250-trainer-vX.Y.Z.zip
 cd bc250-trainer
 bash trainer/install.sh install
 ```
 
-The artifact is self-contained: it includes the executable, installer, backend,
+The Trainer artifact is self-contained: it includes the executable, installer, backend,
 shared service, persistence helpers, CPU core-unlock bundle, and topology helper.
 `status` and `uninstall` use the same path. User files are installed below
 `~/.local`; sudo is requested only for shared service registration.

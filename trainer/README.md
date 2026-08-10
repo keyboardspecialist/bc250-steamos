@@ -11,6 +11,17 @@ as unavailable.
 
 ## Install
 
+From a toolkit checkout or toolkit release artifact, download, verify, and
+install the newest native Trainer release with:
+
+```sh
+./bc250-toolkit.sh trainer
+```
+
+The bootstrap supports `GH_TOKEN` or `GITHUB_TOKEN` for authenticated GitHub API
+requests. To choose the Flatpak package or install a downloaded native artifact
+manually, use the release instructions below.
+
 Download one of the ZIP files from
 [BC250 Trainer Releases](https://github.com/keyboardspecialist/bc250-steamos/releases?q=trainer-v&expanded=true).
 Run these commands as your normal desktop user, not with `sudo`; the installer
@@ -169,7 +180,9 @@ waveform, and visualizer analysis failures do not disable hardware controls.
 
 BC250 Trainer releases use the independent `trainer-vMAJOR.MINOR.PATCH` tag
 namespace and are published as GitHub prereleases. Main toolkit releases retain
-the `vMAJOR.MINOR.PATCH` namespace and existing release workflow.
+the `vMAJOR.MINOR.PATCH` namespace. They include the native release bootstrap
+and maintenance lifecycle scripts, but do not build, bundle, or publish Trainer
+applications.
 
 Cut a release from `master` with an annotated Trainer tag:
 
@@ -182,8 +195,7 @@ git push origin trainer-v1.0.0
 
 The **Build BC250 Trainer prerelease** workflow validates master ancestry, builds
 and tests the native application and shared service, stages the standalone ZIP
-and complete Flatpak installation kit, and publishes checksums with the prerelease. Main `v*`
-toolkit releases publish the same Flatpak artifact.
+and complete Flatpak installation kit, and publishes checksums with the prerelease.
 
 The workflow enforces the publishing decision recorded in `ASSETS.md` before
 building or publishing a release.

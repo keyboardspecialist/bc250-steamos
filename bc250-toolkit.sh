@@ -16,7 +16,7 @@ AUDIO_FIX_SH="$SCRIPT_DIR/bc250-audio-fix/patch-driver.sh"
 MESH_SHADER_SH="$SCRIPT_DIR/bc250-mesh-shader.sh"
 DECKY_INSTALL_SH="$SCRIPT_DIR/decky-plugin/install.sh"
 DESKTOP_INSTALL_SH="$SCRIPT_DIR/desktop-control/install.sh"
-TRAINER_INSTALL_SH="$SCRIPT_DIR/trainer/install.sh"
+TRAINER_RELEASE_INSTALLER="$SCRIPT_DIR/trainer/install-release.py"
 MAINTENANCE_SH="$SCRIPT_DIR/bc250-maintenance.sh"
 
 C0=$'\033[0m'; CB=$'\033[1m'; CD=$'\033[2m'; CI=$'\033[7m'
@@ -107,10 +107,10 @@ install_desktop() {
 
 install_trainer() {
     require_normal_user
-    require_script "$TRAINER_INSTALL_SH"
+    require_script "$TRAINER_RELEASE_INSTALLER"
     confirm_action \
-        "Install or upgrade BC250 Trainer?" \
-        bash "$TRAINER_INSTALL_SH" install
+        "Download and install the latest BC250 Trainer release?" \
+        python3 "$TRAINER_RELEASE_INSTALLER"
 }
 
 run_machine_action() {
@@ -391,7 +391,7 @@ Commands:
   radv                   Open the global Mesa / RADV performance patch
   decky                  Confirm and run the Decky plugin installer
   desktop                Confirm and run the Plasma desktop-control installer
-  trainer                Confirm and run the BC250 Trainer installer
+  trainer                Download and install the latest BC250 Trainer release
   manage                 Open installed-component maintenance and cleanup
 
 Compatibility aliases: audio (amdgpu), mesh (radv)
