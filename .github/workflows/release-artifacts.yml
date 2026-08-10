@@ -119,7 +119,8 @@ jobs:
           set -euo pipefail
           package_dir="release-toolkit/bc250-steamos"
           mkdir -p "$package_dir/aic8800/debian" \
-            "$package_dir/aic8800/src/USB/driver_fw/fw"
+            "$package_dir/aic8800/src/USB/driver_fw/fw" \
+            "$package_dir/trainer"
           cp README.md bc250-*.sh fetch-steamos-package.sh "$package_dir/"
           git archive --format=tar HEAD \
             acpi-tables decky-plugin desktop-control core-unlock backend scripts topology.sh \
