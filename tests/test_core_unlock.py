@@ -129,6 +129,18 @@ class CoreUnlockTests(unittest.TestCase):
                 ["/usr/bin/systemctl", "--no-block", "reboot"], check=True
             )
 
+    def test_apply_accepts_non_factory_locked_mask(self):
+        helper = load_helper()
+        smu = mock.Mock()
+        smu.read.side_effect = (0x0000003F, 0x000000FF)
+        smu.send.return_value = 0x01
+        with mock.patch.object(helper, "Smu", return_value=smu), mock.patch.object(
+            helper.time, "sleep"
+        ):
+            self.assertTrue(helper.read_or_apply_mask())
+        smu.send.assert_called_once_with(helper.MSG_WRITE_FF, helper.MASK_REG)
+        smu.close.assert_called_once_with()
+
     def test_boot_refuses_non_bc250_hardware_before_smu_access(self):
         helper = load_helper()
         with tempfile.TemporaryDirectory() as directory:
@@ -199,12 +211,11 @@ class CoreUnlockTests(unittest.TestCase):
                 self.assertEqual(helper.verify_unlocked(), 0)
             self.assertFalse(helper.PENDING.exists())
 
-    def test_efi_source_has_hardware_mask_and_one_attempt_guards(self):
+    def test_efi_source_has_hardware_identity_and_one_attempt_guards(self):
         source = EFI_SOURCE.read_text(encoding="utf-8")
         main = source[source.index("EFI_STATUS efi_main") :]
 
         self.assertIn("0x13fe1002U", source)
-        self.assertIn("0x00000077U", source)
         self.assertIn("0x000000ffU", source)
         self.assertIn("0x0115A870U", source)
         self.assertIn("0x98U", source)
@@ -214,7 +225,12 @@ class CoreUnlockTests(unittest.TestCase):
         self.assertIn("clear_guard", main)
         self.assertIn("EfiResetWarm", main)
         self.assertIn("0x8000000000000000ULL", source)
-        unlocked = main[main.index("if (mask == UNLOCKED_MASK)") : main.index("if (mask != LOCKED_MASK)")]
+        self.assertNotIn("#define LOCKED_MASK", source)
+        unlocked = main[
+            main.index("if (mask == UNLOCKED_MASK)") : main.index(
+                "status = system_table->RuntimeServices->GetVariable"
+            )
+        ]
         self.assertIn("EFI_ERROR_STATUS(EFI_ABORTED)", unlocked)
         self.assertNotIn("return EFI_SUCCESS", unlocked)
         self.assertNotIn("return EFI_LOAD_ERROR", source)

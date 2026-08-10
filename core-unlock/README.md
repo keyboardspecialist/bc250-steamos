@@ -8,13 +8,13 @@ rw-r-r-0644 and licensed under the MIT license in [`LICENSE`](LICENSE).
 
 ## Toolkit Changes
 
-The toolkit version keeps the fixed SMN target and the upstream `0x77` to
-`0xff` safety check, with these integration changes:
+The toolkit version keeps the fixed SMN target and writes the full `0xff` mask,
+with these integration changes:
 
 - Holds an exclusive lock on the PCI configuration file for the complete SMU
   transaction so it cannot race another SMU client.
-- Requires the BC-250's `1002:13fe` PCI identity and validates the complete
-  `0x00000077` factory mask before issuing the fixed `0x000000ff` write.
+- Requires the BC-250's `1002:13fe` PCI identity, skips an already-complete
+  `0x000000ff` mask, and verifies the full mask after issuing the fixed write.
 - Aborts if the queue is still busy after the initial timeout instead of
   issuing a command into a busy mailbox.
 - Adds one-time apply, boot replay, status, and read-only persistence-gating
@@ -52,11 +52,11 @@ or EFI binary.
 The hardened application adds the following protections:
 
 - Verifies the complete PCI configuration ID `0x13fe1002` before any SMN/SMU
-  access and accepts only full masks `0x00000077` and `0x000000ff`.
+  access, skips an already-complete `0x000000ff` mask, and verifies the result.
 - Retains the proven queue 3 message `0x98` and SMN address `0x0115A870`, with
   bounded mailbox waits and high-bit-encoded EFI error returns.
-- Persists a one-attempt UEFI guard before the SMU write. A `0x77` mask with an
-  existing guard refuses another reset; a verified `0xff` mask clears the guard
+- Persists a one-attempt UEFI guard before the SMU write. Any locked mask with
+  an existing guard refuses another reset; a verified `0xff` mask clears the guard
   and returns high-bit `EFI_ABORTED` so firmware continues to the next
   `BootOrder` entry without entering the interactive-success exception path.
 - Uses the toolkit-specific UEFI vendor GUID
