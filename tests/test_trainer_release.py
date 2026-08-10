@@ -421,6 +421,7 @@ class TrainerReleaseTests(unittest.TestCase):
         for expected in (
             "Main release tags must point to commits on master",
             '"$package_dir/trainer"',
+            'printf \'%s\\n\' "$GITHUB_REF_NAME" > "$package_dir/VERSION"',
             "trainer/install-release.py trainer/install.sh trainer/install-flatpak.sh",
             "acpi-tables decky-plugin desktop-control core-unlock backend scripts topology.sh",
             'rm "$package_dir/scripts/stage-trainer-runtime.py"',

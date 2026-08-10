@@ -9,10 +9,11 @@
 # root-owned plugin directory and the plugin_loader restart.
 #
 # Steps:
-#   1. Install standalone pnpm if missing (and node LTS via pnpm)
-#   2. Ensure PNPM_HOME is on PATH in ~/.bashrc and ~/.zshrc
-#   3. pnpm install + typecheck + build + backend unit tests + runtime staging
-#   4. Copy the runtime files into ~/homebrew/plugins/"BC-250 Control"
+#   1. Install Decky Loader if missing
+#   2. Install standalone pnpm if missing (and node LTS via pnpm)
+#   3. Ensure PNPM_HOME is on PATH in ~/.bashrc and ~/.zshrc
+#   4. pnpm install + typecheck + build + backend unit tests + runtime staging
+#   5. Copy the runtime files into ~/homebrew/plugins/"BC-250 Control"
 #      and restart plugin_loader
 
 set -euo pipefail
@@ -48,6 +49,19 @@ trap cleanup EXIT
 
 require_normal_user() {
     [[ $EUID -ne 0 ]] || die "run as the deck user, not root (sudo is used where needed)"
+}
+
+decky_loader_installed() {
+    [[ -d "$PLUGINS_DIR" ]] \
+        && systemctl cat plugin_loader.service >/dev/null 2>&1
+}
+
+ensure_decky_loader() {
+    decky_loader_installed && return 0
+    log "Installing Decky Loader"
+    curl -L https://github.com/SteamDeckHomebrew/decky-installer/releases/latest/download/install_release.sh | sh
+    decky_loader_installed \
+        || die "Decky Loader installation did not complete"
 }
 
 plugin_owned() {
@@ -121,9 +135,9 @@ uninstall_plugin() {
 install_plugin() {
 require_normal_user
 [[ -f "$SRC_DIR/plugin.json" ]] || die "plugin.json not found next to this script"
-[[ -d "$PLUGINS_DIR" ]] || die "$PLUGINS_DIR missing — install Decky Loader first"
+ensure_decky_loader
 
-# --- 1. dependencies --------------------------------------------------------
+# --- 2. dependencies --------------------------------------------------------
 
 if ! command -v pnpm >/dev/null 2>&1; then
     log "Installing standalone pnpm to $PNPM_HOME"
@@ -135,7 +149,7 @@ if ! command -v node >/dev/null 2>&1; then
     pnpm env use --global lts
 fi
 
-# --- 2. shell PATH setup ----------------------------------------------------
+# --- 3. shell PATH setup ----------------------------------------------------
 # The pnpm installer only edits the shell rc it detects; cover bash and zsh.
 
 for rc in "$HOME/.bashrc" "$HOME/.zshrc"; do
@@ -154,7 +168,7 @@ esac
 EOF
 done
 
-# --- 3. build ---------------------------------------------------------------
+# --- 4. build ---------------------------------------------------------------
 
 cd "$SRC_DIR"
 log "Installing plugin dependencies"
@@ -171,7 +185,7 @@ python3 "$SRC_DIR/../scripts/stage-decky-runtime.py"
 
 [[ -f out/dist/index.js ]] || die "staging produced no out/dist/index.js"
 
-# --- 4. install root helper and Decky plugin -------------------------------
+# --- 5. install root helper and Decky plugin -------------------------------
 # Only the runtime files ship; node_modules/src/tests stay in the checkout.
 
 log "Installing root-owned CPU tuning helper (sudo)"

@@ -35,6 +35,34 @@ class DriverLifecycleTests(unittest.TestCase):
             self.assertIn("state:", result.stdout)
             self.assertIn(result.returncode, (0, 1))
 
+    def test_missing_amdgpu_scheduler_policy_prints_install_command(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            env = os.environ.copy()
+            env.update(
+                {
+                    "SCHED_CONFIG": str(root / "bc250-amdgpu.cfg"),
+                    "GRUB_DEFAULT": str(root / "grub"),
+                    "GRUB_CFG": str(root / "grub.cfg"),
+                    "PROC_CMDLINE": str(root / "cmdline"),
+                    "AMDGPU_KEEP_FILE": str(root / "bc250-amdgpu.conf"),
+                }
+            )
+
+            result = subprocess.run(
+                ["bash", str(AUDIO_BOOT_CONFIG), "status"],
+                capture_output=True,
+                text=True,
+                env=env,
+            )
+
+            self.assertEqual(result.returncode, 1)
+            self.assertIn("scheduler policy: not configured", result.stdout)
+            self.assertIn(
+                f"install with: sudo bash {AUDIO_BOOT_CONFIG} install",
+                result.stdout,
+            )
+
     def test_audio_uninstall_routes_noninteractive_slot_rollbacks(self):
         with tempfile.TemporaryDirectory() as directory:
             bindir = Path(directory)

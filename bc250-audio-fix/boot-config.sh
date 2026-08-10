@@ -263,6 +263,7 @@ cmd_status() {
         log "scheduler policy: incomplete or unrecognized"
     else
         log "scheduler policy: not configured"
+        log "install with: sudo bash $0 install"
     fi
     return 1
 }

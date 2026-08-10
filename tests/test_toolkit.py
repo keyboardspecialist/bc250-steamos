@@ -34,6 +34,7 @@ class ToolkitTests(unittest.TestCase):
             "persistence",
             "wifi",
             "amdgpu",
+            "scheduler-policy",
             "radv",
             "audio",
             "mesh",
@@ -68,12 +69,25 @@ class ToolkitTests(unittest.TestCase):
             "Manage installed components",
         ):
             self.assertIn(f'"{label}|', main_menu)
+        self.assertRegex(
+            (ROOT / "VERSION").read_text(encoding="utf-8").strip(),
+            r"^v\d+\.\d+\.\d+$",
+        )
+        self.assertIn(
+            'menu_select "BC-250 SteamOS toolkit ${CD}[${TOOLKIT_VERSION}]${C0}"',
+            main_menu,
+        )
         self.assertNotIn("Mesh shaders (per game)", source)
         self.assertNotIn("[optional]", drivers_menu)
         self.assertIn("Mesa / RADV performance patch (optional)", drivers_menu)
+        self.assertIn("AMDGPU scheduler policy (toggle)", drivers_menu)
         self.assertIn("[menu]", drivers_menu)
         self.assertLess(
             drivers_menu.index("AMDGPU kernel fixes"),
+            drivers_menu.index("AMDGPU scheduler policy (toggle)"),
+        )
+        self.assertLess(
+            drivers_menu.index("AMDGPU scheduler policy (toggle)"),
             drivers_menu.index("Mesa / RADV performance patch"),
         )
         self.assertLess(
@@ -81,9 +95,12 @@ class ToolkitTests(unittest.TestCase):
             drivers_menu.index("AIC8800 WiFi / Bluetooth"),
         )
         self.assertIn("0) run_menu_action amdgpu", drivers_menu)
-        self.assertIn("1) run_menu_child radv", drivers_menu)
+        self.assertIn("1) run_menu_action scheduler-policy", drivers_menu)
+        self.assertIn("2) run_menu_child radv", drivers_menu)
         self.assertIn("GPU compute-unit unlock", unlocks_menu)
         self.assertIn("CPU core unlock", unlocks_menu)
+        self.assertIn("Configure GPU compute-unit and CPU core unlocks.", main_menu)
+        self.assertNotIn("without confusing the two workflows", source)
         self.assertIn("0) run_menu_child compute", unlocks_menu)
         self.assertIn("1) run_menu_child cpu-unlock", unlocks_menu)
         self.assertIn("amdgpu|audio)", source)
@@ -95,6 +112,38 @@ class ToolkitTests(unittest.TestCase):
         power_menu = power[power.index("cmd_menu() {") : power.index("cmd_help() {")]
         self.assertNotIn('"CPU core unlock|', power_menu)
         self.assertIn("menu)      menu_cpu_unlock", power)
+
+    def test_scheduler_policy_toggle_uses_guarded_boot_config_lifecycle(self):
+        source = TOOLKIT.read_text(encoding="utf-8")
+        toggle = source[
+            source.index("scheduler_policy_badge() {") : source.index("install_decky() {")
+        ]
+
+        self.assertIn('bash "$AMDGPU_BOOT_CONFIG_SH" configured', toggle)
+        self.assertIn('bash "$AMDGPU_BOOT_CONFIG_SH" present', toggle)
+        self.assertIn('sudo bash "$AMDGPU_BOOT_CONFIG_SH" install', toggle)
+        self.assertIn('sudo bash "$AMDGPU_BOOT_CONFIG_SH" remove', toggle)
+        self.assertIn("Scheduler policy state is incomplete", toggle)
+
+    def test_decky_install_bootstraps_loader_before_plugin_dependencies(self):
+        installer = (ROOT / "decky-plugin/install.sh").read_text(encoding="utf-8")
+        install_plugin = installer[installer.index("install_plugin() {") :]
+
+        self.assertIn(
+            "https://github.com/SteamDeckHomebrew/decky-installer/"
+            "releases/latest/download/install_release.sh",
+            installer,
+        )
+        self.assertIn("systemctl cat plugin_loader.service", installer)
+        self.assertIn(
+            "curl -L https://github.com/SteamDeckHomebrew/decky-installer/"
+            "releases/latest/download/install_release.sh | sh",
+            installer,
+        )
+        self.assertLess(
+            install_plugin.index("ensure_decky_loader"),
+            install_plugin.index("command -v pnpm"),
+        )
 
     def make_action_environment(self, root):
         toolkit = root / TOOLKIT.name
@@ -182,6 +231,17 @@ class ToolkitTests(unittest.TestCase):
     def make_status_environment(self, root, amdgpu_status, amdgpu_result):
         toolkit = root / TOOLKIT.name
         shutil.copy2(TOOLKIT, toolkit)
+        bindir = root / "bin"
+        bindir.mkdir()
+        sudo = bindir / "sudo"
+        sudo.write_text(
+            "#!/usr/bin/env bash\n"
+            "[[ \"${1:-}\" == -v ]] && exit 0\n"
+            "export BC250_TEST_ELEVATED=1\n"
+            "exec \"$@\"\n",
+            encoding="utf-8",
+        )
+        sudo.chmod(0o755)
         scripts = (
             "bc250-storage.sh",
             "bc250-power.sh",
@@ -205,8 +265,16 @@ class ToolkitTests(unittest.TestCase):
             "#!/usr/bin/env bash\nprintf '%s\\n' 'runtime: not installed'\nexit 1\n",
             encoding="utf-8",
         )
-        (root / "bc250-cu-status.sh").touch()
-        return toolkit
+        cu_status = root / "bc250-cu-status.sh"
+        cu_status.write_text(
+            "#!/usr/bin/env bash\n"
+            "[[ ${BC250_TEST_ELEVATED:-0} == 1 ]] || exit 2\n"
+            "printf '%s\\n' 'CU register status: elevated'\n",
+            encoding="utf-8",
+        )
+        env = os.environ.copy()
+        env["PATH"] = f"{bindir}:{env['PATH']}"
+        return toolkit, env
 
     def test_without_terminal_prints_help(self):
         result = subprocess.run(
@@ -219,21 +287,41 @@ class ToolkitTests(unittest.TestCase):
 
     def test_status_accepts_missing_amdgpu_but_rejects_incomplete_integration(self):
         cases = (
-            ("[bc250-amdgpu] state: not-installed", 1, 0),
-            ("[bc250-amdgpu] state: incomplete", 1, 1),
+            ("[bc250-amdgpu] state: not-installed", 1, 0, False),
+            ("[bc250-amdgpu] state: incomplete", 1, 1, True),
         )
-        for status, component_result, expected in cases:
+        for status, component_result, expected, incomplete in cases:
             with self.subTest(status=status), tempfile.TemporaryDirectory() as directory:
-                toolkit = self.make_status_environment(
+                toolkit, env = self.make_status_environment(
                     Path(directory), status, component_result
                 )
                 result = subprocess.run(
                     ["bash", str(toolkit), "status"],
                     capture_output=True,
                     text=True,
+                    env=env,
                 )
                 self.assertEqual(result.returncode, expected)
                 self.assertIn(status, result.stdout)
+                self.assertIn("CU register status: elevated", result.stdout)
+                self.assertEqual("System status: incomplete" in result.stdout, incomplete)
+                if incomplete:
+                    self.assertIn(
+                        "System status: incomplete (AMDGPU kernel fixes).",
+                        result.stdout,
+                    )
+
+    def test_interactive_status_reports_health_instead_of_action_failure(self):
+        source = TOOLKIT.read_text(encoding="utf-8")
+        status = source[source.index("show_status() {") : source.index("menu_select() {")]
+        runner = source[
+            source.index("run_menu_action() {") : source.index("cmd_drivers_menu() {")
+        ]
+
+        self.assertIn("sudo -v", status)
+        self.assertIn('sudo bash "$CU_STATUS_SH"', status)
+        self.assertIn("system status is incomplete", runner)
+        self.assertIn("if [[ ${1:-} == status ]]", runner)
 
     def test_component_dispatch_opens_menu_and_rejects_arguments(self):
         with tempfile.TemporaryDirectory() as directory:

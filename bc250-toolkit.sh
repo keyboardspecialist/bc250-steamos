@@ -13,11 +13,18 @@ PERSISTENCE_SH="$SCRIPT_DIR/bc250-update-persistence.sh"
 CU_STATUS_SH="$SCRIPT_DIR/bc250-cu-status.sh"
 AIC_SETUP_SH="$SCRIPT_DIR/aic8800/steamdeck-setup.sh"
 AUDIO_FIX_SH="$SCRIPT_DIR/bc250-audio-fix/patch-driver.sh"
+AMDGPU_BOOT_CONFIG_SH="$SCRIPT_DIR/bc250-audio-fix/boot-config.sh"
 MESH_SHADER_SH="$SCRIPT_DIR/bc250-mesh-shader.sh"
 DECKY_INSTALL_SH="$SCRIPT_DIR/decky-plugin/install.sh"
 DESKTOP_INSTALL_SH="$SCRIPT_DIR/desktop-control/install.sh"
 TRAINER_RELEASE_INSTALLER="$SCRIPT_DIR/trainer/install-release.py"
 MAINTENANCE_SH="$SCRIPT_DIR/bc250-maintenance.sh"
+TOOLKIT_VERSION="development"
+if [[ -f "$SCRIPT_DIR/VERSION" && ! -L "$SCRIPT_DIR/VERSION" ]]; then
+    TOOLKIT_VERSION=$(< "$SCRIPT_DIR/VERSION")
+fi
+[[ "$TOOLKIT_VERSION" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] \
+    || TOOLKIT_VERSION="development"
 
 C0=$'\033[0m'; CB=$'\033[1m'; CD=$'\033[2m'; CI=$'\033[7m'
 CG=$'\033[32m'; CY=$'\033[33m'; CR=$'\033[31m'; CC=$'\033[36m'
@@ -87,6 +94,34 @@ install_audio_fix() {
     confirm_action \
         "Build and install the matching AMDGPU kernel fixes?" \
         bash "$AUDIO_FIX_SH"
+}
+
+scheduler_policy_badge() {
+    if [[ ! -f "$AMDGPU_BOOT_CONFIG_SH" || -L "$AMDGPU_BOOT_CONFIG_SH" ]]; then
+        printf '%s' "${CR}[unavailable]${C0}"
+    elif bash "$AMDGPU_BOOT_CONFIG_SH" configured 2>/dev/null; then
+        printf '%s' "${CG}[enabled]${C0}"
+    elif bash "$AMDGPU_BOOT_CONFIG_SH" present 2>/dev/null; then
+        printf '%s' "${CY}[incomplete]${C0}"
+    else
+        printf '%s' "${CD}[disabled]${C0}"
+    fi
+}
+
+toggle_scheduler_policy() {
+    require_normal_user
+    require_script "$AMDGPU_BOOT_CONFIG_SH"
+    if bash "$AMDGPU_BOOT_CONFIG_SH" configured 2>/dev/null; then
+        confirm_action \
+            "Disable amdgpu.sched_policy=2? Compute repair will be incomplete until re-enabled; reboot required." \
+            sudo bash "$AMDGPU_BOOT_CONFIG_SH" remove
+    elif bash "$AMDGPU_BOOT_CONFIG_SH" present 2>/dev/null; then
+        die "Scheduler policy state is incomplete. Review '$AMDGPU_BOOT_CONFIG_SH status' before changing it."
+    else
+        confirm_action \
+            "Enable amdgpu.sched_policy=2? Reboot required." \
+            sudo bash "$AMDGPU_BOOT_CONFIG_SH" install
+    fi
 }
 
 install_decky() {
@@ -164,13 +199,19 @@ status_section() {
 
 show_status() {
     require_normal_user
-    local failed=0 amdgpu_rc=0 amdgpu_status="" radv_rc=0
-    status_section "Persistent storage" "$STORAGE_SH" status || failed=1
-    status_section "Power management" "$POWER_SH" status || failed=1
-    status_section "RAM / VRAM split" "$RAM_SPLIT_SH" status || failed=1
-    status_section "CEC" "$CEC_SH" status || failed=1
+    local failed=0 amdgpu_rc=0 amdgpu_status="" radv_rc=0 cu_rc=0 failed_list=""
+    local failed_components=()
+    sudo -v
+    status_section "Persistent storage" "$STORAGE_SH" status \
+        || { failed=1; failed_components+=("Persistent storage"); }
+    status_section "Power management" "$POWER_SH" status \
+        || { failed=1; failed_components+=("Power management"); }
+    status_section "RAM / VRAM split" "$RAM_SPLIT_SH" status \
+        || { failed=1; failed_components+=("RAM / VRAM split"); }
+    status_section "CEC" "$CEC_SH" status \
+        || { failed=1; failed_components+=("CEC"); }
     status_section "SteamOS update persistence" "$PERSISTENCE_SH" status \
-        || failed=1
+        || { failed=1; failed_components+=("SteamOS update persistence"); }
     printf '\n%s\n' "${CB}${CC}-- AMDGPU kernel fixes --${C0}"
     if [[ -f "$AUDIO_FIX_SH" && ! -L "$AUDIO_FIX_SH" ]]; then
         amdgpu_status=$(bash "$AUDIO_FIX_SH" status) || amdgpu_rc=$?
@@ -178,25 +219,40 @@ show_status() {
         if [[ $amdgpu_rc -ne 0 ]] \
             && ! grep -qxF '[bc250-amdgpu] state: not-installed' <<< "$amdgpu_status"; then
             failed=1
+            failed_components+=("AMDGPU kernel fixes")
         fi
     else
         log "Component is missing or unsafe: $AUDIO_FIX_SH"
         failed=1
+        failed_components+=("AMDGPU kernel fixes")
     fi
     printf '\n%s\n' "${CB}${CC}-- Mesa / RADV performance patch --${C0}"
     if [[ -f "$MESH_SHADER_SH" && ! -L "$MESH_SHADER_SH" ]]; then
         bash "$MESH_SHADER_SH" status || radv_rc=$?
-        [[ $radv_rc -le 1 ]] || failed=1
+        if [[ $radv_rc -gt 1 ]]; then
+            failed=1
+            failed_components+=("Mesa / RADV performance patch")
+        fi
     else
         log "Component is missing or unsafe: $MESH_SHADER_SH"
         failed=1
+        failed_components+=("Mesa / RADV performance patch")
     fi
     printf '\n%s\n' "${CB}${CC}-- GPU compute units --${C0}"
     if [[ -f "$CU_STATUS_SH" && ! -L "$CU_STATUS_SH" ]]; then
-        printf '%s\n' "Run 'sudo bash $CU_STATUS_SH' for register status."
+        sudo bash "$CU_STATUS_SH" || cu_rc=$?
+        if [[ $cu_rc -ne 0 ]]; then
+            failed=1
+            failed_components+=("GPU compute units")
+        fi
     else
         log "Component is missing or unsafe: $CU_STATUS_SH"
         failed=1
+        failed_components+=("GPU compute units")
+    fi
+    if [[ $failed -ne 0 ]]; then
+        printf -v failed_list '%s, ' "${failed_components[@]}"
+        printf '\n%s\n' "${CR}${CB}System status: incomplete (${failed_list%, }).${C0}"
     fi
     return "$failed"
 }
@@ -260,7 +316,11 @@ run_menu_action() {
     echo
     bash "$SELF" "$@" || rc=$?
     if [[ $rc -ne 0 ]]; then
-        printf '%s\n' "${CR}${CB}[bc250-toolkit]${C0} action failed (exit $rc)"
+        if [[ ${1:-} == status ]]; then
+            printf '%s\n' "${CR}${CB}[bc250-toolkit]${C0} system status is incomplete (exit $rc)"
+        else
+            printf '%s\n' "${CR}${CB}[bc250-toolkit]${C0} action failed (exit $rc)"
+        fi
     fi
     pause_key
 }
@@ -271,14 +331,16 @@ cmd_drivers_menu() {
     while true; do
         local items=(
             "AMDGPU kernel fixes|${CY}[build]${C0}|Install first: display/audio clocks, telemetry, and GFX1013 compute queues. Reboot afterward."
+            "AMDGPU scheduler policy (toggle)|$(scheduler_policy_badge)|Enable or remove amdgpu.sched_policy=2. Reboot after changes."
             "Mesa / RADV performance patch (optional)|${CG}[menu]${C0}|Highly recommended for performance. Requires the active AMDGPU fixes and applies globally to this user."
             "AIC8800 WiFi / Bluetooth|${CY}[installer]${C0}|Install only when the system uses the AIC8800 wireless adapter."
         )
         menu_select "BC-250 drivers" "${items[@]}" || { echo; break; }
         case $MENU_CHOICE in
             0) run_menu_action amdgpu ;;
-            1) run_menu_child radv ;;
-            2) run_menu_action wifi ;;
+            1) run_menu_action scheduler-policy ;;
+            2) run_menu_child radv ;;
+            3) run_menu_action wifi ;;
         esac
     done
 }
@@ -340,7 +402,7 @@ cmd_menu() {
         local items=(
             "System status|${CD}[read only]${C0}|Show system integration, graphics-driver, and GPU compute-unit status."
             "Drivers|${CG}[menu]${C0}|Install the related AMDGPU and Mesa / RADV graphics fixes or AIC8800 wireless support."
-            "Hardware unlocks|${CG}[menu]${C0}|Configure GPU compute units or CPU cores without confusing the two workflows."
+            "Hardware unlocks|${CG}[menu]${C0}|Configure GPU compute-unit and CPU core unlocks."
             "Power management|${CG}[menu]${C0}|Configure power states, GPU tuning, and CPU overclocking."
             "RAM / VRAM split|${CG}[menu]${C0}|Configure the CMOS UMA minimum and Linux dynamic TTM VRAM limit."
             "CEC / HDMI control|${CG}[menu]${C0}|Configure and control TVs, receivers, and active source."
@@ -348,7 +410,7 @@ cmd_menu() {
             "Control interfaces|${CG}[menu]${C0}|Install Decky, Plasma, or the standalone BC250 Trainer."
             "Manage installed components|${CG}[menu]${C0}|Review uninstall plans, remove components, or purge preserved data."
         )
-        menu_select "BC-250 SteamOS toolkit" "${items[@]}" || { echo; break; }
+        menu_select "BC-250 SteamOS toolkit ${CD}[${TOOLKIT_VERSION}]${C0}" "${items[@]}" || { echo; break; }
         case $MENU_CHOICE in
             0) run_menu_action status ;;
             1) cmd_drivers_menu ;;
@@ -365,7 +427,7 @@ cmd_menu() {
 
 cmd_help() {
     cat << EOF
-Usage: $0 [menu|status|inventory-json|action OPERATION_ID|drivers|unlocks|storage-updates|interfaces|power|ram|compute|cpu-unlock|cec|storage|persistence|wifi|amdgpu|radv|decky|desktop|trainer|manage|help]
+Usage: $0 [menu|status|inventory-json|action OPERATION_ID|drivers|unlocks|storage-updates|interfaces|power|ram|compute|cpu-unlock|cec|storage|persistence|wifi|amdgpu|scheduler-policy|radv|decky|desktop|trainer|manage|help]
 
 Run without arguments in a terminal to open the unified toolkit menu.
 Run the toolkit as the logged-in Deck user, not with sudo; child tools request
@@ -388,6 +450,7 @@ Commands:
   persistence            Open the SteamOS Update Persistence menu
   wifi                   Confirm and run the AIC8800 installer
   amdgpu                 Confirm and build the AMDGPU kernel fixes
+  scheduler-policy       Toggle the persistent AMDGPU scheduler policy
   radv                   Open the global Mesa / RADV performance patch
   decky                  Confirm and run the Decky plugin installer
   desktop                Confirm and run the Plasma desktop-control installer
@@ -438,6 +501,7 @@ case "$command_name" in
     persistence) (($# == 0)) || die "Usage: $0 persistence"; run_script "$PERSISTENCE_SH" menu ;;
     wifi) (($# == 0)) || die "Usage: $0 wifi"; install_wifi ;;
     amdgpu|audio) (($# == 0)) || die "Usage: $0 amdgpu"; install_audio_fix ;;
+    scheduler-policy) (($# == 0)) || die "Usage: $0 scheduler-policy"; toggle_scheduler_policy ;;
     radv|mesh) (($# == 0)) || die "Usage: $0 radv"; require_normal_user; run_script "$MESH_SHADER_SH" menu ;;
     decky) (($# == 0)) || die "Usage: $0 decky"; install_decky ;;
     desktop) (($# == 0)) || die "Usage: $0 desktop"; install_desktop ;;
