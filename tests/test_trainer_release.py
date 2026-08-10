@@ -421,7 +421,7 @@ class TrainerReleaseTests(unittest.TestCase):
         for expected in (
             "Main release tags must point to commits on master",
             "trainer/install-release.py trainer/install.sh trainer/install-flatpak.sh",
-            'trainer/lib/shared-service.sh "$package_dir/trainer/lib/"',
+            "acpi-tables decky-plugin desktop-control core-unlock backend scripts topology.sh",
             'rm "$package_dir/scripts/stage-trainer-runtime.py"',
         ):
             self.assertIn(expected, workflow)
