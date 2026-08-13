@@ -34,6 +34,10 @@ ColumnLayout {
         return null
     }
 
+    function showsCategory(categoryName) {
+        return category === "ALL" || category === categoryName
+    }
+
     function requestOperation(operationId) {
         var metadata = operation(operationId)
         if (!metadata)
@@ -154,7 +158,7 @@ ColumnLayout {
                 required property string primary
                 required property string repair
                 required property string remove
-                visible: root.category === "ALL" || root.category === categoryName
+                visible: root.showsCategory(categoryName)
                 objectName: "toolkitCard-" + componentId
                 Layout.fillWidth: true
                 Layout.preferredWidth: (root.width - 7) / 2

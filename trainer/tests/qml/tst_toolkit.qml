@@ -108,23 +108,26 @@ TestCase {
         verify(storage !== null)
         verify(ram !== null)
         verify(cec !== null)
-        compare(storage.visible, true)
-        compare(ram.visible, false)
-        compare(cec.visible, false)
+        compare(storage.categoryName, "FOUNDATION")
+        compare(ram.categoryName, "PERFORMANCE")
+        compare(cec.categoryName, "DEVICES")
+        compare(page.showsCategory(storage.categoryName), true)
+        compare(page.showsCategory(ram.categoryName), false)
+        compare(page.showsCategory(cec.categoryName), false)
 
         page.category = "PERFORMANCE"
-        tryCompare(storage, "visible", false)
-        tryCompare(ram, "visible", true)
-        compare(cec.visible, false)
+        compare(page.showsCategory(storage.categoryName), false)
+        compare(page.showsCategory(ram.categoryName), true)
+        compare(page.showsCategory(cec.categoryName), false)
 
         page.category = "DEVICES"
-        tryCompare(ram, "visible", false)
-        tryCompare(cec, "visible", true)
+        compare(page.showsCategory(ram.categoryName), false)
+        compare(page.showsCategory(cec.categoryName), true)
 
         page.category = "ALL"
-        tryCompare(storage, "visible", true)
-        compare(ram.visible, true)
-        compare(cec.visible, true)
+        compare(page.showsCategory(storage.categoryName), true)
+        compare(page.showsCategory(ram.categoryName), true)
+        compare(page.showsCategory(cec.categoryName), true)
         page.category = "FOUNDATION"
     }
 
