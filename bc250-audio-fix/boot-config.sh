@@ -7,6 +7,7 @@ SCHED_CONFIG=${SCHED_CONFIG:-/etc/default/grub.d/bc250-amdgpu.cfg}
 GRUB_DEFAULT=${GRUB_DEFAULT:-/etc/default/grub}
 GRUB_CFG=${GRUB_CFG:-/efi/EFI/steamos/grub.cfg}
 PROC_CMDLINE=${PROC_CMDLINE:-/proc/cmdline}
+SCHED_POLICY_PARAM=${SCHED_POLICY_PARAM:-/sys/module/amdgpu/parameters/sched_policy}
 KEEP_FILE=${AMDGPU_KEEP_FILE:-/etc/atomic-update.conf.d/bc250-amdgpu.conf}
 PERSISTENCE_SH=${PERSISTENCE_SH:-$HERE/../bc250-update-persistence.sh}
 GRUB_CONFIG_LOCK=${GRUB_CONFIG_LOCK:-/run/lock/bc250-grub-config.lock}
@@ -234,7 +235,12 @@ cmd_remove() {
 }
 
 active_policy() {
-    local token
+    local token value
+    if [[ -r "$SCHED_POLICY_PARAM" ]]; then
+        read -r value < "$SCHED_POLICY_PARAM" || return 1
+        [[ "$value" == 2 ]]
+        return
+    fi
     [[ -r "$PROC_CMDLINE" ]] || return 1
     for token in $(< "$PROC_CMDLINE"); do
         [[ "$token" == amdgpu.sched_policy=2 ]] || continue
@@ -246,7 +252,14 @@ active_policy() {
 configured() {
     config_owned && keep_file_owned \
         && secure_root_file "$SCHED_CONFIG" && secure_root_file "$KEEP_FILE" \
-        && validate_generated_grub "$GRUB_CFG" 2
+        || return 1
+    if [[ -r "$GRUB_CFG" ]]; then
+        validate_generated_grub "$GRUB_CFG" 2
+    else
+        # SteamOS mounts /efi as root-only. Installation validates GRUB before
+        # committing these owned files; root/readable status remains strict.
+        return 0
+    fi
 }
 
 cmd_status() {
@@ -273,6 +286,7 @@ case "${1:-}" in
     remove) [[ $# -eq 1 ]] || die "Usage: $0 remove"; cmd_remove ;;
     status) [[ $# -eq 1 ]] || die "Usage: $0 status"; cmd_status ;;
     configured) [[ $# -eq 1 ]] || exit 2; configured ;;
+    active) [[ $# -eq 1 ]] || exit 2; active_policy ;;
     present)
         [[ $# -eq 1 ]] || exit 2
         [[ -e "$SCHED_CONFIG" || -L "$SCHED_CONFIG" || -e "$KEEP_FILE" || -L "$KEEP_FILE" ]]
@@ -281,5 +295,5 @@ case "${1:-}" in
         [[ $# -eq 1 ]] || exit 2
         [[ -e "$SCHED_CONFIG" || -L "$SCHED_CONFIG" ]]
         ;;
-    *) die "Usage: $0 {install|remove|status|configured|present|policy-present}" ;;
+    *) die "Usage: $0 {install|remove|status|configured|active|present|policy-present}" ;;
 esac

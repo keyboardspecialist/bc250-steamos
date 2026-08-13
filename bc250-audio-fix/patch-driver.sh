@@ -9,6 +9,7 @@
 set -euo pipefail
 
 HERE=$(cd "$(dirname "$0")" && pwd)
+TREE_DRIFT_EXIT=75
 
 usage() {
     cat <<EOF
@@ -157,5 +158,26 @@ exec 9>"$HERE/.prepare-kernel.lock"
 flock 9
 
 "$HERE/fetch-sources.sh" "$@"
-"$HERE/build.sh" "$@"
+build_rc=0
+"$HERE/build.sh" "$@" || build_rc=$?
+if [ "$build_rc" = "$TREE_DRIFT_EXIT" ]; then
+    echo "[bc250-amdgpu] The kernel source tree diverged from the expected patched state." >&2
+    if [ -t 0 ] && [ -t 1 ]; then
+        printf '%s' "Clean the build tree and retry? Cached downloads and dependencies will be kept. [y/N] "
+        IFS= read -r answer
+        case "$answer" in
+            y|Y|yes|YES)
+                "$HERE/clean.sh" "$@"
+                "$HERE/fetch-sources.sh" "$@"
+                "$HERE/build.sh" "$@"
+                ;;
+            *) exit "$build_rc" ;;
+        esac
+    else
+        echo "[bc250-amdgpu] Run '$HERE/clean.sh' and retry." >&2
+        exit "$build_rc"
+    fi
+elif [ "$build_rc" != 0 ]; then
+    exit "$build_rc"
+fi
 sudo "$HERE/install.sh"

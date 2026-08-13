@@ -21,6 +21,7 @@ HERE=$(cd "$(dirname "$0")" && pwd)
 REL=$(uname -r)
 
 die()  { echo "FATAL: $*" >&2; exit 1; }
+die_tree_drift() { echo "FATAL: $*" >&2; exit 75; }
 step() { echo; echo "==> $*"; }
 
 PREPARE_ONLY=0
@@ -105,7 +106,7 @@ elif patch -p1 --dry-run -s -f < "$LIBBPF_PATCH" >/dev/null 2>&1; then
     patch -p1 -s < "$LIBBPF_PATCH"
     echo "libbpf C23 const-correctness patch applied"
 else
-    die "libbpf C23 const-correctness patch neither applies nor reverses cleanly — tree has drifted; inspect by hand"
+    die_tree_drift "libbpf C23 const-correctness patch neither applies nor reverses cleanly — tree has drifted"
 fi
 
 zcat /proc/config.gz > .config.running
@@ -254,7 +255,7 @@ elif patch -p1 --dry-run -s -f < "$PATCH" >/dev/null 2>&1; then
     patch -p1 -s < "$PATCH"
     echo "patch applied"
 else
-    die "patch neither applies nor reverses cleanly — tree has drifted; inspect by hand"
+    die_tree_drift "patch neither applies nor reverses cleanly — tree has drifted"
 fi
 
 step "apply Cyan Skillfish GPU metrics patches"
@@ -274,7 +275,7 @@ elif patch -p1 --dry-run -s -f < "$METRICS_PATCH" >/dev/null 2>&1; then
     patch -p1 -s < "$METRICS_PATCH"
     echo "GPU telemetry patch applied"
 else
-    die "GPU telemetry patch neither applies nor reverses cleanly — tree has drifted; inspect by hand"
+    die_tree_drift "GPU telemetry patch neither applies nor reverses cleanly — tree has drifted"
 fi
 
 METRICS_SOURCE_SHA=$(sha256sum "$METRICS_SOURCE" | cut -d' ' -f1)
@@ -284,7 +285,7 @@ elif patch -p1 --dry-run -s -f < "$GFXCLK_PATCH" >/dev/null 2>&1; then
     patch -p1 -s < "$GFXCLK_PATCH"
     echo "GPU clock query patch applied"
 else
-    die "GPU clock query patch neither applies nor reverses cleanly — tree has drifted; inspect by hand"
+    die_tree_drift "GPU clock query patch neither applies nor reverses cleanly — tree has drifted"
 fi
 
 step "apply GFX1013 compute-queue lifecycle patches"
@@ -321,7 +322,7 @@ apply_gfx1013_patch() {
         rm -f "$source_file.orig"
         echo "$label applied"
     else
-        die "$label neither applies nor reverses cleanly — tree has drifted; inspect by hand"
+        die_tree_drift "$label neither applies nor reverses cleanly — tree has drifted"
     fi
 }
 
@@ -354,7 +355,7 @@ elif patch -p1 --dry-run -s -f < "$HERE/bc250-gfx1013-attestation.patch" >/dev/n
     rm -f drivers/gpu/drm/amd/amdgpu/amdgpu_drv.c.orig
     echo "GFX1013 loaded-module attestation applied"
 else
-    die "GFX1013 loaded-module attestation neither applies nor is present — tree has drifted"
+    die_tree_drift "GFX1013 loaded-module attestation neither applies nor is present — tree has drifted"
 fi
 grep -qF "using MMIO PASID TLB flushes" drivers/gpu/drm/amd/amdgpu/gmc_v10_0.c \
     && grep -qF "GFX1013 COMPUTE_GFXOFF_GUARD" drivers/gpu/drm/amd/amdgpu/amdgpu_amdkfd.c \

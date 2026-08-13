@@ -13,6 +13,7 @@ PERSISTENCE_SH="$SCRIPT_DIR/bc250-update-persistence.sh"
 CU_STATUS_SH="$SCRIPT_DIR/bc250-cu-status.sh"
 AIC_SETUP_SH="$SCRIPT_DIR/aic8800/steamdeck-setup.sh"
 AUDIO_FIX_SH="$SCRIPT_DIR/bc250-audio-fix/patch-driver.sh"
+AUDIO_CLEAN_SH="$SCRIPT_DIR/bc250-audio-fix/clean.sh"
 AMDGPU_BOOT_CONFIG_SH="$SCRIPT_DIR/bc250-audio-fix/boot-config.sh"
 MESH_SHADER_SH="$SCRIPT_DIR/bc250-mesh-shader.sh"
 DECKY_INSTALL_SH="$SCRIPT_DIR/decky-plugin/install.sh"
@@ -121,11 +122,23 @@ install_audio_fix() {
         bash "$AUDIO_FIX_SH"
 }
 
+clean_audio_fix() {
+    require_normal_user
+    require_script "$AUDIO_CLEAN_SH"
+    confirm_action \
+        "Clean the AMDGPU kernel source tree and preserved build output? Downloads and dependencies will be kept." \
+        bash "$AUDIO_CLEAN_SH"
+}
+
 scheduler_policy_badge() {
     if [[ ! -f "$AMDGPU_BOOT_CONFIG_SH" || -L "$AMDGPU_BOOT_CONFIG_SH" ]]; then
         printf '%s' "${CR}[unavailable]${C0}"
     elif bash "$AMDGPU_BOOT_CONFIG_SH" configured 2>/dev/null; then
-        printf '%s' "${CG}[enabled]${C0}"
+        if bash "$AMDGPU_BOOT_CONFIG_SH" active 2>/dev/null; then
+            printf '%s' "${CG}[active]${C0}"
+        else
+            printf '%s' "${CY}[reboot needed]${C0}"
+        fi
     elif bash "$AMDGPU_BOOT_CONFIG_SH" present 2>/dev/null; then
         printf '%s' "${CY}[incomplete]${C0}"
     else
@@ -356,6 +369,7 @@ cmd_drivers_menu() {
     while true; do
         local items=(
             "AMDGPU kernel fixes|${CY}[build]${C0}|Install first: display/audio clocks, telemetry, and GFX1013 compute queues. Reboot afterward."
+            "Clean AMDGPU build tree|${CY}[cleanup]${C0}|Reset patched source and generated build output while keeping cached downloads and dependencies."
             "AMDGPU scheduler policy (toggle)|$(scheduler_policy_badge)|Enable or remove amdgpu.sched_policy=2. Reboot after changes."
             "Mesa / RADV performance patch (optional)|${CG}[menu]${C0}|Highly recommended for performance. Requires the active AMDGPU fixes and applies globally to this user."
             "AIC8800 WiFi / Bluetooth|${CY}[installer]${C0}|Install only when the system uses the AIC8800 wireless adapter."
@@ -363,9 +377,10 @@ cmd_drivers_menu() {
         menu_select "BC-250 drivers" "${items[@]}" || { echo; break; }
         case $MENU_CHOICE in
             0) run_menu_action amdgpu ;;
-            1) run_menu_action scheduler-policy ;;
-            2) run_menu_child radv ;;
-            3) run_menu_action wifi ;;
+            1) run_menu_action amdgpu-clean ;;
+            2) run_menu_action scheduler-policy ;;
+            3) run_menu_child radv ;;
+            4) run_menu_action wifi ;;
         esac
     done
 }
@@ -453,7 +468,7 @@ cmd_menu() {
 
 cmd_help() {
     cat << EOF
-Usage: $0 [menu|status|inventory-json|action OPERATION_ID|drivers|unlocks|storage-updates|interfaces|power|ram|compute|cpu-unlock|cec|storage|persistence|wifi|amdgpu|scheduler-policy|radv|decky|desktop|trainer|manage|help]
+Usage: $0 [menu|status|inventory-json|action OPERATION_ID|drivers|unlocks|storage-updates|interfaces|power|ram|compute|cpu-unlock|cec|storage|persistence|wifi|amdgpu|amdgpu-clean|scheduler-policy|radv|decky|desktop|trainer|manage|help]
 
 Run without arguments in a terminal to open the unified toolkit menu.
 Run the toolkit as the logged-in Deck user, not with sudo; child tools request
@@ -476,6 +491,7 @@ Commands:
   persistence            Open the SteamOS Update Persistence menu
   wifi                   Confirm and run the AIC8800 installer
   amdgpu                 Confirm and build the AMDGPU kernel fixes
+  amdgpu-clean           Confirm and clean the AMDGPU kernel build tree
   scheduler-policy       Toggle the persistent AMDGPU scheduler policy
   radv                   Open the global Mesa / RADV performance patch
   decky                  Confirm and run the Decky plugin installer
@@ -527,6 +543,7 @@ case "$command_name" in
     persistence) (($# == 0)) || die "Usage: $0 persistence"; run_script "$PERSISTENCE_SH" menu ;;
     wifi) (($# == 0)) || die "Usage: $0 wifi"; install_wifi ;;
     amdgpu|audio) (($# == 0)) || die "Usage: $0 amdgpu"; install_audio_fix ;;
+    amdgpu-clean) (($# == 0)) || die "Usage: $0 amdgpu-clean"; clean_audio_fix ;;
     scheduler-policy) (($# == 0)) || die "Usage: $0 scheduler-policy"; toggle_scheduler_policy ;;
     radv|mesh) (($# == 0)) || die "Usage: $0 radv"; require_normal_user; run_script "$MESH_SHADER_SH" menu ;;
     decky) (($# == 0)) || die "Usage: $0 decky"; install_decky ;;

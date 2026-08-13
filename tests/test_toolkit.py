@@ -34,6 +34,7 @@ class ToolkitTests(unittest.TestCase):
             "persistence",
             "wifi",
             "amdgpu",
+            "amdgpu-clean",
             "scheduler-policy",
             "radv",
             "audio",
@@ -81,9 +82,14 @@ class ToolkitTests(unittest.TestCase):
         self.assertNotIn("[optional]", drivers_menu)
         self.assertIn("Mesa / RADV performance patch (optional)", drivers_menu)
         self.assertIn("AMDGPU scheduler policy (toggle)", drivers_menu)
+        self.assertIn("Clean AMDGPU build tree", drivers_menu)
         self.assertIn("[menu]", drivers_menu)
         self.assertLess(
             drivers_menu.index("AMDGPU kernel fixes"),
+            drivers_menu.index("Clean AMDGPU build tree"),
+        )
+        self.assertLess(
+            drivers_menu.index("Clean AMDGPU build tree"),
             drivers_menu.index("AMDGPU scheduler policy (toggle)"),
         )
         self.assertLess(
@@ -95,8 +101,9 @@ class ToolkitTests(unittest.TestCase):
             drivers_menu.index("AIC8800 WiFi / Bluetooth"),
         )
         self.assertIn("0) run_menu_action amdgpu", drivers_menu)
-        self.assertIn("1) run_menu_action scheduler-policy", drivers_menu)
-        self.assertIn("2) run_menu_child radv", drivers_menu)
+        self.assertIn("1) run_menu_action amdgpu-clean", drivers_menu)
+        self.assertIn("2) run_menu_action scheduler-policy", drivers_menu)
+        self.assertIn("3) run_menu_child radv", drivers_menu)
         self.assertIn("GPU compute-unit unlock", unlocks_menu)
         self.assertIn("CPU core unlock", unlocks_menu)
         self.assertIn("Configure GPU compute-unit and CPU core unlocks.", main_menu)
@@ -135,6 +142,7 @@ class ToolkitTests(unittest.TestCase):
         ]
 
         self.assertIn('bash "$AMDGPU_BOOT_CONFIG_SH" configured', toggle)
+        self.assertIn('bash "$AMDGPU_BOOT_CONFIG_SH" active', toggle)
         self.assertIn('bash "$AMDGPU_BOOT_CONFIG_SH" present', toggle)
         self.assertIn('sudo bash "$AMDGPU_BOOT_CONFIG_SH" install', toggle)
         self.assertIn('sudo bash "$AMDGPU_BOOT_CONFIG_SH" remove', toggle)
@@ -186,6 +194,7 @@ class ToolkitTests(unittest.TestCase):
             "bc250-maintenance.sh",
             "aic8800/steamdeck-setup.sh",
             "bc250-audio-fix/patch-driver.sh",
+            "bc250-audio-fix/clean.sh",
             "decky-plugin/install.sh",
             "desktop-control/install.sh",
         )
