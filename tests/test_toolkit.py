@@ -132,10 +132,9 @@ class ToolkitTests(unittest.TestCase):
             source.index("cmd_guided_setup_menu() {") : source.index("cmd_drivers_menu() {")
         ]
         for label in (
-            "Step 1 - Persistent foundation",
-            "Step 2 - AMDGPU kernel fixes",
-            "Step 3 - Power foundation",
-            "Step 4 - Memory balance",
+            "Step 1 - AMDGPU kernel fixes",
+            "Step 2 - Power foundation",
+            "Step 3 - Memory balance",
             "Optional GPU CU unlock",
             "Optional CPU core unlock",
             "Finish - Verify system",
@@ -143,9 +142,11 @@ class ToolkitTests(unittest.TestCase):
             self.assertIn(label, guided_menu)
         self.assertIn("load-test", guided_menu.lower())
         self.assertIn("reboot", guided_menu.lower())
-        self.assertIn("6) run_menu_child compute", guided_menu)
-        self.assertIn("7) run_menu_child cpu-unlock", guided_menu)
-        self.assertIn("10) run_menu_action status", guided_menu)
+        self.assertNotIn("Persistent foundation", guided_menu)
+        self.assertNotIn("run_menu_child storage", guided_menu)
+        self.assertIn("5) run_menu_child compute", guided_menu)
+        self.assertIn("6) run_menu_child cpu-unlock", guided_menu)
+        self.assertIn("9) run_menu_action status", guided_menu)
         self.assertIn("cmd_guided_setup_menu", main_menu)
 
     def test_dense_component_menus_are_grouped_by_intent(self):
@@ -192,10 +193,41 @@ class ToolkitTests(unittest.TestCase):
         )
         self.assertIn('title: "POWER FOUNDATION"', page)
         self.assertIn('title: "GPU CU PREREQUISITES"', page)
+        self.assertIn("Automatic infrastructure", page)
+        self.assertNotIn("Start here: home-backed storage", page)
         self.assertIn("test-starts the GPU governor", page)
         self.assertIn("Build UMR only", page)
         self.assertIn("./bc250-toolkit.sh power", controller)
         self.assertIn("Live routing, stability testing", controller)
+
+    def test_shell_menus_are_anchored_and_status_aligned(self):
+        menu_scripts = (
+            "bc250-toolkit.sh",
+            "bc250-power.sh",
+            "bc250-cec.sh",
+            "bc250-40cu.sh",
+            "bc250-ram-split.sh",
+            "bc250-storage.sh",
+            "bc250-update-persistence.sh",
+            "bc250-mesh-shader.sh",
+            "bc250-maintenance.sh",
+        )
+        for relative in menu_scripts:
+            with self.subTest(script=relative):
+                source = (ROOT / relative).read_text(encoding="utf-8")
+                menu = source[source.index("menu_select() {") :]
+                self.assertIn("label_width=0", menu)
+                self.assertIn("${#label} > label_width", menu)
+                self.assertIn("\\033[H\\033[2J", menu)
+                self.assertIn("%-*s", menu)
+                self.assertNotIn("drawn=", menu)
+                self.assertNotIn("\\033[%dA", menu)
+
+        toolkit = TOOLKIT.read_text(encoding="utf-8")
+        menu = toolkit[toolkit.index("menu_select() {") : toolkit.index("pause_key() {")]
+        self.assertIn("exit_label=back", menu)
+        self.assertIn("exit_label=quit", menu)
+        self.assertIn("q ${exit_label}", menu)
 
     def test_main_menu_keeps_sudo_alive_and_revokes_it_on_exit(self):
         source = TOOLKIT.read_text(encoding="utf-8")

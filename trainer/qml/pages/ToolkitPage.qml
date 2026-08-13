@@ -53,7 +53,7 @@ ColumnLayout {
 
     ListModel {
         id: components
-        ListElement { componentId: "storage"; categoryName: "FOUNDATION"; title: "PERSISTENT STORAGE"; description: "Start here: home-backed storage and boot recovery."; primary: "storage-install"; repair: "storage-repair"; remove: "storage-remove" }
+        ListElement { componentId: "storage"; categoryName: "FOUNDATION"; title: "PERSISTENT STORAGE"; description: "Automatic infrastructure; manual status, install, and boot recovery."; primary: "storage-install"; repair: "storage-repair"; remove: "storage-remove" }
         ListElement { componentId: "audio"; categoryName: "FOUNDATION"; title: "AMDGPU KERNEL FIXES"; description: "Install early, then reboot: clocks, telemetry, and compute queues."; primary: "audio-build"; repair: ""; remove: "audio-remove" }
         ListElement { componentId: "power"; categoryName: "FOUNDATION"; title: "POWER FOUNDATION"; description: "Installs ACPI and test-starts the GPU governor; enable at boot after load testing."; primary: "power-install"; repair: ""; remove: "power-remove" }
         ListElement { componentId: "persistence"; categoryName: "FOUNDATION"; title: "UPDATE PROTECTION"; description: "Retain supported toolkit integration across SteamOS updates."; primary: "persistence-install"; repair: ""; remove: "persistence-remove" }

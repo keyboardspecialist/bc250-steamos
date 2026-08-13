@@ -354,25 +354,28 @@ show_status() {
 menu_select() {
     local title="$1"
     shift
-    local items=("$@") n=$# cur=0 drawn=0 key rest i label badge hint
-    local lines=$((n + 4))
+    local items=("$@") n=$# cur=0 key rest i label badge hint exit_label=back label_width=0
+    [[ "$title" == BC-250\ SteamOS\ toolkit* ]] && exit_label=quit
+    for i in "${!items[@]}"; do
+        IFS='|' read -r label badge hint <<< "${items[$i]}"
+        if ((${#label} > label_width)); then label_width=${#label}; fi
+    done
     printf '\033[?25l'
     TUI_CURSOR_HIDDEN=1
     while true; do
-        if [[ $drawn -eq 1 ]]; then printf '\033[%dA' "$lines"; fi
+        printf '\033[H\033[2J'
         printf '\r\033[K%s\n' "${CB}${CC}${title}${C0}"
-        printf '\033[K%s\n' "${CD}  up/down move - Enter select - q quit${C0}"
+        printf '\033[K%s\n' "${CD}  up/down move - Enter select - q ${exit_label}${C0}"
         for i in "${!items[@]}"; do
             IFS='|' read -r label badge hint <<< "${items[$i]}"
             if [[ $i -eq $cur ]]; then
-                printf '\033[K%s\n' "  ${CI}${CB} > ${label} ${C0} ${badge}"
+                printf '\033[K  %s > %-*s %s %s\n' "${CI}${CB}" "$label_width" "$label" "${C0}" "$badge"
             else
-                printf '\033[K%s\n' "     ${label}  ${badge}"
+                printf '\033[K     %-*s  %s\n' "$label_width" "$label" "$badge"
             fi
         done
         IFS='|' read -r label badge hint <<< "${items[$cur]}"
         printf '\033[K\n\033[K%s\n' "  ${CD}${hint}${C0}"
-        drawn=1
         IFS= read -rsn1 key || { tui_show_cursor; return 1; }
         if [[ $key == $'\033' ]]; then
             rest=""
@@ -425,14 +428,16 @@ show_guided_setup_overview() {
     printf '%s\n' "Complete the foundation in order. Return after each required reboot."
     printf '%s\n' "Power setup deliberately stops before enabling the GPU governor at boot; load-test it first."
     echo
-    printf '  %-24s %s\n' "1. Persistent storage" "$(component_badge "$STORAGE_SH")"
-    printf '  %-24s %s\n' "2. AMDGPU kernel fixes" "$(amdgpu_badge)"
-    printf '  %-24s %s\n' "3. Power foundation" "$(power_foundation_badge)"
-    printf '  %-24s %s\n' "4. RAM / VRAM helper" "$(component_badge "$RAM_SPLIT_SH")"
+    printf '  %-24s %s\n' "1. AMDGPU kernel fixes" "$(amdgpu_badge)"
+    printf '  %-24s %s\n' "2. Power foundation" "$(power_foundation_badge)"
+    printf '  %-24s %s\n' "3. RAM / VRAM helper" "$(component_badge "$RAM_SPLIT_SH")"
     printf '  %-24s %s\n' "Optional Mesa / RADV" "$(radv_badge)"
     printf '  %-24s %s\n' "Optional GPU CU unlock" "$(component_badge "$COMPUTE_SH")"
     printf '  %-24s %s\n' "Optional CPU core unlock" "${CD}[guided test]${C0}"
     printf '  %-24s %s\n' "Optional HDMI-CEC" "$(component_badge "$CEC_SH")"
+    echo
+    printf '  %-24s %s\n' "Automatic infrastructure" "$(component_badge "$STORAGE_SH")"
+    printf '%s\n' "  Persistent storage is installed automatically by components that need it."
     echo
     printf '%s\n' "${CY}Checkpoints:${C0} AMDGPU and ACPI changes need a reboot; Mesa / RADV needs sign-out."
     printf '%s\n' "CMOS, CPU-core, and GPU-CU changes are advanced and stay outside the foundation path."
@@ -445,10 +450,9 @@ cmd_guided_setup_menu() {
     while true; do
         local items=(
             "Setup overview|${CD}[read only]${C0}|Show the recommended order, current component state, and restart checkpoints."
-            "Step 1 - Persistent foundation|$(component_badge "$STORAGE_SH")|Prepare home-backed privileged storage and boot recovery before installing components."
-            "Step 2 - AMDGPU kernel fixes|$(amdgpu_badge)|Install display/audio, telemetry, and compute fixes. Reboot before continuing with RADV."
-            "Step 3 - Power foundation|$(power_foundation_badge)|Install ACPI, reboot, then load-test the GPU governor before enabling it at boot."
-            "Step 4 - Memory balance|$(component_badge "$RAM_SPLIT_SH")|Install the helper, then choose CMOS minimum VRAM and the dynamic TTM limit."
+            "Step 1 - AMDGPU kernel fixes|$(amdgpu_badge)|Install display/audio, telemetry, and compute fixes. Reboot before continuing with RADV."
+            "Step 2 - Power foundation|$(power_foundation_badge)|Install ACPI, reboot, then load-test the GPU governor before enabling it at boot."
+            "Step 3 - Memory balance|$(component_badge "$RAM_SPLIT_SH")|Install the helper, then choose CMOS minimum VRAM and the dynamic TTM limit."
             "Optional performance|$(radv_badge)|Install Mesa / RADV or tune GPU and CPU behavior after the foundation is stable."
             "Optional GPU CU unlock|$(component_badge "$COMPUTE_SH")|Inspect the harvest map, test live routing, stress-test it, then choose whether to persist it."
             "Optional CPU core unlock|${CD}[guided test]${C0}|Test eight cores once, reboot and stress-test, then choose Linux replay or experimental EFI mode."
@@ -459,16 +463,15 @@ cmd_guided_setup_menu() {
         menu_select "BC-250 guided setup  ${CD}(safe order)${C0}" "${items[@]}" || { echo; break; }
         case $MENU_CHOICE in
             0) show_guided_setup_overview ;;
-            1) run_menu_child storage ;;
-            2) run_menu_action amdgpu ;;
-            3) run_menu_child power ;;
-            4) run_menu_child ram ;;
-            5) cmd_performance_menu ;;
-            6) run_menu_child compute ;;
-            7) run_menu_child cpu-unlock ;;
-            8) cmd_devices_menu ;;
-            9) cmd_interfaces_menu ;;
-            10) run_menu_action status ;;
+            1) run_menu_action amdgpu ;;
+            2) run_menu_child power ;;
+            3) run_menu_child ram ;;
+            4) cmd_performance_menu ;;
+            5) run_menu_child compute ;;
+            6) run_menu_child cpu-unlock ;;
+            7) cmd_devices_menu ;;
+            8) cmd_interfaces_menu ;;
+            9) run_menu_action status ;;
         esac
     done
 }
@@ -550,7 +553,7 @@ cmd_core_system_menu() {
     require_normal_user
     while true; do
         local items=(
-            "Persistent storage & boot recovery|$(component_badge "$STORAGE_SH")|Install, inspect, or repair the toolkit's persistent privileged storage."
+            "Persistent storage & boot recovery|$(component_badge "$STORAGE_SH")|Installed automatically when needed; open for status, repair, or manual management."
             "AMDGPU kernel fixes|$(amdgpu_badge)|Install display/audio clocks, telemetry, and GFX1013 compute queues. Reboot afterward."
             "AMDGPU scheduler policy|$(scheduler_policy_badge)|Enable or remove the compute scheduler policy. Reboot after changes."
             "Power foundation & tuning|$(power_foundation_badge)|Set up ACPI and the GPU governor, then access GPU and CPU tuning."

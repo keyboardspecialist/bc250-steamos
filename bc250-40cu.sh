@@ -208,27 +208,29 @@ tui_show_cursor() {
 
 # menu_select "Title" "label|badge|hint" ...
 # up/down or j/k to move, Enter selects (MENU_CHOICE=index), q/Esc backs out
-# (returns 1). Redraws in place; hint line describes the highlighted item.
+# (returns 1). Clears and redraws from the top so nested menus stay anchored.
 menu_select() {
     local title="$1"; shift
-    local items=("$@") n=$# cur=0 drawn=0 key rest i label badge hint
-    local lines=$((n + 4))
+    local items=("$@") n=$# cur=0 key rest i label badge hint label_width=0
+    for i in "${!items[@]}"; do
+        IFS='|' read -r label badge hint <<< "${items[$i]}"
+        if ((${#label} > label_width)); then label_width=${#label}; fi
+    done
     printf '\033[?25l'; TUI_CURSOR_HIDDEN=1
     while true; do
-        if [[ $drawn -eq 1 ]]; then printf '\033[%dA' "$lines"; fi
+        printf '\033[H\033[2J'
         printf '\r\033[K%s\n' "${CB}${CC}${title}${C0}"
         printf '\033[K%s\n' "${CD}  up/down move - Enter select - q back${C0}"
         for i in "${!items[@]}"; do
             IFS='|' read -r label badge hint <<< "${items[$i]}"
             if [[ $i -eq $cur ]]; then
-                printf '\033[K%s\n' "  ${CI}${CB} > ${label} ${C0} ${badge}"
+                printf '\033[K  %s > %-*s %s %s\n' "${CI}${CB}" "$label_width" "$label" "${C0}" "$badge"
             else
-                printf '\033[K%s\n' "     ${label}  ${badge}"
+                printf '\033[K     %-*s  %s\n' "$label_width" "$label" "$badge"
             fi
         done
         IFS='|' read -r label badge hint <<< "${items[$cur]}"
         printf '\033[K\n\033[K%s\n' "  ${CD}${hint}${C0}"
-        drawn=1
         IFS= read -rsn1 key || { tui_show_cursor; return 1; }
         if [[ $key == $'\033' ]]; then
             rest=""

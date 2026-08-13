@@ -122,15 +122,18 @@ menu.
 The `Start here - Guided setup` menu organizes initial setup around dependency
 and restart boundaries rather than exposing every tuning option at once:
 
-1. Prepare persistent storage and boot recovery.
-2. Install the AMDGPU kernel fixes, then reboot.
-3. Install the ACPI and GPU-governor foundation. Reboot for ACPI, load-test the
+1. Install the AMDGPU kernel fixes, then reboot.
+2. Install the ACPI and GPU-governor foundation. Reboot for ACPI, load-test the
    governor, and only then enable it at boot.
-4. Install the memory helper and choose the CMOS minimum and dynamic TTM limit.
-5. Optionally follow the staged GPU-CU or CPU-core unlock workflows, including
+3. Install the memory helper and choose the CMOS minimum and dynamic TTM limit.
+4. Optionally follow the staged GPU-CU or CPU-core unlock workflows, including
    their reboot and stability tests.
-6. Add optional Mesa / RADV performance, matching devices, and a control UI.
-7. Run the complete status report after the required reboot or sign-out.
+5. Add optional Mesa / RADV performance, matching devices, and a control UI.
+6. Run the complete status report after the required reboot or sign-out.
+
+Persistent storage and boot recovery are infrastructure rather than a separate
+setup prerequisite. Supported component installers create them automatically
+when needed; their manual status and repair menu remains under Core System.
 
 GPU-CU and CPU-core unlocks are discoverable from Guided Setup but remain
 optional and outside the foundation path, so their stability tests and recovery
