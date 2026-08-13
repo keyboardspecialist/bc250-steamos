@@ -220,6 +220,10 @@ class ToolkitTests(unittest.TestCase):
                 self.assertIn("${#label} > label_width", menu)
                 self.assertIn("\\033[H\\033[2J", menu)
                 self.assertIn("%-*s", menu)
+                self.assertIn("CONTROLS  [Up/Down or J/K] Move", menu)
+                self.assertIn("[Enter] Select", menu)
+                self.assertIn("[Q/Esc]", menu)
+                self.assertIn("${CB}${CC}", menu)
                 self.assertNotIn("drawn=", menu)
                 self.assertNotIn("\\033[%dA", menu)
 
@@ -227,7 +231,7 @@ class ToolkitTests(unittest.TestCase):
         menu = toolkit[toolkit.index("menu_select() {") : toolkit.index("pause_key() {")]
         self.assertIn("exit_label=back", menu)
         self.assertIn("exit_label=quit", menu)
-        self.assertIn("q ${exit_label}", menu)
+        self.assertIn("${exit_label^}", menu)
 
     def test_main_menu_keeps_sudo_alive_and_revokes_it_on_exit(self):
         source = TOOLKIT.read_text(encoding="utf-8")

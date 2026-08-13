@@ -360,7 +360,8 @@ menu_select() {
     while true; do
         printf '\033[H\033[2J'
         printf '\r\033[K%s\n' "${CB}${CC}${title}${C0}"
-        printf '\033[K%s\n' "${CD}  up/down move - Enter select - q back${C0}"
+        printf '\033[K%s\n' "${CB}${CC}  CONTROLS  [Up/Down or J/K] Move  [Enter] Select  [Q/Esc] Back${C0}"
+        printf '\033[K\n'
         for i in "${!items[@]}"; do
             IFS='|' read -r label badge hint <<< "${items[$i]}"
             if [[ $i -eq $cur ]]; then
@@ -539,6 +540,26 @@ badge_cpu_mitigations() {
         enabled:disabled|disabled:enabled) b_mid "reboot needed" ;;
         *) b_mid "$configured" ;;
     esac
+}
+
+badge_core_unlock() {
+    local mode="${1:-$(core_unlock_mode)}"
+    case "$mode" in
+        systemd)  b_ok "Linux replay enabled" ;;
+        efi)      b_ok "EFI replay enabled" ;;
+        partial)  b_mid "EFI cleanup needed" ;;
+        conflict) b_mid "replay conflict" ;;
+        none)
+            if [[ -x "$CORE_UNLOCK_BIN" ]]; then b_off "replay off - helper kept"
+            else b_off "not installed"; fi
+            ;;
+    esac
+}
+
+badge_core_unlock_files() {
+    if [[ -x "$CORE_UNLOCK_BIN" ]]; then b_mid "helper installed"
+    elif [[ "${1:-none}" != none ]]; then b_mid "artifacts remain"
+    else b_off "nothing installed"; fi
 }
 
 # ============================== ACPI fix ==================================
@@ -2355,7 +2376,7 @@ core_unlock_secure_boot_disabled() {
         *"secureboot disabled"*|*"secure boot disabled"*|*"this system doesn't support secure boot"*)
             return 0 ;;
         *"secureboot enabled"*|*"secure boot enabled"*)
-            die "Secure Boot is enabled; the experimental EFI helper is unsigned and cannot be installed." ;;
+            die "Secure Boot is enabled; the EFI helper is unsigned and cannot be installed." ;;
         *) die "Secure Boot state is unknown; refusing to install an unsigned EFI helper: ${state:-no result}" ;;
     esac
 }
@@ -2766,9 +2787,15 @@ core_unlock_status() {
     echo -e "${CB}=== CPU core unlock ===${C0}"
     local en ac cores metrics_state mode
     mode=$(core_unlock_mode)
-    echo "  persistence mode: $mode"
     case "$mode" in
-        efi) echo "  EFI mode: experimental, unsigned; cold power still causes one firmware warm reset" ;;
+        none)     echo "  boot replay: disabled" ;;
+        systemd)  echo "  boot replay: Linux/systemd" ;;
+        efi)      echo "  boot replay: EFI pre-boot" ;;
+        partial)  echo "  boot replay: incomplete EFI state (cleanup required)" ;;
+        conflict) echo "  boot replay: conflicting Linux and EFI artifacts" ;;
+    esac
+    case "$mode" in
+        efi) echo "  EFI behavior: replay runs before Linux; cold power still causes one firmware warm reset" ;;
         partial) warn "Partial EFI state blocks test/enable; retry efi-enable to finalize a valid retained transaction, or use 'cpu-unlock off'." ;;
         conflict) warn "Systemd and EFI artifacts conflict; use 'cpu-unlock off' before any enable action." ;;
     esac
@@ -3586,16 +3613,18 @@ menu_cpu_unlock() {
         echo
     fi
     while true; do
+        local mode
+        mode=$(core_unlock_mode)
         local items=(
-            "Show core-unlock status||Report service state, physical cores, and reboot-loop guard."
-            "Show CCX core map||Display active and unavailable CPU cores grouped by CCX."
-            "Test eight cores once||Write the volatile mask only. Manually reboot, stress-test, then return here."
-            "Enable Linux boot persistence (recommended)||Safest mode. Only allowed when this boot already has eight tested cores."
-            "Enable EFI pre-boot mode (experimental)||Removes Linux replay; unsigned and incompatible with Secure Boot."
-            "Disable automatic unlock||Remove either boot mode. A full power-off restores six cores."
-            "Uninstall core unlock||Remove systemd/EFI artifacts, trusted helper, licenses, and pending state."
+            "Status summary|$(badge_core_unlock "$mode")|Show replay mode, active cores, service state, reboot guard, and telemetry compatibility."
+            "Core topology||Display active and unavailable CPU cores grouped by CCX."
+            "Setup 1 - Test eight cores once||Write the volatile mask only. Manually reboot, stress-test, then return here."
+            "Setup 2a - Enable Linux boot replay||Replay after Linux boots, then perform one guarded warm reboot after cold power."
+            "Setup 2b - Enable EFI pre-boot replay||Replay before Linux to avoid an extra Linux boot; still performs one firmware warm reset."
+            "Disable boot replay (keep helper)|$(badge_core_unlock "$mode")|Stop future automatic unlock; retain the helper for testing or re-enabling."
+            "Uninstall all core-unlock files|$(badge_core_unlock_files "$mode")|Disable replay and remove the helper, units, EFI files, licenses, and guard state."
         )
-        menu_select "CPU core unlock  ${CD}(experimental: 6c/12t to 8c/16t)${C0}" "${items[@]}" || return 0
+        menu_select "CPU core unlock  ${CD}(experimental: 6c/12t to 8c/16t; test first)${C0}" "${items[@]}" || return 0
         case $MENU_CHOICE in
             0) run_action core_unlock_status ;;
             1) run_action core_unlock_topology ;;
@@ -3728,7 +3757,7 @@ CPU SECURITY MITIGATIONS
                      Any mitigations= setting in another GRUB source is treated
                      as foreign and must be resolved manually.
 
-CPU CORE UNLOCK (experimental; Linux/systemd mode is recommended)
+CPU CORE UNLOCK (test before enabling persistence)
   cpu-unlock menu      Open the dedicated guided CPU core-unlock menu.
   cpu-unlock topology  Show active and unavailable CPU cores grouped by CCX.
   cpu-unlock test      Write the fixed 0xff mask ONCE without installing boot
@@ -3737,24 +3766,23 @@ CPU CORE UNLOCK (experimental; Linux/systemd mode is recommended)
                        system is unstable, power off fully to restore six cores.
   cpu-unlock enable    Only after a successful test: verify this boot already
                        exposes eight physical cores, then install and enable
-                       Linux/systemd boot replay. This is the safest and
-                       recommended persistence mode. It refuses while the
-                       system has six cores.
+                       Linux/systemd boot replay. It refuses while the system
+                       has six cores.
                        On later cold boots the firmware resets to six cores;
                        the service writes the mask and requests ONE guarded
                        warm reboot so AGESA can enumerate 8c/16t. Initramfs
                        cannot avoid this because AGESA runs before Linux.
   cpu-unlock efi-enable
-                       EXPERIMENTAL alternative: verify eight active cores,
-                       require Secure Boot disabled, build the shipped hardened
-                       C source with pinned yoppeh/efi headers, and create an
-                       owned BC250 Boot entry. This removes the extra Linux boot
-                       before replay, but still performs one firmware warm reset
-                       after cold power. The image is unsigned and incompatible
-                       with Secure Boot. Linux replay above is recommended.
+                        Verify eight active cores, build the shipped hardened C
+                        source with pinned
+                        yoppeh/efi headers, and create an owned BC250 Boot entry.
+                        It replays before Linux, avoiding one extra Linux boot,
+                        but still performs one firmware warm reset after cold
+                        power.
   cpu-unlock status    Show none/systemd/efi/conflict/partial mode, service,
                        physical-core, and reboot-guard state.
-  cpu-unlock off       Disable/remove either persistence mode. Helper retained.
+  cpu-unlock off       Disable/remove either replay mode but retain the helper
+                       for later testing or re-enabling.
   cpu-unlock uninstall Remove all systemd/EFI artifacts, helper, licenses, and
                        guard state. A mismatched recorded EFI entry is never
                        deleted and causes removal to fail safely.

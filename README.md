@@ -336,12 +336,14 @@ cold boot, the enabled service safely writes the mask and requests one warm
 reboot. A persistent pending marker prevents a failed unlock from creating a
 reboot loop.
 
-Linux/systemd replay is the safest recommended persistence mode. The optional
-`efi-enable` mode installs an unsigned, namespaced pre-boot application and
-removes the extra Linux boot from the cold-start sequence, but firmware still
-performs one warm reset after cold power so AGESA can enumerate eight cores.
-EFI mode is experimental, requires Secure Boot disabled or unsupported by the
-firmware, and refuses install when Secure Boot state is unknown.
+After validating all eight cores, choose either Linux/systemd or EFI replay.
+Linux/systemd replay applies the mask after Linux boots. `efi-enable` instead
+installs an unsigned, namespaced pre-boot application and removes the extra
+Linux boot from the cold-start sequence. On the first firmware pass after cold
+power, the application writes the mask and requests a warm reset. On the second
+pass, it sees the completed mask and lets firmware continue to SteamOS. EFI
+replay therefore avoids booting Linux once solely to replay the mask, but does
+not eliminate the warm reset AGESA needs to enumerate eight cores.
 Its installer requires `/efi` to be the writable FAT filesystem mounted from a
 standard GPT ESP or the active SteamOS EFI slot and records that partition's
 canonical source, partition number, and PARTUUID. The firmware entry must be
@@ -360,11 +362,15 @@ running kernel.
 | `sudo ./bc250-power.sh cpu-unlock menu` | Open the dedicated guided CPU core-unlock menu |
 | `./bc250-power.sh cpu-unlock topology` | Show active CPU cores grouped by CCX |
 | `sudo ./bc250-power.sh cpu-unlock test` | Apply the volatile mask once without installing boot persistence; reboot manually |
-| `sudo ./bc250-power.sh cpu-unlock enable` | After testing, verify eight cores are already active and install boot replay |
-| `sudo ./bc250-power.sh cpu-unlock efi-enable` | Experimental: build and install unsigned EFI pre-boot replay after verifying eight cores |
+| `sudo ./bc250-power.sh cpu-unlock enable` | Choice 2a: after testing, verify eight cores are active and install Linux boot replay |
+| `sudo ./bc250-power.sh cpu-unlock efi-enable` | Choice 2b: after testing, verify eight cores are active and install EFI pre-boot replay |
 | `sudo ./bc250-power.sh cpu-unlock status` | Show service, topology, and reboot-guard state |
 | `sudo ./bc250-power.sh cpu-unlock off` | Disable/remove either replay mode but retain the Linux helper |
 | `sudo ./bc250-power.sh cpu-unlock uninstall` | Remove all systemd/EFI artifacts, helper, license copies, and pending state |
+
+Use `off` when you only want to stop automatic replay and may test or re-enable
+the unlock later. Use `uninstall` to remove the complete core-unlock integration,
+including the retained Linux helper and its support files.
 
 `test` does not create a systemd unit, enablement symlink, or atomic-update
 entry. If the extra cores are unstable, do not run `enable`; power the system

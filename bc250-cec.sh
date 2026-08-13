@@ -152,7 +152,8 @@ menu_select() {
     while true; do
         printf '\033[H\033[2J'
         printf '\r\033[K%s\n' "${CB}${CC}${title}${C0}"
-        printf '\033[K%s\n' "${CD}  up/down move - Enter select - q back${C0}"
+        printf '\033[K%s\n' "${CB}${CC}  CONTROLS  [Up/Down or J/K] Move  [Enter] Select  [Q/Esc] Back${C0}"
+        printf '\033[K\n'
         for i in "${!items[@]}"; do
             IFS='|' read -r label badge hint <<< "${items[$i]}"
             if [[ $i -eq $cur ]]; then

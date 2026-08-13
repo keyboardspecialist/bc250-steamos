@@ -36,7 +36,7 @@ AGESA consumes the core mask before Linux starts, so initramfs is already too
 late. After a full power-off resets the mask, the boot service writes it and
 requests one warm reboot. AGESA then sees `0xff` and enumerates all eight cores.
 
-## Experimental EFI Mode
+## EFI Mode
 
 `bc250-unlock-cores-efi.c` is adapted and hardened from
 [`Hexxeh/bc250-efi-core-unlock`](https://github.com/Hexxeh/bc250-efi-core-unlock)
@@ -63,20 +63,20 @@ The hardened application adds the following protections:
   `4f6f6f13-1ec2-4f26-a250-bc250c0e77ff` and variable name
   `BC250CoreUnlockAttempt`.
 
-`cpu-unlock efi-enable` requires exactly eight active physical cores and Secure
-Boot disabled or unsupported by the firmware. It compiles the local source with
-clang/lld, verifies an x86-64 PE EFI application, and stores a master image and
-ownership state under `/var/lib/bc250-control/core-unlock`. It installs the
-namespaced loader at `/efi/EFI/bc250/bc250-core-unlock.efi`, then creates and
-verifies its recorded `Boot####` entry. The mounted path must be a writable FAT
-filesystem on a standard GPT ESP or the active SteamOS EFI slot; its canonical
-source, parent disk, partition number, and PARTUUID are recorded. Completeness
-additionally requires an active entry first in `BootOrder`. Rollback and removal
-delete only an entry whose exact label, loader, partition number, and PARTUUID
-match; uncertainty retains the loader and ownership/recovery state for manual
-review.
+`cpu-unlock efi-enable` requires exactly eight active physical cores. It compiles
+the local source with clang/lld, verifies an x86-64 PE EFI application, and
+stores a master image and ownership state under
+`/var/lib/bc250-control/core-unlock`. It installs the namespaced loader at
+`/efi/EFI/bc250/bc250-core-unlock.efi`, then creates and verifies its recorded
+`Boot####` entry. The mounted path must be a writable FAT filesystem on a
+standard GPT ESP or the active SteamOS EFI slot; its canonical source, parent
+disk, partition number, and PARTUUID are recorded. Completeness additionally
+requires an active entry first in `BootOrder`. Rollback and removal delete only
+an entry whose exact label, loader, partition number, and PARTUUID match;
+uncertainty retains the loader and ownership/recovery state for manual review.
 
-EFI mode eliminates the extra Linux boot used to replay the mask, but firmware
-still performs one warm reset after each cold power-on. It is unsigned,
-incompatible with Secure Boot, and experimental. Linux/systemd replay remains
-the safest recommended default.
+EFI mode runs before Linux. Its first pass after cold power writes the mask and
+requests a warm reset; its second pass sees the completed mask and lets firmware
+continue to SteamOS. This eliminates the extra Linux boot used to replay the
+mask, but not the warm reset AGESA requires. Linux/systemd and EFI replay are
+the two persistence choices available after validating all eight cores.

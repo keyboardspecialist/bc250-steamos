@@ -43,6 +43,31 @@ class CoreUnlockTests(unittest.TestCase):
         )
         self.assertEqual(result.stdout, "menu")
 
+    def test_guided_menu_groups_status_setup_and_removal(self):
+        power = POWER.read_text(encoding="utf-8")
+        menu = power[
+            power.index("menu_cpu_unlock() {") : power.index(
+                "cmd_menu() {", power.index("menu_cpu_unlock() {")
+            )
+        ]
+
+        for expected in (
+            "Status summary",
+            "Core topology",
+            "Setup 1 - Test eight cores once",
+            "Setup 2a - Enable Linux boot replay",
+            "Setup 2b - Enable EFI pre-boot replay",
+            "Disable boot replay (keep helper)",
+            "Uninstall all core-unlock files",
+        ):
+            self.assertIn(expected, menu)
+        self.assertIn('$(badge_core_unlock "$mode")', menu)
+        self.assertIn('$(badge_core_unlock_files "$mode")', menu)
+        self.assertIn("avoid an extra Linux boot", menu)
+        self.assertIn("retain the helper", menu)
+        self.assertNotIn("Secure Boot", menu)
+        self.assertNotIn("EFI pre-boot replay (experimental)", menu)
+
     def test_release_build_check_uses_pinned_headers_and_efi_subsystem(self):
         source = EFI_BUILD_CHECK.read_text(encoding="utf-8")
         self.assertIn("761b114e3b186adb82516d5fa8e7a4c559f56ba5", source)

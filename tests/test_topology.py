@@ -60,7 +60,7 @@ class TopologyTests(unittest.TestCase):
         source = POWER.read_text(encoding="utf-8")
 
         self.assertIn('TOPOLOGY_SH="${TOPOLOGY_SH:-$SCRIPT_DIR/topology.sh}"', source)
-        self.assertIn('"Show CCX core map|', source)
+        self.assertIn('"Core topology|', source)
         self.assertIn("topology)  core_unlock_topology", source)
 
     def test_scripts_parse(self):

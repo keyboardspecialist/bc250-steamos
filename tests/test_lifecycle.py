@@ -69,8 +69,9 @@ class LifecycleTests(unittest.TestCase):
                 env=script_env(home),
             ).stdout
             self.assertIn("cpu-unlock efi-enable", power_help)
-            self.assertIn("Linux/systemd mode is recommended", power_help)
-            self.assertIn("unsigned and incompatible", power_help)
+            self.assertIn("replays before Linux", power_help)
+            self.assertIn("one firmware warm reset", power_help)
+            self.assertNotIn("EXPERIMENTAL alternative", power_help)
 
     def test_uninstall_boundaries_preserve_settings_and_shared_data(self):
         power = POWER.read_text(encoding="utf-8")
