@@ -20,6 +20,7 @@ class ToolkitTests(unittest.TestCase):
             text=True,
         )
         for command in (
+            "setup",
             "status",
             "drivers",
             "unlocks",
@@ -59,15 +60,14 @@ class ToolkitTests(unittest.TestCase):
         ]
 
         for label in (
+            "Start here - Guided setup",
             "System status",
-            "Drivers",
+            "Core system",
+            "Performance tuning",
             "Hardware unlocks",
-            "Power management",
-            "RAM / VRAM split",
-            "CEC / HDMI control",
-            "Storage & SteamOS updates",
+            "Display & connectivity",
             "Control interfaces",
-            "Manage installed components",
+            "Maintenance & recovery",
         ):
             self.assertIn(f'"{label}|', main_menu)
         self.assertRegex(
@@ -78,6 +78,11 @@ class ToolkitTests(unittest.TestCase):
             'menu_select "BC-250 SteamOS toolkit ${CD}[${TOOLKIT_VERSION}]${C0}"',
             main_menu,
         )
+        self.assertGreater(
+            main_menu.index('"System status|'),
+            main_menu.index('"Maintenance & recovery|'),
+        )
+        self.assertIn("7) run_menu_action status", main_menu)
         self.assertNotIn("Mesh shaders (per game)", source)
         self.assertNotIn("[optional]", drivers_menu)
         self.assertIn("Mesa / RADV performance patch (optional)", drivers_menu)
@@ -106,7 +111,10 @@ class ToolkitTests(unittest.TestCase):
         self.assertIn("3) run_menu_child radv", drivers_menu)
         self.assertIn("GPU compute-unit unlock", unlocks_menu)
         self.assertIn("CPU core unlock", unlocks_menu)
-        self.assertIn("Configure GPU compute-unit and CPU core unlocks.", main_menu)
+        self.assertIn(
+            "Test GPU compute units or CPU cores with explicit stability and recovery steps.",
+            main_menu,
+        )
         self.assertNotIn("without confusing the two workflows", source)
         self.assertIn("0) run_menu_child compute", unlocks_menu)
         self.assertIn("1) run_menu_child cpu-unlock", unlocks_menu)
@@ -119,6 +127,75 @@ class ToolkitTests(unittest.TestCase):
         power_menu = power[power.index("cmd_menu() {") : power.index("cmd_help() {")]
         self.assertNotIn('"CPU core unlock|', power_menu)
         self.assertIn("menu)      menu_cpu_unlock", power)
+
+        guided_menu = source[
+            source.index("cmd_guided_setup_menu() {") : source.index("cmd_drivers_menu() {")
+        ]
+        for label in (
+            "Step 1 - Persistent foundation",
+            "Step 2 - AMDGPU kernel fixes",
+            "Step 3 - Power foundation",
+            "Step 4 - Memory balance",
+            "Optional GPU CU unlock",
+            "Optional CPU core unlock",
+            "Finish - Verify system",
+        ):
+            self.assertIn(label, guided_menu)
+        self.assertIn("load-test", guided_menu.lower())
+        self.assertIn("reboot", guided_menu.lower())
+        self.assertIn("6) run_menu_child compute", guided_menu)
+        self.assertIn("7) run_menu_child cpu-unlock", guided_menu)
+        self.assertIn("10) run_menu_action status", guided_menu)
+        self.assertIn("cmd_guided_setup_menu", main_menu)
+
+    def test_dense_component_menus_are_grouped_by_intent(self):
+        power = (ROOT / "bc250-power.sh").read_text(encoding="utf-8")
+        power_menu = power[power.index("cmd_menu() {") : power.index("cmd_help() {")]
+        self.assertIn("Power foundation", power_menu)
+        self.assertIn("GPU performance tuning", power_menu)
+        self.assertIn("CPU performance & security", power_menu)
+        self.assertNotIn('"Step 1 - ACPI fix:', power_menu)
+        self.assertIn("menu_power_setup()", power)
+        self.assertIn("menu_gpu_tuning()", power)
+        self.assertIn("menu_cpu_tuning()", power)
+
+        cec = (ROOT / "bc250-cec.sh").read_text(encoding="utf-8")
+        cec_menu = cec[cec.index("cmd_menu() {") : cec.index("tv_badge_menu() {")]
+        self.assertIn("Setup & automation", cec_menu)
+        self.assertIn("Everyday controls", cec_menu)
+        self.assertIn("Diagnostics & recovery", cec_menu)
+        self.assertNotIn('"Scan CEC bus|', cec_menu)
+        self.assertIn("menu_setup()", cec)
+        self.assertIn("menu_controls()", cec)
+        self.assertIn("menu_diagnostics()", cec)
+        controls = cec[cec.index("menu_controls() {") : cec.index("menu_diagnostics() {")]
+        self.assertIn("Take the input", controls)
+        self.assertIn("4) run_action cmd_switch", controls)
+
+        toolkit = TOOLKIT.read_text(encoding="utf-8")
+        guided = toolkit[
+            toolkit.index("cmd_guided_setup_menu() {") : toolkit.index("cmd_drivers_menu() {")
+        ]
+        self.assertNotIn("start_sudo_session", guided)
+
+    def test_trainer_toolkit_uses_semantic_setup_groups(self):
+        page = (ROOT / "trainer/qml/pages/ToolkitPage.qml").read_text(
+            encoding="utf-8"
+        )
+        controller = (ROOT / "trainer/src/ToolkitController.cpp").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn('property string category: "FOUNDATION"', page)
+        self.assertIn(
+            '["FOUNDATION", "PERFORMANCE", "DEVICES", "INTERFACES", "ALL"]',
+            page,
+        )
+        self.assertIn('title: "POWER FOUNDATION"', page)
+        self.assertIn('title: "GPU CU PREREQUISITES"', page)
+        self.assertIn("test-starts the GPU governor", page)
+        self.assertIn("Build UMR only", page)
+        self.assertIn("./bc250-toolkit.sh power", controller)
+        self.assertIn("Live routing, stability testing", controller)
 
     def test_main_menu_keeps_sudo_alive_and_revokes_it_on_exit(self):
         source = TOOLKIT.read_text(encoding="utf-8")

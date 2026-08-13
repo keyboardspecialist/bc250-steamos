@@ -98,6 +98,7 @@ Each child requests administrator access only when needed.
 | Command | Action |
 |---|---|
 | `./bc250-toolkit.sh` | Open the unified interactive menu |
+| `./bc250-toolkit.sh setup` | Open the status-aware guided setup checklist |
 | `./bc250-toolkit.sh status` | Show the read-only component status overview |
 | `./bc250-toolkit.sh inventory-json` | Emit versioned lifecycle state for the native Trainer dashboard |
 | `./bc250-toolkit.sh action OPERATION_ID` | Run one fixed dashboard action without opening a TUI |
@@ -115,6 +116,26 @@ Each child requests administrator access only when needed.
 arbitrary scripts or arguments. These machine-facing commands back the native
 Trainer dashboard. Normal interactive use should continue through the toolkit
 menu.
+
+### Guided Setup
+
+The `Start here - Guided setup` menu organizes initial setup around dependency
+and restart boundaries rather than exposing every tuning option at once:
+
+1. Prepare persistent storage and boot recovery.
+2. Install the AMDGPU kernel fixes, then reboot.
+3. Install the ACPI and GPU-governor foundation. Reboot for ACPI, load-test the
+   governor, and only then enable it at boot.
+4. Install the memory helper and choose the CMOS minimum and dynamic TTM limit.
+5. Optionally follow the staged GPU-CU or CPU-core unlock workflows, including
+   their reboot and stability tests.
+6. Add optional Mesa / RADV performance, matching devices, and a control UI.
+7. Run the complete status report after the required reboot or sign-out.
+
+GPU-CU and CPU-core unlocks are discoverable from Guided Setup but remain
+optional and outside the foundation path, so their stability tests and recovery
+requirements are not mistaken for routine setup. The existing component
+commands and expert menus remain available.
 
 ### Uninstall And Cleanup
 

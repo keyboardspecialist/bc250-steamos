@@ -101,6 +101,33 @@ TestCase {
         tryCompare(storage, "actionEnabled", false)
     }
 
+    function test_semanticCategoryVisibility() {
+        var storage = findChild(page, "toolkitCard-storage")
+        var ram = findChild(page, "toolkitCard-ram")
+        var cec = findChild(page, "toolkitCard-cec")
+        verify(storage !== null)
+        verify(ram !== null)
+        verify(cec !== null)
+        compare(storage.visible, true)
+        compare(ram.visible, false)
+        compare(cec.visible, false)
+
+        page.category = "PERFORMANCE"
+        tryCompare(storage, "visible", false)
+        tryCompare(ram, "visible", true)
+        compare(cec.visible, false)
+
+        page.category = "DEVICES"
+        tryCompare(ram, "visible", false)
+        tryCompare(cec, "visible", true)
+
+        page.category = "ALL"
+        tryCompare(storage, "visible", true)
+        compare(ram.visible, true)
+        compare(cec.visible, true)
+        page.category = "FOUNDATION"
+    }
+
     function test_consoleReflectsAndClearsOutput() {
         controller.outputText = "build line 1\nbuild line 2\n"
         var output = findChild(page, "consoleOutput")

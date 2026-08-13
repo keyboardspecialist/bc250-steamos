@@ -3527,6 +3527,54 @@ menu_cpu_oc() {
     done
 }
 
+menu_power_setup() {
+    while true; do
+        local items=(
+            "Step 1 - ACPI fix: CPU idle + scaling|$(badge_acpi)|Install the ACPI override, then reboot before judging CPU idle or scaling."
+            "Step 2 - Install and test GPU governor|$(badge_governor)|Test-start adaptive GPU control. Load-test it before enabling boot startup."
+            "Step 3 - Enable governor at boot|$(badge_gov_boot)|Only enable after the test-started governor has proved stable under load."
+            "Reinstall D-Bus helpers||Repair frequency-control helpers and 'name is not activatable' errors."
+        )
+        menu_select "Power foundation  ${CD}(complete in order)${C0}" "${items[@]}" || return 0
+        case $MENU_CHOICE in
+            0) run_action cmd_acpi ;;
+            1) run_action cmd_governor ;;
+            2) run_action cmd_enable ;;
+            3) run_action cmd_helpers ;;
+        esac
+    done
+}
+
+menu_gpu_tuning() {
+    while true; do
+        local items=(
+            "Frequency & voltage|$(badge_freq)|Set adaptive caps, ranges, pinned clocks, or advanced voltage-curve changes."
+            "Load targets|$(badge_load_target)|Choose when the governor clocks up and down."
+            "Ramp behavior|$(badge_ramp)|Choose how quickly and granularly GPU clocks move."
+        )
+        menu_select "GPU performance tuning  ${CD}(governor required)${C0}" "${items[@]}" || return 0
+        case $MENU_CHOICE in
+            0) menu_freq ;;
+            1) menu_load_target ;;
+            2) menu_ramp ;;
+        esac
+    done
+}
+
+menu_cpu_tuning() {
+    while true; do
+        local items=(
+            "CPU overclock / undervolt|$(badge_oc)|Detect, apply, persist, or revert a CPU voltage/frequency profile."
+            "CPU security mitigations (toggle)|$(badge_cpu_mitigations)|Trade kernel security mitigations for performance. Reboot required."
+        )
+        menu_select "CPU performance & security  ${CD}(advanced)${C0}" "${items[@]}" || return 0
+        case $MENU_CHOICE in
+            0) menu_cpu_oc ;;
+            1) menu_toggle_cpu_mitigations ;;
+        esac
+    done
+}
+
 menu_cpu_unlock() {
     [[ -t 0 && -t 1 ]] || die "The menu needs an interactive terminal. See '$0 help' for CLI commands."
     if [[ $EUID -ne 0 ]]; then
@@ -3569,30 +3617,18 @@ cmd_menu() {
     while true; do
         local items=(
             "Status overview||Health check of every service, clock and temp. Always safe."
-            "Step 1 - ACPI fix: CPU idle + scaling|$(badge_acpi)|SSDT override via GRUB + self-heal. Reboot needed after install."
-            "Step 2 - GPU governor|$(badge_governor)|Adaptive GPU freq/voltage via SMU. Test under load before step 3."
-            "Step 3 - Enable governor at boot|$(badge_gov_boot)|Lock it in once step 2 proves stable."
-            "GPU frequency & voltage|$(badge_freq)|Pin / cap / range + voltage curve. Settings survive reboots."
-            "GPU load targets|$(badge_load_target)|When to clock up/down. Fixes light games stuck at idle clocks."
-            "GPU ramp behavior|$(badge_ramp)|How fast + how granular clocks move. One number, rest derived."
-            "CPU overclock / undervolt|$(badge_oc)|bc250_smu_oc: ~200 mV undervolt even at stock clocks."
-            "CPU security mitigations (toggle)|$(badge_cpu_mitigations)|Disable for performance or restore secure kernel defaults. Reboot required."
-            "Reinstall D-Bus helpers||Fixes 'name is not activatable' errors from freq control."
+            "Power foundation|${CG}[guided]${C0}|Install ACPI, reboot, test the GPU governor, then enable it at boot."
+            "GPU performance tuning|$(badge_freq)|Configure clocks, voltage, load response, and ramp behavior."
+            "CPU performance & security|$(badge_oc)|Configure CPU undervolt/overclock and the security-mitigation policy."
             "Full help||The complete manual for every CLI command."
         )
         menu_select "BC-250 power setup  ${CD}(SteamOS)${C0}" "${items[@]}" || { echo; break; }
         case $MENU_CHOICE in
             0) run_action cmd_status ;;
-            1) run_action cmd_acpi ;;
-            2) run_action cmd_governor ;;
-            3) run_action cmd_enable ;;
-            4) menu_freq ;;
-            5) menu_load_target ;;
-            6) menu_ramp ;;
-            7) menu_cpu_oc ;;
-            8) menu_toggle_cpu_mitigations ;;
-            9) run_action cmd_helpers ;;
-            10) cmd_help; pause_key ;;
+            1) menu_power_setup ;;
+            2) menu_gpu_tuning ;;
+            3) menu_cpu_tuning ;;
+            4) cmd_help; pause_key ;;
         esac
     done
 }

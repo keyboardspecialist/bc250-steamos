@@ -146,6 +146,62 @@ scheduler_policy_badge() {
     fi
 }
 
+component_badge() {
+    local script="$1" command="${2:-installed}"
+    if [[ ! -f "$script" || -L "$script" ]]; then
+        printf '%s' "${CR}[unavailable]${C0}"
+    elif bash "$script" "$command" >/dev/null 2>&1; then
+        printf '%s' "${CG}[installed]${C0}"
+    else
+        printf '%s' "${CD}[not installed]${C0}"
+    fi
+}
+
+power_foundation_badge() {
+    if [[ ! -f "$POWER_SH" || -L "$POWER_SH" ]]; then
+        printf '%s' "${CR}[unavailable]${C0}"
+    elif [[ -f /etc/systemd/system/bc250-acpi-heal.service \
+        && -f /etc/systemd/system/bc250-cpufreq.service ]] \
+        && systemctl is-active --quiet cyan-skillfish-governor-smu.service 2>/dev/null \
+        && systemctl is-enabled --quiet cyan-skillfish-governor-smu.service 2>/dev/null; then
+        printf '%s' "${CG}[active]${C0}"
+    elif [[ -f /etc/systemd/system/bc250-acpi-heal.service \
+        || -f /etc/systemd/system/bc250-cpufreq.service ]] \
+        || systemctl cat cyan-skillfish-governor-smu.service >/dev/null 2>&1; then
+        printf '%s' "${CY}[continue setup]${C0}"
+    else
+        printf '%s' "${CD}[not installed]${C0}"
+    fi
+}
+
+amdgpu_badge() {
+    local status=""
+    if [[ ! -f "$AUDIO_FIX_SH" || -L "$AUDIO_FIX_SH" ]]; then
+        printf '%s' "${CR}[unavailable]${C0}"
+        return
+    fi
+    status=$(bash "$AUDIO_FIX_SH" status 2>/dev/null || true)
+    case "$status" in
+        *"state: installed"*) printf '%s' "${CG}[installed]${C0}" ;;
+        *"state: incomplete"*) printf '%s' "${CY}[incomplete]${C0}" ;;
+        *) printf '%s' "${CD}[not installed]${C0}" ;;
+    esac
+}
+
+radv_badge() {
+    local status=""
+    if [[ ! -f "$MESH_SHADER_SH" || -L "$MESH_SHADER_SH" ]]; then
+        printf '%s' "${CR}[unavailable]${C0}"
+        return
+    fi
+    status=$(bash "$MESH_SHADER_SH" status 2>/dev/null || true)
+    case "$status" in
+        *"runtime: installed"*) printf '%s' "${CG}[installed]${C0}" ;;
+        *"runtime: incomplete"*|*"legacy install"*) printf '%s' "${CY}[repair needed]${C0}" ;;
+        *) printf '%s' "${CD}[optional]${C0}" ;;
+    esac
+}
+
 toggle_scheduler_policy() {
     require_normal_user
     require_script "$AMDGPU_BOOT_CONFIG_SH"
@@ -363,6 +419,60 @@ run_menu_action() {
     pause_key
 }
 
+show_guided_setup_overview() {
+    echo
+    printf '%s\n' "${CB}${CC}BC-250 guided setup${C0}"
+    printf '%s\n' "Complete the foundation in order. Return after each required reboot."
+    printf '%s\n' "Power setup deliberately stops before enabling the GPU governor at boot; load-test it first."
+    echo
+    printf '  %-24s %s\n' "1. Persistent storage" "$(component_badge "$STORAGE_SH")"
+    printf '  %-24s %s\n' "2. AMDGPU kernel fixes" "$(amdgpu_badge)"
+    printf '  %-24s %s\n' "3. Power foundation" "$(power_foundation_badge)"
+    printf '  %-24s %s\n' "4. RAM / VRAM helper" "$(component_badge "$RAM_SPLIT_SH")"
+    printf '  %-24s %s\n' "Optional Mesa / RADV" "$(radv_badge)"
+    printf '  %-24s %s\n' "Optional GPU CU unlock" "$(component_badge "$COMPUTE_SH")"
+    printf '  %-24s %s\n' "Optional CPU core unlock" "${CD}[guided test]${C0}"
+    printf '  %-24s %s\n' "Optional HDMI-CEC" "$(component_badge "$CEC_SH")"
+    echo
+    printf '%s\n' "${CY}Checkpoints:${C0} AMDGPU and ACPI changes need a reboot; Mesa / RADV needs sign-out."
+    printf '%s\n' "CMOS, CPU-core, and GPU-CU changes are advanced and stay outside the foundation path."
+    pause_key
+}
+
+cmd_guided_setup_menu() {
+    require_terminal
+    require_normal_user
+    while true; do
+        local items=(
+            "Setup overview|${CD}[read only]${C0}|Show the recommended order, current component state, and restart checkpoints."
+            "Step 1 - Persistent foundation|$(component_badge "$STORAGE_SH")|Prepare home-backed privileged storage and boot recovery before installing components."
+            "Step 2 - AMDGPU kernel fixes|$(amdgpu_badge)|Install display/audio, telemetry, and compute fixes. Reboot before continuing with RADV."
+            "Step 3 - Power foundation|$(power_foundation_badge)|Install ACPI, reboot, then load-test the GPU governor before enabling it at boot."
+            "Step 4 - Memory balance|$(component_badge "$RAM_SPLIT_SH")|Install the helper, then choose CMOS minimum VRAM and the dynamic TTM limit."
+            "Optional performance|$(radv_badge)|Install Mesa / RADV or tune GPU and CPU behavior after the foundation is stable."
+            "Optional GPU CU unlock|$(component_badge "$COMPUTE_SH")|Inspect the harvest map, test live routing, stress-test it, then choose whether to persist it."
+            "Optional CPU core unlock|${CD}[guided test]${C0}|Test eight cores once, reboot and stress-test, then choose Linux replay or experimental EFI mode."
+            "Optional devices||Configure HDMI-CEC or install AIC8800 support only when matching hardware is present."
+            "Choose control interface||Install Decky for Gaming Mode, Plasma for desktop, or the standalone Trainer."
+            "Finish - Verify system|${CD}[read only]${C0}|Run the complete status report after required reboot and sign-out checkpoints."
+        )
+        menu_select "BC-250 guided setup  ${CD}(safe order)${C0}" "${items[@]}" || { echo; break; }
+        case $MENU_CHOICE in
+            0) show_guided_setup_overview ;;
+            1) run_menu_child storage ;;
+            2) run_menu_action amdgpu ;;
+            3) run_menu_child power ;;
+            4) run_menu_child ram ;;
+            5) cmd_performance_menu ;;
+            6) run_menu_child compute ;;
+            7) run_menu_child cpu-unlock ;;
+            8) cmd_devices_menu ;;
+            9) cmd_interfaces_menu ;;
+            10) run_menu_action status ;;
+        esac
+    done
+}
+
 cmd_drivers_menu() {
     require_terminal
     require_normal_user
@@ -435,46 +545,121 @@ cmd_interfaces_menu() {
     done
 }
 
+cmd_core_system_menu() {
+    require_terminal
+    require_normal_user
+    while true; do
+        local items=(
+            "Persistent storage & boot recovery|$(component_badge "$STORAGE_SH")|Install, inspect, or repair the toolkit's persistent privileged storage."
+            "AMDGPU kernel fixes|$(amdgpu_badge)|Install display/audio clocks, telemetry, and GFX1013 compute queues. Reboot afterward."
+            "AMDGPU scheduler policy|$(scheduler_policy_badge)|Enable or remove the compute scheduler policy. Reboot after changes."
+            "Power foundation & tuning|$(power_foundation_badge)|Set up ACPI and the GPU governor, then access GPU and CPU tuning."
+            "RAM / VRAM split|$(component_badge "$RAM_SPLIT_SH")|Balance the persistent CMOS minimum and dynamic Linux TTM limit."
+            "SteamOS update protection|${CG}[menu]${C0}|Protect installed integration and recover supported settings after updates."
+        )
+        menu_select "BC-250 core system" "${items[@]}" || { echo; break; }
+        case $MENU_CHOICE in
+            0) run_menu_child storage ;;
+            1) run_menu_action amdgpu ;;
+            2) run_menu_action scheduler-policy ;;
+            3) run_menu_child power ;;
+            4) run_menu_child ram ;;
+            5) run_menu_child persistence ;;
+        esac
+    done
+}
+
+cmd_performance_menu() {
+    require_terminal
+    require_normal_user
+    while true; do
+        local items=(
+            "Mesa / RADV performance patch|$(radv_badge)|Optional, recommended global graphics driver. Requires active AMDGPU fixes."
+            "GPU and CPU tuning|${CG}[menu]${C0}|Adjust GPU clocks, load response, ramp behavior, and CPU undervolt/overclock."
+        )
+        menu_select "BC-250 performance tuning" "${items[@]}" || { echo; break; }
+        case $MENU_CHOICE in
+            0) run_menu_child radv ;;
+            1) run_menu_child power ;;
+        esac
+    done
+}
+
+cmd_devices_menu() {
+    require_terminal
+    require_normal_user
+    while true; do
+        local items=(
+            "CEC / HDMI control|$(component_badge "$CEC_SH")|Set up TV and receiver behavior, then access everyday HDMI controls."
+            "AIC8800 WiFi / Bluetooth|${CY}[hardware specific]${C0}|Install only when the system uses the AIC8800 wireless adapter."
+        )
+        menu_select "BC-250 display & connectivity" "${items[@]}" || { echo; break; }
+        case $MENU_CHOICE in
+            0) run_menu_child cec ;;
+            1) run_menu_action wifi ;;
+        esac
+    done
+}
+
+cmd_maintenance_menu() {
+    require_terminal
+    require_normal_user
+    while true; do
+        local items=(
+            "System status|${CD}[read only]${C0}|Show system integration, graphics-driver, and GPU compute-unit health."
+            "SteamOS update recovery|${CG}[menu]${C0}|Inspect protection or restore supported settings from the newest update snapshot."
+            "Clean AMDGPU build tree|${CY}[cleanup]${C0}|Reset patched source and build output while retaining downloads and dependencies."
+            "Manage installed components|${CG}[menu]${C0}|Review removal plans, uninstall components, or permanently purge preserved data."
+        )
+        menu_select "BC-250 maintenance & recovery" "${items[@]}" || { echo; break; }
+        case $MENU_CHOICE in
+            0) run_menu_action status ;;
+            1) run_menu_child persistence ;;
+            2) run_menu_action amdgpu-clean ;;
+            3) run_menu_child manage ;;
+        esac
+    done
+}
+
 cmd_menu() {
     require_terminal
     require_normal_user
     start_sudo_session
     while true; do
         local items=(
-            "System status|${CD}[read only]${C0}|Show system integration, graphics-driver, and GPU compute-unit status."
-            "Drivers|${CG}[menu]${C0}|Install the related AMDGPU and Mesa / RADV graphics fixes or AIC8800 wireless support."
-            "Hardware unlocks|${CG}[menu]${C0}|Configure GPU compute-unit and CPU core unlocks."
-            "Power management|${CG}[menu]${C0}|Configure power states, GPU tuning, and CPU overclocking."
-            "RAM / VRAM split|${CG}[menu]${C0}|Configure the CMOS UMA minimum and Linux dynamic TTM VRAM limit."
-            "CEC / HDMI control|${CG}[menu]${C0}|Configure and control TVs, receivers, and active source."
-            "Storage & SteamOS updates|${CG}[menu]${C0}|Manage persistent storage, boot recovery, and update protection."
+            "Start here - Guided setup|${CG}[recommended]${C0}|Follow the safe dependency order with reboot, load-test, and sign-out checkpoints."
+            "Core system|${CG}[menu]${C0}|Configure storage, AMDGPU, power foundations, memory balance, and update protection."
+            "Performance tuning|${CG}[menu]${C0}|Configure Mesa / RADV and optional GPU or CPU tuning after setup is stable."
+            "Hardware unlocks|${CG}[menu]${C0}|Test GPU compute units or CPU cores with explicit stability and recovery steps."
+            "Display & connectivity|${CG}[menu]${C0}|Configure HDMI-CEC or hardware-specific AIC8800 wireless support."
             "Control interfaces|${CG}[menu]${C0}|Install Decky, Plasma, or the standalone BC250 Trainer."
-            "Manage installed components|${CG}[menu]${C0}|Review uninstall plans, remove components, or purge preserved data."
+            "Maintenance & recovery|${CG}[menu]${C0}|Verify, repair, clean build state, remove components, or purge preserved data."
+            "System status|${CD}[read only]${C0}|Show system integration, graphics-driver, and GPU compute-unit status."
         )
         menu_select "BC-250 SteamOS toolkit ${CD}[${TOOLKIT_VERSION}]${C0}" "${items[@]}" || { echo; break; }
         case $MENU_CHOICE in
-            0) run_menu_action status ;;
-            1) cmd_drivers_menu ;;
-            2) cmd_unlocks_menu ;;
-            3) run_menu_child power ;;
-            4) run_menu_child ram ;;
-            5) run_menu_child cec ;;
-            6) cmd_storage_updates_menu ;;
-            7) cmd_interfaces_menu ;;
-            8) run_menu_child manage ;;
+            0) cmd_guided_setup_menu ;;
+            1) cmd_core_system_menu ;;
+            2) cmd_performance_menu ;;
+            3) cmd_unlocks_menu ;;
+            4) cmd_devices_menu ;;
+            5) cmd_interfaces_menu ;;
+            6) cmd_maintenance_menu ;;
+            7) run_menu_action status ;;
         esac
     done
 }
 
 cmd_help() {
     cat << EOF
-Usage: $0 [menu|status|inventory-json|action OPERATION_ID|drivers|unlocks|storage-updates|interfaces|power|ram|compute|cpu-unlock|cec|storage|persistence|wifi|amdgpu|amdgpu-clean|scheduler-policy|radv|decky|desktop|trainer|manage|help]
+Usage: $0 [menu|setup|status|inventory-json|action OPERATION_ID|drivers|unlocks|storage-updates|interfaces|power|ram|compute|cpu-unlock|cec|storage|persistence|wifi|amdgpu|amdgpu-clean|scheduler-policy|radv|decky|desktop|trainer|manage|help]
 
 Run without arguments in a terminal to open the unified toolkit menu.
 Run the toolkit as the logged-in Deck user, not with sudo; child tools request
 administrator access when needed.
 
 Commands:
+  setup                  Open the status-aware guided setup checklist
   status                 Show a read-only component status overview
   inventory-json         Emit versioned JSON component inventory for automation
   action OPERATION_ID    Run one fixed, noninteractive dashboard operation
@@ -527,6 +712,7 @@ command_name="$1"
 shift
 case "$command_name" in
     menu) (($# == 0)) || die "Usage: $0 menu"; cmd_menu ;;
+    setup) (($# == 0)) || die "Usage: $0 setup"; cmd_guided_setup_menu ;;
     status) (($# == 0)) || die "Usage: $0 status"; show_status ;;
     inventory-json) (($# == 0)) || die "Usage: $0 inventory-json"; show_inventory_json ;;
     action) run_machine_action "$@" ;;

@@ -1665,6 +1665,72 @@ menu_boot_wake() {
     done
 }
 
+menu_setup() {
+    while true; do
+        local items=(
+            "Recommended setup||One shot: device name, TV sleep behavior, poweroff integration, and boot wake."
+            "Set TV name (OSD)|$(badge_osd)|Set the console name shown in the TV's HDMI device list."
+            "Console sleep behavior|$(badge_overrides)|Configure wake, suspend, TV-power, and remote-input overrides."
+            "TV standby on power-off|$(badge_standby)|Install or remove polite TV standby during console shutdown."
+            "Wake TV at boot|$(badge_wake)|Install boot wake and choose polite or always-grab input behavior."
+            "Receiver integration|$(badge_amp_summary)|Configure receiver follow behavior for boot, poweroff, suspend, and resume."
+        )
+        menu_select "CEC setup & automation" "${items[@]}" || return 0
+        case $MENU_CHOICE in
+            0) run_action cmd_setup ;;
+            1) run_action cmd_osd_name ;;
+            2) menu_toggles ;;
+            3) run_action shutdown_standby_toggle ;;
+            4) menu_boot_wake ;;
+            5) menu_amp ;;
+        esac
+    done
+}
+
+menu_controls() {
+    while true; do
+        local items=(
+            "Wake TV and take input|$(badge_active)|Wake the display and claim active source for the BC-250."
+            "TV standby|$(tv_badge_menu)|Send the TV to standby now."
+            "Receiver / amp|$(badge_amp_summary)|Control receiver power and review its follow settings."
+            "Who has the input|$(badge_active)|Ask which HDMI device is currently active."
+            "Take the input|$(badge_active)|Claim active source without sending a separate TV wake command."
+            "Hand off the input|$(badge_active)|Wake another device and route the TV or receiver to it."
+            "Release the input||Give up active source without selecting another device."
+        )
+        menu_select "CEC everyday controls" "${items[@]}" || return 0
+        case $MENU_CHOICE in
+            0) run_action cmd_tv_on ;;
+            1) run_action cmd_tv_off ;;
+            2) menu_amp ;;
+            3) run_action cmd_active ;;
+            4) run_action cmd_switch ;;
+            5) run_action cmd_handoff ;;
+            6) run_action cmd_release ;;
+        esac
+    done
+}
+
+menu_diagnostics() {
+    while true; do
+        local items=(
+            "Test TV control|$(tv_badge_menu)|Guided poll, wake, input, audio, and optional standby sequence."
+            "Scan CEC bus|$(tv_badge_menu)|Show the HDMI tree, addresses, names, power, and active source."
+            "Repair CEC|$(tv_badge_menu)|Health-check and re-register an adapter that failed after suspend."
+            "TV-remote input|$(badge_remote)|Inspect remote-key relay and cecd-created input devices."
+            "Live CEC monitor||Watch raw bus traffic with cectool until Ctrl-C."
+        )
+        menu_select "CEC diagnostics & recovery" "${items[@]}" || return 0
+        case $MENU_CHOICE in
+            0) run_action cmd_test ;;
+            1) run_action cmd_scan ;;
+            2) run_action cmd_repair ;;
+            3) run_action cmd_remote ;;
+            4) cmd_monitor ;;
+        esac
+    done
+}
+
 cmd_menu() {
     [[ -t 0 && -t 1 ]] || die "The menu needs an interactive terminal. See '$0 help' for CLI commands."
     # Opposite of bc250-power.sh: this script must NOT run as root, because
@@ -1673,42 +1739,18 @@ cmd_menu() {
     while true; do
         local items=(
             "Status overview||Full health dump: device, daemon, TV power, config. Always safe."
-            "Recommended setup||One shot: OSD name + TV off on suspend/poweroff + TV (and optionally receiver) wake at boot."
-            "Set TV name (OSD)|$(badge_osd)|Name in the TV's device list. Default: $OSD_DEFAULT."
-            "Behavior toggles|$(badge_overrides)|Wake/standby/remote toggles -- overrides Steam UI settings."
-            "TV standby on power-off|$(badge_standby)|CEC standby on poweroff only -- skipped if another device holds the input. Uses sudo."
-            "Wake TV at boot|$(badge_wake)|Wake the TV at session start -- install/remove, and polite vs grab mode."
-            "Receiver / amp|$(badge_amp_summary)|Receiver power now, plus follow-the-console toggles: boot, poweroff, suspend, resume."
-            "Who has the input|$(badge_active)|Ask the bus for the active source -- the device the TV/receiver is showing."
-            "Take the input|$(badge_active)|Claim active source now -- switch the TV/receiver to the BC-250 ('switch')."
-            "Hand off the input|$(badge_active)|Route the TV/receiver to another device (it wakes + claims the input)."
-            "Release the input||We give up the input, the TV picks what's next. The polite exit."
-            "Test TV control|$(tv_badge_menu)|Guided sequence: poll, wake, switch input, audio, standby."
-            "Scan CEC bus|$(tv_badge_menu)|HDMI tree of every device: address, name, vendor, power, active source."
-            "Repair CEC|$(tv_badge_menu)|Dead after suspend? Health check + re-register the adapter on the bus."
-            "TV-remote input|$(badge_remote)|uinput relay state and the input devices cecd created."
-            "Live CEC monitor||Raw bus traffic via cectool (needs sudo; Ctrl-C exits)."
+            "Setup & automation|${CG}[guided]${C0}|Configure identity, sleep, boot, poweroff, and receiver-follow behavior."
+            "Everyday controls|$(badge_active)|Wake or sleep devices and manage the active HDMI input."
+            "Diagnostics & recovery|$(tv_badge_menu)|Test, scan, repair, inspect remote input, or monitor raw traffic."
             "Full help||The complete manual for every CLI command."
         )
         menu_select "BC-250 CEC / TV control  ${CD}(SteamOS cecd)${C0}" "${items[@]}" || { echo; break; }
         case $MENU_CHOICE in
             0) run_action cmd_status ;;
-            1) run_action cmd_setup ;;
-            2) run_action cmd_osd_name ;;
-            3) menu_toggles ;;
-            4) run_action shutdown_standby_toggle ;;
-            5) menu_boot_wake ;;
-            6) menu_amp ;;
-            7) run_action cmd_active ;;
-            8) run_action cmd_switch ;;
-            9) run_action cmd_handoff ;;
-            10) run_action cmd_release ;;
-            11) run_action cmd_test ;;
-            12) run_action cmd_scan ;;
-            13) run_action cmd_repair ;;
-            14) run_action cmd_remote ;;
-            15) cmd_monitor ;;
-            16) cmd_help; pause_key ;;
+            1) menu_setup ;;
+            2) menu_controls ;;
+            3) menu_diagnostics ;;
+            4) cmd_help; pause_key ;;
         esac
     done
 }

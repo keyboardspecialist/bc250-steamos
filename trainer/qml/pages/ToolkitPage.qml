@@ -6,7 +6,7 @@ ColumnLayout {
     id: root
     required property var backend
     required property var controller
-    property string category: "SYSTEM"
+    property string category: "FOUNDATION"
     spacing: 8
     readonly property bool inventoryReady: controller.inventory.schemaVersion === 1
         && Array.isArray(controller.inventory.components)
@@ -49,15 +49,15 @@ ColumnLayout {
 
     ListModel {
         id: components
-        ListElement { componentId: "storage"; categoryName: "SYSTEM"; title: "PERSISTENT STORAGE"; description: "Home-backed storage and boot recovery."; primary: "storage-install"; repair: "storage-repair"; remove: "storage-remove" }
-        ListElement { componentId: "power"; categoryName: "SYSTEM"; title: "POWER MANAGEMENT"; description: "ACPI and tuning; removal includes CPU unlock replay."; primary: "power-install"; repair: ""; remove: "power-remove" }
-        ListElement { componentId: "ram"; categoryName: "SYSTEM"; title: "RAM / VRAM HELPER"; description: "Verified CMOS and TTM configuration helper."; primary: "ram-install"; repair: ""; remove: "ram-remove" }
-        ListElement { componentId: "compute"; categoryName: "SYSTEM"; title: "GPU CU UNLOCK TOOLS"; description: "Build UMR for GPU CU/WGP routing."; primary: "compute-build"; repair: ""; remove: "compute-remove" }
-        ListElement { componentId: "cec"; categoryName: "SYSTEM"; title: "HDMI-CEC"; description: "TV, receiver, boot, and sleep integration."; primary: "cec-setup"; repair: "cec-repair"; remove: "cec-remove" }
-        ListElement { componentId: "persistence"; categoryName: "SYSTEM"; title: "UPDATE PERSISTENCE"; description: "Retain toolkit integration across SteamOS updates."; primary: "persistence-install"; repair: ""; remove: "persistence-remove" }
-        ListElement { componentId: "audio"; categoryName: "DRIVERS"; title: "AMDGPU KERNEL FIXES"; description: "Install first: clocks, telemetry, and compute queues."; primary: "audio-build"; repair: ""; remove: "audio-remove" }
-        ListElement { componentId: "mesh"; categoryName: "DRIVERS"; title: "MESA / RADV PATCH"; description: "Optional, recommended global performance driver."; primary: "mesh-setup"; repair: ""; remove: "mesh-remove" }
-        ListElement { componentId: "aic"; categoryName: "DRIVERS"; title: "AIC8800 WIRELESS"; description: "Build matching WiFi and Bluetooth modules."; primary: "aic-install"; repair: ""; remove: "aic-remove" }
+        ListElement { componentId: "storage"; categoryName: "FOUNDATION"; title: "PERSISTENT STORAGE"; description: "Start here: home-backed storage and boot recovery."; primary: "storage-install"; repair: "storage-repair"; remove: "storage-remove" }
+        ListElement { componentId: "audio"; categoryName: "FOUNDATION"; title: "AMDGPU KERNEL FIXES"; description: "Install early, then reboot: clocks, telemetry, and compute queues."; primary: "audio-build"; repair: ""; remove: "audio-remove" }
+        ListElement { componentId: "power"; categoryName: "FOUNDATION"; title: "POWER FOUNDATION"; description: "Installs ACPI and test-starts the GPU governor; enable at boot after load testing."; primary: "power-install"; repair: ""; remove: "power-remove" }
+        ListElement { componentId: "persistence"; categoryName: "FOUNDATION"; title: "UPDATE PROTECTION"; description: "Retain supported toolkit integration across SteamOS updates."; primary: "persistence-install"; repair: ""; remove: "persistence-remove" }
+        ListElement { componentId: "ram"; categoryName: "PERFORMANCE"; title: "MEMORY BALANCE HELPER"; description: "Install the verified helper before choosing CMOS and TTM limits on MEMORY."; primary: "ram-install"; repair: ""; remove: "ram-remove" }
+        ListElement { componentId: "compute"; categoryName: "PERFORMANCE"; title: "GPU CU PREREQUISITES"; description: "Build UMR only; routing, stability testing, and boot replay are separate steps."; primary: "compute-build"; repair: ""; remove: "compute-remove" }
+        ListElement { componentId: "mesh"; categoryName: "PERFORMANCE"; title: "MESA / RADV PATCH"; description: "Optional global driver after AMDGPU fixes are active."; primary: "mesh-setup"; repair: ""; remove: "mesh-remove" }
+        ListElement { componentId: "cec"; categoryName: "DEVICES"; title: "HDMI-CEC"; description: "TV, receiver, boot, and sleep integration."; primary: "cec-setup"; repair: "cec-repair"; remove: "cec-remove" }
+        ListElement { componentId: "aic"; categoryName: "DEVICES"; title: "AIC8800 WIRELESS"; description: "Hardware-specific WiFi and Bluetooth modules."; primary: "aic-install"; repair: ""; remove: "aic-remove" }
         ListElement { componentId: "decky"; categoryName: "INTERFACES"; title: "DECKY PLUGIN"; description: "Gaming-mode BC-250 controls."; primary: "decky-install"; repair: ""; remove: "decky-remove" }
         ListElement { componentId: "desktop"; categoryName: "INTERFACES"; title: "PLASMA CONTROL"; description: "Desktop applet and shared system service."; primary: "desktop-install"; repair: ""; remove: "desktop-remove" }
     }
@@ -126,7 +126,7 @@ ColumnLayout {
         Layout.fillWidth: true
         spacing: 4
         Repeater {
-            model: ["SYSTEM", "DRIVERS", "INTERFACES", "ALL"]
+            model: ["FOUNDATION", "PERFORMANCE", "DEVICES", "INTERFACES", "ALL"]
             C.NeonButton {
                 required property string modelData
                 text: modelData
