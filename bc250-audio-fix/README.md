@@ -24,8 +24,8 @@ sudo reboot
 
 | SteamOS | Kernel | Patch |
 |---|---|---|
-| 3.8.x | `linux-neptune-616` | [`bc250-dp-audio-clock-6.16.patch`](bc250-dp-audio-clock-6.16.patch) |
-| 3.9.x | `linux-neptune-618` | [`bc250-dp-audio-clock-6.18.patch`](bc250-dp-audio-clock-6.18.patch) |
+| 3.8.x | `linux-neptune-616` | [`bc250-dp-audio-clock-6.16.patch`](bc250-dp-audio-clock-6.16.patch) and [`0002-bc250-audio.patch`](0002-bc250-audio.patch) |
+| 3.9.x | `linux-neptune-618` | [`0002-bc250-audio.patch`](0002-bc250-audio.patch) |
 
 Both versions also apply the Cyan Skillfish telemetry patches. They preserve
 the firmware's published metrics-table transfer size, query and validate the
@@ -33,6 +33,20 @@ GFX clock through the SMU, sample GPU activity from GC status, and apply the
 three-part GFX1013 PASID/GFXOFF compute-queue repair.
 The build selects the display patch from the running kernel and produces
 `amdgpu.ko.zst` for that exact release.
+
+### DisplayPort Audio
+
+The 6.16 display patch backports upstream commit `9c7be0efa6f0`, routing
+Cyan Skillfish through its DCN 2.01 clock manager so the driver uses the real
+DP reference clock instead of the dcn3 730 MHz default.
+
+`0002-bc250-audio.patch` backports stable-tagged upstream commit
+[`ff209cd04845`](https://github.com/torvalds/linux/commit/ff209cd04845d819acc2fcc19b25904b4b7c3ea9).
+BC-250 VBIOS reports DP reference-clock downspread, but hardware testing found
+that the clock is not actually downspread. Correcting the audio DTO for the
+reported spread therefore causes audio to drift from video. The upstream quirk
+sets `ignore_dpref_ss` only for `AMD_APU_IS_CYAN_SKILLFISH2`; it does not rewrite
+the clock manager's spread-spectrum state.
 
 ## GPU Metrics Patches
 
@@ -189,8 +203,8 @@ The complete fallback remains mandatory for the AMDGPU override. AIC8800 may ins
 | `cleanup-other-slot.sh` | Alternate-slot restoration |
 | `clean.sh` | Generated-state cleanup |
 | `build-env.sh` | Local build environment |
-| `bc250-dp-audio-clock-6.16.patch` | SteamOS 3.8.x display clock patch |
-| `bc250-dp-audio-clock-6.18.patch` | SteamOS 3.9.x display clock patch |
+| `bc250-dp-audio-clock-6.16.patch` | SteamOS 3.8.x DCN 2.01 clock-manager selection backport |
+| `0002-bc250-audio.patch` | Stable-tagged upstream Cyan Skillfish DP-audio quirk |
 | `bc250-cyan-skillfish-gpu-telemetry.patch` | Runtime GPU activity export using the published metrics layout |
 | `bc250-cyan-skillfish-gfxclk.patch` | Runtime GFX clock export using a direct SMU query |
 | `bc250-gfx1013-attestation.patch` | Read-only loaded-module identity for safe global RADV activation |

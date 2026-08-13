@@ -16,6 +16,8 @@ AUDIO_CLEAN = ROOT / "bc250-audio-fix/clean.sh"
 AUDIO_PREREQS = ROOT / "bc250-audio-fix/ensure-build-prereqs.sh"
 METRICS_PATCH = ROOT / "bc250-audio-fix/bc250-cyan-skillfish-gpu-telemetry.patch"
 GFXCLK_PATCH = ROOT / "bc250-audio-fix/bc250-cyan-skillfish-gfxclk.patch"
+DP_AUDIO_PATCH = ROOT / "bc250-audio-fix/0002-bc250-audio.patch"
+DP_CLOCK_616_PATCH = ROOT / "bc250-audio-fix/bc250-dp-audio-clock-6.16.patch"
 GFX1013_ATTESTATION_PATCH = (
     ROOT / "bc250-audio-fix/bc250-gfx1013-attestation.patch"
 )
@@ -265,6 +267,23 @@ class DriverLifecycleTests(unittest.TestCase):
             installer.rindex('"$HERE/fetch-sources.sh" "$@"'),
         )
         self.assertGreaterEqual(builder.count("die_tree_drift \""), 6)
+
+    def test_dp_audio_uses_stable_tagged_upstream_quirk(self):
+        builder = (ROOT / "bc250-audio-fix/build.sh").read_text(encoding="utf-8")
+        readme = (ROOT / "bc250-audio-fix/README.md").read_text(encoding="utf-8")
+        audio_patch = DP_AUDIO_PATCH.read_text(encoding="utf-8")
+        clock_patch = DP_CLOCK_616_PATCH.read_text(encoding="utf-8")
+
+        self.assertIn("ff209cd04845", readme)
+        self.assertIn("AMD_APU_IS_CYAN_SKILLFISH2", audio_patch)
+        self.assertIn("init_data.flags.ignore_dpref_ss = true", audio_patch)
+        self.assertNotIn("dprefclk_ss_percentage", audio_patch)
+        self.assertNotIn("ss_on_dprefclk", audio_patch)
+        self.assertNotIn("dprefclk_ss_percentage", clock_patch)
+        self.assertNotIn("ss_on_dprefclk", clock_patch)
+        self.assertIn("AUDIO_PATCH=$HERE/0002-bc250-audio.patch", builder)
+        self.assertNotIn("bc250-dp-audio-clock-6.18.patch", builder)
+        self.assertIn("superseded blanket DPREF", builder)
 
     def test_amdgpu_build_integrates_cyan_skillfish_metrics_patches(self):
         builder = (ROOT / "bc250-audio-fix/build.sh").read_text(encoding="utf-8")

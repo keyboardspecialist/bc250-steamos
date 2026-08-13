@@ -238,24 +238,42 @@ if [ "$PREPARE_ONLY" = 1 ]; then
     exit 0
 fi
 
-step "apply DP-audio patch (runbook step 7)"
-# SteamOS 3.8.x (6.16) needs both hunks; 3.9.x (6.18) already carries the
-# clk_mgr DCN 2.01 reorder upstream, leaving only the dcn201
-# spread-spectrum-state hunk. New kernel major: check which hunks are upstream
-# before adding a variant here.
+step "apply display/audio clock patches (runbook step 7)"
+# SteamOS 3.8.x needs the DCN 2.01 clock-manager selection backport. The
+# selection is already upstream in 6.18. Both versions need the stable-tagged
+# Cyan Skillfish DP-audio quirk from upstream commit ff209cd04845.
 case "$BASE" in
-    6.16.*) PATCH=$HERE/bc250-dp-audio-clock-6.16.patch ;;
-    6.18.*) PATCH=$HERE/bc250-dp-audio-clock-6.18.patch ;;
-    *)      die "no DP-audio patch variant for kernel $BASE — check which hunks are already upstream, then add a case above" ;;
+    6.16.*) CLOCK_PATCH=$HERE/bc250-dp-audio-clock-6.16.patch ;;
+    6.18.*) CLOCK_PATCH= ;;
+    *)      die "no display/audio patch variant for kernel $BASE — check which fixes are already upstream, then add a case above" ;;
 esac
-echo "kernel $BASE -> $(basename "$PATCH")"
-if patch -p1 -R --dry-run -s -f < "$PATCH" >/dev/null 2>&1; then
-    echo "patch already applied"
-elif patch -p1 --dry-run -s -f < "$PATCH" >/dev/null 2>&1; then
-    patch -p1 -s < "$PATCH"
-    echo "patch applied"
+
+DCN201_CLK_MGR=drivers/gpu/drm/amd/display/dc/clk_mgr/dcn201/dcn201_clk_mgr.c
+if [ "$(grep -c 'clk_mgr->dprefclk_ss_percentage = 0;' "$DCN201_CLK_MGR")" -gt 1 ] \
+   || [ "$(grep -c 'clk_mgr->ss_on_dprefclk = false;' "$DCN201_CLK_MGR")" -gt 1 ]; then
+    die_tree_drift "superseded blanket DPREF spread-spectrum override is still applied; clean the tree before rebuilding"
+fi
+
+if [ -n "$CLOCK_PATCH" ]; then
+    echo "kernel $BASE -> $(basename "$CLOCK_PATCH")"
+    if patch -p1 -R --dry-run -s -f < "$CLOCK_PATCH" >/dev/null 2>&1; then
+        echo "display clock patch already applied"
+    elif patch -p1 --dry-run -s -f < "$CLOCK_PATCH" >/dev/null 2>&1; then
+        patch -p1 -s < "$CLOCK_PATCH"
+        echo "display clock patch applied"
+    else
+        die_tree_drift "display clock patch neither applies nor reverses cleanly — tree has drifted"
+    fi
+fi
+
+AUDIO_PATCH=$HERE/0002-bc250-audio.patch
+if patch -p1 -R --dry-run -s -f < "$AUDIO_PATCH" >/dev/null 2>&1; then
+    echo "upstream DP-audio patch already applied"
+elif patch -p1 --dry-run -s -f < "$AUDIO_PATCH" >/dev/null 2>&1; then
+    patch -p1 -s < "$AUDIO_PATCH"
+    echo "upstream DP-audio patch applied"
 else
-    die_tree_drift "patch neither applies nor reverses cleanly — tree has drifted"
+    die_tree_drift "upstream DP-audio patch neither applies nor reverses cleanly — tree has drifted"
 fi
 
 step "apply Cyan Skillfish GPU metrics patches"
