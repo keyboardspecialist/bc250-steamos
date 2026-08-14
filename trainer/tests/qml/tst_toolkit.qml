@@ -28,13 +28,17 @@ TestCase {
             "components": [
                 {"id": "storage", "state": "installed"},
                 {"id": "power", "state": "partial"},
-                {"id": "ram", "state": "not-installed"}
+                {"id": "ram", "state": "not-installed"},
+                {"id": "swap", "state": "installed"}
             ]
         })
         property var operations: [
             {"id": "storage-install", "title": "Install storage", "verb": "INSTALL", "description": "Install storage.", "destructive": false},
             {"id": "storage-repair", "title": "Repair storage", "verb": "REPAIR", "description": "Repair storage.", "destructive": false},
-            {"id": "storage-remove", "title": "Remove storage", "verb": "REMOVE", "description": "Remove storage.", "destructive": true}
+            {"id": "storage-remove", "title": "Remove storage", "verb": "REMOVE", "description": "Remove storage.", "destructive": true},
+            {"id": "swap-zram-install", "title": "Use zram", "verb": "USE ZRAM", "description": "Use zram.", "destructive": false},
+            {"id": "swap-zswap-install", "title": "Use zswap", "verb": "USE ZSWAP", "description": "Use zswap.", "destructive": false},
+            {"id": "swap-remove", "title": "Remove swap", "verb": "REMOVE", "description": "Remove swap.", "destructive": true}
         ]
         property bool refreshing: false
         property bool running: false
@@ -81,6 +85,7 @@ TestCase {
         compare(page.componentState("storage"), "installed")
         compare(page.componentState("power"), "partial")
         compare(page.componentState("persistence"), "installed")
+        compare(page.componentState("swap"), "installed")
 
         var storage = findChild(page, "toolkitCard-storage")
         verify(storage !== null)
@@ -104,12 +109,15 @@ TestCase {
     function test_semanticCategoryVisibility() {
         var storage = findChild(page, "toolkitCard-storage")
         var ram = findChild(page, "toolkitCard-ram")
+        var swap = findChild(page, "toolkitCard-swap")
         var cec = findChild(page, "toolkitCard-cec")
         verify(storage !== null)
         verify(ram !== null)
+        verify(swap !== null)
         verify(cec !== null)
         compare(storage.categoryName, "FOUNDATION")
         compare(ram.categoryName, "PERFORMANCE")
+        compare(swap.categoryName, "PERFORMANCE")
         compare(cec.categoryName, "DEVICES")
         compare(page.showsCategory(storage.categoryName), true)
         compare(page.showsCategory(ram.categoryName), false)

@@ -28,6 +28,7 @@ class ToolkitTests(unittest.TestCase):
             "interfaces",
             "power",
             "ram",
+            "swap",
             "compute",
             "cpu-unlock",
             "cec",
@@ -207,6 +208,7 @@ class ToolkitTests(unittest.TestCase):
             "bc250-cec.sh",
             "bc250-40cu.sh",
             "bc250-ram-split.sh",
+            "bc250-swap.sh",
             "bc250-storage.sh",
             "bc250-update-persistence.sh",
             "bc250-mesh-shader.sh",
@@ -302,6 +304,7 @@ class ToolkitTests(unittest.TestCase):
             "bc250-storage.sh",
             "bc250-power.sh",
             "bc250-ram-split.sh",
+            "bc250-swap.sh",
             "bc250-40cu.sh",
             "bc250-cec.sh",
             "bc250-update-persistence.sh",
@@ -338,6 +341,7 @@ class ToolkitTests(unittest.TestCase):
         probes = {
             "bc250-power.sh": ("installed", 0),
             "bc250-ram-split.sh": ("installed", 0),
+            "bc250-swap.sh": ("installed", 0),
             "bc250-40cu.sh": ("installed", 0),
             "bc250-cec.sh": ("installed", 1),
             "bc250-storage.sh": ("installed", 0),
@@ -385,6 +389,7 @@ class ToolkitTests(unittest.TestCase):
             "bc250-storage.sh",
             "bc250-power.sh",
             "bc250-ram-split.sh",
+            "bc250-swap.sh",
             "bc250-cec.sh",
             "bc250-update-persistence.sh",
         )
@@ -514,6 +519,7 @@ class ToolkitTests(unittest.TestCase):
                     "cpu-unlock",
                     "menu",
                 ),
+                "swap": ("sudo", "bash", str(root / "bc250-swap.sh"), "menu"),
             }
             for command, expected in mappings.items():
                 with self.subTest(command=command):
@@ -539,6 +545,8 @@ class ToolkitTests(unittest.TestCase):
                 "storage-repair": ("sudo", "bc250-storage.sh", "repair-infrastructure"),
                 "power-install": ("sudo", "bc250-power.sh", "all"),
                 "ram-install": ("sudo", "bc250-ram-split.sh", "install"),
+                "swap-zram-install": ("sudo", "bc250-swap.sh", "install", "zram"),
+                "swap-zswap-install": ("sudo", "bc250-swap.sh", "install", "zswap"),
                 "compute-build": ("sudo", "bc250-40cu.sh", "prep"),
                 "cec-setup": ("direct", "bc250-cec.sh", "setup"),
                 "cec-repair": ("direct", "bc250-cec.sh", "repair"),
@@ -564,6 +572,7 @@ class ToolkitTests(unittest.TestCase):
                 "storage",
                 "power",
                 "ram",
+                "swap",
                 "compute",
                 "cec",
                 "aic",
@@ -638,6 +647,7 @@ class ToolkitTests(unittest.TestCase):
                     "cec",
                     "power",
                     "ram",
+                    "swap",
                     "compute",
                     "mesh",
                     "audio",

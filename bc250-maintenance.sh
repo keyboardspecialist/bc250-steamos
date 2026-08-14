@@ -6,6 +6,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SELF="$SCRIPT_DIR/$(basename "${BASH_SOURCE[0]}")"
 POWER_SH="${POWER_SH:-$SCRIPT_DIR/bc250-power.sh}"
 RAM_SH="${RAM_SH:-$SCRIPT_DIR/bc250-ram-split.sh}"
+SWAP_SH="${SWAP_SH:-$SCRIPT_DIR/bc250-swap.sh}"
 COMPUTE_SH="${COMPUTE_SH:-$SCRIPT_DIR/bc250-40cu.sh}"
 CEC_SH="${CEC_SH:-$SCRIPT_DIR/bc250-cec.sh}"
 STORAGE_SH="${STORAGE_SH:-$SCRIPT_DIR/bc250-storage.sh}"
@@ -20,8 +21,8 @@ TRAINER_SH="${TRAINER_SH:-$SCRIPT_DIR/trainer/install.sh}"
 TRAINER_FLATPAK_SH="${TRAINER_FLATPAK_SH:-$SCRIPT_DIR/trainer/install-flatpak.sh}"
 SERVICE_CLIENT_DIR="${BC250_SERVICE_CLIENT_DIR:-/var/lib/bc250-control/service-clients}"
 
-COMPONENTS=(trainer desktop decky cec power ram compute mesh audio aic)
-UNINSTALL_ORDER=(trainer desktop decky cec power ram compute mesh audio aic)
+COMPONENTS=(trainer desktop decky cec power ram swap compute mesh audio aic)
+UNINSTALL_ORDER=(trainer desktop decky cec power ram swap compute mesh audio aic)
 MESH_STATE_DIR="${BC250_MESH_STATE_DIR:-$HOME/.local/share/bc250-mesh-shader}"
 MESH_LOCK_FILE="${BC250_MESH_LOCK_FILE:-$HOME/.cache/bc250-mesh-shader.lock}"
 MESH_GENERATOR="${BC250_GFX1013_GENERATOR:-/usr/lib/systemd/user-environment-generators/60-bc250-gfx1013}"
@@ -46,6 +47,7 @@ component_label() {
         cec) echo "CEC integration" ;;
         power) echo "Power management / CPU core unlock" ;;
         ram) echo "RAM / VRAM split" ;;
+        swap) echo "Compressed swap" ;;
         compute) echo "GPU compute-unit unlock" ;;
         mesh) echo "Mesa / RADV async-compute patch" ;;
         audio) echo "AMDGPU kernel fixes" ;;
@@ -63,6 +65,7 @@ component_script() {
         cec) echo "$CEC_SH" ;;
         power) echo "$POWER_SH" ;;
         ram) echo "$RAM_SH" ;;
+        swap) echo "$SWAP_SH" ;;
         compute) echo "$COMPUTE_SH" ;;
         mesh) echo "$MESH_SH" ;;
         audio) echo "$AUDIO_SH" ;;
@@ -77,7 +80,7 @@ component_probe() {
     script=$(component_script "$component")
     require_script "$script"
     case "$component" in
-        power|ram|compute|cec) bash "$script" installed >/dev/null 2>&1 ;;
+        power|ram|swap|compute|cec) bash "$script" installed >/dev/null 2>&1 ;;
         trainer)
             if bash "$script" status >/dev/null 2>&1; then
                 return 0
@@ -139,6 +142,15 @@ component_has_artifacts() {
                 || -L /etc/default/grub.d/bc250-ttm.cfg \
                 || -e /etc/atomic-update.conf.d/bc250-ram.conf \
                 || -L /etc/atomic-update.conf.d/bc250-ram.conf ]]
+            ;;
+        swap)
+            [[ -e /var/lib/bc250-control/swap/install.conf \
+                || -e /var/lib/bc250-control/swap/swapfile \
+                || -e /etc/systemd/zram-generator.conf.d/90-bc250-swap.conf \
+                || -e /etc/systemd/system/bc250-zswap-setup.service \
+                || -e '/etc/systemd/system/var-lib-bc250\x2dcontrol-swap-swapfile.swap' \
+                || -L '/etc/systemd/system/swap.target.wants/var-lib-bc250\x2dcontrol-swap-swapfile.swap' \
+                || -e /etc/atomic-update.conf.d/bc250-swap.conf ]]
             ;;
         compute) [[ -e /etc/systemd/system/bc250-cu-live-manager.service ]] ;;
         mesh)
@@ -253,6 +265,7 @@ plan_component() {
         cec) echo "  Remove CEC boot, shutdown, and sleep integrations; preserve CEC preferences." ;;
         power) echo "  Restore stock CPU state, disable tuning and CPU core-unlock persistence, and remove the ACPI override on next boot." ;;
         ram) echo "  Remove the memory utility and TTM boot limit; preserve the profile. The CMOS split is unchanged." ;;
+        swap) echo "  Disable toolkit swap boot integration and safely remove its inactive disk swapfile after any required reboot." ;;
         compute) echo "  Restore stock CU dispatch when possible and remove boot integration; preserve the WGP profile and UMR." ;;
         mesh) echo "  Remove the alternate RADV ICD and global user environment generator; preserve build caches." ;;
         audio) echo "  Restore stock AMDGPU modules for every patched kernel; preserve source and build caches." ;;
@@ -282,7 +295,7 @@ show_plan() {
 remove_persistence_for() {
     local component="$1" persistence=""
     case "$component" in
-        cec|power|ram|compute|aic) persistence="$component" ;;
+        cec|power|ram|swap|compute|aic) persistence="$component" ;;
         *) return 0 ;;
     esac
     require_script "$PERSISTENCE_SH"
@@ -328,7 +341,7 @@ run_component_uninstall() {
                 || bash "$script" uninstall || rc=$?
             ;;
         desktop|decky|cec|mesh|audio) bash "$script" uninstall || rc=$? ;;
-        power|ram|compute|aic|storage) sudo bash "$script" uninstall || rc=$? ;;
+        power|ram|swap|compute|aic|storage) sudo bash "$script" uninstall || rc=$? ;;
         *) die "Unknown component: $component" ;;
     esac
     [[ $rc -eq 0 ]] || return "$rc"

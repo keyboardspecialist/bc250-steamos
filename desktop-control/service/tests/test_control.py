@@ -235,6 +235,10 @@ class ControlServiceTests(unittest.IsolatedAsyncioTestCase):
         with self.assertRaises(InvalidArguments):
             await self.service.set_gpu_frequency(":1.1", "pin", 0, 2200)
         with self.assertRaises(InvalidArguments):
+            await self.service.set_gpu_frequency(":1.1", "pin", 0, 299)
+        with self.assertRaises(InvalidArguments):
+            await self.service.set_gpu_frequency(":1.1", "range", 100, 1500)
+        with self.assertRaises(InvalidArguments):
             await self.service.set_cec_name(":1.1", 'bad"name')
         with self.assertRaises(InvalidArguments):
             await self.service.cpu_oc_action(":1.1", "detect", True, 1200, 90)

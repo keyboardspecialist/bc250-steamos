@@ -27,6 +27,7 @@ class MaintenanceTests(unittest.TestCase):
         scripts = {
             "POWER_SH": "power",
             "RAM_SH": "ram",
+            "SWAP_SH": "swap",
             "COMPUTE_SH": "compute",
             "CEC_SH": "cec",
             "STORAGE_SH": "storage",
@@ -44,7 +45,7 @@ class MaintenanceTests(unittest.TestCase):
                 "case \"${1:-}\" in\n"
                 "  status|installed) echo installed; exit 0 ;;\n"
                 f'  uninstall) printf "%s\\n" "{name}:uninstall" >> "$CALL_LOG"; '
-                f'[ "${{FAIL_COMPONENT:-}}" != "{name}" ] || exit 9 ;;\n'
+                f'[ "${{FAIL_COMPONENT:-}}" != "{name}" ] || exit "${{FAIL_CODE:-9}}" ;;\n'
                 f'  uninstall-legacy) printf "%s\\n" "{name}:uninstall-legacy" >> "$CALL_LOG" ;;\n'
                 "  *) exit 2 ;;\n"
                 "esac\n",
@@ -109,7 +110,7 @@ class MaintenanceTests(unittest.TestCase):
                 text=True,
                 env=env,
             )
-            self.assertEqual(status.stdout.count("installed"), 11)
+            self.assertEqual(status.stdout.count("installed"), 12)
             self.assertIn("Saved tuning profiles", plan.stdout)
             self.assertFalse(call_log.exists())
 
@@ -135,6 +136,8 @@ class MaintenanceTests(unittest.TestCase):
                     "persistence:remove power",
                     "ram:uninstall",
                     "persistence:remove ram",
+                    "swap:uninstall",
+                    "persistence:remove swap",
                     "compute:uninstall",
                     "persistence:remove compute",
                     "mesh:uninstall",
@@ -225,6 +228,24 @@ class MaintenanceTests(unittest.TestCase):
             self.assertNotIn("persistence:remove all", calls)
             self.assertNotIn("storage:uninstall", calls)
             self.assertIn("aic:uninstall", calls)
+
+    def test_pending_swap_removal_blocks_storage_teardown(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            env, call_log = self.make_environment(Path(temporary))
+            env["FAIL_COMPONENT"] = "swap"
+            env["FAIL_CODE"] = "75"
+            result = subprocess.run(
+                ["bash", str(MAINTENANCE), "uninstall", "all", "--yes"],
+                capture_output=True,
+                text=True,
+                env=env,
+            )
+            self.assertNotEqual(result.returncode, 0)
+            calls = call_log.read_text(encoding="utf-8").splitlines()
+            self.assertIn("swap:uninstall", calls)
+            self.assertNotIn("persistence:remove swap", calls)
+            self.assertNotIn("persistence:remove all", calls)
+            self.assertNotIn("storage:uninstall", calls)
 
     def test_scripts_parse(self):
         subprocess.run(

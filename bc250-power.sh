@@ -71,6 +71,9 @@ GOV_CONF_DIR="/etc/cyan-skillfish-governor-smu"
 GOV_CONF="$GOV_CONF_DIR/config.toml"
 GOV_UNIT="/etc/systemd/system/cyan-skillfish-governor-smu.service"
 GOV_SVC="cyan-skillfish-governor-smu.service"
+GPU_CONTROL_LOCK="${GPU_CONTROL_LOCK:-/run/lock/bc250-control/backend.lock}"
+SYSTEMCTL_BIN="${SYSTEMCTL_BIN:-systemctl}"
+GPU_CONTROL_LOCK_HELD=0
 DBUS_POLICY="/etc/dbus-1/system.d/com.cyan.SkillFishGovernor.conf"
 GOV_API="https://api.github.com/repos/filippor/cyan-skillfish-governor/releases/latest"
 GOV_RAW="https://raw.githubusercontent.com/filippor/cyan-skillfish-governor/smu"
@@ -331,6 +334,7 @@ cleanup() {
     done
     relock_rootfs || true
     grub_config_unlock || true
+    gpu_control_unlock || true
 }
 trap cleanup EXIT
 
@@ -937,8 +941,12 @@ EOF
 # restored by 'gpu-volt reset'.
 default_safe_points() {
     cat << 'EOF'
-# Voltage curve: flat 1000 mV ceiling (2026 community finding: most boards
-# hold it; bump the TOP point +15-25 mV only if yours proves unstable there)
+# Voltage curve: 300 MHz floor with a flat 1000 mV ceiling (2026 community
+# finding: most boards hold it; bump the TOP point +15-25 mV only if unstable)
+[[safe-points]]
+frequency = 300
+voltage = 700
+
 [[safe-points]]
 frequency = 1000
 voltage = 800
@@ -1264,12 +1272,90 @@ clear_freq_state() {
     fi
 }
 
+gpu_control_lock() {
+    local parent owner permissions descriptor_device descriptor_inode path_device path_inode
+    [[ $GPU_CONTROL_LOCK_HELD -eq 0 ]] || return 0
+    command -v flock >/dev/null 2>&1 \
+        || { warn "flock is required for safe GPU control changes."; return 1; }
+    parent="${GPU_CONTROL_LOCK%/*}"
+    [[ "$GPU_CONTROL_LOCK" == /* && -n "$parent" && "$parent" != "$GPU_CONTROL_LOCK" ]] \
+        || { warn "GPU control lock path is invalid: $GPU_CONTROL_LOCK"; return 1; }
+    install -d -o "$(id -u)" -g "$(id -g)" -m 0755 "$parent" \
+        || { warn "Could not prepare GPU control lock directory: $parent"; return 1; }
+    [[ -d "$parent" && ! -L "$parent" ]] \
+        || { warn "GPU control lock directory is unsafe: $parent"; return 1; }
+    owner=$(stat -c %u "$parent")
+    permissions=$(stat -c %a "$parent")
+    [[ "$owner" == "$(id -u)" ]] && (( (8#$permissions & 8#022) == 0 )) \
+        || { warn "GPU control lock directory is not trusted: $parent"; return 1; }
+    if [[ ! -e "$GPU_CONTROL_LOCK" ]]; then
+        ( umask 177; : > "$GPU_CONTROL_LOCK" ) \
+            || { warn "Could not create GPU control lock: $GPU_CONTROL_LOCK"; return 1; }
+    fi
+    [[ -f "$GPU_CONTROL_LOCK" && ! -L "$GPU_CONTROL_LOCK" ]] \
+        || { warn "GPU control lock file is unsafe: $GPU_CONTROL_LOCK"; return 1; }
+    owner=$(stat -c %u "$GPU_CONTROL_LOCK")
+    permissions=$(stat -c %a "$GPU_CONTROL_LOCK")
+    [[ "$owner" == "$(id -u)" ]] && (( (8#$permissions & 8#022) == 0 )) \
+        || { warn "GPU control lock file is not trusted: $GPU_CONTROL_LOCK"; return 1; }
+    exec 5<> "$GPU_CONTROL_LOCK" \
+        || { warn "Could not open GPU control lock: $GPU_CONTROL_LOCK"; return 1; }
+    read -r descriptor_device descriptor_inode < <(stat -Lc '%d %i' /proc/self/fd/5)
+    read -r path_device path_inode < <(stat -Lc '%d %i' "$GPU_CONTROL_LOCK")
+    if [[ "$descriptor_device:$descriptor_inode" != "$path_device:$path_inode" ]]; then
+        exec 5>&-
+        warn "GPU control lock changed while opening: $GPU_CONTROL_LOCK"
+        return 1
+    fi
+    if ! flock -w 10 5; then
+        exec 5>&-
+        warn "Another BC-250 control operation is still running."
+        return 1
+    fi
+    GPU_CONTROL_LOCK_HELD=1
+}
+
+gpu_control_unlock() {
+    [[ $GPU_CONTROL_LOCK_HELD -eq 1 ]] || return 0
+    flock -u 5 2>/dev/null || true
+    exec 5>&-
+    GPU_CONTROL_LOCK_HELD=0
+}
+
+validate_gpu_frequency_request() {
+    local first="${1:-}" second="${2:-}"
+    case "$first" in
+        ""|status|auto|off|max|on)
+            [[ -z "$second" ]] || die "Usage: $0 freq [status|auto|max|<MHz>|<min> <max>]"
+            ;;
+        *)
+            [[ "$first" =~ ^[0-9]+$ ]] \
+                || die "Usage: $0 freq [status|auto|max|<MHz>|<min> <max>]"
+            if [[ -n "$second" ]]; then
+                [[ "$second" =~ ^[0-9]+$ ]] \
+                    || die "GPU frequencies must be whole numbers."
+                (( second >= GPU_FREQ_MIN && second <= GPU_FREQ_MAX )) \
+                    || die "Maximum frequency must be ${GPU_FREQ_MIN}-${GPU_FREQ_MAX} MHz."
+                (( first == 0 || (first >= GPU_FREQ_MIN && first <= GPU_FREQ_MAX) )) \
+                    || die "Minimum frequency must be 0 (no floor) or ${GPU_FREQ_MIN}-${GPU_FREQ_MAX} MHz."
+                (( first == 0 || first <= second )) \
+                    || die "Minimum frequency exceeds maximum frequency."
+            else
+                (( first >= GPU_FREQ_MIN && first <= GPU_FREQ_MAX )) \
+                    || die "Pinned frequency must be ${GPU_FREQ_MIN}-${GPU_FREQ_MAX} MHz."
+            fi
+            ;;
+    esac
+}
+
 cmd_freq() {
     require_root
+    gpu_control_lock || return $?
     systemctl is-active "$GOV_SVC" >/dev/null 2>&1 \
         || die "Governor not running -- freq control goes through it."
 
     local a="${1:-}" b="${2:-}"
+    validate_gpu_frequency_request "$a" "$b"
     # Helper handles everything including status; use it when available.
     if [[ -x "$PERF_BIN" ]]; then
         case "$a" in
@@ -1282,6 +1368,7 @@ cmd_freq() {
                 else                   "$PERF_BIN" --fixed-frequency "$a" && save_freq_state pin "$a"; fi ;;
             *) die "Usage: $0 freq [status|auto|max|<MHz>|<min> <max>]" ;;
         esac
+        gpu_control_unlock
         return
     fi
 
@@ -1306,6 +1393,7 @@ cmd_freq() {
             fi ;;
         *) die "Usage: $0 freq [status|auto|max|<MHz>|<min> <max>]" ;;
     esac
+    gpu_control_unlock
 }
 
 # ========================= GPU voltage control ============================
@@ -1313,79 +1401,601 @@ cmd_freq() {
 # frequency continuously); forcing vid directly over SMU would fight it.
 # These commands edit the curve in config.toml, restart the governor, and
 # reapply the saved freq setting (a restart otherwise drops runtime state).
+GPU_FREQ_MIN=300
+GPU_FREQ_MAX=2150
 VOLT_MIN=700    # below: artifact/crash territory even at low clocks
 VOLT_MAX=1050   # above the community flat-1000 ceiling + small margin
 
 restart_governor_reapply() {
     systemctl restart "$GOV_SVC"
-    log "Governor restarted with the new curve."
+    log "Governor restarted with the updated configuration."
     if [[ -f "$FREQ_STATE" && -x "$RESTORE_BIN" ]]; then
         if "$RESTORE_BIN"; then log "Saved freq setting reapplied."
         else warn "Could not reapply saved freq setting -- check 'freq status'."; fi
     fi
 }
 
-volt_show() {
-    [[ -f "$GOV_CONF" ]] || die "No governor config at $GOV_CONF -- run '$0 governor' first."
-    echo -e "${CB}=== GPU voltage curve ($GOV_CONF) ===${C0}"
-    awk '/^frequency = /{f=$3} /^voltage = /{printf "  %4d MHz -> %4d mV\n", f, $3}' "$GOV_CONF"
-    local live
-    live=$(sensors 2>/dev/null | grep -im1 vddgfx || true)
-    [[ -n "$live" ]] && echo "  live: $live"
-    echo "  (any frequency you run needs a point at or above it)"
+volt_curve_helper() {
+    local mode="$1"
+    shift
+    command -v python3 >/dev/null 2>&1 \
+        || die "python3 is required for safe voltage-curve updates."
+    python3 -c 'import tomllib' >/dev/null 2>&1 \
+        || die "Python 3.11 or newer is required for safe voltage-curve updates."
+    python3 - "$mode" "$GOV_CONF" "$FREQ_STATE" "$RESTORE_BIN" "$GOV_SVC" \
+        "$GPU_CONTROL_LOCK" "$SYSTEMCTL_BIN" "$GPU_FREQ_MIN" "$GPU_FREQ_MAX" \
+        "$VOLT_MIN" "$VOLT_MAX" "$@" <<'PY'
+import fcntl
+import os
+import re
+import stat
+import subprocess
+import sys
+import tempfile
+import time
+import tomllib
+from pathlib import Path
+
+
+class CurveError(Exception):
+    pass
+
+
+class AtomicWriteError(CurveError):
+    def __init__(self, message, replacement_done=False):
+        super().__init__(message)
+        self.replacement_done = replacement_done
+
+
+class TransitionalServiceError(CurveError):
+    pass
+
+
+mode, config_arg, state_arg, restore_arg, service, lock_arg, systemctl = sys.argv[1:8]
+frequency_min, frequency_max, voltage_min, voltage_max = map(int, sys.argv[8:12])
+arguments = sys.argv[12:]
+config_path = Path(config_arg)
+state_path = Path(state_arg)
+restore_path = Path(restore_arg)
+lock_path = Path(lock_arg)
+
+
+def read_regular(path, trusted=False):
+    try:
+        before = path.lstat()
+        if not stat.S_ISREG(before.st_mode) or stat.S_ISLNK(before.st_mode):
+            raise CurveError(f"Refusing unsafe file: {path}")
+        descriptor = os.open(path, os.O_RDONLY | os.O_CLOEXEC | os.O_NOFOLLOW)
+        with os.fdopen(descriptor, "rb") as stream:
+            opened = os.fstat(stream.fileno())
+            if (before.st_dev, before.st_ino) != (opened.st_dev, opened.st_ino):
+                raise CurveError(f"File changed while opening: {path}")
+            if trusted and (
+                opened.st_nlink != 1
+                or opened.st_uid != os.geteuid()
+                or opened.st_mode & 0o022
+            ):
+                raise CurveError(f"File is not trusted: {path}")
+            content = stream.read(1024 * 1024 + 1)
+        if len(content) > 1024 * 1024:
+            raise CurveError(f"File is unexpectedly large: {path}")
+        return content.decode("utf-8"), before
+    except CurveError:
+        raise
+    except (OSError, UnicodeError) as error:
+        raise CurveError(f"Could not read {path}: {error}") from error
+
+
+def parse_config(content):
+    try:
+        data = tomllib.loads(content)
+    except (TypeError, ValueError) as error:
+        raise CurveError(f"Governor config is invalid TOML: {error}") from error
+    raw_points = data.get("safe-points")
+    if not isinstance(raw_points, list) or not raw_points:
+        raise CurveError("Governor config has no [[safe-points]] curve.")
+    points = []
+    for index, point in enumerate(raw_points, 1):
+        if not isinstance(point, dict):
+            raise CurveError(f"Curve point {index} is not a TOML table.")
+        if set(point) != {"frequency", "voltage"}:
+            raise CurveError(f"Curve point {index} contains unsupported fields.")
+        frequency = point.get("frequency")
+        voltage = point.get("voltage")
+        if type(frequency) is not int or type(voltage) is not int:
+            raise CurveError(f"Curve point {index} needs integer frequency and voltage values.")
+        points.append((frequency, voltage))
+    return points
+
+
+def validate_points(points):
+    if len(points) < 2:
+        raise CurveError("The voltage curve must contain at least two points.")
+    previous_frequency = None
+    previous_voltage = None
+    for frequency, voltage in points:
+        if not frequency_min <= frequency <= frequency_max:
+            raise CurveError(
+                f"Frequency {frequency} is outside {frequency_min}-{frequency_max} MHz."
+            )
+        if not voltage_min <= voltage <= voltage_max:
+            raise CurveError(
+                f"Voltage {voltage} is outside {voltage_min}-{voltage_max} mV."
+            )
+        if previous_frequency is not None and frequency <= previous_frequency:
+            raise CurveError("Curve frequencies must be sorted and unique.")
+        if previous_voltage is not None and voltage < previous_voltage:
+            raise CurveError("Curve voltage cannot decrease as frequency increases.")
+        previous_frequency = frequency
+        previous_voltage = voltage
+
+
+def integer(value, label, signed=False):
+    pattern = r"[+-]?[0-9]+" if signed else r"[0-9]+"
+    if re.fullmatch(pattern, value or "") is None:
+        raise CurveError(f"{label} must be a whole number.")
+    return int(value)
+
+
+def mutate_points(points, operation, values):
+    if operation == "reset":
+        if values:
+            raise CurveError("reset takes no values.")
+        return [(300, 700), (1000, 800), (1500, 900), (2000, 1000), (2150, 1000)]
+
+    validate_points(points)
+    if operation == "offset":
+        if len(values) != 1:
+            raise CurveError("offset needs one mV delta.")
+        delta = integer(values[0], "Voltage offset", signed=True)
+        return [(frequency, voltage + delta) for frequency, voltage in points]
+
+    if operation == "add":
+        if len(values) != 2:
+            raise CurveError("add needs frequency and voltage values.")
+        frequency = integer(values[0], "Frequency")
+        voltage = integer(values[1], "Voltage")
+        if any(existing == frequency for existing, _ in points):
+            raise CurveError(f"A curve point already exists at {frequency} MHz.")
+        return sorted([*points, (frequency, voltage)])
+
+    if operation == "set":
+        if len(values) != 2:
+            raise CurveError("set needs frequency and voltage values.")
+        frequency = integer(values[0], "Frequency")
+        voltage = integer(values[1], "Voltage")
+        if not any(existing == frequency for existing, _ in points):
+            raise CurveError(f"No curve point exists at {frequency} MHz.")
+        return [(existing, voltage if existing == frequency else current) for existing, current in points]
+
+    if operation == "edit":
+        if len(values) != 3:
+            raise CurveError("edit needs old frequency, new frequency, and voltage values.")
+        old_frequency = integer(values[0], "Existing frequency")
+        frequency = integer(values[1], "New frequency")
+        voltage = integer(values[2], "Voltage")
+        if not any(existing == old_frequency for existing, _ in points):
+            raise CurveError(f"No curve point exists at {old_frequency} MHz.")
+        if frequency != old_frequency and any(existing == frequency for existing, _ in points):
+            raise CurveError(f"A curve point already exists at {frequency} MHz.")
+        return sorted(
+            (frequency, voltage) if existing == old_frequency else (existing, current)
+            for existing, current in points
+        )
+
+    if operation == "remove":
+        if len(values) != 1:
+            raise CurveError("remove needs one frequency value.")
+        frequency = integer(values[0], "Frequency")
+        if not any(existing == frequency for existing, _ in points):
+            raise CurveError(f"No curve point exists at {frequency} MHz.")
+        return [(existing, voltage) for existing, voltage in points if existing != frequency]
+
+    raise CurveError(f"Unknown voltage-curve operation: {operation}")
+
+
+def validate_frequency_state(points):
+    if not state_path.exists():
+        return False
+    content, _ = read_regular(state_path, trusted=True)
+    values = {}
+    for line in content.splitlines():
+        if "=" in line:
+            key, value = line.split("=", 1)
+            if key in {"MODE", "A", "B"}:
+                values[key] = value
+    state_mode = values.get("MODE", "")
+    if state_mode == "adaptive":
+        return False
+    if state_mode == "max":
+        return True
+    low, high = points[0][0], points[-1][0]
+    if state_mode == "pin":
+        frequency = integer(values.get("A", ""), "Saved pinned frequency")
+        if not low <= frequency <= high:
+            raise CurveError("Saved pinned frequency falls outside the candidate curve.")
+        return True
+    if state_mode == "range":
+        minimum = integer(values.get("A", ""), "Saved minimum frequency")
+        maximum = integer(values.get("B", ""), "Saved maximum frequency")
+        if (minimum != 0 and not low <= minimum <= high) or not low <= maximum <= high:
+            raise CurveError("Saved frequency range falls outside the candidate curve.")
+        if minimum and minimum > maximum:
+            raise CurveError("Saved frequency range is inverted.")
+        return True
+    raise CurveError("Saved GPU frequency state is invalid.")
+
+
+def render_config(content, points):
+    lines = content.splitlines(keepends=True)
+    safe_header = re.compile(r"^\s*\[\[safe-points\]\]\s*(?:#.*)?$")
+    assignment = re.compile(
+        r"^\s*(frequency|voltage)\s*=\s*([0-9]+)\s*(?:#.*)?$"
+    )
+    starts = [index for index, line in enumerate(lines) if safe_header.match(line.rstrip("\r\n"))]
+    if not starts:
+        raise CurveError("Governor config has no [[safe-points]] blocks to replace.")
+    ranges = []
+    for start in starts:
+        found = set()
+        end = None
+        for index in range(start + 1, len(lines)):
+            stripped = lines[index].rstrip("\r\n")
+            if not stripped.strip() or stripped.lstrip().startswith("#"):
+                continue
+            matched = assignment.match(stripped)
+            if matched is None or matched.group(1) in found:
+                raise CurveError(
+                    f"Curve block at line {start + 1} has unsupported content."
+                )
+            found.add(matched.group(1))
+            if found == {"frequency", "voltage"}:
+                end = index + 1
+                break
+        if end is None:
+            raise CurveError(f"Curve block at line {start + 1} is incomplete.")
+        ranges.append((start, end))
+    rendered = "".join(
+        f"[[safe-points]]\nfrequency = {frequency}\nvoltage = {voltage}\n\n"
+        for frequency, voltage in points
+    )
+    output = []
+    cursor = 0
+    for index, (start, end) in enumerate(ranges):
+        output.extend(lines[cursor:start])
+        if index == 0:
+            output.append(rendered)
+        cursor = end
+    output.extend(lines[cursor:])
+    candidate = "".join(output)
+    try:
+        tomllib.loads(candidate)
+    except (TypeError, ValueError) as error:
+        raise CurveError(f"Candidate governor config is invalid TOML: {error}") from error
+    reparsed = parse_config(candidate)
+    validate_points(reparsed)
+    if reparsed != points:
+        raise CurveError(
+            "Candidate curve does not match the requested points; normalize safe-point headers first."
+        )
+    return candidate
+
+
+def atomic_write(path, content, metadata):
+    parent = path.parent
+    replacement_done = False
+    try:
+        parent_metadata = parent.lstat()
+        if not stat.S_ISDIR(parent_metadata.st_mode) or stat.S_ISLNK(parent_metadata.st_mode):
+            raise CurveError(f"Governor config directory is unsafe: {parent}")
+        if (
+            parent_metadata.st_uid != os.geteuid()
+            or parent_metadata.st_mode & 0o022
+        ):
+            raise CurveError(f"Governor config directory is not trusted: {parent}")
+        descriptor, temporary = tempfile.mkstemp(prefix=f".{path.name}.", dir=parent)
+        try:
+            os.fchmod(descriptor, stat.S_IMODE(metadata.st_mode))
+            os.fchown(descriptor, metadata.st_uid, metadata.st_gid)
+            with os.fdopen(descriptor, "w", encoding="utf-8") as stream:
+                stream.write(content)
+                stream.flush()
+                os.fsync(stream.fileno())
+            os.replace(temporary, path)
+            replacement_done = True
+            directory = os.open(parent, os.O_RDONLY | os.O_DIRECTORY | os.O_CLOEXEC)
+            try:
+                os.fsync(directory)
+            finally:
+                os.close(directory)
+        finally:
+            if os.path.exists(temporary):
+                os.unlink(temporary)
+    except CurveError:
+        raise
+    except OSError as error:
+        raise AtomicWriteError(
+            f"Could not atomically update {path}: {error}", replacement_done
+        ) from error
+
+
+def open_lock():
+    if not lock_path.is_absolute() or lock_path.name in {"", ".", ".."}:
+        raise CurveError(f"Control lock path is invalid: {lock_path}")
+    parent = lock_path.parent
+    try:
+        parent.mkdir(mode=0o755, parents=True, exist_ok=True)
+        parent_metadata = parent.lstat()
+        if not stat.S_ISDIR(parent_metadata.st_mode) or stat.S_ISLNK(parent_metadata.st_mode):
+            raise CurveError(f"Control lock directory is unsafe: {parent}")
+        if parent_metadata.st_mode & 0o022 or parent_metadata.st_uid != os.geteuid():
+            raise CurveError(f"Control lock directory is not trusted: {parent}")
+        directory = os.open(parent, os.O_RDONLY | os.O_DIRECTORY | os.O_CLOEXEC | os.O_NOFOLLOW)
+        try:
+            descriptor = os.open(
+                lock_path.name,
+                os.O_RDWR | os.O_CREAT | os.O_CLOEXEC | os.O_NOFOLLOW,
+                0o600,
+                dir_fd=directory,
+            )
+            metadata = os.fstat(descriptor)
+            named = lock_path.lstat()
+            opened_parent = os.fstat(directory)
+            if not stat.S_ISREG(metadata.st_mode) or metadata.st_nlink != 1:
+                raise CurveError(f"Control lock file is unsafe: {lock_path}")
+            if (metadata.st_dev, metadata.st_ino) != (named.st_dev, named.st_ino):
+                raise CurveError(f"Control lock changed while opening: {lock_path}")
+            if (parent_metadata.st_dev, parent_metadata.st_ino) != (
+                opened_parent.st_dev,
+                opened_parent.st_ino,
+            ):
+                raise CurveError(f"Control lock directory changed while opening: {parent}")
+            if metadata.st_mode & 0o022 or metadata.st_uid != os.geteuid():
+                raise CurveError(f"Control lock file is not trusted: {lock_path}")
+            return descriptor
+        finally:
+            os.close(directory)
+    except CurveError:
+        if "descriptor" in locals():
+            os.close(descriptor)
+        raise
+    except OSError as error:
+        raise CurveError(f"Could not open control lock {lock_path}: {error}") from error
+
+
+def acquire_lock(descriptor):
+    deadline = time.monotonic() + 10
+    while True:
+        try:
+            fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            return
+        except BlockingIOError:
+            if time.monotonic() >= deadline:
+                raise CurveError("Another BC-250 control operation is still running.")
+            time.sleep(0.05)
+
+
+def run(command, description):
+    try:
+        result = subprocess.run(command, check=False)
+    except OSError as error:
+        raise CurveError(f"{description} could not run: {error}") from error
+    if result.returncode != 0:
+        raise CurveError(f"{description} failed with exit status {result.returncode}.")
+
+
+def service_active():
+    try:
+        result = subprocess.run(
+            [systemctl, "is-active", "--quiet", service], check=False
+        )
+    except OSError as error:
+        raise CurveError(f"Could not query {service}: {error}") from error
+    if result.returncode == 0:
+        return True
+    if result.returncode == 3:
+        try:
+            state = subprocess.run(
+                [systemctl, "show", "--property=ActiveState", "--value", service],
+                check=False,
+                capture_output=True,
+                text=True,
+            )
+        except OSError as error:
+            raise CurveError(f"Could not query {service}: {error}") from error
+        if state.returncode != 0:
+            raise CurveError(
+                f"Governor service-state query failed with exit status {state.returncode}."
+            )
+        active_state = state.stdout.strip()
+        if active_state == "active":
+            return True
+        if active_state in {"inactive", "failed"}:
+            return False
+        if active_state in {"activating", "deactivating", "reloading"}:
+            raise TransitionalServiceError(
+                f"Governor service is currently {active_state}; retry after it settles."
+            )
+        raise CurveError(f"Governor returned an unknown service state: {active_state or 'empty'}.")
+    raise CurveError(
+        f"Governor service-state query failed with exit status {result.returncode}."
+    )
+
+
+def trusted_executable(path):
+    try:
+        metadata = path.lstat()
+    except OSError:
+        return False
+    return (
+        stat.S_ISREG(metadata.st_mode)
+        and not stat.S_ISLNK(metadata.st_mode)
+        and metadata.st_nlink == 1
+        and metadata.st_uid == os.geteuid()
+        and not metadata.st_mode & 0o022
+        and os.access(path, os.X_OK)
+    )
+
+
+def apply_runtime(has_state):
+    run([systemctl, "restart", service], "Governor restart")
+    run([systemctl, "is-active", "--quiet", service], "Governor health check")
+    if has_state:
+        if not trusted_executable(restore_path):
+            raise CurveError(f"Saved frequency restore helper is unavailable: {restore_path}")
+        run([str(restore_path)], "Saved frequency replay")
+
+
+def main():
+    original, metadata = read_regular(config_path)
+    points = parse_config(original)
+    if mode == "list":
+        validate_points(points)
+        for frequency, voltage in points:
+            print(f"{frequency} {voltage}")
+        return
+    if mode != "mutate" or not arguments:
+        raise CurveError("Internal voltage-curve helper usage error.")
+
+    descriptor = open_lock()
+    try:
+        acquire_lock(descriptor)
+        original, metadata = read_regular(config_path, trusted=True)
+        points = parse_config(original)
+        candidate_points = mutate_points(points, arguments[0], arguments[1:])
+        validate_points(candidate_points)
+        has_state = validate_frequency_state(candidate_points)
+        candidate = render_config(original, candidate_points)
+        active = service_active()
+        if has_state and not trusted_executable(restore_path):
+            raise CurveError(f"Saved frequency restore helper is unavailable: {restore_path}")
+
+        written = False
+        runtime_active = active
+        try:
+            try:
+                atomic_write(config_path, candidate, metadata)
+                written = True
+            except BaseException as error:
+                written = getattr(error, "replacement_done", False)
+                raise
+            if active:
+                apply_runtime(has_state)
+            else:
+                try:
+                    became_active = service_active()
+                except TransitionalServiceError:
+                    runtime_active = True
+                    raise
+                if became_active:
+                    runtime_active = True
+                    apply_runtime(has_state)
+        except BaseException as error:
+            if not written:
+                raise
+            rollback_errors = []
+            try:
+                atomic_write(config_path, original, metadata)
+            except Exception as rollback_error:
+                rollback_errors.append(f"config restore failed: {rollback_error}")
+            if runtime_active:
+                try:
+                    apply_runtime(has_state)
+                except Exception as rollback_error:
+                    rollback_errors.append(f"runtime restore failed: {rollback_error}")
+            if rollback_errors:
+                raise CurveError(f"{error}; " + "; ".join(rollback_errors)) from error
+            raise CurveError(f"{error}; previous curve and runtime restored") from error
+    finally:
+        os.close(descriptor)
+
+
+try:
+    main()
+except CurveError as error:
+    print(f"bc250: {error}", file=sys.stderr)
+    raise SystemExit(1)
+PY
 }
 
-volt_check_bounds() {   # validate every voltage in a candidate config
-    local bad
-    bad=$(awk -v lo="$VOLT_MIN" -v hi="$VOLT_MAX" \
-        '/^voltage = /{ if ($3 < lo || $3 > hi) printf "%s ", $3 }' "$1")
-    [[ -z "$bad" ]] || { rm -f "$1"; die "Voltage(s) outside safe ${VOLT_MIN}-${VOLT_MAX} mV range: $bad"; }
+volt_points() {
+    [[ -f "$GOV_CONF" ]] || die "No governor config at $GOV_CONF -- run '$0 governor' first."
+    volt_curve_helper list
+}
+
+volt_show() {
+    local points live
+    points=$(volt_points) || return $?
+    echo -e "${CB}=== GPU voltage curve ($GOV_CONF) ===${C0}"
+    while read -r frequency voltage; do
+        [[ -n "$frequency" ]] && printf '  %4d MHz -> %4d mV\n' "$frequency" "$voltage"
+    done <<< "$points"
+    live=$(sensors 2>/dev/null | grep -im1 vddgfx || true)
+    [[ -n "$live" ]] && echo "  live: $live"
+    echo "  (curve bounds: ${GPU_FREQ_MIN}-${GPU_FREQ_MAX} MHz, ${VOLT_MIN}-${VOLT_MAX} mV)"
+}
+
+volt_transaction() {
+    require_root
+    [[ -f "$GOV_CONF" ]] || die "No governor config -- run '$0 governor' first."
+    volt_curve_helper mutate "$@"
+    log "Curve saved atomically${GOV_SVC:+; active runtime reloaded when needed}."
 }
 
 volt_offset() {
-    require_root
     local delta="${1:-}"
-    [[ "$delta" =~ ^[+-]?[0-9]+$ ]] || die "Usage: $0 gpu-volt offset <±mV>   (e.g. offset -25)"
-    [[ -f "$GOV_CONF" ]] || die "No governor config -- run '$0 governor' first."
-    awk -v d="$delta" '/^voltage = /{ print "voltage = " $3+d; next } { print }' \
-        "$GOV_CONF" > "$GOV_CONF.tmp"
-    volt_check_bounds "$GOV_CONF.tmp"
-    mv "$GOV_CONF.tmp" "$GOV_CONF"
-    log "Whole curve shifted ${delta} mV:"
+    [[ $# -eq 1 ]] || die "Usage: $0 gpu-volt offset <+/-mV>   (e.g. offset -25)"
+    [[ "$delta" =~ ^[+-]?[0-9]+$ ]] || die "Usage: $0 gpu-volt offset <+/-mV>   (e.g. offset -25)"
+    volt_transaction offset "$delta"
+    log "Whole curve shifted ${delta} mV."
     volt_show
-    restart_governor_reapply
     warn "Stress test now -- undervolts that boot fine can still crash under load."
 }
 
 volt_set() {
-    require_root
-    local freq="${1:-}" mv_="${2:-}"
-    [[ "$freq" =~ ^[0-9]+$ && "$mv_" =~ ^[0-9]+$ ]] || die "Usage: $0 gpu-volt set <freqMHz> <mV>"
-    [[ -f "$GOV_CONF" ]] || die "No governor config -- run '$0 governor' first."
-    grep -q "^frequency = ${freq}\$" "$GOV_CONF" \
-        || die "No curve point at $freq MHz. Existing points: $(awk '/^frequency = /{printf "%s ", $3}' "$GOV_CONF")"
-    awk -v f="$freq" -v m="$mv_" '
-        /^frequency = /{cur=$3}
-        /^voltage = / && cur==f { print "voltage = " m; next }
-        { print }' "$GOV_CONF" > "$GOV_CONF.tmp"
-    volt_check_bounds "$GOV_CONF.tmp"
-    mv "$GOV_CONF.tmp" "$GOV_CONF"
-    log "Point $freq MHz -> $mv_ mV."
-    restart_governor_reapply
+    local frequency="${1:-}" voltage="${2:-}"
+    [[ $# -eq 2 ]] || die "Usage: $0 gpu-volt set <freqMHz> <mV>"
+    [[ "$frequency" =~ ^[0-9]+$ && "$voltage" =~ ^[0-9]+$ ]] \
+        || die "Usage: $0 gpu-volt set <freqMHz> <mV>"
+    volt_transaction set "$frequency" "$voltage"
+    log "Point $frequency MHz -> $voltage mV."
     warn "Stress test now -- undervolts that boot fine can still crash under load."
 }
 
+volt_add() {
+    local frequency="${1:-}" voltage="${2:-}"
+    [[ $# -eq 2 ]] || die "Usage: $0 gpu-volt add <freqMHz> <mV>"
+    [[ "$frequency" =~ ^[0-9]+$ && "$voltage" =~ ^[0-9]+$ ]] \
+        || die "Usage: $0 gpu-volt add <freqMHz> <mV>"
+    volt_transaction add "$frequency" "$voltage"
+    log "Added point $frequency MHz -> $voltage mV."
+    warn "Stress test the changed curve before relying on it."
+}
+
+volt_edit() {
+    local old_frequency="${1:-}" frequency="${2:-}" voltage="${3:-}"
+    [[ $# -eq 3 ]] || die "Usage: $0 gpu-volt edit <oldFreqMHz> <newFreqMHz> <mV>"
+    [[ "$old_frequency" =~ ^[0-9]+$ && "$frequency" =~ ^[0-9]+$ && "$voltage" =~ ^[0-9]+$ ]] \
+        || die "Usage: $0 gpu-volt edit <oldFreqMHz> <newFreqMHz> <mV>"
+    volt_transaction edit "$old_frequency" "$frequency" "$voltage"
+    log "Point $old_frequency MHz changed to $frequency MHz -> $voltage mV."
+    warn "Stress test the changed curve before relying on it."
+}
+
+volt_remove() {
+    local frequency="${1:-}"
+    [[ $# -eq 1 ]] || die "Usage: $0 gpu-volt remove <freqMHz>"
+    [[ "$frequency" =~ ^[0-9]+$ ]] || die "Usage: $0 gpu-volt remove <freqMHz>"
+    volt_transaction remove "$frequency"
+    log "Removed point at $frequency MHz."
+    warn "The first and last remaining points now define the available frequency range."
+}
+
 volt_reset() {
-    require_root
-    [[ -f "$GOV_CONF" ]] || die "No governor config -- run '$0 governor' first."
-    # our generated config keeps the curve last; cut it off and re-append
-    awk '/^# Voltage curve/ || /^\[\[safe-points\]\]/{ exit } { print }' \
-        "$GOV_CONF" > "$GOV_CONF.tmp"
-    default_safe_points >> "$GOV_CONF.tmp"
-    mv "$GOV_CONF.tmp" "$GOV_CONF"
+    [[ $# -eq 0 ]] || die "Usage: $0 gpu-volt reset"
+    volt_transaction reset
     log "Curve reset to tuned defaults."
     volt_show
-    restart_governor_reapply
 }
 
 cmd_gpu_volt() {
@@ -1395,8 +2005,11 @@ cmd_gpu_volt() {
         ""|show)  volt_show ;;
         offset)   volt_offset "$@" ;;
         set)      volt_set "$@" ;;
+        add)      volt_add "$@" ;;
+        edit)     volt_edit "$@" ;;
+        remove)   volt_remove "$@" ;;
         reset)    volt_reset ;;
-        *) die "Usage: $0 gpu-volt {show | offset <±mV> | set <freqMHz> <mV> | reset}" ;;
+        *) die "Usage: $0 gpu-volt {show | offset <+/-mV> | set <freqMHz> <mV> | add <freqMHz> <mV> | edit <oldFreqMHz> <newFreqMHz> <mV> | remove <freqMHz> | reset}" ;;
     esac
 }
 
@@ -1480,6 +2093,7 @@ lt_set() {
     awk -v u="$upper" -v l="$lower" 'BEGIN{ exit !(l+0 < u+0) }' \
         || die "lower ($lower) must be below upper ($upper)."
     [[ -f "$GOV_CONF" ]] || die "No governor config -- run '$0 governor' first."
+    gpu_control_lock || return $?
     if grep -q '^\[load-target\]' "$GOV_CONF"; then
         awk -v u="$upper" -v l="$lower" '
             /^\[/{ lt = ($0=="[load-target]") }
@@ -1502,6 +2116,7 @@ lt_set() {
     awk -v u="$upper" 'BEGIN{ exit !(u+0 < 0.40) }' \
         && warn "Upper below 0.40: very eager -- expect higher idle clocks/power."
     lt_apply_live "$upper" "$lower"
+    gpu_control_unlock
 }
 
 cmd_load_target() {
@@ -1623,6 +2238,7 @@ ramp_set() {
     [[ "$T" =~ ^[0-9]+$ ]] || die "Usage: $0 ramp set <climb-ms>   (idle-to-max climb time, e.g. 500)"
     (( T >= 200 && T <= 5000 )) || die "Climb time $T ms outside the sane 200-5000 ms window."
     [[ -f "$GOV_CONF" ]] || die "No governor config -- run '$0 governor' first."
+    gpu_control_lock || return $?
 
     local fmin fmax note upper lower
     read -r fmin fmax note <<< "$(ramp_range)"
@@ -1674,11 +2290,13 @@ ramp_set() {
     log "Ramp saved: $step MHz steps every $adjust_ms ms -> idle-to-max in ~$teff ms,"
     log "downscale after $(( de * adjust_ms )) ms of low load (down-events $de)."
     ramp_restart_if_active
+    gpu_control_unlock
 }
 
 ramp_reset() {
     require_root
     [[ -f "$GOV_CONF" ]] || die "No governor config -- run '$0 governor' first."
+    gpu_control_lock || return $?
     cp "$GOV_CONF" "$GOV_CONF.tmp"
     toml_set timing.intervals adjust "${RAMP_DEF_ADJ_MS}_000" "$GOV_CONF.tmp"
     toml_set timing.ramp-rates normal "$RAMP_DEF_NORMAL"      "$GOV_CONF.tmp"
@@ -1687,6 +2305,7 @@ ramp_reset() {
     mv "$GOV_CONF.tmp" "$GOV_CONF"
     log "Ramp params reset to install defaults (200 MHz steps / 200 ms, 1 s hold)."
     ramp_restart_if_active
+    gpu_control_unlock
 }
 
 cmd_ramp() {
@@ -3448,6 +4067,65 @@ cmd_status() {
 }
 
 # ============================ guided menu =================================
+menu_voltage_point() {
+    local old_frequency="$1" old_voltage="$2"
+    local items=(
+        "Edit point||Change this point's frequency and voltage in one transaction."
+        "Remove point||Delete this point; at least two points must remain."
+    )
+    menu_select "Curve point: $old_frequency MHz @ $old_voltage mV" "${items[@]}" || return 0
+    case $MENU_CHOICE in
+        0) ask "Frequency MHz ($GPU_FREQ_MIN-$GPU_FREQ_MAX)" "$old_frequency"; local frequency="$REPLY"
+           ask "Voltage mV ($VOLT_MIN-$VOLT_MAX)" "$old_voltage"
+           run_action volt_edit "$old_frequency" "$frequency" "$REPLY" ;;
+        1) ask "Type REMOVE to delete the $old_frequency MHz point" "cancel"
+           if [[ "$REPLY" == REMOVE ]]; then
+               run_action volt_remove "$old_frequency"
+           fi ;;
+    esac
+}
+
+menu_voltage_curve() {
+    while true; do
+        local output row frequency voltage index count action
+        local rows=() items=()
+        if ! output=$(volt_points); then
+            run_action volt_show
+            return 0
+        fi
+        mapfile -t rows <<< "$output"
+        count=${#rows[@]}
+        for index in "${!rows[@]}"; do
+            row="${rows[$index]}"
+            read -r frequency voltage <<< "$row"
+            local badge=""
+            if (( index == 0 )); then badge="$(b_mid "floor")"
+            elif (( index == count - 1 )); then badge="$(b_mid "ceiling")"; fi
+            items+=("$frequency MHz @ $voltage mV|$badge|Select to edit or remove this point.")
+        done
+        items+=(
+            "Add curve point||Insert a sorted frequency/voltage point."
+            "Offset whole curve||Shift every voltage by the same signed mV amount."
+            "Reset tuned defaults||Restore the 300-2150 MHz, 700-1000 mV default curve."
+        )
+        menu_select "GPU frequency / voltage curve  ${CD}(atomic + rollback protected)${C0}" "${items[@]}" || return 0
+        if (( MENU_CHOICE < count )); then
+            read -r frequency voltage <<< "${rows[$MENU_CHOICE]}"
+            menu_voltage_point "$frequency" "$voltage"
+            continue
+        fi
+        action=$((MENU_CHOICE - count))
+        case $action in
+            0) ask "New frequency MHz ($GPU_FREQ_MIN-$GPU_FREQ_MAX)" "1200"; frequency="$REPLY"
+               ask "Voltage mV ($VOLT_MIN-$VOLT_MAX)" "850"
+               run_action volt_add "$frequency" "$REPLY" ;;
+            1) ask "Offset mV (negative = undervolt)" "-15"
+               run_action volt_offset "$REPLY" ;;
+            2) run_action volt_reset ;;
+        esac
+    done
+}
+
 menu_freq() {
     while true; do
         local items=(
@@ -3457,30 +4135,21 @@ menu_freq() {
             "Set min + max range||Floor AND ceiling, adaptive in between."
             "Pin a frequency||Fixed clock, perf mode ON -- no idle downscale. For testing."
             "Max performance||Top of the voltage curve until you switch back to auto."
-            "Show voltage curve||Current freq -> mV safe-points + live vddgfx reading."
-            "Offset voltage curve||Undervolt/overvolt every point by +-mV. Small steps, stress test."
-            "Set one voltage point||Change the mV at a single frequency point."
-            "Reset voltage curve||Restore the tuned 800/900/1000/1000 mV defaults."
+            "Edit frequency / voltage curve||List, add, edit, remove, offset, or reset safe-points transactionally."
         )
         menu_select "GPU frequency & voltage  ${CD}(persists across reboots)${C0}" "${items[@]}" || return 0
         case $MENU_CHOICE in
             0) run_action cmd_freq status ;;
             1) run_action cmd_freq auto ;;
-            2) ask "Max MHz (0-2150 curve, 1500 = tuned default)" "2000"
+            2) ask "Max MHz ($GPU_FREQ_MIN-$GPU_FREQ_MAX, 1500 = tuned default)" "2000"
                run_action cmd_freq 0 "$REPLY" ;;
-            3) ask "Min MHz" "1200"; local mn="$REPLY"
+            3) ask "Min MHz ($GPU_FREQ_MIN-$GPU_FREQ_MAX)" "1200"; local mn="$REPLY"
                ask "Max MHz" "1800"
                run_action cmd_freq "$mn" "$REPLY" ;;
             4) ask "Pin at MHz" "1800"
                run_action cmd_freq "$REPLY" ;;
             5) run_action cmd_freq max ;;
-            6) run_action volt_show ;;
-            7) ask "Offset mV (negative = undervolt)" "-15"
-               run_action volt_offset "$REPLY" ;;
-            8) ask "Frequency point MHz" "2000"; local vf="$REPLY"
-               ask "Voltage mV ($VOLT_MIN-$VOLT_MAX)" "1000"
-               run_action volt_set "$vf" "$REPLY" ;;
-            9) run_action volt_reset ;;
+            6) menu_voltage_curve ;;
         esac
     done
 }
@@ -3690,7 +4359,7 @@ SETUP COMMANDS (run once, in this order)
   governor    Install cyan-skillfish-governor-smu (filippor): adaptive
               GPU freq/voltage via SMU firmware calls, no kernel patch.
               Downloads the latest release, writes a tuned config
-              (voltage curve to 2150 MHz, operating cap 1500 MHz,
+              (voltage curve from 300 to 2150 MHz, operating cap 1500 MHz,
               thermal throttle 85C), TEST-STARTS the service but does
               not enable it at boot -- verify under load first.
 
@@ -3822,10 +4491,16 @@ EVERYDAY COMMANDS
     gpu-volt              show curve + live vddgfx
     gpu-volt offset -25   undervolt the whole curve 25 mV
     gpu-volt set 2000 985 change one point
+    gpu-volt add 1200 850 add a sorted point
+    gpu-volt edit 1200 1250 875
+                          change a point's frequency and voltage
+    gpu-volt remove 1250  remove a point (at least two must remain)
     gpu-volt reset        restore the tuned default curve
-              Bounds 700-1050 mV enforced. Small steps (10-25 mV) and
-              stress test after -- undervolts that boot fine can still
-              crash under load. Changes are permanent (config.toml).
+              Bounds 300-2150 MHz and 700-1050 mV are enforced, with
+              sorted unique frequencies and nondecreasing voltages. Updates
+              are atomic and rollback config/runtime after reload failure.
+              Small steps (10-25 mV) and stress test after -- undervolts
+              that boot fine can still crash under load. Changes persist.
 
   load-target GPU load targets: the busy% band the governor keeps the GPU
               in. It only clocks UP above 'upper' -- frame-capped light

@@ -15,6 +15,9 @@ ColumnLayout {
     property int loadMinimum: Math.round((gpu.loadLower === null ? 0.65 : gpu.loadLower) * 100)
     property int loadMaximum: Math.round((gpu.loadUpper === null ? 0.80 : gpu.loadUpper) * 100)
     property int rampMs: gpu.climbMs || 500
+    readonly property int frequencyMinimum: Math.max(root.gpu.allowedMinimum || 300, 300)
+    readonly property bool frequencyValid: root.mode !== "range"
+        || ((root.minimum === 0 || root.minimum >= root.frequencyMinimum) && root.minimum <= root.maximum)
     readonly property bool controllable: gpu.controllable && !backend.busy
     readonly property string disabledReason: backend.busy ? backend.busyLabel
         : !gpu.available ? "Install the GPU governor with bc250-power.sh governor."
@@ -87,7 +90,7 @@ ColumnLayout {
         }
         QQC2.Label { text: root.mode === "pin" ? "Pinned clock" : "Maximum clock"; visible: root.mode !== "max" }
         QQC2.SpinBox {
-            from: Math.max(root.gpu.allowedMinimum || 100, 100); to: Math.min(root.gpu.allowedMaximum || 2150, 2150); stepSize: 50
+            from: root.frequencyMinimum; to: Math.min(root.gpu.allowedMaximum || 2150, 2150); stepSize: 50
             value: root.maximum; editable: true; enabled: root.controllable
             visible: root.mode !== "max"; Layout.fillWidth: true
             textFromValue: (value) => value + " MHz"
@@ -96,8 +99,10 @@ ColumnLayout {
         }
         Components.ActionButton {
             text: "Apply frequency mode"
-            enabled: root.controllable
-            disabledReason: root.disabledReason
+            enabled: root.controllable && root.frequencyValid
+            disabledReason: !root.frequencyValid
+                ? "Minimum clock must be 0 (no floor) or at least " + root.frequencyMinimum + " MHz, and not exceed maximum."
+                : root.disabledReason
             onClicked: {
                 var apply = function() { root.backend.setGpuFrequency(root.mode, root.minimum, root.maximum); };
                 if (root.mode === "pin" || root.mode === "max")

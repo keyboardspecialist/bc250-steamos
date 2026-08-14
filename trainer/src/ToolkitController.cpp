@@ -66,6 +66,12 @@ constexpr OperationDefinition Operations[] = {
      "Download and verify the memory configuration helper.", false, false},
     {"ram-remove", "Remove RAM / VRAM helper", "ram", "REMOVE",
      "Remove the helper and TTM override while preserving the CMOS split and profile.", false, true},
+    {"swap-zram-install", "Use compressed zram swap", "swap", "USE ZRAM",
+     "Configure Valve-style half-RAM zstd swap at priority 100. Reboot-gated transitions never perform a live swapoff.", false, false},
+    {"swap-zswap-install", "Use zswap-backed disk swap", "swap", "USE ZSWAP",
+     "Configure lz4 zswap with a 25% RAM pool and a 16 GiB persistent disk swapfile at priority 10.", false, false},
+    {"swap-remove", "Remove compressed swap profile", "swap", "REMOVE",
+     "Remove toolkit-owned swap integration and return to Valve's zram defaults after any required reboot.", false, true},
     {"compute-build", "Build GPU CU prerequisites", "compute", "BUILD UMR",
      "Install dependencies and build UMR only. Live routing, stability testing, saving the table, and boot replay remain separate steps.", false, false},
     {"compute-remove", "Remove GPU CU unlock integration", "compute", "REMOVE",
@@ -609,8 +615,11 @@ void ToolkitController::pollChild()
         finishOperation(code, QStringLiteral("cancelled"));
     } else if (WIFEXITED(status)) {
         const int code = WEXITSTATUS(status);
+        const bool rebootRequired = code == 75
+            && m_activeOperationId == QStringLiteral("swap-remove");
         finishOperation(code, code == 0 ? QStringLiteral("succeeded")
-                                        : QStringLiteral("failed"));
+                              : rebootRequired ? QStringLiteral("reboot-required")
+                                               : QStringLiteral("failed"));
     } else if (WIFSIGNALED(status)) {
         finishOperation(128 + WTERMSIG(status), QStringLiteral("signaled"));
     } else {
@@ -1004,8 +1013,9 @@ QVariantMap ToolkitController::mockInventory() const
 {
     const QStringList ids = {QStringLiteral("trainer"), QStringLiteral("desktop"),
                              QStringLiteral("decky"), QStringLiteral("cec"),
-                             QStringLiteral("power"), QStringLiteral("ram"),
-                             QStringLiteral("compute"), QStringLiteral("mesh"),
+                              QStringLiteral("power"), QStringLiteral("ram"),
+                              QStringLiteral("swap"),
+                              QStringLiteral("compute"), QStringLiteral("mesh"),
                              QStringLiteral("audio"), QStringLiteral("aic"),
                              QStringLiteral("storage")};
     QVariantList components;

@@ -32,7 +32,10 @@ export function GpuTab({ snapshot, busy, runMutation }: TabProps) {
   );
   const frequencyDisabled = busy || !gpu.controllable;
   const frequencyMaximum = Math.min(gpu.allowedMaximum || 2150, 2150);
-  const frequencyMinimum = Math.max(gpu.allowedMinimum || 100, 100);
+  const frequencyMinimum = Math.max(gpu.allowedMinimum || 300, 300);
+  const frequencyValid =
+    mode !== "range" ||
+    ((minimum === 0 || minimum >= frequencyMinimum) && minimum <= maximum);
 
   useEffect(() => {
     setMode(gpu.mode);
@@ -176,7 +179,7 @@ export function GpuTab({ snapshot, busy, runMutation }: TabProps) {
         )}
         <ActionButton
           label="Apply frequency mode"
-          disabled={frequencyDisabled}
+          disabled={frequencyDisabled || !frequencyValid}
           onClick={applyFrequency}
         />
       </PanelSection>

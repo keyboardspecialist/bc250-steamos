@@ -142,7 +142,7 @@ QtObject {
     function setGpuFrequency(mode, minimum, maximum) {
         var safeMode = Utils.allowed(mode, ["adaptive", "range", "pin", "max"]);
         _startMutation("SetGpuFrequency", "suu", [safeMode,
-            Utils.integer(minimum, 0, 2150), Utils.integer(maximum, 100, 2150)],
+            Utils.integer(minimum, 0, 2150), Utils.integer(maximum, 300, 2150)],
             "Applying GPU frequency mode");
     }
 

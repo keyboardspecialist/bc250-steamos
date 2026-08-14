@@ -26,7 +26,9 @@ private slots:
             QStringLiteral("storage-install"), QStringLiteral("storage-repair"),
             QStringLiteral("storage-remove"), QStringLiteral("power-install"),
             QStringLiteral("power-remove"), QStringLiteral("ram-install"),
-            QStringLiteral("ram-remove"), QStringLiteral("compute-build"),
+            QStringLiteral("ram-remove"), QStringLiteral("swap-zram-install"),
+            QStringLiteral("swap-zswap-install"), QStringLiteral("swap-remove"),
+            QStringLiteral("compute-build"),
             QStringLiteral("compute-remove"), QStringLiteral("cec-setup"),
             QStringLiteral("cec-repair"), QStringLiteral("cec-remove"),
             QStringLiteral("persistence-install"), QStringLiteral("persistence-remove"),
@@ -44,6 +46,11 @@ private slots:
         QCOMPARE(power.value(QStringLiteral("component")).toString(), QStringLiteral("power"));
         QVERIFY(!power.value(QStringLiteral("destructive")).toBool());
         QVERIFY(ToolkitController::operationMetadata(QStringLiteral("power-remove"))
+                    .value(QStringLiteral("destructive")).toBool());
+        QCOMPARE(ToolkitController::operationMetadata(QStringLiteral("swap-zswap-install"))
+                     .value(QStringLiteral("component")).toString(),
+                 QStringLiteral("swap"));
+        QVERIFY(ToolkitController::operationMetadata(QStringLiteral("swap-remove"))
                     .value(QStringLiteral("destructive")).toBool());
         QVERIFY(ToolkitController::operationMetadata(QStringLiteral("../bc250-toolkit.sh")).isEmpty());
         QVERIFY(ToolkitController::operationMetadata(QStringLiteral("power-install extra")).isEmpty());
@@ -140,6 +147,23 @@ private slots:
                 .toMap().value(QStringLiteral("state")).toString(),
             QStringLiteral("installed"), 3000);
         QVERIFY(!controller.refreshing());
+    }
+
+    void reportsStagedSwapRemovalAsRebootRequired()
+    {
+        QTemporaryDir directory;
+        QVERIFY(directory.isValid());
+        writeLauncher(directory.path(), QByteArrayLiteral(
+            "case \"$1\" in\n"
+            "  inventory-json) printf '%s\\n' '{\"schemaVersion\":1,\"components\":[]}' ;;\n"
+            "  action) [[ $2 == swap-remove ]] || exit 91; exit 75 ;;\n"
+            "esac\n"));
+
+        ToolkitController controller(false, directory.path());
+        QTRY_VERIFY_WITH_TIMEOUT(!controller.refreshing(), 3000);
+        QVERIFY(controller.start(QStringLiteral("swap-remove")));
+        QTRY_COMPARE_WITH_TIMEOUT(controller.resultStatus(), QStringLiteral("reboot-required"), 3000);
+        QCOMPARE(controller.exitCode(), 75);
     }
 
     void mockModeNeverExecutesLauncher()

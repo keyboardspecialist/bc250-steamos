@@ -53,17 +53,18 @@ ColumnLayout {
 
     ListModel {
         id: components
-        ListElement { componentId: "storage"; categoryName: "FOUNDATION"; title: "PERSISTENT STORAGE"; description: "Automatic infrastructure; manual status, install, and boot recovery."; primary: "storage-install"; repair: "storage-repair"; remove: "storage-remove" }
-        ListElement { componentId: "audio"; categoryName: "FOUNDATION"; title: "AMDGPU KERNEL FIXES"; description: "Install early, then reboot: clocks, telemetry, and compute queues."; primary: "audio-build"; repair: ""; remove: "audio-remove" }
-        ListElement { componentId: "power"; categoryName: "FOUNDATION"; title: "POWER FOUNDATION"; description: "Installs ACPI and test-starts the GPU governor; enable at boot after load testing."; primary: "power-install"; repair: ""; remove: "power-remove" }
-        ListElement { componentId: "persistence"; categoryName: "FOUNDATION"; title: "UPDATE PROTECTION"; description: "Retain supported toolkit integration across SteamOS updates."; primary: "persistence-install"; repair: ""; remove: "persistence-remove" }
-        ListElement { componentId: "ram"; categoryName: "PERFORMANCE"; title: "MEMORY BALANCE HELPER"; description: "Install the verified helper before choosing CMOS and TTM limits on MEMORY."; primary: "ram-install"; repair: ""; remove: "ram-remove" }
-        ListElement { componentId: "compute"; categoryName: "PERFORMANCE"; title: "GPU CU PREREQUISITES"; description: "Build UMR only; routing, stability testing, and boot replay are separate steps."; primary: "compute-build"; repair: ""; remove: "compute-remove" }
-        ListElement { componentId: "mesh"; categoryName: "PERFORMANCE"; title: "MESA / RADV ASYNC COMPUTE"; description: "Builds the GFX1013 async-compute driver in about 3-5 minutes; requires the patched AMDGPU module."; primary: "mesh-setup"; repair: ""; remove: "mesh-remove" }
-        ListElement { componentId: "cec"; categoryName: "DEVICES"; title: "HDMI-CEC"; description: "TV, receiver, boot, and sleep integration."; primary: "cec-setup"; repair: "cec-repair"; remove: "cec-remove" }
-        ListElement { componentId: "aic"; categoryName: "DEVICES"; title: "AIC8800 WIRELESS"; description: "Hardware-specific WiFi and Bluetooth modules."; primary: "aic-install"; repair: ""; remove: "aic-remove" }
-        ListElement { componentId: "decky"; categoryName: "INTERFACES"; title: "DECKY PLUGIN"; description: "Gaming-mode BC-250 controls."; primary: "decky-install"; repair: ""; remove: "decky-remove" }
-        ListElement { componentId: "desktop"; categoryName: "INTERFACES"; title: "PLASMA CONTROL"; description: "Desktop applet and shared system service."; primary: "desktop-install"; repair: ""; remove: "desktop-remove" }
+        ListElement { componentId: "storage"; categoryName: "FOUNDATION"; title: "PERSISTENT STORAGE"; description: "Automatic infrastructure; manual status, install, and boot recovery."; primary: "storage-install"; repair: "storage-repair"; secondaryText: "REPAIR"; remove: "storage-remove" }
+        ListElement { componentId: "audio"; categoryName: "FOUNDATION"; title: "AMDGPU KERNEL FIXES"; description: "Install early, then reboot: clocks, telemetry, and compute queues."; primary: "audio-build"; repair: ""; secondaryText: "REPAIR"; remove: "audio-remove" }
+        ListElement { componentId: "power"; categoryName: "FOUNDATION"; title: "POWER FOUNDATION"; description: "Installs ACPI and test-starts the GPU governor; enable at boot after load testing."; primary: "power-install"; repair: ""; secondaryText: "REPAIR"; remove: "power-remove" }
+        ListElement { componentId: "persistence"; categoryName: "FOUNDATION"; title: "UPDATE PROTECTION"; description: "Retain supported toolkit integration across SteamOS updates."; primary: "persistence-install"; repair: ""; secondaryText: "REPAIR"; remove: "persistence-remove" }
+        ListElement { componentId: "ram"; categoryName: "PERFORMANCE"; title: "MEMORY BALANCE HELPER"; description: "Install the verified helper before choosing CMOS and TTM limits on MEMORY."; primary: "ram-install"; repair: ""; secondaryText: "REPAIR"; remove: "ram-remove" }
+        ListElement { componentId: "swap"; categoryName: "PERFORMANCE"; title: "COMPRESSED SWAP"; description: "Choose half-RAM zstd zram, or lz4 zswap with a 16 GiB persistent disk swapfile."; primary: "swap-zram-install"; repair: "swap-zswap-install"; secondaryText: "ZSWAP"; remove: "swap-remove" }
+        ListElement { componentId: "compute"; categoryName: "PERFORMANCE"; title: "GPU CU PREREQUISITES"; description: "Build UMR only; routing, stability testing, and boot replay are separate steps."; primary: "compute-build"; repair: ""; secondaryText: "REPAIR"; remove: "compute-remove" }
+        ListElement { componentId: "mesh"; categoryName: "PERFORMANCE"; title: "MESA / RADV ASYNC COMPUTE"; description: "Builds the GFX1013 async-compute driver in about 3-5 minutes; requires the patched AMDGPU module."; primary: "mesh-setup"; repair: ""; secondaryText: "REPAIR"; remove: "mesh-remove" }
+        ListElement { componentId: "cec"; categoryName: "DEVICES"; title: "HDMI-CEC"; description: "TV, receiver, boot, and sleep integration."; primary: "cec-setup"; repair: "cec-repair"; secondaryText: "REPAIR"; remove: "cec-remove" }
+        ListElement { componentId: "aic"; categoryName: "DEVICES"; title: "AIC8800 WIRELESS"; description: "Hardware-specific WiFi and Bluetooth modules."; primary: "aic-install"; repair: ""; secondaryText: "REPAIR"; remove: "aic-remove" }
+        ListElement { componentId: "decky"; categoryName: "INTERFACES"; title: "DECKY PLUGIN"; description: "Gaming-mode BC-250 controls."; primary: "decky-install"; repair: ""; secondaryText: "REPAIR"; remove: "decky-remove" }
+        ListElement { componentId: "desktop"; categoryName: "INTERFACES"; title: "PLASMA CONTROL"; description: "Desktop applet and shared system service."; primary: "desktop-install"; repair: ""; secondaryText: "REPAIR"; remove: "desktop-remove" }
     }
 
     C.ConfirmDialog { id: confirmation }
@@ -157,6 +158,7 @@ ColumnLayout {
                 required property string categoryName
                 required property string primary
                 required property string repair
+                required property string secondaryText
                 required property string remove
                 visible: root.showsCategory(categoryName)
                 objectName: "toolkitCard-" + componentId
@@ -164,6 +166,7 @@ ColumnLayout {
                 Layout.preferredWidth: (root.width - 7) / 2
                 installState: root.componentState(componentId)
                 primaryText: (root.operation(primary) || {}).verb || "RUN"
+                repairText: secondaryText
                 actionEnabled: root.actionsEnabled
                 repairVisible: repair.length > 0
                 removeVisible: installState !== "not-installed" && installState !== "unavailable"

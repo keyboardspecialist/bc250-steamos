@@ -25,12 +25,14 @@ Open the unified toolkit menu as the logged-in Deck user:
 | Mesa / RADV async-compute patch (optional, highly recommended) | `./bc250-toolkit.sh radv`, then reboot |
 | Power management | `sudo ./bc250-power.sh all`, then `sudo ./bc250-power.sh enable` |
 | RAM / VRAM split | `./bc250-ram-split.sh` |
+| Compressed swap (optional) | `sudo ./bc250-swap.sh`, then choose zram or zswap-backed disk swap |
 | GPU compute-unit unlock | `sudo ./bc250-40cu.sh` |
 | CEC | `./bc250-cec.sh setup` |
 | AIC8800 | `sudo bash ./aic8800/steamdeck-setup.sh` |
 | Decky plugin | `bash ./decky-plugin/install.sh` |
 | Plasma desktop control | `bash ./desktop-control/install.sh install` |
 | BC250 Trainer | `./bc250-toolkit.sh trainer` |
+| Compressed swap | `sudo ./bc250-swap.sh install zram` or `sudo ./bc250-swap.sh install zswap` |
 | Persistent storage and recovery | Automatic with each setup workflow; `./bc250-storage.sh` opens its menu |
 | Verification | `sudo ./bc250-storage.sh status` |
 
@@ -74,6 +76,7 @@ sudo ./bc250-power.sh status
 | [`bc250-cu-status.sh`](#gpu-compute-unit-unlock) | CU dispatch status |
 | [`bc250-power.sh`](#power-management) | CPU power states, GPU governor, clock and voltage tuning, CPU overclocking |
 | [`bc250-ram-split.sh`](#ram--vram-split) | CMOS minimum VRAM and dynamic TTM VRAM limit |
+| [`bc250-swap.sh`](#compressed-swap) | Mutually exclusive zram and zswap-backed disk swap profiles |
 | [`bc250-cec.sh`](#cec) | TV, receiver, input, and power control over HDMI-CEC |
 | [`bc250-update-persistence.sh`](#steamos-updates) | Atomic-update allowlist and tuning recovery |
 | `bc250-maintenance.sh` | Installed-component inventory, uninstall orchestration, and optional data purge |
@@ -106,6 +109,7 @@ Each child requests administrator access only when needed.
 | `./bc250-toolkit.sh unlocks` | Open GPU compute-unit and CPU core unlock setup |
 | `./bc250-toolkit.sh power` | Open a component menu directly |
 | `./bc250-toolkit.sh ram` | Open RAM / VRAM split settings |
+| `./bc250-toolkit.sh swap` | Choose a compressed swap profile |
 | `./bc250-toolkit.sh amdgpu` | Build the AMDGPU kernel fixes |
 | `./bc250-toolkit.sh radv` | Open the global Mesa / RADV async-compute menu |
 | `./bc250-toolkit.sh trainer` | Download, verify, and install the latest native BC250 Trainer release |
@@ -160,7 +164,8 @@ preferences, source/build caches, and persistent backing data are preserved by
 default. RAM firmware reset uses a CMOS clear. ACPI, TTM, compute routing,
 AMDGPU, and loaded AIC8800 rollback may require a reboot. After every
 component is removed, permanently delete retained data with
-`./bc250-maintenance.sh purge`.
+`./bc250-maintenance.sh purge`. Active toolkit disk swap uses a two-stage
+uninstall: reboot once to deactivate it, then rerun removal.
 
 ## GPU Compute-Unit Unlock
 
@@ -229,6 +234,41 @@ sudo ./bc250-cu-status.sh -q
 | Exact 12 GiB dynamic | `3145728` pages |
 | Status states | Active, reboot needed, default, or foreign configuration |
 
+## Compressed Swap
+
+Open the profile menu:
+
+```bash
+./bc250-toolkit.sh swap
+```
+
+The two profiles are mutually exclusive:
+
+| Profile | Configuration |
+|---|---|
+| Zram | Valve-style compressed RAM swap sized to half of physical RAM, `zstd`, priority 100 |
+| Zswap + disk | Global kernel zswap cache using `lz4` and a 25% RAM pool, backed by a 16 GiB toolkit-owned disk swapfile at priority 10 |
+
+The disk swapfile lives under `/var/lib/bc250-control/swap`, which is backed by
+SteamOS's shared `/home/.steamos/offload` storage. Its size can be selected from
+4 through 64 GiB with the direct CLI. Zswap applies to pages sent to every
+active disk swap device, but the toolkit never disables or removes unrelated
+swapfiles.
+
+```bash
+sudo ./bc250-swap.sh install zram
+sudo ./bc250-swap.sh install zswap          # 16 GiB default
+sudo ./bc250-swap.sh install zswap 32       # 32 GiB
+./bc250-swap.sh status
+sudo ./bc250-swap.sh uninstall
+```
+
+Profile transitions are reboot-gated and never perform a live `swapoff`.
+Switching away from an active toolkit disk swap or uninstalling it requires one
+reboot followed by rerunning the requested command. The second pass removes the
+now-inactive swapfile and integration. Removing the toolkit profile restores
+Valve's packaged zram defaults on the next boot.
+
 ## Power Management
 
 Open the setup and tuning menu:
@@ -264,6 +304,9 @@ sudo ./bc250-power.sh freq auto
 sudo ./bc250-power.sh gpu-volt show
 sudo ./bc250-power.sh gpu-volt offset -25
 sudo ./bc250-power.sh gpu-volt set 2000 985
+sudo ./bc250-power.sh gpu-volt add 1200 850
+sudo ./bc250-power.sh gpu-volt edit 1200 1250 875
+sudo ./bc250-power.sh gpu-volt remove 1250
 sudo ./bc250-power.sh gpu-volt reset
 
 sudo ./bc250-power.sh load-target eager
@@ -274,7 +317,11 @@ sudo ./bc250-power.sh ramp set 500
 sudo ./bc250-power.sh ramp reset
 ```
 
-Frequency, voltage, load-target, and ramp settings persist across boots. GPU voltage points use a 700-1050 mV range.
+Frequency, voltage, load-target, and ramp settings persist across boots. The
+default voltage curve spans 300-2150 MHz; points use a 700-1050 mV range and
+must have increasing frequencies with nondecreasing voltages. Curve updates
+are atomic and restore the prior config/runtime if governor reload or saved
+frequency replay fails. The guided TUI can list, add, edit, and remove points.
 
 `[frequency-range] max` in `config.toml` is the adaptive ceiling, not a fixed
 clock. The active clock rises toward that ceiling only when GPU load exceeds
@@ -607,6 +654,7 @@ The installer snapshots driver source, firmware, and verified per-kernel modules
 | GPU compute-unit unlock | Run `sudo ./bc250-40cu.sh verify` after an update |
 | Power management | The keep list retains tuning and GRUB defaults; the ACPI service validates and restores the `/boot` override and EFI GRUB config |
 | RAM / VRAM split | CMOS persists independently; the keep list retains the TTM GRUB drop-in |
+| Compressed swap | The keep list retains the selected zram configuration or the zswap setup service and disk-swap unit; the swapfile persists in toolkit storage |
 | CEC | Home configuration and allowlisted system integration carry forward |
 | Patched AMDGPU module | Run `bc250-audio-fix/patch-driver.sh` after each kernel update to rebuild the kernel-specific module; the rebuild disables any retained scheduler policy until RADV setup is rerun |
 | Mesa / RADV async-compute patch | Rerun `bc250-mesh-shader.sh setup` after a SteamOS update to restore the root-owned driver, safety-gated environment generator, and scheduler policy |
@@ -654,6 +702,7 @@ Run `./bc250-update-persistence.sh` to open the interactive menu with current pr
 | `sudo ./bc250-update-persistence.sh install compute` | Protect compute-unit configuration |
 | `sudo ./bc250-update-persistence.sh install power` | Protect power and tuning configuration |
 | `sudo ./bc250-update-persistence.sh install ram` | Protect the TTM dynamic VRAM setting |
+| `sudo ./bc250-update-persistence.sh install swap` | Protect the selected compressed-swap profile |
 | `sudo ./bc250-update-persistence.sh install cec` | Protect CEC system integration |
 | `sudo ./bc250-update-persistence.sh install aic` | Protect AIC8800 system integration |
 | `sudo ./bc250-update-persistence.sh install all` | Protect every component |
@@ -687,6 +736,7 @@ Run the normal component setup commands afterward to regenerate services for the
 | BC-250 ACPI Fix | [Original tables](https://github.com/bc250-collective/bc250-acpi-fix) · [8-core update](https://github.com/mendesrr/bc250-acpi-fix-updated-8c) · [guarded universal sources](acpi-tables/) | `bc250-power.sh` |
 | Cyan Skillfish Governor | [Repository](https://github.com/filippor/cyan-skillfish-governor/tree/smu) · [Performance-mode script](https://github.com/filippor/cyan-skillfish-governor/blob/smu/scripts/cyan-skillfish-performance-mode) | `bc250-power.sh` |
 | BC-250 SMU OC | [Repository](https://github.com/bc250-collective/bc250_smu_oc) | `bc250-power.sh` |
+| CachyOS BC250 Toolkit | [Repository](https://github.com/redbeard1083/bc250-toolkit) | Design reference for the independently implemented zswap-backed disk profile; upstream code has no declared license |
 | BC-250 CPU Core Unlock | [Linux helper](https://github.com/rw-r-r-0644/bc250-core-unlock) · [EFI source](https://github.com/Hexxeh/bc250-efi-core-unlock) · [EFI headers](https://github.com/yoppeh/efi) | Original SMU method and the optional pre-boot implementation adapted by `bc250-power.sh` |
 | BC-250 Memory Config | [Repository](https://github.com/fanoush/bc250_memcfg) · [VRAM guide](https://elektricm.github.io/amd-bc250-docs/bios/vram/) | CMOS UMA utility fetched by `bc250-ram-split.sh` |
 | BC-250 GFX1013 Fix | [Repository](https://github.com/DryhoppedIPA/bc250-gfx1013-fix) · [integrated commit](https://github.com/DryhoppedIPA/bc250-gfx1013-fix/commit/d3e6dc062c34d2523db0abe5741d1f5b0dea00d9) | Kernel compute lifecycle repair and pinned alternate RADV build by DryhoppedIPA |

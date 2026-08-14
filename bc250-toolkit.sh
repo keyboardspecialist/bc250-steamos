@@ -6,6 +6,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SELF="$SCRIPT_DIR/$(basename "${BASH_SOURCE[0]}")"
 POWER_SH="$SCRIPT_DIR/bc250-power.sh"
 RAM_SPLIT_SH="$SCRIPT_DIR/bc250-ram-split.sh"
+SWAP_SH="$SCRIPT_DIR/bc250-swap.sh"
 COMPUTE_SH="$SCRIPT_DIR/bc250-40cu.sh"
 CEC_SH="$SCRIPT_DIR/bc250-cec.sh"
 STORAGE_SH="$SCRIPT_DIR/bc250-storage.sh"
@@ -257,6 +258,8 @@ run_machine_action() {
         storage-repair) run_sudo_script "$STORAGE_SH" repair-infrastructure ;;
         power-install) run_sudo_script "$POWER_SH" all ;;
         ram-install) run_sudo_script "$RAM_SPLIT_SH" install ;;
+        swap-zram-install) run_sudo_script "$SWAP_SH" install zram ;;
+        swap-zswap-install) run_sudo_script "$SWAP_SH" install zswap ;;
         compute-build) run_sudo_script "$COMPUTE_SH" prep ;;
         cec-setup) run_script "$CEC_SH" setup ;;
         cec-repair) run_script "$CEC_SH" repair ;;
@@ -267,7 +270,7 @@ run_machine_action() {
         decky-install) run_script "$DECKY_INSTALL_SH" install ;;
         desktop-install) run_script "$DESKTOP_INSTALL_SH" install ;;
         persistence-remove) run_sudo_script "$PERSISTENCE_SH" remove all ;;
-        storage-remove|power-remove|ram-remove|compute-remove|cec-remove|aic-remove|audio-remove|mesh-remove|decky-remove|desktop-remove)
+        storage-remove|power-remove|ram-remove|swap-remove|compute-remove|cec-remove|aic-remove|audio-remove|mesh-remove|decky-remove|desktop-remove)
             require_script "$MAINTENANCE_SH"
             bash "$MAINTENANCE_SH" uninstall "${operation%-remove}" --yes
             ;;
@@ -297,7 +300,7 @@ status_section() {
 
 show_status() {
     require_normal_user
-    local failed=0 amdgpu_rc=0 amdgpu_status="" radv_rc=0 cu_rc=0 failed_list=""
+    local failed=0 amdgpu_rc=0 amdgpu_status="" radv_rc=0 swap_rc=0 cu_rc=0 failed_list=""
     local failed_components=()
     sudo -v
     status_section "Persistent storage" "$STORAGE_SH" status \
@@ -306,6 +309,18 @@ show_status() {
         || { failed=1; failed_components+=("Power management"); }
     status_section "RAM / VRAM split" "$RAM_SPLIT_SH" status \
         || { failed=1; failed_components+=("RAM / VRAM split"); }
+    printf '\n%s\n' "${CB}${CC}-- Compressed swap --${C0}"
+    if [[ -f "$SWAP_SH" && ! -L "$SWAP_SH" ]]; then
+        sudo bash "$SWAP_SH" verify || swap_rc=$?
+        if [[ $swap_rc -gt 1 ]]; then
+            failed=1
+            failed_components+=("Compressed swap")
+        fi
+    else
+        log "Component is missing or unsafe: $SWAP_SH"
+        failed=1
+        failed_components+=("Compressed swap")
+    fi
     status_section "CEC" "$CEC_SH" status \
         || { failed=1; failed_components+=("CEC"); }
     status_section "SteamOS update persistence" "$PERSISTENCE_SH" status \
@@ -436,6 +451,7 @@ show_guided_setup_overview() {
     printf '  %-24s %s\n' "1. AMDGPU kernel fixes" "$(amdgpu_badge)"
     printf '  %-24s %s\n' "2. Power foundation" "$(power_foundation_badge)"
     printf '  %-24s %s\n' "3. RAM / VRAM helper" "$(component_badge "$RAM_SPLIT_SH")"
+    printf '  %-24s %s\n' "Optional compressed swap" "$(component_badge "$SWAP_SH")"
     printf '  %-24s %s\n' "Optional Mesa / RADV" "$(radv_badge)"
     printf '  %-24s %s\n' "Optional GPU CU unlock" "$(component_badge "$COMPUTE_SH")"
     printf '  %-24s %s\n' "Optional CPU core unlock" "${CD}[guided test]${C0}"
@@ -563,6 +579,7 @@ cmd_core_system_menu() {
             "AMDGPU scheduler policy|$(scheduler_policy_badge)|Normally enabled by RADV setup after both async-compute halves are installed."
             "Power foundation & tuning|$(power_foundation_badge)|Set up ACPI and the GPU governor, then access GPU and CPU tuning."
             "RAM / VRAM split|$(component_badge "$RAM_SPLIT_SH")|Balance the persistent CMOS minimum and dynamic Linux TTM limit."
+            "Compressed swap|$(component_badge "$SWAP_SH")|Choose mutually exclusive zram or zswap-backed disk swap profiles."
             "SteamOS update protection|${CG}[menu]${C0}|Protect installed integration and recover supported settings after updates."
         )
         menu_select "BC-250 core system" "${items[@]}" || { echo; break; }
@@ -572,7 +589,8 @@ cmd_core_system_menu() {
             2) run_menu_action scheduler-policy ;;
             3) run_menu_child power ;;
             4) run_menu_child ram ;;
-            5) run_menu_child persistence ;;
+            5) run_menu_child swap ;;
+            6) run_menu_child persistence ;;
         esac
     done
 }
@@ -660,7 +678,7 @@ cmd_menu() {
 
 cmd_help() {
     cat << EOF
-Usage: $0 [menu|setup|status|inventory-json|action OPERATION_ID|drivers|unlocks|storage-updates|interfaces|power|ram|compute|cpu-unlock|cec|storage|persistence|wifi|amdgpu|amdgpu-clean|scheduler-policy|radv|decky|desktop|trainer|manage|help]
+Usage: $0 [menu|setup|status|inventory-json|action OPERATION_ID|drivers|unlocks|storage-updates|interfaces|power|ram|swap|compute|cpu-unlock|cec|storage|persistence|wifi|amdgpu|amdgpu-clean|scheduler-policy|radv|decky|desktop|trainer|manage|help]
 
 Run without arguments in a terminal to open the unified toolkit menu.
 Run the toolkit as the logged-in Deck user, not with sudo; child tools request
@@ -677,6 +695,7 @@ Commands:
   interfaces             Open Decky, Plasma, and Trainer installers
   power                  Open the Power Management menu
   ram                    Open the RAM / VRAM Split menu
+  swap                   Choose zram or zswap-backed disk swap
   compute                Open the GPU Compute-Unit Unlock menu
   cpu-unlock             Open the CPU Core Unlock menu
   cec                    Open the CEC / HDMI Control menu
@@ -696,11 +715,13 @@ Compatibility aliases: audio (amdgpu), mesh (radv)
 
 Action operation IDs:
   storage-install        power-install          ram-install
-  compute-build          cec-setup              persistence-install
+  swap-zram-install      swap-zswap-install     compute-build
+  cec-setup              persistence-install
   aic-install            audio-build            mesh-setup
   decky-install          desktop-install
   storage-repair         cec-repair
   storage-remove         power-remove           ram-remove
+  swap-remove
   compute-remove         cec-remove             persistence-remove
   aic-remove             audio-remove           mesh-remove
   decky-remove           desktop-remove
@@ -730,6 +751,7 @@ case "$command_name" in
     interfaces) (($# == 0)) || die "Usage: $0 interfaces"; cmd_interfaces_menu ;;
     power) (($# == 0)) || die "Usage: $0 power"; run_sudo_script "$POWER_SH" menu ;;
     ram) (($# == 0)) || die "Usage: $0 ram"; run_script "$RAM_SPLIT_SH" menu ;;
+    swap) (($# == 0)) || die "Usage: $0 swap"; run_sudo_script "$SWAP_SH" menu ;;
     compute) (($# == 0)) || die "Usage: $0 compute"; run_sudo_script "$COMPUTE_SH" menu ;;
     cpu-unlock) (($# == 0)) || die "Usage: $0 cpu-unlock"; run_sudo_script "$POWER_SH" cpu-unlock menu ;;
     cec) (($# == 0)) || die "Usage: $0 cec"; require_normal_user; run_script "$CEC_SH" menu ;;

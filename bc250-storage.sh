@@ -516,7 +516,7 @@ list_dependencies() {
             printf 'service:%s\n' "$unit"
         fi
     done
-    for component in compute power ram cec aic desktop; do
+    for component in compute power ram swap cec aic desktop; do
         if [[ -e "$ATOMIC_KEEP_DIR/bc250-$component.conf" \
             || -L "$ATOMIC_KEEP_DIR/bc250-$component.conf" ]]; then
             printf 'persistence:%s\n' "$component"
@@ -529,6 +529,15 @@ list_dependencies() {
     if [[ -e "$ROOT_DIR/bin/bc250memcfg" || -L "$ROOT_DIR/bin/bc250memcfg" \
         || -e "$ROOT_DIR/ram-split/install.conf" || -L "$ROOT_DIR/ram-split/install.conf" ]]; then
         printf 'component:ram\n'
+    fi
+    if [[ -e "$ROOT_DIR/swap" || -L "$ROOT_DIR/swap" \
+        || -e "$SYSTEMD_DIR/bc250-zswap-setup.service" \
+        || -L "$SYSTEMD_DIR/bc250-zswap-setup.service" \
+        || -e "$SYSTEMD_DIR/var-lib-bc250\\x2dcontrol-swap-swapfile.swap" \
+        || -L "$SYSTEMD_DIR/var-lib-bc250\\x2dcontrol-swap-swapfile.swap" \
+        || -e "$SYSTEMD_DIR/swap.target.wants/var-lib-bc250\\x2dcontrol-swap-swapfile.swap" \
+        || -L "$SYSTEMD_DIR/swap.target.wants/var-lib-bc250\\x2dcontrol-swap-swapfile.swap" ]]; then
+        printf 'component:swap\n'
     fi
 }
 

@@ -1,6 +1,7 @@
 import os
 import subprocess
 import tempfile
+import tomllib
 import unittest
 from pathlib import Path
 from typing import Dict
@@ -249,6 +250,354 @@ run_action failing_action >/dev/null
                 env=script_env(directory),
             )
             self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_voltage_curve_structural_edits_preserve_later_toml_sections(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            config = root / "config.toml"
+            config.write_text(
+                "[load-target]\nupper = 0.80\nlower = 0.65\n\n"
+                "[[safe-points]]\nfrequency = 300\nvoltage = 700\n\n"
+                "[[safe-points]]\nfrequency = 1000\nvoltage = 800\n\n"
+                "[[safe-points]]\nfrequency = 2150\nvoltage = 1000\n\n"
+                '["after]curve"]\nkept = true\n',
+                encoding="utf-8",
+            )
+            systemctl = root / "systemctl"
+            systemctl.write_text(
+                "#!/bin/sh\n"
+                "if [ \"$1\" = show ]; then printf 'inactive\\n'; exit 0; fi\n"
+                "exit 3\n",
+                encoding="ascii",
+            )
+            systemctl.chmod(0o755)
+            subprocess.run(
+                [
+                    "bash",
+                    "-c",
+                    r'''
+script=$1; base=$2; systemctl_bin=$3
+set -- help
+source "$script" >/dev/null
+require_root() { :; }
+GOV_CONF="$base/config.toml"
+FREQ_STATE="$base/freq-state"
+RESTORE_BIN="$base/restore"
+GPU_CONTROL_LOCK="$base/lock/backend.lock"
+SYSTEMCTL_BIN="$systemctl_bin"
+volt_add 1500 900 >/dev/null
+volt_edit 1500 1600 925 >/dev/null
+volt_set 1000 825 >/dev/null
+volt_remove 1600 >/dev/null
+''',
+                    "_",
+                    str(POWER),
+                    directory,
+                    str(systemctl),
+                ],
+                check=True,
+                capture_output=True,
+                text=True,
+                env=script_env(directory),
+            )
+            parsed = tomllib.loads(config.read_text(encoding="utf-8"))
+            self.assertEqual(
+                parsed["safe-points"],
+                [
+                    {"frequency": 300, "voltage": 700},
+                    {"frequency": 1000, "voltage": 825},
+                    {"frequency": 2150, "voltage": 1000},
+                ],
+            )
+            self.assertEqual(parsed["after]curve"], {"kept": True})
+
+    def test_shell_frequency_validation_uses_300_mhz_floor(self):
+        with tempfile.TemporaryDirectory() as directory:
+            result = subprocess.run(
+                [
+                    "bash",
+                    "-c",
+                    r'''
+script=$1
+set -- help
+source "$script" >/dev/null
+validate_gpu_frequency_request 300
+validate_gpu_frequency_request 0 300
+validate_gpu_frequency_request 300 2150
+if (validate_gpu_frequency_request 299) >/dev/null 2>&1; then exit 1; fi
+if (validate_gpu_frequency_request 100 1500) >/dev/null 2>&1; then exit 1; fi
+''',
+                    "_",
+                    str(POWER),
+                ],
+                capture_output=True,
+                text=True,
+                env=script_env(directory),
+            )
+            self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_voltage_curve_rejects_invalid_candidate_without_writing(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            config = root / "config.toml"
+            original = (
+                "[[safe-points]]\nfrequency = 300\nvoltage = 700\n\n"
+                "[[safe-points]]\nfrequency = 1000\nvoltage = 800\n\n"
+                "[[safe-points]]\nfrequency = 2150\nvoltage = 1000\n"
+            )
+            config.write_text(original, encoding="utf-8")
+            systemctl = root / "systemctl"
+            systemctl.write_text("#!/bin/sh\nexit 3\n", encoding="ascii")
+            systemctl.chmod(0o755)
+            result = subprocess.run(
+                [
+                    "bash",
+                    "-c",
+                    r'''
+script=$1; base=$2; systemctl_bin=$3
+set -- help
+source "$script" >/dev/null
+require_root() { :; }
+GOV_CONF="$base/config.toml"
+FREQ_STATE="$base/freq-state"
+RESTORE_BIN="$base/restore"
+GPU_CONTROL_LOCK="$base/lock/backend.lock"
+SYSTEMCTL_BIN="$systemctl_bin"
+volt_add 1500 750
+''',
+                    "_",
+                    str(POWER),
+                    directory,
+                    str(systemctl),
+                ],
+                capture_output=True,
+                text=True,
+                env=script_env(directory),
+            )
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("cannot decrease", result.stderr)
+            self.assertEqual(config.read_text(encoding="utf-8"), original)
+
+    def test_voltage_curve_rejects_mixed_safe_point_header_spellings(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            config = root / "config.toml"
+            original = (
+                "[[safe-points]]\nfrequency = 300\nvoltage = 700\n\n"
+                "[[ safe-points ]]\nfrequency = 1000\nvoltage = 800\n\n"
+                "[[safe-points]]\nfrequency = 2150\nvoltage = 1000\n"
+            )
+            config.write_text(original, encoding="utf-8")
+            result = subprocess.run(
+                [
+                    "bash",
+                    "-c",
+                    r'''
+script=$1; base=$2
+set -- help
+source "$script" >/dev/null
+require_root() { :; }
+GOV_CONF="$base/config.toml"
+FREQ_STATE="$base/freq-state"
+RESTORE_BIN="$base/restore"
+GPU_CONTROL_LOCK="$base/lock/backend.lock"
+SYSTEMCTL_BIN=/bin/false
+volt_set 1000 825
+''',
+                    "_",
+                    str(POWER),
+                    directory,
+                ],
+                capture_output=True,
+                text=True,
+                env=script_env(directory),
+            )
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("sorted and unique", result.stderr)
+            self.assertEqual(config.read_text(encoding="utf-8"), original)
+
+    def test_voltage_curve_restart_failure_restores_config_and_runtime(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            config = root / "config.toml"
+            original = (
+                "[[safe-points]]\nfrequency = 300\nvoltage = 700\n\n"
+                "[[safe-points]]\nfrequency = 1000\nvoltage = 800\n\n"
+                "[[safe-points]]\nfrequency = 2150\nvoltage = 1000\n"
+            )
+            config.write_text(original, encoding="utf-8")
+            systemctl = root / "systemctl"
+            systemctl.write_text(
+                "#!/bin/sh\n"
+                "if [ \"$1\" = is-active ]; then exit 0; fi\n"
+                "if [ \"$1\" = restart ]; then\n"
+                "  count=0; [ ! -f \"$COUNT_FILE\" ] || count=$(cat \"$COUNT_FILE\")\n"
+                "  count=$((count + 1)); printf '%s\\n' \"$count\" > \"$COUNT_FILE\"\n"
+                "  [ \"$count\" -ne 1 ]\n"
+                "fi\n",
+                encoding="ascii",
+            )
+            systemctl.chmod(0o755)
+            env = script_env(directory)
+            env["COUNT_FILE"] = str(root / "restart-count")
+            result = subprocess.run(
+                [
+                    "bash",
+                    "-c",
+                    r'''
+script=$1; base=$2; systemctl_bin=$3
+set -- help
+source "$script" >/dev/null
+require_root() { :; }
+GOV_CONF="$base/config.toml"
+FREQ_STATE="$base/freq-state"
+RESTORE_BIN="$base/restore"
+GPU_CONTROL_LOCK="$base/lock/backend.lock"
+SYSTEMCTL_BIN="$systemctl_bin"
+volt_set 1000 825
+''',
+                    "_",
+                    str(POWER),
+                    directory,
+                    str(systemctl),
+                ],
+                capture_output=True,
+                text=True,
+                env=env,
+            )
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("previous curve and runtime restored", result.stderr)
+            self.assertEqual(config.read_text(encoding="utf-8"), original)
+            self.assertEqual((root / "restart-count").read_text(encoding="ascii"), "2\n")
+
+    def test_voltage_curve_rolls_back_if_governor_starts_during_update(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            config = root / "config.toml"
+            original = (
+                "[[safe-points]]\nfrequency = 300\nvoltage = 700\n\n"
+                "[[safe-points]]\nfrequency = 1000\nvoltage = 800\n\n"
+                "[[safe-points]]\nfrequency = 2150\nvoltage = 1000\n"
+            )
+            config.write_text(original, encoding="utf-8")
+            systemctl = root / "systemctl"
+            systemctl.write_text(
+                "#!/bin/sh\n"
+                "if [ \"$1\" = is-active ]; then\n"
+                "  [ ! -f \"$ACTIVE_MARKER\" ] || exit 0\n"
+                "  exit 3\n"
+                "fi\n"
+                "if [ \"$1\" = show ]; then\n"
+                "  count=0; [ ! -f \"$SHOW_COUNT\" ] || count=$(cat \"$SHOW_COUNT\")\n"
+                "  count=$((count + 1)); printf '%s\\n' \"$count\" > \"$SHOW_COUNT\"\n"
+                "  if [ \"$count\" -eq 1 ]; then printf 'inactive\\n'; else printf 'activating\\n'; fi\n"
+                "  exit 0\n"
+                "fi\n"
+                "if [ \"$1\" = restart ]; then : > \"$ACTIVE_MARKER\"; exit 0; fi\n",
+                encoding="ascii",
+            )
+            systemctl.chmod(0o755)
+            env = script_env(directory)
+            env["ACTIVE_MARKER"] = str(root / "active")
+            env["SHOW_COUNT"] = str(root / "show-count")
+            result = subprocess.run(
+                [
+                    "bash",
+                    "-c",
+                    r'''
+script=$1; base=$2; systemctl_bin=$3
+set -- help
+source "$script" >/dev/null
+require_root() { :; }
+GOV_CONF="$base/config.toml"
+FREQ_STATE="$base/freq-state"
+RESTORE_BIN="$base/restore"
+GPU_CONTROL_LOCK="$base/lock/backend.lock"
+SYSTEMCTL_BIN="$systemctl_bin"
+volt_set 1000 825
+''',
+                    "_",
+                    str(POWER),
+                    directory,
+                    str(systemctl),
+                ],
+                capture_output=True,
+                text=True,
+                env=env,
+            )
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("currently activating", result.stderr)
+            self.assertIn("previous curve and runtime restored", result.stderr)
+            self.assertEqual(config.read_text(encoding="utf-8"), original)
+            self.assertTrue((root / "active").is_file())
+
+    def test_voltage_curve_replay_failure_rolls_back_and_replays_previous_state(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            config = root / "config.toml"
+            original = (
+                "[[safe-points]]\nfrequency = 300\nvoltage = 700\n\n"
+                "[[safe-points]]\nfrequency = 1000\nvoltage = 800\n\n"
+                "[[safe-points]]\nfrequency = 2150\nvoltage = 1000\n"
+            )
+            config.write_text(original, encoding="utf-8")
+            (root / "freq-state").write_text(
+                "MODE=pin\nA=1000\nB=\n", encoding="ascii"
+            )
+            systemctl = root / "systemctl"
+            systemctl.write_text(
+                "#!/bin/sh\n"
+                "if [ \"$1\" = is-active ]; then exit 0; fi\n"
+                "if [ \"$1\" = restart ]; then\n"
+                "  count=0; [ ! -f \"$RESTART_COUNT\" ] || count=$(cat \"$RESTART_COUNT\")\n"
+                "  printf '%s\\n' \"$((count + 1))\" > \"$RESTART_COUNT\"\n"
+                "  exit 0\n"
+                "fi\n",
+                encoding="ascii",
+            )
+            systemctl.chmod(0o755)
+            restore = root / "restore"
+            restore.write_text(
+                "#!/bin/sh\n"
+                "count=0; [ ! -f \"$REPLAY_COUNT\" ] || count=$(cat \"$REPLAY_COUNT\")\n"
+                "count=$((count + 1)); printf '%s\\n' \"$count\" > \"$REPLAY_COUNT\"\n"
+                "[ \"$count\" -ne 1 ]\n",
+                encoding="ascii",
+            )
+            restore.chmod(0o755)
+            env = script_env(directory)
+            env["RESTART_COUNT"] = str(root / "restart-count")
+            env["REPLAY_COUNT"] = str(root / "replay-count")
+            result = subprocess.run(
+                [
+                    "bash",
+                    "-c",
+                    r'''
+script=$1; base=$2; systemctl_bin=$3
+set -- help
+source "$script" >/dev/null
+require_root() { :; }
+GOV_CONF="$base/config.toml"
+FREQ_STATE="$base/freq-state"
+RESTORE_BIN="$base/restore"
+GPU_CONTROL_LOCK="$base/lock/backend.lock"
+SYSTEMCTL_BIN="$systemctl_bin"
+volt_set 1000 825
+''',
+                    "_",
+                    str(POWER),
+                    directory,
+                    str(systemctl),
+                ],
+                capture_output=True,
+                text=True,
+                env=env,
+            )
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("previous curve and runtime restored", result.stderr)
+            self.assertEqual(config.read_text(encoding="utf-8"), original)
+            self.assertEqual((root / "restart-count").read_text(encoding="ascii"), "2\n")
+            self.assertEqual((root / "replay-count").read_text(encoding="ascii"), "2\n")
 
     def test_core_unlock_can_be_uninstalled_without_other_power_features(self):
         with tempfile.TemporaryDirectory() as directory:

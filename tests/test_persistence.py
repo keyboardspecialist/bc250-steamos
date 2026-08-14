@@ -230,6 +230,30 @@ class PersistenceUnitTests(unittest.TestCase):
             self.assertIn("Atomic-update keep list installed", result.stdout)
             self.assertIn("/etc/default/grub.d/bc250-amdgpu.cfg", payload)
 
+    def test_swap_keep_list_contains_generator_and_disk_units(self):
+        with tempfile.TemporaryDirectory() as directory:
+            keep = Path(directory)
+            subprocess.run(
+                [
+                    "bash",
+                    "-c",
+                    'script=$1; keep=$2; set -- help; source "$script" >/dev/null; '
+                    'require_root() { :; }; install_storage() { :; }; KEEP_DIR=$keep; '
+                    'LEGACY_KEEP_FILE="$keep/bc250-steamos.conf"; install_keep_list swap',
+                    "_",
+                    str(PERSISTENCE),
+                    str(keep),
+                ],
+                check=True,
+                capture_output=True,
+                text=True,
+            )
+            payload = (keep / "bc250-swap.conf").read_text(encoding="utf-8")
+            self.assertIn("zram-generator.conf.d/90-bc250-swap.conf", payload)
+            self.assertIn("bc250-zswap-setup.service", payload)
+            self.assertIn("swapfile.swap", payload)
+            self.assertIn("bc250-persistence-recovery.service", payload)
+
     def test_storage_uninstall_preserves_backing_and_stops_recovery(self):
         with tempfile.TemporaryDirectory() as directory:
             result = subprocess.run(
@@ -311,6 +335,28 @@ grep -Fxq "daemon-reload" "$SYSTEMCTL_LOG"
         self.assertIn('case "$target" in', source)
         self.assertIn('done < <(findmnt -rn -o FSROOT,TARGET)', source)
         self.assertIn('find "$BACKING_DIR" ! -uid 0', source)
+
+    def test_storage_blocks_on_swap_state_without_keep_list(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            result = subprocess.run(
+                [
+                    "bash",
+                    "-c",
+                    'script=$1; root=$2; set -- help; source "$script" >/dev/null; '
+                    'ROOT_DIR="$root/data"; SYSTEMD_DIR="$root/systemd"; '
+                    'ATOMIC_KEEP_DIR="$root/keep"; mkdir -p "$ROOT_DIR/swap"; '
+                    'touch "$ROOT_DIR/swap/install.conf"; systemctl() { return 1; }; '
+                    'can_uninstall',
+                    "_",
+                    str(STORAGE),
+                    str(root),
+                ],
+                capture_output=True,
+                text=True,
+            )
+            self.assertEqual(result.returncode, 1)
+            self.assertEqual(result.stdout.strip(), "component:swap")
 
     def test_recovery_bootstraps_from_home_before_local_filesystems(self):
         unit = render("recovery")
@@ -602,7 +648,7 @@ grep -Fxq "daemon-reload" "$SYSTEMCTL_LOG"
         )
         storage = STORAGE.read_text(encoding="utf-8")
         for expected in (
-            "COMPONENTS=(compute power ram cec aic desktop amdgpu)",
+            "COMPONENTS=(compute power ram swap cec aic desktop amdgpu)",
             "/etc/systemd/system/bc250-control.service",
             "/etc/systemd/system/bc250-desktop-control-repair.service",
             "/etc/dbus-1/system.d/io.github.keyboardspecialist.BC250Control1.conf",
@@ -653,6 +699,7 @@ grep -Fxq "daemon-reload" "$SYSTEMCTL_LOG"
             "bc250-update-persistence.sh",
             "bc250-power.sh",
             "bc250-ram-split.sh",
+            "bc250-swap.sh",
             "bc250-40cu.sh",
             "bc250-cec.sh",
             "aic8800/steamdeck-setup.sh",

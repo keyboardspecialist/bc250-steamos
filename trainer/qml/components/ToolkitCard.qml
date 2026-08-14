@@ -9,6 +9,7 @@ Item {
     required property string description
     required property string installState
     required property string primaryText
+    property string repairText: "REPAIR"
     property bool actionEnabled: true
     property bool repairVisible: false
     property bool removeVisible: false
@@ -80,7 +81,7 @@ Item {
             }
             C.NeonButton {
                 objectName: "repairAction"
-                text: "REPAIR"
+                text: root.repairText
                 visible: root.repairVisible
                 enabled: root.actionEnabled
                 implicitHeight: 25

@@ -42,13 +42,13 @@ QtObject {
         },
         gpu: {
             available: true, controllable: true, dbusReady: true, mode: "adaptive",
-            requestedMode: "adaptive", requestedMinimum: 100, requestedMaximum: 1500,
-            minimum: 100, maximum: 1500, liveMinimum: 100, liveMaximum: 1500,
-            initialMinimum: 100, initialMaximum: 1500, activeMhz: 1120,
-            levels: ["100", "500", "1000", "1500"], allowedMinimum: 100, allowedMaximum: 2150,
+            requestedMode: "adaptive", requestedMinimum: 300, requestedMaximum: 1500,
+            minimum: 300, maximum: 1500, liveMinimum: 300, liveMaximum: 1500,
+            initialMinimum: 300, initialMaximum: 1500, activeMhz: 1120,
+            levels: ["300", "500", "1000", "1500"], allowedMinimum: 300, allowedMaximum: 2150,
             climbMs: 500, governorService: { enabled: "enabled", active: "active" },
             frequencyRestore: { enabled: "enabled", active: "exited" }, persistent: true,
-            replayApplied: true, safePoints: [{ frequency: 1000, voltage: 850 }, { frequency: 1500, voltage: 975 }],
+            replayApplied: true, safePoints: [{ frequency: 300, voltage: 700 }, { frequency: 1500, voltage: 975 }],
             configuredMax: 1500, loadUpper: 0.80, loadLower: 0.65, adjustMicros: 5000,
             rampNormal: 10, downEvents: 3
         },

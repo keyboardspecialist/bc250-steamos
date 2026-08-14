@@ -559,6 +559,24 @@ class BackendMutationTests(unittest.IsolatedAsyncioTestCase):
         with self.assertRaises(CommandError):
             await backend.set_gpu_frequency("pin", 0, True)
 
+    async def test_gpu_frequency_enforces_300_mhz_floor(self):
+        backend = object.__new__(ToolkitBackend)
+        backend._mutate = AsyncMock(return_value=None)
+
+        await backend.set_gpu_frequency("pin", 0, 300)
+        await backend.set_gpu_frequency("range", 0, 300)
+        await backend.set_gpu_frequency("range", 300, 2150)
+        for mode, minimum, maximum in (
+            ("pin", 0, 299),
+            ("range", 0, 299),
+            ("range", 100, 1500),
+        ):
+            with self.subTest(mode=mode, minimum=minimum, maximum=maximum):
+                with self.assertRaises(CommandError):
+                    await backend.set_gpu_frequency(mode, minimum, maximum)
+
+        self.assertEqual(backend._mutate.await_count, 3)
+
     async def test_rpc_rejects_non_boolean_toggle(self):
         backend = object.__new__(ToolkitBackend)
         with self.assertRaises(CommandError):
