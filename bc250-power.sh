@@ -1420,11 +1420,9 @@ volt_curve_helper() {
     shift
     command -v python3 >/dev/null 2>&1 \
         || die "python3 is required for safe voltage-curve updates."
-    python3 -c 'import tomllib' >/dev/null 2>&1 \
-        || die "Python 3.11 or newer is required for safe voltage-curve updates."
     python3 - "$mode" "$GOV_CONF" "$FREQ_STATE" "$RESTORE_BIN" "$GOV_SVC" \
         "$GPU_CONTROL_LOCK" "$SYSTEMCTL_BIN" "$GPU_FREQ_MIN" "$GPU_FREQ_MAX" \
-        "$VOLT_MIN" "$VOLT_MAX" "$@" <<'PY'
+        "$VOLT_MIN" "$VOLT_MAX" "$SCRIPT_DIR/backend/vendor" "$@" <<'PY'
 import fcntl
 import os
 import re
@@ -1433,8 +1431,13 @@ import subprocess
 import sys
 import tempfile
 import time
-import tomllib
 from pathlib import Path
+
+try:
+    import tomllib
+except ModuleNotFoundError:
+    sys.path.insert(0, sys.argv[12])
+    import tomli as tomllib
 
 
 class CurveError(Exception):
@@ -1453,7 +1456,7 @@ class TransitionalServiceError(CurveError):
 
 mode, config_arg, state_arg, restore_arg, service, lock_arg, systemctl = sys.argv[1:8]
 frequency_min, frequency_max, voltage_min, voltage_max = map(int, sys.argv[8:12])
-arguments = sys.argv[12:]
+arguments = sys.argv[13:]
 config_path = Path(config_arg)
 state_path = Path(state_arg)
 restore_path = Path(restore_arg)

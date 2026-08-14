@@ -1,13 +1,19 @@
 import os
 import subprocess
+import sys
 import tempfile
-import tomllib
 import unittest
 from pathlib import Path
 from typing import Dict
 
 
 ROOT = Path(__file__).resolve().parents[1]
+try:
+    import tomllib
+except ModuleNotFoundError:  # Python 3.8 release workflow
+    sys.path.insert(0, str(ROOT / "backend/vendor"))
+    import tomli as tomllib
+
 POWER = ROOT / "bc250-power.sh"
 COMPUTE = ROOT / "bc250-40cu.sh"
 
