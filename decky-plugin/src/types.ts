@@ -142,6 +142,8 @@ export interface MeshStatus {
   icdPath: string;
   configValid: boolean;
   kernelReady: boolean;
+  schedulerConfigured: boolean;
+  schedulerActive: boolean;
   globalEnabled: boolean;
   restartRequired: boolean;
   error: string | null;

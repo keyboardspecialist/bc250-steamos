@@ -592,6 +592,8 @@ class BackendMutationTests(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(status["scriptAvailable"])
         self.assertEqual(status["runtimeState"], "not-installed")
         self.assertFalse(status["kernelReady"])
+        self.assertFalse(status["schedulerConfigured"])
+        self.assertFalse(status["schedulerActive"])
         self.assertFalse(status["globalEnabled"])
         self.assertFalse(status["restartRequired"])
         self.assertEqual(
@@ -611,6 +613,8 @@ class BackendMutationTests(unittest.IsolatedAsyncioTestCase):
                     "icdPath": "/home/deck/radeon_driconf_icd.x86_64.json",
                     "configValid": True,
                     "kernelReady": True,
+                    "schedulerConfigured": True,
+                    "schedulerActive": True,
                     "globalEnabled": True,
                     "restartRequired": False,
                     "error": None,
@@ -628,6 +632,8 @@ class BackendMutationTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(status["runtimeState"], "ready")
         self.assertTrue(status["kernelReady"])
+        self.assertTrue(status["schedulerConfigured"])
+        self.assertTrue(status["schedulerActive"])
         self.assertTrue(status["globalEnabled"])
         self.assertFalse(status["restartRequired"])
         self.assertEqual(status["games"][0]["executable"], "bc250-steam-1462040")

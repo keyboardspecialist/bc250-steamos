@@ -1316,7 +1316,7 @@ class ToolkitBackend:
             "actions": actions,
             "semantics": {
                 "test": "A six-core test requires a warm reboot before Linux can enumerate eight cores.",
-                "off": "Disabling replay does not relock this boot; eight active cores require a full power-off.",
+                "off": "Disabling automatic unlock does not relock this boot; eight active cores require a full power-off.",
             },
         }
 
@@ -2301,6 +2301,8 @@ class ToolkitBackend:
                 ),
                 "configValid": True,
                 "kernelReady": False,
+                "schedulerConfigured": False,
+                "schedulerActive": False,
                 "globalEnabled": False,
                 "restartRequired": False,
                 "error": None,
@@ -2339,6 +2341,8 @@ class ToolkitBackend:
         icd_path = status.get("icdPath")
         config_valid = status.get("configValid")
         kernel_ready = status.get("kernelReady", False)
+        scheduler_configured = status.get("schedulerConfigured", False)
+        scheduler_active = status.get("schedulerActive", False)
         global_enabled = status.get("globalEnabled", False)
         restart_required = status.get("restartRequired", False)
         status_error = status.get("error")
@@ -2355,6 +2359,8 @@ class ToolkitBackend:
             raise CommandError("Mesa / RADV status returned invalid configuration state.")
         if type(kernel_ready) is not bool:
             raise CommandError("Mesa / RADV status returned invalid kernel state.")
+        if type(scheduler_configured) is not bool or type(scheduler_active) is not bool:
+            raise CommandError("Mesa / RADV status returned invalid scheduler state.")
         if type(global_enabled) is not bool:
             raise CommandError("Mesa / RADV status returned invalid global state.")
         if type(restart_required) is not bool:
@@ -2368,6 +2374,8 @@ class ToolkitBackend:
             "icdPath": icd_path,
             "configValid": config_valid,
             "kernelReady": kernel_ready,
+            "schedulerConfigured": scheduler_configured,
+            "schedulerActive": scheduler_active,
             "globalEnabled": global_enabled,
             "restartRequired": restart_required,
             "error": status_error,
@@ -2426,7 +2434,7 @@ class ToolkitBackend:
         self, app_id: int, friendly_name: str, enabled: bool
     ) -> None:
         raise CommandError(
-            "Per-game controls were removed; the Mesa / RADV performance patch is global."
+            "Per-game controls were removed; the Mesa / RADV async-compute patch is global."
         )
 
     async def set_cu_wgp(

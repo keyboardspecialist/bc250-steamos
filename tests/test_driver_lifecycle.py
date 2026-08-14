@@ -415,10 +415,20 @@ class DriverLifecycleTests(unittest.TestCase):
             encoding="utf-8"
         )
 
-        self.assertIn('"$BOOT_CONFIG" install', installer)
+        mesh = (ROOT / "bc250-mesh-shader.sh").read_text(encoding="utf-8")
+        direct_installer = (ROOT / "bc250-audio-fix/install.sh").read_text(
+            encoding="utf-8"
+        )
+        self.assertNotIn('"$BOOT_CONFIG" install', installer)
+        self.assertIn('BC250_FORCE_GRUB_REGEN=1 "$BOOT_CONFIG" remove', direct_installer)
+        self.assertLess(
+            direct_installer.index('"$BOOT_CONFIG" remove'),
+            direct_installer.index('mkinitcpio -p "$PRESET"', direct_installer.index('"$BOOT_CONFIG" remove')),
+        )
+        self.assertIn('as_root bash "$BOOT_CONFIG" install', mesh)
         self.assertIn('"$BOOT_CONFIG" remove', rollback)
         self.assertIn("BC250_SKIP_GRUB_REGEN=1", cleanup)
-        self.assertIn("amdgpu.sched_policy=2", installer)
+        self.assertIn("amdgpu.sched_policy=2", mesh)
 
 
 if __name__ == "__main__":

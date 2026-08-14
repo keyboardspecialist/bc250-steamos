@@ -17,8 +17,8 @@ with these integration changes:
   `0x000000ff` mask, and verifies the full mask after issuing the fixed write.
 - Aborts if the queue is still busy after the initial timeout instead of
   issuing a command into a busy mailbox.
-- Adds one-time apply, boot replay, status, and read-only persistence-gating
-  modes plus physical-core topology checks.
+- Adds one-time apply, automatic boot-time unlock, status, and read-only
+  persistence-gating modes plus physical-core topology checks.
 - Serializes boot/manual operations and writes a persistent pending marker
   before touching the SMU. This permits at most one automatic attempt and warm
   reboot after a cold boot, preventing failed writes or unlocks from looping.
@@ -77,6 +77,8 @@ uncertainty retains the loader and ownership/recovery state for manual review.
 
 EFI mode runs before Linux. Its first pass after cold power writes the mask and
 requests a warm reset; its second pass sees the completed mask and lets firmware
-continue to SteamOS. This eliminates the extra Linux boot used to replay the
-mask, but not the warm reset AGESA requires. Linux/systemd and EFI replay are
-the two persistence choices available after validating all eight cores.
+continue to SteamOS. This eliminates the extra Linux boot used to apply the
+mask, but not the warm reset AGESA requires. After validating all eight cores,
+choose either the standard Linux/systemd method or the EFI pre-boot alternative.
+These automatic unlock methods are mutually exclusive and cannot be enabled
+together.

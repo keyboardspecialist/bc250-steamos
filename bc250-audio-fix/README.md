@@ -4,9 +4,10 @@ Corrects DisplayPort video/audio timing, Cyan Skillfish GPU telemetry, and the
 GFX1013 compute-queue lifecycle through one patched `amdgpu` module. GPU
 activity comes from GC status sampling and GFX clock comes from a validated
 direct SMU query while retaining the firmware's published `SmuMetrics_t`
-layout. The GFX1013 async-compute repair also requires
-`amdgpu.sched_policy=2`; installation adds it through a toolkit-owned GRUB
-drop-in and retains that drop-in across SteamOS atomic updates.
+layout. The GFX1013 async-compute repair also requires patched Mesa RADV and
+`amdgpu.sched_policy=2`. Module installation deliberately leaves that policy
+off. `bc250-mesh-shader.sh setup` enables it only after the matching RADV
+runtime is installed, preventing either half from being activated alone.
 
 ## Install
 
@@ -101,19 +102,17 @@ outside the supported 1000-2000 MHz range propagate to the metrics caller.
 The GFX1013 repair keeps PASID TLB invalidation off the KIQ path, guards GFXOFF
 during KFD compute activity, and uses the GFXHUB semaphore/type-0 transaction
 only for BC-250 PASID invalidation. The three patches are mandatory and applied
-in upstream order. The installer writes
-`/etc/default/grub.d/bc250-amdgpu.cfg`, regenerates
-`/efi/EFI/steamos/grub.cfg`, verifies that every generated Linux boot line has
-exactly one `amdgpu.sched_policy=2`, and registers the drop-in with SteamOS's
-atomic-update keep list. The setting therefore survives reboots and atomic OS
-updates; rollback removes it after the last patched module is removed.
+in upstream order. The module installer does not change scheduler policy.
 
 The kernel repair does not expose compute queues by itself. The optional,
-recommended Mesa / RADV performance-patch workflow in `bc250-mesh-shader.sh`
-builds the matching userspace half and enables it globally for the logged-in
-user through a kernel-gated environment generator. Never point an application
-at that alternate ICD while a stock kernel module is active; upstream reports
-that combination can hang the GPU.
+recommended Mesa / RADV workflow in `bc250-mesh-shader.sh` builds the matching
+userspace half that enables asynchronous compute. After installing RADV, it
+writes `/etc/default/grub.d/bc250-amdgpu.cfg`, verifies exactly one
+`amdgpu.sched_policy=2` on every generated Linux boot line, and registers the
+drop-in for atomic updates. Its environment generator requires the installed
+and active patched module plus active policy `2` before exposing RADV. Never
+point an application at the alternate ICD while a stock kernel module is
+active; upstream reports that combination can hang the GPU.
 
 ## Commands
 

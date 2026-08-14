@@ -111,6 +111,7 @@ TestCase {
         compare(efiButton.enabled, false)
         compare(offButton.enabled, true)
         compare(page.unlockMode, "linux-replay")
+        compare(page.actionStatus("efi-enable", ""), "Blocked: standard Linux boot method already enabled")
     }
 
     function test_modeLabelsAndRecoveryStates() {
@@ -124,7 +125,7 @@ TestCase {
         var cases = [
             {"mode": "none", "label": "NONE"},
             {"mode": "temporary", "label": "ONE-TIME TEST"},
-            {"mode": "linux-replay", "label": "LINUX REPLAY"},
+            {"mode": "linux-replay", "label": "STANDARD LINUX"},
             {"mode": "efi", "label": "EFI PREBOOT"}
         ]
         for (var index = 0; index < cases.length; ++index) {
@@ -233,7 +234,7 @@ TestCase {
         }
         backend.cpuUnlockStatus = oldStatus
         compare(page.unlockMode, "linux-replay")
-        compare(modeTile.value, "LINUX REPLAY")
+        compare(modeTile.value, "STANDARD LINUX")
         compare(entryStatus.value, "Unavailable")
         compare(entryStatus.health, 0)
     }

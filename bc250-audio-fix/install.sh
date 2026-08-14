@@ -12,10 +12,6 @@ MARKER=/usr/lib/modules/$REL/updates/.bc250-audio-fix
 METRICS_MARKER=/usr/lib/modules/$REL/updates/.bc250-metrics-fix
 GFX1013_MARKER=/usr/lib/modules/$REL/updates/.bc250-gfx1013-fix
 BOOT_CONFIG=$HERE/boot-config.sh
-SCHED_CONFIG=/etc/default/grub.d/bc250-amdgpu.cfg
-AMDGPU_KEEP_FILE=/etc/atomic-update.conf.d/bc250-amdgpu.conf
-GRUB_CFG=/efi/EFI/steamos/grub.cfg
-GRUB_CONFIG_LOCK=/run/lock/bc250-grub-config.lock
 
 [ -f "$SRC" ] || { echo "missing $SRC — the module is not shipped in the repo; build it against your running kernel first: ./fetch-sources.sh && ./build.sh"; exit 1; }
 [ -f "$ATTESTATION" ] && [ ! -L "$ATTESTATION" ] \
@@ -51,24 +47,9 @@ fi
 ROOTFS_WAS_READONLY=0
 INSTALL_STARTED=0
 INSTALL_OK=0
-BOOT_CONFIG_INSTALLED=0
 TMPD=$(mktemp -d)
 PRIORITY_FILE=/usr/lib/depmod.d/10-bc250-audio-fix.conf
-restore_boot_file() {
-    local backup=$1 target=$2 tmp
-    if [ -f "$backup" ]; then
-        tmp=$(mktemp "${target%/*}/.bc250-restore.XXXXXX") || return 1
-        if ! cp -p "$backup" "$tmp"; then
-            rm -f "$tmp"
-            return 1
-        fi
-        mv -f "$tmp" "$target"
-    else
-        rm -f "$target"
-    fi
-}
 cleanup() {
-    local boot_restore_failed=0
     if [ "$INSTALL_STARTED" = 1 ] && [ "$INSTALL_OK" = 0 ]; then
         echo "install failed; restoring the previous module override" >&2
         if [ -f "$TMPD/original.ko.zst" ]; then
@@ -97,34 +78,17 @@ cleanup() {
             rm -f "$PRIORITY_FILE"
         fi
         depmod "$REL" || true
-        if mkinitcpio -p "$PRESET" >/dev/null 2>&1; then
-            if [ "$BOOT_CONFIG_INSTALLED" = 1 ]; then
-                restore_boot_file "$TMPD/original-amdgpu.cfg" "$SCHED_CONFIG" || boot_restore_failed=1
-                restore_boot_file "$TMPD/original-amdgpu-keep.conf" "$AMDGPU_KEEP_FILE" || boot_restore_failed=1
-                restore_boot_file "$TMPD/original-grub.cfg" "$GRUB_CFG" || boot_restore_failed=1
-                if [ "$boot_restore_failed" = 1 ]; then
-                    echo "warning: failed to restore part of the previous boot-policy state" >&2
-                fi
-            fi
-        elif [ "$BOOT_CONFIG_INSTALLED" = 1 ]; then
-            echo "stock initramfs regeneration failed; retaining amdgpu.sched_policy=2 for boot safety" >&2
-        fi
+        mkinitcpio -p "$PRESET" >/dev/null 2>&1 || true
     fi
     rm -rf "$TMPD"
     if [ "$ROOTFS_WAS_READONLY" = 1 ]; then steamos-readonly enable || true; fi
 }
 trap cleanup EXIT
-command -v flock >/dev/null 2>&1 || { echo "flock is required for safe GRUB changes" >&2; exit 1; }
-exec 8> "$GRUB_CONFIG_LOCK"
-flock 8 || { echo "could not lock $GRUB_CONFIG_LOCK" >&2; exit 1; }
 if [ -f "$DST" ]; then cp -a "$DST" "$TMPD/original.ko.zst"; fi
 if [ -f "$MARKER" ]; then cp -a "$MARKER" "$TMPD/original-marker"; fi
 if [ -f "$METRICS_MARKER" ]; then cp -a "$METRICS_MARKER" "$TMPD/original-metrics-marker"; fi
 if [ -f "$GFX1013_MARKER" ]; then cp -a "$GFX1013_MARKER" "$TMPD/original-gfx1013-marker"; fi
 if [ -f "$PRIORITY_FILE" ]; then cp -a "$PRIORITY_FILE" "$TMPD/original-priority.conf"; fi
-if [ -f "$SCHED_CONFIG" ]; then cp -a "$SCHED_CONFIG" "$TMPD/original-amdgpu.cfg"; fi
-if [ -f "$AMDGPU_KEEP_FILE" ]; then cp -a "$AMDGPU_KEEP_FILE" "$TMPD/original-amdgpu-keep.conf"; fi
-if [ -f "$GRUB_CFG" ]; then cp -a "$GRUB_CFG" "$TMPD/original-grub.cfg"; fi
 if steamos-readonly status 2>/dev/null | grep -qi enabled; then
     steamos-readonly disable
     ROOTFS_WAS_READONLY=1
@@ -150,11 +114,12 @@ EOF
     depmod "$REL"
     RESOLVED=$(modinfo -k "$REL" -F filename amdgpu)
     echo "amdgpu now resolves to: $RESOLVED"
-    [[ "$RESOLVED" == *"/updates/"* ]] || { echo "still losing — aborting before initramfs"; rm -f "$DST"; depmod "$REL"; exit 1; }
+[[ "$RESOLVED" == *"/updates/"* ]] || { echo "still losing — aborting before initramfs"; rm -f "$DST"; depmod "$REL"; exit 1; }
 fi
 
-BC250_GRUB_LOCK_HELD=1 "$BOOT_CONFIG" install
-BOOT_CONFIG_INSTALLED=1
+BC250_FORCE_GRUB_REGEN=1 "$BOOT_CONFIG" remove
 mkinitcpio -p "$PRESET"
 INSTALL_OK=1
-echo "OK — display, GPU telemetry, and GFX1013 compute-queue corrections installed with amdgpu.sched_policy=2. Reboot to activate."
+echo "OK - display, GPU telemetry, and GFX1013 kernel corrections installed."
+echo "Any older toolkit-managed scheduler policy is now disabled for the next boot."
+echo "Reboot, then install the Mesa / RADV patch; that final step enables amdgpu.sched_policy=2 and async compute together."

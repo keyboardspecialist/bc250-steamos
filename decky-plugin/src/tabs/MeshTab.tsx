@@ -54,8 +54,9 @@ export function MeshTab() {
 
   return (
     <>
-      <PanelSection title="Mesa / RADV Performance Patch">
-        <StatusRow label="AMDGPU fixes" value={status.kernelReady ? "Active" : "Not active"} good={status.kernelReady} />
+      <PanelSection title="Mesa / RADV Async Compute">
+        <StatusRow label="Patched AMDGPU" value={status.kernelReady ? "Installed and active" : "Not ready"} good={status.kernelReady} />
+        <StatusRow label="Scheduler policy" value={status.schedulerActive ? "Active" : status.schedulerConfigured ? "Reboot required" : "Disabled"} good={status.schedulerActive} />
         <StatusRow label="RADV runtime" value={status.runtimeState} good={status.runtimeState === "ready"} />
         <StatusRow label="Global activation" value={status.globalEnabled ? "Enabled" : "Disabled"} good={status.globalEnabled} />
         <StatusRow label="Mesa" value={status.mesaVersion ?? "Not installed"} />
@@ -64,12 +65,13 @@ export function MeshTab() {
 
       {error && <EmptyState>{error}</EmptyState>}
       {!status.scriptAvailable && <EmptyState>The Mesa / RADV toolkit script is unavailable.</EmptyState>}
-      {!status.kernelReady && <EmptyState>Install the AMDGPU kernel fixes and reboot before installing the Mesa / RADV performance patch.</EmptyState>}
-      {status.runtimeState === "not-installed" && <EmptyState>The optional Mesa / RADV patch is highly recommended for performance. Install it from Drivers in the toolkit; it applies to the complete user session.</EmptyState>}
+      {!status.kernelReady && <EmptyState>Install the AMDGPU kernel fixes and reboot before installing the Mesa / RADV async-compute patch.</EmptyState>}
+      {status.runtimeState === "not-installed" && <EmptyState>The Mesa / RADV patch enables GFX1013 async compute. Install it from Drivers after the patched AMDGPU module is active; the build usually takes 3-5 minutes.</EmptyState>}
       {status.runtimeState === "invalid" && <EmptyState>The alternate runtime failed validation or requires migration. Run setup again from the toolkit menu.</EmptyState>}
       {status.globalEnabled && <EmptyState>The patched RADV ICD is active across this user session.</EmptyState>}
-      {status.restartRequired && <EmptyState>The global driver is configured but this graphical session has not inherited it. Sign out and back in.</EmptyState>}
-      {status.games.length > 0 && <EmptyState>Legacy per-game records remain for: {status.games.map((game) => game.name).join(", ")}. Remove their old Steam launch options, then run bc250-mesh-shader.sh legacy-clear.</EmptyState>}
+      {status.restartRequired && !status.schedulerActive && <EmptyState>Reboot to activate amdgpu.sched_policy=2 and patched RADV together.</EmptyState>}
+      {status.restartRequired && status.schedulerActive && <EmptyState>The global driver is configured but this graphical session has not inherited it. Sign out and back in.</EmptyState>}
+      {status.games.length > 0 && <EmptyState>Migration records from the older per-game workflow remain for: {status.games.map((game) => game.name).join(", ")}. Remove MESA_DRICONF_EXECUTABLE_OVERRIDE and VK_ICD_FILENAMES from their Steam launch options, then run bc250-mesh-shader.sh legacy-clear.</EmptyState>}
 
       <PanelSection>
         <PanelSectionRow>

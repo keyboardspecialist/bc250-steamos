@@ -212,8 +212,12 @@ toggle_scheduler_policy() {
     elif bash "$AMDGPU_BOOT_CONFIG_SH" present 2>/dev/null; then
         die "Scheduler policy state is incomplete. Review '$AMDGPU_BOOT_CONFIG_SH status' before changing it."
     else
+        require_script "$MESH_SHADER_SH"
+        bash "$MESH_SHADER_SH" status-json 2>/dev/null \
+            | grep -qF '"runtimeState":"ready"' \
+            || die "Install the Mesa / RADV async-compute patch before enabling amdgpu.sched_policy=2."
         confirm_action \
-            "Enable amdgpu.sched_policy=2? Reboot required." \
+            "Enable amdgpu.sched_policy=2 for the installed RADV async-compute patch? Reboot required." \
             sudo bash "$AMDGPU_BOOT_CONFIG_SH" install
     fi
 }
@@ -320,17 +324,17 @@ show_status() {
         failed=1
         failed_components+=("AMDGPU kernel fixes")
     fi
-    printf '\n%s\n' "${CB}${CC}-- Mesa / RADV performance patch --${C0}"
+    printf '\n%s\n' "${CB}${CC}-- Mesa / RADV async-compute patch --${C0}"
     if [[ -f "$MESH_SHADER_SH" && ! -L "$MESH_SHADER_SH" ]]; then
         bash "$MESH_SHADER_SH" status || radv_rc=$?
         if [[ $radv_rc -gt 1 ]]; then
             failed=1
-            failed_components+=("Mesa / RADV performance patch")
+            failed_components+=("Mesa / RADV async-compute patch")
         fi
     else
         log "Component is missing or unsafe: $MESH_SHADER_SH"
         failed=1
-        failed_components+=("Mesa / RADV performance patch")
+        failed_components+=("Mesa / RADV async-compute patch")
     fi
     printf '\n%s\n' "${CB}${CC}-- GPU compute units --${C0}"
     if [[ -f "$CU_STATUS_SH" && ! -L "$CU_STATUS_SH" ]]; then
@@ -440,7 +444,7 @@ show_guided_setup_overview() {
     printf '  %-24s %s\n' "Automatic infrastructure" "$(component_badge "$STORAGE_SH")"
     printf '%s\n' "  Persistent storage is installed automatically by components that need it."
     echo
-    printf '%s\n' "${CY}Checkpoints:${C0} AMDGPU and ACPI changes need a reboot; Mesa / RADV needs sign-out."
+    printf '%s\n' "${CY}Checkpoints:${C0} Reboot after AMDGPU, install RADV, then reboot again to enable async compute safely."
     printf '%s\n' "CMOS, CPU-core, and GPU-CU changes are advanced and stay outside the foundation path."
     pause_key
 }
@@ -451,12 +455,12 @@ cmd_guided_setup_menu() {
     while true; do
         local items=(
             "Setup overview|${CD}[read only]${C0}|Show the recommended order, current component state, and restart checkpoints."
-            "Step 1 - AMDGPU kernel fixes|$(amdgpu_badge)|Install display/audio, telemetry, and compute fixes. Reboot before continuing with RADV."
+            "Step 1 - AMDGPU kernel fixes|$(amdgpu_badge)|Build and install the required kernel module, but leave sched_policy=2 off. Reboot before RADV setup."
             "Step 2 - Power foundation|$(power_foundation_badge)|Install ACPI, reboot, then load-test the GPU governor before enabling it at boot."
             "Step 3 - Memory balance|$(component_badge "$RAM_SPLIT_SH")|Install the helper, then choose CMOS minimum VRAM and the dynamic TTM limit."
-            "Optional performance|$(radv_badge)|Install Mesa / RADV or tune GPU and CPU behavior after the foundation is stable."
+            "Optional performance|$(radv_badge)|Build the Mesa RADV patch that enables GFX1013 async compute, or tune GPU and CPU behavior. RADV takes about 3-5 minutes."
             "Optional GPU CU unlock|$(component_badge "$COMPUTE_SH")|Inspect the harvest map, test live routing, stress-test it, then choose whether to persist it."
-            "Optional CPU core unlock|${CD}[guided test]${C0}|Test eight cores once, reboot and stress-test, then choose Linux replay or experimental EFI mode."
+            "Optional CPU core unlock|${CD}[guided test]${C0}|Test eight cores once, then choose one automatic unlock method: standard Linux or EFI pre-boot."
             "Optional devices||Configure HDMI-CEC or install AIC8800 support only when matching hardware is present."
             "Choose control interface||Install Decky for Gaming Mode, Plasma for desktop, or the standalone Trainer."
             "Finish - Verify system|${CD}[read only]${C0}|Run the complete status report after required reboot and sign-out checkpoints."
@@ -482,10 +486,10 @@ cmd_drivers_menu() {
     require_normal_user
     while true; do
         local items=(
-            "AMDGPU kernel fixes|${CY}[build]${C0}|Install first: display/audio clocks, telemetry, and GFX1013 compute queues. Reboot afterward."
+            "AMDGPU kernel fixes|${CY}[build]${C0}|Install the required kernel module first. sched_policy=2 stays off until the RADV patch is installed. Reboot afterward."
             "Clean AMDGPU build tree|${CY}[cleanup]${C0}|Reset patched source and generated build output while keeping cached downloads and dependencies."
-            "AMDGPU scheduler policy (toggle)|$(scheduler_policy_badge)|Enable or remove amdgpu.sched_policy=2. Reboot after changes."
-            "Mesa / RADV performance patch (optional)|${CG}[menu]${C0}|Highly recommended for performance. Requires the active AMDGPU fixes and applies globally to this user."
+            "AMDGPU scheduler policy (advanced)|$(scheduler_policy_badge)|Normally managed by RADV setup. Enabling is blocked until the patched RADV runtime is installed."
+            "Mesa / RADV async-compute patch (optional)|${CG}[menu]${C0}|Enables GFX1013 async compute. Requires the patched AMDGPU module; builds in about 3-5 minutes."
             "AIC8800 WiFi / Bluetooth|${CY}[installer]${C0}|Install only when the system uses the AIC8800 wireless adapter."
         )
         menu_select "BC-250 drivers" "${items[@]}" || { echo; break; }
@@ -555,8 +559,8 @@ cmd_core_system_menu() {
     while true; do
         local items=(
             "Persistent storage & boot recovery|$(component_badge "$STORAGE_SH")|Installed automatically when needed; open for status, repair, or manual management."
-            "AMDGPU kernel fixes|$(amdgpu_badge)|Install display/audio clocks, telemetry, and GFX1013 compute queues. Reboot afterward."
-            "AMDGPU scheduler policy|$(scheduler_policy_badge)|Enable or remove the compute scheduler policy. Reboot after changes."
+            "AMDGPU kernel fixes|$(amdgpu_badge)|Install display/audio clocks, telemetry, and the kernel half of GFX1013 async compute. Reboot afterward."
+            "AMDGPU scheduler policy|$(scheduler_policy_badge)|Normally enabled by RADV setup after both async-compute halves are installed."
             "Power foundation & tuning|$(power_foundation_badge)|Set up ACPI and the GPU governor, then access GPU and CPU tuning."
             "RAM / VRAM split|$(component_badge "$RAM_SPLIT_SH")|Balance the persistent CMOS minimum and dynamic Linux TTM limit."
             "SteamOS update protection|${CG}[menu]${C0}|Protect installed integration and recover supported settings after updates."
@@ -578,7 +582,7 @@ cmd_performance_menu() {
     require_normal_user
     while true; do
         local items=(
-            "Mesa / RADV performance patch|$(radv_badge)|Optional, recommended global graphics driver. Requires active AMDGPU fixes."
+            "Mesa / RADV async-compute patch|$(radv_badge)|Enables GFX1013 async compute globally. Requires the active patched AMDGPU module; builds in about 3-5 minutes."
             "GPU and CPU tuning|${CG}[menu]${C0}|Adjust GPU clocks, load response, ramp behavior, and CPU undervolt/overclock."
         )
         menu_select "BC-250 performance tuning" "${items[@]}" || { echo; break; }
@@ -681,8 +685,8 @@ Commands:
   wifi                   Confirm and run the AIC8800 installer
   amdgpu                 Confirm and build the AMDGPU kernel fixes
   amdgpu-clean           Confirm and clean the AMDGPU kernel build tree
-  scheduler-policy       Toggle the persistent AMDGPU scheduler policy
-  radv                   Open the global Mesa / RADV performance patch
+  scheduler-policy       Advanced: toggle policy only after RADV is installed
+  radv                   Open the global Mesa / RADV async-compute patch
   decky                  Confirm and run the Decky plugin installer
   desktop                Confirm and run the Plasma desktop-control installer
   trainer                Download and install the latest BC250 Trainer release

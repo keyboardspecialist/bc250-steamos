@@ -67,7 +67,7 @@ does not bundle or update the complete toolkit source tree.
 - GPU load target and ramp controls with service-equivalent client bounds
 - RAM/VRAM split controls for CMOS UMA minimums and dynamic TTM limits
 - Live WGP routing with an advanced interlock and per-write confirmation
-- Mutually exclusive CPU core-unlock controls for recommended Linux replay and experimental EFI preboot
+- Mutually exclusive CPU core-unlock controls for the standard Linux boot method and the experimental EFI pre-boot alternative
 - CPU overclock detection, apply, boot replay, and stock actions
 - Asynchronous QtDBus operation tracking, protected-operation cancellation state, and service lifetime monitoring
 - Collapsible music library with transport, natural track ordering, and folder watching
@@ -75,7 +75,7 @@ does not bundle or update the complete toolkit source tree.
 - Persisted music directory, current track, and volume via `QSettings`; mute is session-only
 - `--mock` development mode that never contacts hardware
 
-The installed service must include `GetCpuUnlockStatus()` and `CpuUnlockAction(string)` for core-unlock controls. The action allowlist is `test`, `enable`, `efi-enable`, and `off`; action availability is always taken from the status response. Older services remain usable for status, GPU, CU, and CPU-overclock features; schema-v1 Linux replay status remains supported, and the UI reports a missing extension rather than using toolkit execution as a hardware-control fallback.
+The installed service must include `GetCpuUnlockStatus()` and `CpuUnlockAction(string)` for core-unlock controls. The action allowlist is `test`, `enable`, `efi-enable`, and `off`; action availability is always taken from the status response. Older services remain usable for status, GPU, CU, and CPU-overclock features; schema-v1 `linuxReplay` status remains supported, and the UI reports a missing extension rather than using toolkit execution as a hardware-control fallback.
 
 ## Build
 
@@ -212,6 +212,6 @@ Normal polling pauses during mutations. Snapshot and telemetry calls are coalesc
 
 ## Safety
 
-CU routing, sustained GPU clocks, CPU overclock detection, and all CPU core-unlock operations require explicit confirmation. High-risk dialogs require an additional acknowledgement. CPU replay enablement is unavailable unless the service reports exactly eight physical cores, and pending automatic reboot guards disable conflicting work.
+CU routing, sustained GPU clocks, CPU overclock detection, and all CPU core-unlock operations require explicit confirmation. High-risk dialogs require an additional acknowledgement. Automatic CPU core unlock is unavailable unless the service reports exactly eight physical cores, and pending automatic reboot guards disable conflicting work.
 
 Review `ASSETS.md` before redistribution. The media are embedded unchanged under the stable resource aliases documented in `PLAN.md`.

@@ -28,9 +28,21 @@ GLOBAL_ICDS="$ICD:$FALLBACK_ICD"
 GENERATOR="${BC250_GFX1013_GENERATOR:-/usr/lib/systemd/user-environment-generators/60-bc250-gfx1013}"
 BUILD_ROOT="$STATE_DIR/build"
 LOCK_FILE="${BC250_MESH_LOCK_FILE:-$HOME/.cache/bc250-mesh-shader.lock}"
-COMPUTE_MARKER="${BC250_GFX1013_MARKER:-/usr/lib/modules/$(uname -r)/updates/.bc250-gfx1013-fix}"
-COMPUTE_MODULE="${BC250_GFX1013_MODULE:-${COMPUTE_MARKER%/*}/amdgpu.ko.zst}"
-COMPUTE_ACTIVE="${BC250_GFX1013_ACTIVE:-/sys/module/amdgpu/parameters/bc250_gfx1013_fix}"
+MODULE_UPDATES="/usr/lib/modules/$(uname -r)/updates"
+DEFAULT_COMPUTE_MODULE="$MODULE_UPDATES/amdgpu.ko.zst"
+DEFAULT_COMPUTE_MARKER="$MODULE_UPDATES/.bc250-gfx1013-fix"
+DEFAULT_AUDIO_MARKER="$MODULE_UPDATES/.bc250-audio-fix"
+DEFAULT_METRICS_MARKER="$MODULE_UPDATES/.bc250-metrics-fix"
+DEFAULT_COMPUTE_ACTIVE="/sys/module/amdgpu/parameters/bc250_gfx1013_fix"
+DEFAULT_SCHED_POLICY="/sys/module/amdgpu/parameters/sched_policy"
+DEFAULT_BOOT_CONFIG="${SELF%/*}/bc250-audio-fix/boot-config.sh"
+COMPUTE_MODULE="${BC250_GFX1013_MODULE:-$DEFAULT_COMPUTE_MODULE}"
+COMPUTE_MARKER="${BC250_GFX1013_MARKER:-$DEFAULT_COMPUTE_MARKER}"
+AUDIO_MARKER="${BC250_AUDIO_MARKER:-$DEFAULT_AUDIO_MARKER}"
+METRICS_MARKER="${BC250_METRICS_MARKER:-$DEFAULT_METRICS_MARKER}"
+COMPUTE_ACTIVE="${BC250_GFX1013_ACTIVE:-$DEFAULT_COMPUTE_ACTIVE}"
+SCHED_POLICY="${BC250_SCHED_POLICY_PARAM:-$DEFAULT_SCHED_POLICY}"
+BOOT_CONFIG="${BC250_AMDGPU_BOOT_CONFIG:-$DEFAULT_BOOT_CONFIG}"
 
 C0=$'\033[0m'; CB=$'\033[1m'; CD=$'\033[2m'; CI=$'\033[7m'
 CG=$'\033[32m'; CY=$'\033[33m'; CR=$'\033[31m'; CC=$'\033[36m'
@@ -125,25 +137,65 @@ stage_upstream() {
 }
 
 verify_compute_kernel() {
-    local expected actual active
-    [[ -f "$COMPUTE_MARKER" && ! -L "$COMPUTE_MARKER" \
-        && -f "$COMPUTE_MODULE" && ! -L "$COMPUTE_MODULE" ]] || return 1
-    read -r expected < "$COMPUTE_MARKER" || return 1
-    [[ "$expected" =~ ^[0-9a-f]{64}$ ]] || return 1
+    local expected actual active marker resolved owner mode
+    [[ -f "$COMPUTE_MODULE" && ! -L "$COMPUTE_MODULE" ]] || return 1
     actual=$(sha256_file "$COMPUTE_MODULE")
-    [[ "$actual" == "$expected" ]] || return 1
+    for marker in "$COMPUTE_MARKER" "$AUDIO_MARKER" "$METRICS_MARKER"; do
+        [[ -f "$marker" && ! -L "$marker" ]] || return 1
+        read -r expected < "$marker" || return 1
+        [[ "$expected" =~ ^[0-9a-f]{64}$ && "$actual" == "$expected" ]] || return 1
+    done
+    read -r expected < "$COMPUTE_MARKER" || return 1
     [[ -r "$COMPUTE_ACTIVE" && ! -L "$COMPUTE_ACTIVE" ]] || return 1
     active=$(<"$COMPUTE_ACTIVE")
-    [[ "$active" == "$UPSTREAM_COMMIT" ]]
+    [[ "$active" == "$UPSTREAM_COMMIT" ]] || return 1
+    if [[ "$COMPUTE_MODULE" == "$DEFAULT_COMPUTE_MODULE" \
+        && "$COMPUTE_MARKER" == "$DEFAULT_COMPUTE_MARKER" \
+        && "$AUDIO_MARKER" == "$DEFAULT_AUDIO_MARKER" \
+        && "$METRICS_MARKER" == "$DEFAULT_METRICS_MARKER" \
+        && "$COMPUTE_ACTIVE" == "$DEFAULT_COMPUTE_ACTIVE" ]]; then
+        command -v modinfo >/dev/null 2>&1 || return 1
+        resolved=$(modinfo -k "$(uname -r)" -F filename amdgpu 2>/dev/null) || return 1
+        [[ "$(readlink -f "$resolved")" == "$(readlink -f "$COMPUTE_MODULE")" ]] || return 1
+        for marker in "$COMPUTE_MODULE" "$COMPUTE_MARKER" "$AUDIO_MARKER" "$METRICS_MARKER"; do
+            owner=$(stat -c %u "$marker") || return 1
+            mode=$(stat -c %a "$marker") || return 1
+            [[ "$owner" == 0 && "$mode" =~ ^[0-7]+$ ]] || return 1
+            (( (8#$mode & 8#022) == 0 )) || return 1
+        done
+    fi
+}
+
+verify_scheduler_active() {
+    local value
+    [[ -r "$SCHED_POLICY" && ! -L "$SCHED_POLICY" ]] || return 1
+    read -r value < "$SCHED_POLICY" || return 1
+    [[ "$value" == 2 ]]
+}
+
+verify_scheduler_configured() {
+    [[ -f "$BOOT_CONFIG" && ! -L "$BOOT_CONFIG" ]] \
+        && bash "$BOOT_CONFIG" configured >/dev/null 2>&1
+}
+
+require_production_kernel_paths() {
+    [[ "$COMPUTE_MODULE" == "$DEFAULT_COMPUTE_MODULE" \
+        && "$COMPUTE_MARKER" == "$DEFAULT_COMPUTE_MARKER" \
+        && "$AUDIO_MARKER" == "$DEFAULT_AUDIO_MARKER" \
+        && "$METRICS_MARKER" == "$DEFAULT_METRICS_MARKER" \
+        && "$COMPUTE_ACTIVE" == "$DEFAULT_COMPUTE_ACTIVE" \
+        && "$SCHED_POLICY" == "$DEFAULT_SCHED_POLICY" \
+        && "$BOOT_CONFIG" == "$DEFAULT_BOOT_CONFIG" ]] \
+        || die "RADV setup refuses overridden AMDGPU safety-check paths."
 }
 
 require_compute_kernel() {
-    verify_compute_kernel || die "The active amdgpu lacks the GFX1013 compute repair. Run bc250-audio-fix/patch-driver.sh, reboot, and retry."
+    verify_compute_kernel || die "The patched AMDGPU module is not installed, selected, and active for this kernel. Run bc250-audio-fix/patch-driver.sh, reboot, and retry."
 }
 
 manager_environment_active() {
     local environment
-    verify_compute_kernel && verify_current_runtime || return 1
+    verify_compute_kernel && verify_scheduler_active && verify_current_runtime || return 1
     command -v systemctl >/dev/null 2>&1 || return 1
     environment=$(systemctl --user show-environment 2>/dev/null) || return 1
     grep -qxF "VK_DRIVER_FILES=$GLOBAL_ICDS" <<< "$environment" \
@@ -204,6 +256,69 @@ verify_owned_runtime() {
 }
 
 render_generator() {
+    local marker_q audio_marker_q metrics_marker_q module_q active_q policy_q
+    local driver_q fallback_icd_q commit_q
+    marker_q=$(shell_word "$COMPUTE_MARKER")
+    audio_marker_q=$(shell_word "$AUDIO_MARKER")
+    metrics_marker_q=$(shell_word "$METRICS_MARKER")
+    module_q=$(shell_word "$COMPUTE_MODULE")
+    active_q=$(shell_word "$COMPUTE_ACTIVE")
+    policy_q=$(shell_word "$SCHED_POLICY")
+    driver_q=$(shell_word "$DRIVER")
+    fallback_icd_q=$(shell_word "$FALLBACK_ICD")
+    commit_q=$(shell_word "$UPSTREAM_COMMIT")
+    cat <<EOF
+#!/usr/bin/env bash
+set -u
+MARKER=$marker_q
+AUDIO_MARKER=$audio_marker_q
+METRICS_MARKER=$metrics_marker_q
+MODULE=$module_q
+ACTIVE=$active_q
+SCHED_POLICY=$policy_q
+DRIVER=$driver_q
+FALLBACK_ICD=$fallback_icd_q
+COMMIT=$commit_q
+ICD="\$HOME/radeon_driconf_icd.x86_64.json"
+MANIFEST="\$HOME/.local/share/bc250-mesh-shader/install.conf"
+[ -f "\$MARKER" ] && [ ! -L "\$MARKER" ] \
+    && [ -f "\$AUDIO_MARKER" ] && [ ! -L "\$AUDIO_MARKER" ] \
+    && [ -f "\$METRICS_MARKER" ] && [ ! -L "\$METRICS_MARKER" ] \
+    && [ -f "\$MODULE" ] \
+    && [ ! -L "\$MODULE" ] && [ -f "\$DRIVER" ] && [ ! -L "\$DRIVER" ] \
+    && [ -f "\$ICD" ] && [ ! -L "\$ICD" ] \
+    && [ -f "\$FALLBACK_ICD" ] && [ ! -L "\$FALLBACK_ICD" ] \
+    && [ -f "\$MANIFEST" ] && [ ! -L "\$MANIFEST" ] \
+    && [ -r "\$ACTIVE" ] && [ ! -L "\$ACTIVE" ] \
+    && [ -r "\$SCHED_POLICY" ] && [ ! -L "\$SCHED_POLICY" ] || exit 0
+actual=\$(sha256sum "\$MODULE" | awk '{print \$1}')
+for marker in "\$MARKER" "\$AUDIO_MARKER" "\$METRICS_MARKER"; do
+    read -r expected < "\$marker" || exit 0
+    [[ "\$expected" =~ ^[0-9a-f]{64}\$ ]] && [ "\$actual" = "\$expected" ] || exit 0
+done
+resolved=\$(modinfo -k "\$(uname -r)" -F filename amdgpu 2>/dev/null) || exit 0
+[ "\$(readlink -f "\$resolved")" = "\$(readlink -f "\$MODULE")" ] || exit 0
+for path in "\$MODULE" "\$MARKER" "\$AUDIO_MARKER" "\$METRICS_MARKER" "\$DRIVER"; do
+    [ "\$(stat -c %u "\$path")" = 0 ] || exit 0
+    mode=\$(stat -c %a "\$path") || exit 0
+    [[ "\$mode" =~ ^[0-7]+\$ ]] && (( (8#\$mode & 8#022) == 0 )) || exit 0
+done
+[ "\$(cat "\$ACTIVE")" = "\$COMMIT" ] || exit 0
+[ "\$(cat "\$SCHED_POLICY")" = 2 ] || exit 0
+read -r driver_sha icd_sha mesa_version commit < "\$MANIFEST" || exit 0
+[[ "\$driver_sha" =~ ^[0-9a-f]{64}\$ && "\$icd_sha" =~ ^[0-9a-f]{64}\$ \
+    && "\$commit" = "\$COMMIT" ]] || exit 0
+[ "\$(sha256sum "\$DRIVER" | awk '{print \$1}')" = "\$driver_sha" ] || exit 0
+[ "\$(sha256sum "\$ICD" | awk '{print \$1}')" = "\$icd_sha" ] || exit 0
+grep -qF "\"library_path\": \"\$DRIVER\"" "\$ICD" || exit 0
+grep -Eq '"library_arch"[[:space:]]*:[[:space:]]*"64"' "\$ICD" || exit 0
+grep -Eq '"library_arch"[[:space:]]*:[[:space:]]*"32"' "\$FALLBACK_ICD" || exit 0
+printf 'VK_DRIVER_FILES=%s:%s\n' "\$ICD" "\$FALLBACK_ICD"
+printf 'VK_ICD_FILENAMES=%s:%s\n' "\$ICD" "\$FALLBACK_ICD"
+EOF
+}
+
+render_pre_policy_generator() {
     local marker_q module_q active_q driver_q fallback_icd_q commit_q
     marker_q=$(shell_word "$COMPUTE_MARKER")
     module_q=$(shell_word "$COMPUTE_MODULE")
@@ -292,7 +407,8 @@ generator_owned() {
 generator_recorded() {
     generator_owned || {
         [[ -f "$GENERATOR" && ! -L "$GENERATOR" && -x "$GENERATOR" ]] \
-            && cmp -s "$GENERATOR" <(render_legacy_generator)
+            && { cmp -s "$GENERATOR" <(render_pre_policy_generator) \
+                || cmp -s "$GENERATOR" <(render_legacy_generator); }
     }
 }
 
@@ -510,6 +626,9 @@ cmd_setup() (
     command -v python3 >/dev/null 2>&1 || die "python3 is required"
     command -v flock >/dev/null 2>&1 || die "flock is required"
     command -v systemctl >/dev/null 2>&1 || die "systemctl is required for global RADV activation"
+    require_production_kernel_paths
+    [[ -f "$BOOT_CONFIG" && ! -L "$BOOT_CONFIG" ]] \
+        || die "AMDGPU scheduler-policy helper is missing or unsafe: $BOOT_CONFIG"
     ensure_state_dir
     exec 9> "$LOCK_FILE"
     flock 9
@@ -562,7 +681,7 @@ cmd_setup() (
         ro_was_enabled=1
     fi
 
-    local required_commands=(gcc g++ meson ninja patch pkg-config tar vulkaninfo glslangValidator spirv-as)
+    local required_commands=(gcc g++ meson ninja patch pkg-config tar readelf ldd glslangValidator spirv-as)
     local development_packages=(
         glibc linux-api-headers libdrm expat libelf zlib zstd wayland wayland-protocols
         libffi libxau libxdmcp xorgproto libxcb xcb-util xcb-util-wm
@@ -585,7 +704,7 @@ cmd_setup() (
         as_root pacman-key --init
         as_root pacman-key --populate archlinux holo 2>/dev/null || as_root pacman-key --populate
         as_root pacman -S --needed --noconfirm \
-            base-devel meson ninja python-mako python-packaging python-yaml pkgconf vulkan-tools \
+            base-devel meson ninja python-mako python-packaging python-yaml pkgconf \
             glslang spirv-tools \
             "${development_packages[@]}"
         # SteamOS images can record these packages while omitting development
@@ -637,12 +756,21 @@ cmd_setup() (
     ninja -C "$build" src/amd/vulkan/libvulkan_radeon.so
     output="$build/src/amd/vulkan/libvulkan_radeon.so"
     [[ -s "$output" && ! -L "$output" ]] || die "Mesa build did not produce the alternate RADV driver"
-
-    cat > "$work/test-icd.json" <<EOF
-{"file_format_version":"1.0.1","ICD":{"library_path":"$output","api_version":"1.4.309","library_arch":"64"}}
-EOF
-    VK_DRIVER_FILES="$work/test-icd.json" vulkaninfo --summary >/dev/null \
-        || die "Staged alternate RADV driver failed vulkaninfo"
+    python3 - "$output" <<'PY'
+from pathlib import Path
+import sys
+with Path(sys.argv[1]).open("rb") as stream:
+    valid = stream.read(5) == b"\x7fELF\x02"
+raise SystemExit(0 if valid else 1)
+PY
+    readelf -h "$output" | grep -Eq 'Class:[[:space:]]+ELF64' \
+        || die "Mesa build did not produce a valid 64-bit ELF driver"
+    local linkage
+    linkage=$(ldd -r "$output" 2>&1) \
+        || die "Built RADV driver failed dynamic-link validation: $linkage"
+    ! grep -Eq 'not found|undefined symbol:' <<< "$linkage" \
+        || die "Built RADV driver has unresolved dynamic dependencies: $linkage"
+    require_compute_kernel
 
     log "Installing audited $mesa_tag with DryhoppedIPA's patch series ${UPSTREAM_COMMIT:0:7}."
     log "The alternate ICD will become global for this user after the user manager reloads."
@@ -676,8 +804,6 @@ PY
     [[ -f "$ICD" && ! -L "$ICD" ]] || die "Upstream build did not create $ICD"
     grep -qF "\"library_path\": \"$DRIVER\"" "$ICD" \
         || die "Generated ICD does not reference the expected alternate driver"
-    VK_DRIVER_FILES="$ICD" vulkaninfo --summary >/dev/null \
-        || die "Installed alternate RADV ICD failed vulkaninfo"
     [[ ! -L "$GENERATOR" ]] || die "Refusing symlinked environment generator: $GENERATOR"
     render_generator > "$work/generator"
     chmod 0755 "$work/generator"
@@ -699,8 +825,16 @@ finally:
     os.close(descriptor)
 PY
     committed=1
-    log "Alternate RADV ICD installed and enabled globally for this user."
-    log "Sign out and back in so the complete graphical session inherits the new Vulkan environment."
+    if ! verify_scheduler_configured; then
+        as_root bash "$BOOT_CONFIG" install \
+            || die "RADV was installed but amdgpu.sched_policy=2 could not be configured. The safety gate will keep RADV disabled; fix the boot policy and retry."
+    fi
+    log "Patched RADV async-compute support is installed."
+    if verify_scheduler_active; then
+        log "Sign out and back in so the complete graphical session inherits the new Vulkan environment."
+    else
+        log "Reboot to activate amdgpu.sched_policy=2 and the patched RADV driver together."
+    fi
 )
 
 manage_games() {
@@ -803,7 +937,7 @@ PY
 }
 
 cmd_game() {
-    die "Per-game controls were removed; the Mesa / RADV performance patch is global for the user session."
+    die "Per-game controls were removed; the Mesa / RADV async-compute patch is global for the user session."
 }
 
 cmd_legacy_clear() {
@@ -813,18 +947,26 @@ cmd_legacy_clear() {
     exec 9> "$LOCK_FILE"
     flock 9
     manage_games clear
-    log "Cleared legacy per-game records. Confirm their old Steam launch options were removed separately."
+    log "Cleared migration records from the older per-game workflow."
+    log "Confirm MESA_DRICONF_EXECUTABLE_OVERRIDE and VK_ICD_FILENAMES were removed from those games' Steam launch options."
 }
 
 cmd_status() {
     local failed=0
-    echo "BC-250 Mesa / RADV performance patch"
+    echo "BC-250 Mesa / RADV async-compute patch"
     echo "  upstream: $UPSTREAM_REPO @ ${UPSTREAM_COMMIT:0:7}"
     if verify_compute_kernel; then
-        echo "  kernel:  active GFX1013 compute repair"
+        echo "  kernel:  patched AMDGPU module installed and active"
     else
         echo "  kernel:  repair not active"
         failed=2
+    fi
+    if verify_scheduler_active; then
+        echo "  policy:  active (amdgpu.sched_policy=2)"
+    elif verify_scheduler_configured; then
+        echo "  policy:  configured; reboot required"
+    else
+        echo "  policy:  disabled until RADV setup completes"
     fi
     if verify_current_runtime; then
         echo "  runtime: installed ($STORED_MESA_TAG)"
@@ -856,14 +998,16 @@ cmd_status() {
 
 cmd_status_json() {
     local runtime_state="not-installed" mesa_version="" config_valid=1 error="" games="[]" kernel_ready=0
-    local global_enabled=0 restart_required=0
+    local global_enabled=0 restart_required=0 scheduler_configured=0 scheduler_active=0
     verify_compute_kernel && kernel_ready=1
+    verify_scheduler_configured && scheduler_configured=1
+    verify_scheduler_active && scheduler_active=1
     if verify_current_runtime; then
         runtime_state="ready"
         mesa_version="$STORED_MESA_TAG"
         if manager_environment_active; then
             global_enabled=1
-        elif [[ $kernel_ready == 1 ]]; then
+        elif [[ $kernel_ready == 1 && $scheduler_configured == 1 ]]; then
             restart_required=1
         fi
     elif verify_owned_runtime; then
@@ -879,11 +1023,11 @@ cmd_status_json() {
         error="$games"
         games="[]"
     fi
-    python3 - "$runtime_state" "$mesa_version" "$ICD" "$config_valid" "$error" "$games" "$kernel_ready" "$global_enabled" "$restart_required" <<'PY'
+    python3 - "$runtime_state" "$mesa_version" "$ICD" "$config_valid" "$error" "$games" "$kernel_ready" "$global_enabled" "$restart_required" "$scheduler_configured" "$scheduler_active" <<'PY'
 import json
 import sys
 
-runtime_state, mesa_version, icd_path, config_valid, error, games, kernel_ready, global_enabled, restart_required = sys.argv[1:]
+runtime_state, mesa_version, icd_path, config_valid, error, games, kernel_ready, global_enabled, restart_required, scheduler_configured, scheduler_active = sys.argv[1:]
 print(json.dumps({
     "scriptAvailable": True,
     "runtimeState": runtime_state,
@@ -893,6 +1037,8 @@ print(json.dumps({
     "error": error or None,
     "games": json.loads(games),
     "kernelReady": kernel_ready == "1",
+    "schedulerConfigured": scheduler_configured == "1",
+    "schedulerActive": scheduler_active == "1",
     "globalEnabled": global_enabled == "1",
     "restartRequired": restart_required == "1",
 }, ensure_ascii=True, separators=(",", ":")))
@@ -946,6 +1092,16 @@ cmd_uninstall() (
         ! grep -qxF "VK_DRIVER_FILES=$GLOBAL_ICDS" <<< "$environment" \
             && ! grep -qxF "VK_ICD_FILENAMES=$GLOBAL_ICDS" <<< "$environment" \
             || die "Global Vulkan environment remains active; sign out and retry uninstall."
+    fi
+    if [[ "$COMPUTE_MODULE" == "$DEFAULT_COMPUTE_MODULE" \
+        && "$COMPUTE_MARKER" == "$DEFAULT_COMPUTE_MARKER" \
+        && "$SCHED_POLICY" == "$DEFAULT_SCHED_POLICY" \
+        && -f "$BOOT_CONFIG" && ! -L "$BOOT_CONFIG" ]]; then
+        as_root env BC250_FORCE_GRUB_REGEN=1 bash "$BOOT_CONFIG" remove
+    fi
+    if [[ "$SCHED_POLICY" == "$DEFAULT_SCHED_POLICY" ]] \
+        && verify_scheduler_active; then
+        die "amdgpu.sched_policy=2 remains active for this boot. Reboot to deactivate it, then rerun uninstall; the patched RADV runtime was left intact."
     fi
     if [[ -e "$DRIVER" || -L "$DRIVER" ]]; then
         if command -v steamos-readonly >/dev/null 2>&1 \
@@ -1078,21 +1234,29 @@ cmd_menu() {
     while true; do
         local runtime_state
         runtime_state=$(runtime_badge)
+        local legacy_games legacy_state
+        if ! legacy_games=$(manage_games list 2>/dev/null); then
+            legacy_state="${CR}[invalid]${C0}"
+        elif [[ -n "$legacy_games" ]]; then
+            legacy_state="${CY}[cleanup needed]${C0}"
+        else
+            legacy_state="${CD}[not needed]${C0}"
+        fi
         local items=(
-            "Status overview|${runtime_state}|Verify the required AMDGPU kernel fixes, Mesa / RADV runtime, and global user activation."
-            "Build / install Mesa / RADV patch|${runtime_state}|Optional but highly recommended: build audited Mesa $DEFAULT_MESA_TAG and enable it globally. May take 20-40+ minutes."
-            "Clear legacy per-game records||After manually removing old Steam launch options, clear their migration records."
+            "Status overview|${runtime_state}|Verify the patched AMDGPU module, scheduler policy, RADV runtime, and global activation."
+            "Build / install RADV async-compute patch|${runtime_state}|Optional but highly recommended. Enables GFX1013 async compute, requires Step 1 AMDGPU fixes, and usually takes 3-5 minutes."
+            "Older per-game setup cleanup|${legacy_state}|Migration only: remove old MESA_DRICONF_EXECUTABLE_OVERRIDE and VK_ICD_FILENAMES Steam launch options, then clear their records."
             "Uninstall Mesa / RADV runtime|${runtime_state}|Remove the alternate driver, ICD, and user environment generator; preserve build caches."
             "Full help||Show CLI commands, activation behavior, and upstream source."
         )
-        menu_select "BC-250 Mesa / RADV performance patch  ${CD}(global user driver)${C0}" "${items[@]}" \
+        menu_select "BC-250 Mesa / RADV async-compute patch  ${CD}(global user driver)${C0}" "${items[@]}" \
             || { echo; break; }
         case $MENU_CHOICE in
             0) show_menu_status ;;
             1) confirm_menu_action \
-                "Build and install the global Mesa / RADV performance patch?" setup ;;
+                "Build and install the global RADV async-compute patch?" setup ;;
             2) confirm_menu_action \
-                "Have you removed the old per-game Steam launch options?" legacy-clear ;;
+                "Have you removed MESA_DRICONF_EXECUTABLE_OVERRIDE and VK_ICD_FILENAMES from the old per-game Steam launch options?" legacy-clear ;;
             3) confirm_menu_action \
                 "Remove the global Mesa / RADV runtime?" uninstall ;;
             4) echo; cmd_help; pause_key ;;
@@ -1105,18 +1269,23 @@ cmd_help() {
 Usage: $0 [menu|setup|status|status-json|legacy-clear|uninstall|purge|help]
 
   setup                        Fetch the verified upstream series, build the
-                               audited Mesa release, install a separate ICD, and
-                               enable it globally for this user session.
-  status                       Verify the kernel gate and global runtime ownership.
+                               audited Mesa RADV driver with GFX1013 async
+                               compute, install a separate ICD, and configure
+                               safe global activation. Usually takes 3-5 minutes.
+  status                       Verify the AMDGPU module, scheduler policy, and
+                               global runtime ownership.
   status-json                  Print machine-readable runtime status.
-  legacy-clear                Clear old per-game records after manually
-                               removing their Steam launch options.
+  legacy-clear                Migration cleanup for older toolkit installs only.
+                               First remove MESA_DRICONF_EXECUTABLE_OVERRIDE and
+                               VK_ICD_FILENAMES from their Steam launch options.
   uninstall                    Remove the alternate ICD and global activation.
   purge                        After uninstall, remove patch/source/build caches.
 
 The environment generator exports VK_DRIVER_FILES and VK_ICD_FILENAMES only
-when the patched AMDGPU module is active. Sign out and back in after setup or
-uninstall so the complete graphical session inherits the changed environment.
+when the installed, selected, and active patched AMDGPU module validates and
+amdgpu.sched_policy=2 is active. Fresh setup configures that policy only after
+RADV is installed; reboot to activate both together. Sign out and back in after
+an update when the policy is already active.
 The patched ICD serves 64-bit processes; SteamOS's stock RADV serves 32-bit
 processes through the same global driver list.
 

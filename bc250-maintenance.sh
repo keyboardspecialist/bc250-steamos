@@ -47,7 +47,7 @@ component_label() {
         power) echo "Power management / CPU core unlock" ;;
         ram) echo "RAM / VRAM split" ;;
         compute) echo "GPU compute-unit unlock" ;;
-        mesh) echo "Mesa / RADV performance patch" ;;
+        mesh) echo "Mesa / RADV async-compute patch" ;;
         audio) echo "AMDGPU kernel fixes" ;;
         aic) echo "AIC8800 WiFi / Bluetooth" ;;
         storage) echo "Persistent infrastructure" ;;

@@ -55,18 +55,20 @@ class CoreUnlockTests(unittest.TestCase):
             "Status summary",
             "Core topology",
             "Setup 1 - Test eight cores once",
-            "Setup 2a - Enable Linux boot replay",
-            "Setup 2b - Enable EFI pre-boot replay",
-            "Disable boot replay (keep helper)",
+            "Setup 2 - Standard Linux boot method",
+            "Setup 2 - EFI pre-boot method",
+            "Disable automatic unlock (keep helper)",
             "Uninstall all core-unlock files",
         ):
             self.assertIn(expected, menu)
         self.assertIn('$(badge_core_unlock "$mode")', menu)
         self.assertIn('$(badge_core_unlock_files "$mode")', menu)
         self.assertIn("avoid an extra Linux boot", menu)
+        self.assertIn("they cannot be enabled together", menu)
         self.assertIn("retain the helper", menu)
         self.assertNotIn("Secure Boot", menu)
-        self.assertNotIn("EFI pre-boot replay (experimental)", menu)
+        self.assertNotIn("Setup 2a", menu)
+        self.assertNotIn("Setup 2b", menu)
 
     def test_release_build_check_uses_pinned_headers_and_efi_subsystem(self):
         source = EFI_BUILD_CHECK.read_text(encoding="utf-8")

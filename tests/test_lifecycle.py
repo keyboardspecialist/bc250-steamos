@@ -69,7 +69,8 @@ class LifecycleTests(unittest.TestCase):
                 env=script_env(home),
             ).stdout
             self.assertIn("cpu-unlock efi-enable", power_help)
-            self.assertIn("replays before Linux", power_help)
+            self.assertIn("applies the unlock before Linux", power_help)
+            self.assertIn("mutually exclusive", power_help)
             self.assertIn("one firmware warm reset", power_help)
             self.assertNotIn("EXPERIMENTAL alternative", power_help)
 

@@ -30,14 +30,20 @@ ColumnLayout {
         var state = actions[action] || ({})
         var blockers = state.blockers || []
         if (blockers.length > 0)
-            return "Blocked: " + blockers.join(", ")
+            return "Blocked: " + blockers.map(blockerLabel).join(", ")
         if (state.available !== true)
             return state.hint || state.message || "Unavailable from the installed service."
         return state.hint || state.message || readyText
     }
 
+    function blockerLabel(blocker) {
+        if (blocker === "persistent-replay-enabled") return "standard Linux boot method already enabled"
+        if (blocker === "efi-unlock-enabled") return "EFI pre-boot method already enabled"
+        return blocker
+    }
+
     function modeLabel(mode) {
-        if (mode === "linux-replay") return "LINUX REPLAY"
+        if (mode === "linux-replay") return "STANDARD LINUX"
         if (mode === "efi") return "EFI PREBOOT"
         if (mode === "temporary") return "ONE-TIME TEST"
         return (mode || "unknown").toUpperCase()
@@ -92,7 +98,7 @@ ColumnLayout {
 
     function disableLabel() {
         if (unlockMode === "efi") return "DISABLE EFI PREBOOT"
-        if (unlockMode === "linux-replay") return "DISABLE LINUX REPLAY"
+        if (unlockMode === "linux-replay") return "DISABLE STANDARD METHOD"
         if (unlockMode === "conflict") return "RECOVER CONFLICTING MODES"
         if (unlockMode === "partial") return "ATTEMPT PARTIAL CLEANUP"
         return "DISABLE CORE UNLOCK"
@@ -102,7 +108,7 @@ ColumnLayout {
         if (unlockMode === "efi")
             return "This disables the EFI preboot mode and may remove its firmware boot entry. It does not relock cores during the current boot; fully power off to return to the factory six-core mask."
         if (unlockMode === "conflict" || unlockMode === "partial")
-            return "This first disables Linux replay, then removes only EFI state whose toolkit ownership can be verified. Ambiguous or unqueryable firmware entries are retained for manual recovery. It does not relock cores during the current boot."
+            return "This first disables the standard Linux method, then removes only EFI state whose toolkit ownership can be verified. Ambiguous or unqueryable firmware entries are retained for manual recovery. It does not relock cores during the current boot."
         return "This disables the active core-unlock mode. It does not relock cores during the current boot. If eight cores remain active, a complete shutdown and full power-off is required to return to the factory six-core mask."
     }
 
@@ -153,7 +159,7 @@ ColumnLayout {
         C.MetricTile { objectName: "cpuUnlockModeTile"; label: "MODE"; value: root.modeLabel(root.unlockMode); accent: root.unlockMode === "conflict" || root.unlockMode === "partial" ? "#ff4d8d" : "#22e7f2"; Layout.fillWidth: true }
     }
     C.StatusRow { label: "Unlock helper / unit"; value: root.unlock.helperInstalled ? (root.unlock.unitInstalled ? "Installed / installed" : "Installed / missing") : "Unavailable"; health: root.unlock.helperInstalled && root.unlock.unitInstalled ? 1 : -1 }
-    C.StatusRow { label: "Linux replay service (enabled / active)"; value: root.serviceLabel(root.linuxService); health: root.linuxService.enabled === "enabled" ? 1 : 0 }
+    C.StatusRow { label: "Standard Linux service (enabled / active)"; value: root.serviceLabel(root.linuxService); health: root.linuxService.enabled === "enabled" ? 1 : 0 }
     C.StatusRow { objectName: "efiInstallStatus"; label: "EFI installation"; value: root.efiInstalledLabel(); health: root.efi.partial ? -1 : root.efi.installed ? 1 : 0 }
     C.StatusRow { objectName: "efiBootEntryStatus"; label: "EFI firmware boot entry"; value: root.efiBootEntryLabel(); health: root.efiBootEntryHealth() }
     C.StatusRow { label: "Reboot guard"; value: root.automaticRebootPending ? "AUTOMATIC REBOOT PENDING" : root.guard.state || "Unknown"; health: root.automaticRebootPending ? -1 : 0 }
@@ -170,9 +176,15 @@ ColumnLayout {
         objectName: "cpuUnlockModeWarning"
         visible: root.recoveryWarningVisible
         text: root.unlockMode === "conflict"
-            ? "CONFLICT: Linux replay and EFI preboot are both configured. Do not enable either mode; use the disable action to recover to one clean state."
+            ? "CONFLICT: The standard Linux and EFI pre-boot methods are both configured. They are mutually exclusive; use the disable action to recover to one clean state."
             : "PARTIAL INSTALL: a core-unlock mode is incomplete or inconsistent. Do not enable another mode. The cleanup action can remove verified toolkit-owned state; ambiguous entries require manual firmware recovery."
         color: "#ff6aa2"; font.family: "monospace"; font.pixelSize: 10; font.bold: true
+        wrapMode: Text.Wrap; Layout.fillWidth: true
+    }
+
+    Text {
+        text: "Choose one automatic unlock method. The standard Linux and EFI pre-boot methods are mutually exclusive and cannot be enabled together."
+        color: "#ffb06a"; font.family: "monospace"; font.pixelSize: 9; font.bold: true
         wrapMode: Text.Wrap; Layout.fillWidth: true
     }
 
@@ -191,7 +203,7 @@ ColumnLayout {
                 id: linuxOption
                 anchors.fill: parent; anchors.margins: 10
                 spacing: 6
-                Text { text: "LINUX REPLAY (RECOMMENDED)"; color: "#49ff9a"; font.family: "monospace"; font.pixelSize: 11; font.bold: true; Layout.fillWidth: true }
+                Text { text: "STANDARD LINUX BOOT (RECOMMENDED)"; color: "#49ff9a"; font.family: "monospace"; font.pixelSize: 11; font.bold: true; Layout.fillWidth: true }
                 Text {
                     text: "Safest persistent method. After each cold power-on, Linux boots once to apply the mask, then warm-reboots into Linux a second time."
                     color: "#c6d9df"; font.family: "monospace"; font.pixelSize: 9
@@ -213,15 +225,15 @@ ColumnLayout {
                 }
                 C.NeonButton {
                     objectName: "linuxReplayEnableButton"
-                    text: "ENABLE LINUX REPLAY"; Layout.fillWidth: true
+                    text: "ENABLE STANDARD METHOD"; Layout.fillWidth: true
                     enabled: root.unlockControls && Boolean((root.actions.enable || {}).available)
-                    hint: "Available only when the service reports the tested topology is ready for replay."
-                    onClicked: confirm.ask("Enable Linux core-unlock replay?",
+                    hint: "Available only when the tested topology is ready and EFI pre-boot is not configured."
+                    onClicked: confirm.ask("Enable the standard Linux boot method?",
                         "Persist only after the eight-core topology has completed stability testing. Disabled cores may be defective. Cold power-on will boot Linux once to apply the mask, then perform a warm reboot into Linux.", true,
                         function() { root.backend.cpuUnlockAction("enable") })
                 }
                 Text {
-                    text: root.actionStatus("enable", "Ready to enable Linux replay.")
+                    text: root.actionStatus("enable", "Ready to enable the standard Linux boot method.")
                     color: (root.actions.enable || {}).available ? "#76b8bd" : "#ff8ab4"
                     font.family: "monospace"; font.pixelSize: 8; wrapMode: Text.Wrap; Layout.fillWidth: true
                 }
@@ -237,7 +249,7 @@ ColumnLayout {
                 id: efiOption
                 anchors.fill: parent; anchors.margins: 10
                 spacing: 6
-                Text { text: "EFI PREBOOT (EXPERIMENTAL)"; color: "#ef70cc"; font.family: "monospace"; font.pixelSize: 11; font.bold: true; Layout.fillWidth: true }
+                Text { text: "EFI PREBOOT (ALTERNATIVE)"; color: "#ef70cc"; font.family: "monospace"; font.pixelSize: 11; font.bold: true; Layout.fillWidth: true }
                 Text {
                     text: "Applies before Linux, avoiding one Linux boot, but still performs one quick firmware warm reset after cold power. Upstream support is new and reverse-engineered. The unsigned EFI image does not work with Secure Boot."
                     color: "#c6d9df"; font.family: "monospace"; font.pixelSize: 9

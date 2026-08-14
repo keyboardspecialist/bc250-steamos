@@ -35,7 +35,7 @@ ColumnLayout {
     C.SectionHeader { text: "Control link" }
     C.StatusRow { label: "System service"; value: backend.mockMode ? "Mock / isolated" : backend.serviceAvailable ? "Online" : "Offline"; health: backend.serviceAvailable ? 1 : -1 }
     C.StatusRow { label: "Current operation"; value: backend.busy ? backend.busyLabel : "Idle"; health: backend.busy ? 0 : 1 }
-    C.StatusRow { label: "Core replay guard"; value: root.automaticRebootPending ? "AUTO REBOOT PENDING" : root.unlockGuard.state || "Unknown"; health: root.automaticRebootPending ? -1 : 0 }
+    C.StatusRow { label: "Core unlock guard"; value: root.automaticRebootPending ? "AUTO REBOOT PENDING" : root.unlockGuard.state || "Unknown"; health: root.automaticRebootPending ? -1 : 0 }
     Text {
         visible: root.automaticRebootPending
         text: "Conflicting controls are blocked while the guarded reboot is pending."

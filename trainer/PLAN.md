@@ -149,10 +149,10 @@ until it can receive equivalent validation and rollback coverage.
 
 - Physical core and logical-thread topology
 - CCX grouping where the kernel exposes it
-- Core-unlock helper, service, guard, and replay state
+- Core-unlock helper, service, guard, and automatic-unlock state
 - One-time core-unlock test
-- Persistent replay enablement after successful testing
-- Replay disablement
+- Automatic-unlock enablement after successful testing
+- Automatic-unlock disablement
 - CPU overclock detect, apply, enable, and off actions
 - Active CPU overclock profile and service state
 
@@ -226,7 +226,7 @@ Structured status should include:
 - Helper and unit installation state
 - Current mutually exclusive mode (`none`, `temporary`, `linux-replay`, `efi`,
   `conflict`, or `partial`)
-- Linux replay service active and enabled state
+- Standard Linux core-unlock service active and enabled state
 - EFI image and firmware boot-entry state
 - Update-persistence state
 - Manual or automatic reboot-guard state
@@ -267,9 +267,9 @@ Operation completion should identify the required next step:
 | --- | --- |
 | Successful six-core test | Warm reboot |
 | Test while already at eight cores | None |
-| Persistent replay enabled | None immediately |
-| Replay disabled while eight cores remain active | Full power-off |
-| Replay disabled while already at six cores | None |
+| Automatic unlock enabled | None immediately |
+| Automatic unlock disabled while eight cores remain active | Full power-off |
+| Automatic unlock disabled while already at six cores | None |
 
 ## Safety Requirements
 
@@ -279,9 +279,9 @@ Operation completion should identify the required next step:
 - Explain that CPU overclock detection can crash or restart the machine.
 - Explain that a core-unlock test changes the mask immediately but requires a
   warm reboot before Linux can enumerate the additional cores.
-- Do not offer persistent replay until exactly eight physical cores are active.
-- Explain that disabling replay does not relock the current boot and requires a
-  complete power-off to return to six cores.
+- Do not offer automatic unlock until exactly eight physical cores are active.
+- Explain that disabling automatic unlock does not relock the current boot and
+  requires a complete power-off to return to six cores.
 - Show when an automatic guarded reboot is pending and block conflicting work.
 - Disable controls according to service-provided capability flags and blockers.
 - Keep all existing script-level checks as the final authority to avoid

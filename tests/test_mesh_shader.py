@@ -23,6 +23,8 @@ class MeshShaderTests(unittest.TestCase):
             "flock": "#!/bin/sh\nexit 0\n",
             "sync": "#!/bin/sh\nexit 0\n",
             "journalctl": "#!/bin/sh\necho 'GFX1013/BC-250: PASID-only CPU type-0 invalidation'\n",
+            "modinfo": '#!/bin/sh\nprintf "%s\\n" "$BC250_GFX1013_MODULE"\n',
+            "stat": '#!/bin/sh\n[ "$2" = %u ] && { echo 0; exit; }\n[ "$2" = %a ] && { echo 644; exit; }\nexec /usr/bin/stat "$@"\n',
         }.items():
             path = bindir / name
             path.write_text(source, encoding="utf-8")
@@ -56,7 +58,23 @@ class MeshShaderTests(unittest.TestCase):
         sha256sum.chmod(0o755)
         module = root / "modules" / "amdgpu.ko.zst"
         marker = root / "modules" / ".bc250-gfx1013-fix"
+        audio_marker = root / "modules" / ".bc250-audio-fix"
+        metrics_marker = root / "modules" / ".bc250-metrics-fix"
         active = root / "modules" / "bc250_gfx1013_fix"
+        policy = root / "modules" / "sched_policy"
+        boot_config = root / "boot-config.sh"
+        boot_config.write_text(
+            "#!/bin/sh\n"
+            "case \"$1\" in\n"
+            "  configured) [ \"${BC250_TEST_POLICY_CONFIGURED:-1}\" = 1 ] ;;\n"
+            "  present|policy-present) [ \"${BC250_TEST_POLICY_CONFIGURED:-1}\" = 1 ] ;;\n"
+            "  active) [ -r \"$BC250_SCHED_POLICY_PARAM\" ] && [ \"$(cat \"$BC250_SCHED_POLICY_PARAM\")\" = 2 ] ;;\n"
+            "  install|remove) exit 0 ;;\n"
+            "  *) exit 2 ;;\n"
+            "esac\n",
+            encoding="utf-8",
+        )
+        boot_config.chmod(0o755)
         return {
             **os.environ,
             "HOME": str(home),
@@ -72,7 +90,11 @@ class MeshShaderTests(unittest.TestCase):
             ),
             "BC250_GFX1013_MODULE": str(module),
             "BC250_GFX1013_MARKER": str(marker),
+            "BC250_AUDIO_MARKER": str(audio_marker),
+            "BC250_METRICS_MARKER": str(metrics_marker),
             "BC250_GFX1013_ACTIVE": str(active),
+            "BC250_SCHED_POLICY_PARAM": str(policy),
+            "BC250_AMDGPU_BOOT_CONFIG": str(boot_config),
         }
 
     def install_runtime(self, env, commit=UPSTREAM_COMMIT):
@@ -81,19 +103,22 @@ class MeshShaderTests(unittest.TestCase):
         state = Path(env["BC250_MESH_STATE_DIR"])
         module = Path(env["BC250_GFX1013_MODULE"])
         marker = Path(env["BC250_GFX1013_MARKER"])
+        audio_marker = Path(env["BC250_AUDIO_MARKER"])
+        metrics_marker = Path(env["BC250_METRICS_MARKER"])
         active = Path(env["BC250_GFX1013_ACTIVE"])
+        policy = Path(env["BC250_SCHED_POLICY_PARAM"])
         generator = Path(env["BC250_GFX1013_GENERATOR"])
         fallback_icd = Path(env["BC250_MESH_32BIT_ICD"])
         fallback_driver = fallback_icd.parent / "libvulkan_radeon.i686.so"
-        for path in (driver, icd, module, active, generator):
+        for path in (driver, icd, module, active, policy, generator):
             path.parent.mkdir(parents=True, exist_ok=True)
         state.mkdir(parents=True, exist_ok=True)
         module.write_bytes(b"patched amdgpu\n")
-        marker.write_text(
-            hashlib.sha256(module.read_bytes()).hexdigest() + "\n",
-            encoding="ascii",
-        )
+        module_hash = hashlib.sha256(module.read_bytes()).hexdigest() + "\n"
+        for path in (marker, audio_marker, metrics_marker):
+            path.write_text(module_hash, encoding="ascii")
         active.write_text(UPSTREAM_COMMIT + "\n", encoding="ascii")
+        policy.write_text("2\n", encoding="ascii")
         driver.write_bytes(b"driver\n")
         fallback_driver.write_bytes(b"\x7fELF\x01stock 32-bit driver\n")
         fallback_icd.write_text(
@@ -291,6 +316,41 @@ class MeshShaderTests(unittest.TestCase):
             )
             self.assertEqual(generated.stdout, "")
 
+    def test_global_activation_requires_every_module_attestation(self):
+        for key in ("BC250_AUDIO_MARKER", "BC250_METRICS_MARKER"):
+            with self.subTest(key=key), tempfile.TemporaryDirectory() as directory:
+                env = self.environment(Path(directory))
+                self.install_runtime(env)
+                Path(env[key]).unlink()
+                status = self.run_status_json(env)
+                self.assertFalse(status["kernelReady"])
+                generated = subprocess.run(
+                    ["bash", env["BC250_GFX1013_GENERATOR"]],
+                    check=True,
+                    capture_output=True,
+                    text=True,
+                    env=env,
+                )
+                self.assertEqual(generated.stdout, "")
+
+    def test_global_activation_stops_when_scheduler_policy_is_inactive(self):
+        with tempfile.TemporaryDirectory() as directory:
+            env = self.environment(Path(directory))
+            self.install_runtime(env)
+            Path(env["BC250_SCHED_POLICY_PARAM"]).write_text("0\n", encoding="ascii")
+            status = self.run_status_json(env)
+            self.assertTrue(status["kernelReady"])
+            self.assertFalse(status["schedulerActive"])
+            self.assertFalse(status["globalEnabled"])
+            generated = subprocess.run(
+                ["bash", env["BC250_GFX1013_GENERATOR"]],
+                check=True,
+                capture_output=True,
+                text=True,
+                env=env,
+            )
+            self.assertEqual(generated.stdout, "")
+
     def test_configured_runtime_requires_new_session_environment(self):
         with tempfile.TemporaryDirectory() as directory:
             env = self.environment(Path(directory))
@@ -299,6 +359,16 @@ class MeshShaderTests(unittest.TestCase):
             status = self.run_status_json(env)
             self.assertFalse(status["globalEnabled"])
             self.assertTrue(status["restartRequired"])
+
+    def test_unconfigured_runtime_does_not_report_restart_required(self):
+        with tempfile.TemporaryDirectory() as directory:
+            env = self.environment(Path(directory))
+            self.install_runtime(env)
+            env["BC250_TEST_POLICY_CONFIGURED"] = "0"
+            env["BC250_TEST_MANAGER_INACTIVE"] = "1"
+            status = self.run_status_json(env)
+            self.assertFalse(status["schedulerConfigured"])
+            self.assertFalse(status["restartRequired"])
 
     def test_legacy_runtime_requires_upgrade(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -484,8 +554,17 @@ class MeshShaderTests(unittest.TestCase):
         subprocess.run(["bash", "-n", str(MESH)], check=True)
         source = MESH.read_text(encoding="utf-8")
         self.assertIn("menu_select()", source)
-        self.assertIn("Mesa / RADV performance patch", source)
+        self.assertIn("Mesa / RADV async-compute patch", source)
         self.assertIn("Optional but highly recommended", source)
+        self.assertIn("usually takes 3-5 minutes", source)
+        self.assertIn("GFX1013 async compute", source)
+        self.assertIn("require_production_kernel_paths", source)
+        self.assertIn('ldd -r "$output"', source)
+        self.assertIn('readelf -h "$output"', source)
+        self.assertIn("undefined symbol:", source)
+        self.assertIn("BC250_FORCE_GRUB_REGEN=1", source)
+        self.assertIn("Reboot to deactivate it, then rerun uninstall", source)
+        self.assertNotIn("20-40", source)
         self.assertNotIn("Enable one executable|", source)
         self.assertIn("DryhoppedIPA/bc250-gfx1013-fix", source)
         self.assertIn("/usr/lib/systemd/user-environment-generators", source)

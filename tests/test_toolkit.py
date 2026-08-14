@@ -85,8 +85,8 @@ class ToolkitTests(unittest.TestCase):
         self.assertIn("7) run_menu_action status", main_menu)
         self.assertNotIn("Mesh shaders (per game)", source)
         self.assertNotIn("[optional]", drivers_menu)
-        self.assertIn("Mesa / RADV performance patch (optional)", drivers_menu)
-        self.assertIn("AMDGPU scheduler policy (toggle)", drivers_menu)
+        self.assertIn("Mesa / RADV async-compute patch (optional)", drivers_menu)
+        self.assertIn("AMDGPU scheduler policy (advanced)", drivers_menu)
         self.assertIn("Clean AMDGPU build tree", drivers_menu)
         self.assertIn("[menu]", drivers_menu)
         self.assertLess(
@@ -95,14 +95,14 @@ class ToolkitTests(unittest.TestCase):
         )
         self.assertLess(
             drivers_menu.index("Clean AMDGPU build tree"),
-            drivers_menu.index("AMDGPU scheduler policy (toggle)"),
+            drivers_menu.index("AMDGPU scheduler policy (advanced)"),
         )
         self.assertLess(
-            drivers_menu.index("AMDGPU scheduler policy (toggle)"),
-            drivers_menu.index("Mesa / RADV performance patch"),
+            drivers_menu.index("AMDGPU scheduler policy (advanced)"),
+            drivers_menu.index("Mesa / RADV async-compute patch"),
         )
         self.assertLess(
-            drivers_menu.index("Mesa / RADV performance patch"),
+            drivers_menu.index("Mesa / RADV async-compute patch"),
             drivers_menu.index("AIC8800 WiFi / Bluetooth"),
         )
         self.assertIn("0) run_menu_action amdgpu", drivers_menu)
@@ -259,6 +259,8 @@ class ToolkitTests(unittest.TestCase):
         self.assertIn('bash "$AMDGPU_BOOT_CONFIG_SH" present', toggle)
         self.assertIn('sudo bash "$AMDGPU_BOOT_CONFIG_SH" install', toggle)
         self.assertIn('sudo bash "$AMDGPU_BOOT_CONFIG_SH" remove', toggle)
+        self.assertIn('bash "$MESH_SHADER_SH" status-json', toggle)
+        self.assertIn("before enabling amdgpu.sched_policy=2", toggle)
         self.assertIn("Scheduler policy state is incomplete", toggle)
 
     def test_decky_install_bootstraps_loader_before_plugin_dependencies(self):

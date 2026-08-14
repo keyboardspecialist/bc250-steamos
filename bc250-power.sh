@@ -545,12 +545,12 @@ badge_cpu_mitigations() {
 badge_core_unlock() {
     local mode="${1:-$(core_unlock_mode)}"
     case "$mode" in
-        systemd)  b_ok "Linux replay enabled" ;;
-        efi)      b_ok "EFI replay enabled" ;;
+        systemd)  b_ok "standard boot method enabled" ;;
+        efi)      b_ok "EFI pre-boot method enabled" ;;
         partial)  b_mid "EFI cleanup needed" ;;
-        conflict) b_mid "replay conflict" ;;
+        conflict) b_mid "boot method conflict" ;;
         none)
-            if [[ -x "$CORE_UNLOCK_BIN" ]]; then b_off "replay off - helper kept"
+            if [[ -x "$CORE_UNLOCK_BIN" ]]; then b_off "automatic unlock off - helper kept"
             else b_off "not installed"; fi
             ;;
     esac
@@ -2133,9 +2133,9 @@ core_unlock_require_no_efi() {
     local action="$1" mode
     mode=$(core_unlock_mode)
     case "$mode" in
-        efi) die "$action is unavailable while EFI core unlock is enabled; run '$0 cpu-unlock off' first." ;;
+        efi) die "$action and the EFI pre-boot method are mutually exclusive; run '$0 cpu-unlock off' first." ;;
         partial) die "$action is blocked by partial EFI core-unlock state; run '$0 cpu-unlock off' to remove toolkit-owned artifacts." ;;
-        conflict) die "$action is blocked by conflicting systemd and EFI core-unlock artifacts; run '$0 cpu-unlock off'." ;;
+        conflict) die "$action is blocked by conflicting standard Linux and EFI pre-boot methods; run '$0 cpu-unlock off'." ;;
     esac
 }
 
@@ -2505,7 +2505,7 @@ core_unlock_efi_enable() {
     mode=$(core_unlock_mode)
     case "$mode" in
         systemd|conflict)
-            die "EFI mode cannot be enabled while systemd core-unlock replay is active; run '$0 cpu-unlock off' first." ;;
+            die "EFI mode and the standard Linux boot method are mutually exclusive; run '$0 cpu-unlock off' first." ;;
         partial)
             if efi_configuration_complete 1; then
                 rm -f "$CORE_UNLOCK_EFI_RECOVERY" \
@@ -2628,7 +2628,7 @@ core_unlock_efi_enable() {
     sync "$CORE_UNLOCK_STATE_DIR"
     core_unlock_lifecycle_unlock
     log "Experimental EFI core unlock installed as Boot$number at $CORE_UNLOCK_EFI_IMAGE."
-    warn "The unsigned helper removes Linux boot replay, but firmware still performs one warm reset after cold power."
+    warn "EFI runs before Linux, but firmware still performs one warm reset after cold power."
 }
 
 clear_core_unlock_efi_guard() {
@@ -2758,7 +2758,7 @@ core_unlock_test() {
 core_unlock_enable() {
     require_root
     core_unlock_lifecycle_lock || return $?
-    core_unlock_require_no_efi "Linux/systemd core-unlock enable"
+    core_unlock_require_no_efi "The standard Linux boot method"
     install_core_unlock_files || return $?
     BC250_CORE_UNLOCK_STATE_DIR="$CORE_UNLOCK_STATE_DIR" \
         python3 -I "$CORE_UNLOCK_BIN" verify-unlocked || return $?
@@ -2788,14 +2788,14 @@ core_unlock_status() {
     local en ac cores metrics_state mode
     mode=$(core_unlock_mode)
     case "$mode" in
-        none)     echo "  boot replay: disabled" ;;
-        systemd)  echo "  boot replay: Linux/systemd" ;;
-        efi)      echo "  boot replay: EFI pre-boot" ;;
-        partial)  echo "  boot replay: incomplete EFI state (cleanup required)" ;;
-        conflict) echo "  boot replay: conflicting Linux and EFI artifacts" ;;
+        none)     echo "  automatic unlock: disabled" ;;
+        systemd)  echo "  automatic unlock: standard Linux boot method" ;;
+        efi)      echo "  automatic unlock: EFI pre-boot method" ;;
+        partial)  echo "  automatic unlock: incomplete EFI state (cleanup required)" ;;
+        conflict) echo "  automatic unlock: conflicting Linux and EFI methods" ;;
     esac
     case "$mode" in
-        efi) echo "  EFI behavior: replay runs before Linux; cold power still causes one firmware warm reset" ;;
+        efi) echo "  EFI behavior: unlock runs before Linux; cold power still causes one firmware warm reset" ;;
         partial) warn "Partial EFI state blocks test/enable; retry efi-enable to finalize a valid retained transaction, or use 'cpu-unlock off'." ;;
         conflict) warn "Systemd and EFI artifacts conflict; use 'cpu-unlock off' before any enable action." ;;
     esac
@@ -3616,15 +3616,15 @@ menu_cpu_unlock() {
         local mode
         mode=$(core_unlock_mode)
         local items=(
-            "Status summary|$(badge_core_unlock "$mode")|Show replay mode, active cores, service state, reboot guard, and telemetry compatibility."
+            "Status summary|$(badge_core_unlock "$mode")|Show the automatic unlock method, active cores, service state, reboot guard, and telemetry compatibility."
             "Core topology||Display active and unavailable CPU cores grouped by CCX."
             "Setup 1 - Test eight cores once||Write the volatile mask only. Manually reboot, stress-test, then return here."
-            "Setup 2a - Enable Linux boot replay||Replay after Linux boots, then perform one guarded warm reboot after cold power."
-            "Setup 2b - Enable EFI pre-boot replay||Replay before Linux to avoid an extra Linux boot; still performs one firmware warm reset."
-            "Disable boot replay (keep helper)|$(badge_core_unlock "$mode")|Stop future automatic unlock; retain the helper for testing or re-enabling."
-            "Uninstall all core-unlock files|$(badge_core_unlock_files "$mode")|Disable replay and remove the helper, units, EFI files, licenses, and guard state."
+            "Setup 2 - Standard Linux boot method||Recommended. Applies after Linux boots. Choose this OR EFI; they cannot be enabled together."
+            "Setup 2 - EFI pre-boot method||Alternative. Applies before Linux to avoid an extra Linux boot. Choose this OR standard; they cannot be enabled together."
+            "Disable automatic unlock (keep helper)|$(badge_core_unlock "$mode")|Stop future automatic unlock; retain the helper for testing or re-enabling."
+            "Uninstall all core-unlock files|$(badge_core_unlock_files "$mode")|Disable automatic unlock and remove the helper, units, EFI files, licenses, and guard state."
         )
-        menu_select "CPU core unlock  ${CD}(experimental: 6c/12t to 8c/16t; test first)${C0}" "${items[@]}" || return 0
+        menu_select "CPU core unlock  ${CD}(experimental 6c/12t -> 8c/16t: test, then choose one Setup 2 method)${C0}" "${items[@]}" || return 0
         case $MENU_CHOICE in
             0) run_action core_unlock_status ;;
             1) run_action core_unlock_topology ;;
@@ -3708,7 +3708,7 @@ SETUP COMMANDS (run once, in this order)
               settings and persistent data do not count as installed.
 
   uninstall   Stop and disable power services, revert CPU OC live when
-              possible, remove CPU core-unlock replay, remove the ACPI
+              possible, remove automatic CPU core unlock, remove the ACPI
               override from the next boot, and
               remove component-owned units, executables, D-Bus policy, and
               update keep list. Keeps governor/OC tuning, saved frequency
@@ -3764,25 +3764,29 @@ CPU CORE UNLOCK (test before enabling persistence)
                        persistence. Manually reboot, confirm 8c/16t, then
                        stress-test and check dmesg for hardware errors. If the
                        system is unstable, power off fully to restore six cores.
+                       After a successful test, choose exactly ONE automatic
+                       unlock method below. The standard Linux and EFI pre-boot
+                       methods are mutually exclusive and cannot be enabled
+                       together.
   cpu-unlock enable    Only after a successful test: verify this boot already
-                       exposes eight physical cores, then install and enable
-                       Linux/systemd boot replay. It refuses while the system
-                       has six cores.
+                       exposes eight physical cores, then enable the STANDARD
+                       Linux boot method. It refuses while the system has six
+                       cores or the EFI method is configured.
                        On later cold boots the firmware resets to six cores;
                        the service writes the mask and requests ONE guarded
                        warm reboot so AGESA can enumerate 8c/16t. Initramfs
                        cannot avoid this because AGESA runs before Linux.
   cpu-unlock efi-enable
-                        Verify eight active cores, build the shipped hardened C
-                        source with pinned
-                        yoppeh/efi headers, and create an owned BC250 Boot entry.
-                        It replays before Linux, avoiding one extra Linux boot,
-                        but still performs one firmware warm reset after cold
-                        power.
+                        ALTERNATIVE to 'enable', not an additional step. Verify
+                        eight active cores, build the shipped hardened C source
+                        with pinned yoppeh/efi headers, and create an owned BC250
+                        Boot entry. It applies the unlock before Linux, avoiding
+                        one extra Linux boot, but still performs
+                        one firmware warm reset after cold power.
   cpu-unlock status    Show none/systemd/efi/conflict/partial mode, service,
                        physical-core, and reboot-guard state.
-  cpu-unlock off       Disable/remove either replay mode but retain the helper
-                       for later testing or re-enabling.
+  cpu-unlock off       Disable/remove either automatic unlock method but retain
+                       the helper for later testing or re-enabling.
   cpu-unlock uninstall Remove all systemd/EFI artifacts, helper, licenses, and
                        guard state. A mismatched recorded EFI entry is never
                        deleted and causes removal to fail safely.

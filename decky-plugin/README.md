@@ -13,7 +13,7 @@ CEC quick controls. Select
 - GPU frequency, load target, and ramp behavior
 - CPU overclock detection, apply, boot replay, and stock restore controls
 - HDMI-CEC controls
-- Global Mesa / RADV performance-patch status and AMDGPU prerequisite
+- Global Mesa / RADV async-compute status and AMDGPU prerequisite
 
 GPU voltage editing and saving WGP routing for boot remain in the toolkit CLI.
 

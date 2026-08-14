@@ -22,7 +22,7 @@ Open the unified toolkit menu as the logged-in Deck user:
 | Component | Setup command |
 |---|---|
 | AMDGPU kernel fixes | `./bc250-toolkit.sh amdgpu`, then reboot |
-| Mesa / RADV performance patch (optional, highly recommended) | `./bc250-toolkit.sh radv`, then sign out and back in |
+| Mesa / RADV async-compute patch (optional, highly recommended) | `./bc250-toolkit.sh radv`, then reboot |
 | Power management | `sudo ./bc250-power.sh all`, then `sudo ./bc250-power.sh enable` |
 | RAM / VRAM split | `./bc250-ram-split.sh` |
 | GPU compute-unit unlock | `sudo ./bc250-40cu.sh` |
@@ -81,7 +81,7 @@ sudo ./bc250-power.sh status
 | [`desktop-control/`](#plasma-desktop-control) | Plasma system-tray and windowed controls |
 | [`trainer/`](#bc250-trainer) | Standalone native Qt control application |
 | [`bc250-audio-fix/`](#amdgpu-driver) | DisplayPort clock, GPU telemetry, and GFX1013 compute repair |
-| [`bc250-mesh-shader.sh`](#mesa--radv-performance-patch-optional-recommended) | Optional, recommended Mesa / RADV performance driver enabled globally for the user session |
+| [`bc250-mesh-shader.sh`](#mesa--radv-async-compute-patch-optional-recommended) | Optional, recommended Mesa / RADV async-compute driver enabled globally for the user session |
 | [`aic8800/`](#wifi-and-bluetooth) | AIC8800D80 USB WiFi and Bluetooth driver |
 
 The unified launcher and individual component scripts remain independently usable. Use the child scripts directly for command-line automation.
@@ -107,7 +107,7 @@ Each child requests administrator access only when needed.
 | `./bc250-toolkit.sh power` | Open a component menu directly |
 | `./bc250-toolkit.sh ram` | Open RAM / VRAM split settings |
 | `./bc250-toolkit.sh amdgpu` | Build the AMDGPU kernel fixes |
-| `./bc250-toolkit.sh radv` | Open the global Mesa / RADV performance-patch menu |
+| `./bc250-toolkit.sh radv` | Open the global Mesa / RADV async-compute menu |
 | `./bc250-toolkit.sh trainer` | Download, verify, and install the latest native BC250 Trainer release |
 | `./bc250-toolkit.sh manage` | Review and remove installed components |
 | `./bc250-toolkit.sh help` | List launcher commands and components |
@@ -128,8 +128,9 @@ and restart boundaries rather than exposing every tuning option at once:
 3. Install the memory helper and choose the CMOS minimum and dynamic TTM limit.
 4. Optionally follow the staged GPU-CU or CPU-core unlock workflows, including
    their reboot and stability tests.
-5. Add optional Mesa / RADV performance, matching devices, and a control UI.
-6. Run the complete status report after the required reboot or sign-out.
+5. Optionally build the Mesa / RADV async-compute patch after AMDGPU is active,
+   then reboot so RADV and `amdgpu.sched_policy=2` activate together.
+6. Add matching devices and a control UI, then run the complete status report.
 
 Persistent storage and boot recovery are infrastructure rather than a separate
 setup prerequisite. Supported component installers create them automatically
@@ -324,9 +325,9 @@ CPU core-unlock boot persistence.
 sudo ./bc250-power.sh cpu-unlock test
 sudo reboot
 sudo ./bc250-power.sh cpu-unlock status
-# Stress-test the extra cores and inspect dmesg, then opt into persistence:
+# Stress-test the extra cores and inspect dmesg, then choose ONE method:
 sudo ./bc250-power.sh cpu-unlock enable
-# Optional experimental alternative after the same validation:
+# OR use the experimental EFI alternative (do not enable both):
 # sudo ./bc250-power.sh cpu-unlock efi-enable
 ```
 
@@ -336,14 +337,16 @@ cold boot, the enabled service safely writes the mask and requests one warm
 reboot. A persistent pending marker prevents a failed unlock from creating a
 reboot loop.
 
-After validating all eight cores, choose either Linux/systemd or EFI replay.
-Linux/systemd replay applies the mask after Linux boots. `efi-enable` instead
-installs an unsigned, namespaced pre-boot application and removes the extra
-Linux boot from the cold-start sequence. On the first firmware pass after cold
-power, the application writes the mask and requests a warm reset. On the second
-pass, it sees the completed mask and lets firmware continue to SteamOS. EFI
-replay therefore avoids booting Linux once solely to replay the mask, but does
-not eliminate the warm reset AGESA needs to enumerate eight cores.
+After validating all eight cores, choose exactly one automatic unlock method.
+The standard Linux/systemd method and the EFI pre-boot method are mutually
+exclusive and cannot be enabled together. The standard method applies the mask
+after Linux boots. `efi-enable` is an alternative that installs an unsigned,
+namespaced pre-boot application and removes the extra Linux boot from the
+cold-start sequence. On the first firmware pass after cold power, the
+application writes the mask and requests a warm reset. On the second pass, it
+sees the completed mask and lets firmware continue to SteamOS. The EFI method
+therefore avoids booting Linux once solely to apply the mask, but does not
+eliminate the warm reset AGESA needs to enumerate eight cores.
 Its installer requires `/efi` to be the writable FAT filesystem mounted from a
 standard GPT ESP or the active SteamOS EFI slot and records that partition's
 canonical source, partition number, and PARTUUID. The firmware entry must be
@@ -362,13 +365,13 @@ running kernel.
 | `sudo ./bc250-power.sh cpu-unlock menu` | Open the dedicated guided CPU core-unlock menu |
 | `./bc250-power.sh cpu-unlock topology` | Show active CPU cores grouped by CCX |
 | `sudo ./bc250-power.sh cpu-unlock test` | Apply the volatile mask once without installing boot persistence; reboot manually |
-| `sudo ./bc250-power.sh cpu-unlock enable` | Choice 2a: after testing, verify eight cores are active and install Linux boot replay |
-| `sudo ./bc250-power.sh cpu-unlock efi-enable` | Choice 2b: after testing, verify eight cores are active and install EFI pre-boot replay |
+| `sudo ./bc250-power.sh cpu-unlock enable` | Setup 2 standard choice: verify eight cores are active and enable automatic unlock from Linux |
+| `sudo ./bc250-power.sh cpu-unlock efi-enable` | Setup 2 alternative choice: verify eight cores are active and enable automatic unlock from EFI; do not use with `enable` |
 | `sudo ./bc250-power.sh cpu-unlock status` | Show service, topology, and reboot-guard state |
-| `sudo ./bc250-power.sh cpu-unlock off` | Disable/remove either replay mode but retain the Linux helper |
+| `sudo ./bc250-power.sh cpu-unlock off` | Disable/remove either automatic unlock method but retain the Linux helper |
 | `sudo ./bc250-power.sh cpu-unlock uninstall` | Remove all systemd/EFI artifacts, helper, license copies, and pending state |
 
-Use `off` when you only want to stop automatic replay and may test or re-enable
+Use `off` when you only want to stop automatic unlock and may test or re-enable
 the unlock later. Use `uninstall` to remove the complete core-unlock integration,
 including the retained Linux helper and its support files.
 
@@ -376,11 +379,11 @@ including the retained Linux helper and its support files.
 entry. If the extra cores are unstable, do not run `enable`; power the system
 off fully to restore the factory six-core mask.
 
-The SMU command has no known inverse; `off` and `uninstall` stop future replay,
-but a full power-off is required to return to six cores. The disabled cores may
-be defective. Upstream tested BIOS 3.0 with kernel 6.18.40; BIOS 5 is untested.
-Stress-test all cores and inspect `dmesg` for hardware errors before relying on
-them.
+The SMU command has no known inverse; `off` and `uninstall` stop future
+automatic unlock, but a full power-off is required to return to six cores. The
+disabled cores may be defective. Upstream tested BIOS 3.0 with kernel 6.18.40;
+BIOS 5 is untested. Stress-test all cores and inspect `dmesg` for hardware
+errors before relying on them.
 
 The vendored Linux helper is pinned to upstream commit
 [`87ec098`](https://github.com/rw-r-r-0644/bc250-core-unlock/commit/87ec09877df57d2e310a9b9961584a78b6d1c79d)
@@ -506,15 +509,17 @@ sudo ./rollback.sh
 
 See [`bc250-audio-fix/README.md`](bc250-audio-fix/README.md) for kernel support and build controls.
 
-## Mesa / RADV Performance Patch (Optional, Recommended)
+## Mesa / RADV Async-Compute Patch (Optional, Recommended)
 
-This optional but highly recommended performance patch builds the Mesa/RADV half of
+This optional but highly recommended patch builds the Mesa/RADV half of
 [`DryhoppedIPA/bc250-gfx1013-fix`](https://github.com/DryhoppedIPA/bc250-gfx1013-fix)
-as a separate Vulkan ICD and leaves the stock Vulkan driver as the system
-default until setup enables the alternate driver globally for the logged-in
-user. The matching `bc250-audio-fix` AMDGPU kernel module must be installed and
-active first. Use the toolkit's **Drivers** menu: install **AMDGPU kernel
-fixes**, reboot, and then open **Mesa / RADV performance patch**.
+as a separate Vulkan ICD to enable GFX1013 asynchronous compute. The matching
+`bc250-audio-fix` AMDGPU kernel module must be built, installed, selected, and
+active first. Setup refuses to continue unless all installed module markers,
+the selected `modinfo` path, and the loaded repair attestation agree. Use the
+toolkit's **Drivers** menu: install **AMDGPU kernel fixes**, reboot, and then
+open **Mesa / RADV async-compute patch**. The RADV-only build normally takes
+about 3-5 minutes.
 
 Open the menu as the logged-in user:
 
@@ -529,11 +534,16 @@ Or use the CLI:
 ./bc250-mesh-shader.sh status
 ```
 
+Step 1 does not enable `amdgpu.sched_policy=2`. RADV setup installs the patched
+ICD first and only then writes that boot policy. It does not execute the
+alternate ICD during this pre-policy installation. Reboot afterward so the
+kernel policy and patched RADV activate together.
+
 Setup installs a systemd user-environment generator that exports
 `VK_DRIVER_FILES` and `VK_ICD_FILENAMES` for the complete user session. Sign
-out and back in after setup so the graphical session inherits the alternate
-driver. The generator exports nothing unless the installed module hash and the
-loaded module's read-only GFX1013 repair attestation both validate.
+out and back in after later rebuilds when policy `2` is already active. The
+generator exports nothing unless the installed module hashes, loaded module's
+read-only GFX1013 repair attestation, and active scheduler policy all validate.
 
 The global driver list is architecture-qualified. Native 64-bit processes use
 the patched GFX1013 RADV ICD, while 32-bit processes fall back to SteamOS's
@@ -551,11 +561,16 @@ Remove it:
 ```
 
 Uninstall verifies recorded hashes before removing the alternate driver and
-environment generator. Sign out and back in afterward to clear
-the inherited Vulkan environment. Legacy toolkit-managed `~/.drirc` entries
-are retained during migration so their old Steam launch options can be found.
-Remove those launch options, run `./bc250-mesh-shader.sh legacy-clear`, and then
-uninstall; unrelated `~/.drirc` content is preserved.
+environment generator. If scheduler policy `2` is active, uninstall removes it
+from the next boot but retains RADV until after that reboot; rerun uninstall to
+finish. Sign out and back in afterward to clear the inherited Vulkan
+environment. **Older per-game setup cleanup** is relevant
+only when upgrading from toolkit versions that recorded games in `~/.drirc`.
+Those records identify games that may still have
+`MESA_DRICONF_EXECUTABLE_OVERRIDE` or `VK_ICD_FILENAMES` in their Steam launch
+options. Remove those options, run `./bc250-mesh-shader.sh legacy-clear`, and
+then uninstall; unrelated `~/.drirc` content is preserved. New installations
+do not create per-game records.
 
 The upstream alpha build itself remains x86-64 only. Its compute and mesh
 changes therefore do not apply to 32-bit processes; those processes use the
@@ -593,8 +608,8 @@ The installer snapshots driver source, firmware, and verified per-kernel modules
 | Power management | The keep list retains tuning and GRUB defaults; the ACPI service validates and restores the `/boot` override and EFI GRUB config |
 | RAM / VRAM split | CMOS persists independently; the keep list retains the TTM GRUB drop-in |
 | CEC | Home configuration and allowlisted system integration carry forward |
-| Patched AMDGPU module | `amdgpu.sched_policy=2` persists through the atomic-update keep list; run `bc250-audio-fix/patch-driver.sh` after each kernel update to rebuild the kernel-specific module |
-| Mesa / RADV performance patch | Rerun `bc250-mesh-shader.sh setup` after a SteamOS update to restore the root-owned driver and environment generator, then sign out and back in |
+| Patched AMDGPU module | Run `bc250-audio-fix/patch-driver.sh` after each kernel update to rebuild the kernel-specific module; the rebuild disables any retained scheduler policy until RADV setup is rerun |
+| Mesa / RADV async-compute patch | Rerun `bc250-mesh-shader.sh setup` after a SteamOS update to restore the root-owned driver, safety-gated environment generator, and scheduler policy |
 | AIC8800 modules | The boot helper reuses staged modules or published headers; rerun setup if it requests interactive source preparation |
 
 Current installers preserve their configuration across normal atomic updates.

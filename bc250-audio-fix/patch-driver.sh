@@ -68,13 +68,18 @@ show_status() {
             failed=1
         fi
     done
-    if [ "$module_found" = 1 ] || "$HERE/boot-config.sh" present; then
+    if [ "$module_found" = 1 ]; then
         found=1
-        "$HERE/boot-config.sh" status || failed=1
-        if [ "$module_found" = 0 ]; then
-            echo "[bc250-amdgpu] scheduler policy is present without a module override"
-            failed=1
+        if "$HERE/boot-config.sh" present; then
+            "$HERE/boot-config.sh" status || failed=1
+        else
+            echo "[bc250-amdgpu] scheduler policy: deferred until Mesa / RADV setup"
         fi
+    elif "$HERE/boot-config.sh" present; then
+        found=1
+        "$HERE/boot-config.sh" status || true
+        echo "[bc250-amdgpu] scheduler policy is present without a module override"
+        failed=1
     fi
     for marker in /usr/lib/modules/*/updates/.bc250-audio-fix \
                   /usr/lib/modules/*/updates/.bc250-metrics-fix \

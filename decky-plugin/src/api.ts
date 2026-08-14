@@ -33,7 +33,3 @@ export const setCecToggle = callable<
 >("set_cec_toggle");
 export const setCecName = callable<[name: string], void>("set_cec_name");
 export const getMeshStatus = callable<[], MeshStatus>("get_mesh_status");
-export const setMeshGameEnabled = callable<
-  [appId: number, friendlyName: string, enabled: boolean],
-  void
->("set_mesh_game_enabled");

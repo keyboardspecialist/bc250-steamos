@@ -34,13 +34,6 @@ class Plugin:
     async def set_gpu_frequency(self, mode: str, minimum: int, maximum: int):
         return await self.backend.set_gpu_frequency(mode, minimum, maximum)
 
-    async def set_mesh_game_enabled(
-        self, app_id: int, friendly_name: str, enabled: bool
-    ):
-        return await self.backend.set_mesh_game_enabled(
-            app_id, friendly_name, enabled
-        )
-
     async def set_load_target(self, preset: str):
         return await self.backend.set_load_target(preset)
 
