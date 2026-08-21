@@ -18,3 +18,16 @@ Run `bash steamdeck-setup.sh status` as the logged-in user to inspect the
 installation. Run `sudo bash steamdeck-setup.sh uninstall` to disable automatic
 repair and remove runtime modules, firmware, and configuration. Uninstall keeps
 the persistent source snapshot and downloaded kernel/build caches for reuse.
+
+Dongles that use a different fake mass-storage identity or switch command can
+override both values during installation:
+
+```sh
+sudo AIC_MODESWITCH_ID=1234:5678 \
+  AIC_MODESWITCH_MESSAGE=0123456789abcdef \
+  bash steamdeck-setup.sh install
+```
+
+Use the pre-switch USB VID:PID and the manufacturer-provided mode-switch message.
+The firmware-loader and runtime identities are discovered from the bundled
+modules' USB device tables and do not need to be configured separately.

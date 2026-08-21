@@ -1,5 +1,5 @@
 #!/bin/bash
-# One-shot (re)setup of the AIC8800D80 USB WiFi dongle on the Steam Deck.
+# One-shot (re)setup of an AIC8800 USB WiFi dongle on the Steam Deck.
 # Run:  sudo bash steamdeck-setup.sh [install|uninstall]
 #       bash steamdeck-setup.sh status
 #
@@ -25,6 +25,7 @@ ROOT_HELPER=$ROOT_DATA_DIR/helper/aic8800-ensure-modules
 UNINSTALL_PENDING=$AIC_DATA_DIR/uninstall-pending
 SERVICE_UNIT=/etc/systemd/system/aic8800-modules.service
 KEEP_FILE=/etc/atomic-update.conf.d/bc250-aic.conf
+MODESWITCH_ID_FILE=/etc/aic8800-modeswitch-id
 KREL=$(uname -r)
 
 log() { echo "[aic8800] $*"; }
@@ -38,7 +39,7 @@ runtime_artifact_present() {
         "$UNINSTALL_PENDING" \
         /etc/modprobe.d/aic8800.conf \
         /etc/udev/rules.d/40-aic8800-modeswitch.rules \
-        /etc/usb_modeswitch.d/1111:1111 "$SERVICE_UNIT"; do
+        "$MODESWITCH_ID_FILE" /etc/usb_modeswitch.d/1111:1111 "$SERVICE_UNIT"; do
         [ ! -e "$path" ] && [ ! -L "$path" ] || return 0
     done
     return 1
@@ -86,10 +87,16 @@ show_status() {
     fi
     log "repair service: $state"
 
-    if [ -f /etc/modprobe.d/aic8800.conf ] \
+    if [ -f "$MODESWITCH_ID_FILE" ]; then
+        modeswitch_id=$(<"$MODESWITCH_ID_FILE")
+    else
+        modeswitch_id=1111:1111
+    fi
+    if [[ "$modeswitch_id" =~ ^[0-9a-fA-F]{4}:[0-9a-fA-F]{4}$ ]] \
+       && [ -f /etc/modprobe.d/aic8800.conf ] \
        && grep -Fxq 'blacklist aic_load_fw' /etc/modprobe.d/aic8800.conf \
        && [ -f /etc/udev/rules.d/40-aic8800-modeswitch.rules ] \
-       && [ -f /etc/usb_modeswitch.d/1111:1111 ]; then
+       && [ -f "/etc/usb_modeswitch.d/$modeswitch_id" ]; then
         state=installed
     else
         state=incomplete
@@ -97,7 +104,7 @@ show_status() {
     fi
     log "device configuration: $state"
 
-    if [ -d "$AIC_DATA_DIR/firmware/aic8800D80" ]; then
+    if [ -d "$AIC_DATA_DIR/firmware" ]; then
         state=installed
     else
         state=missing
@@ -120,7 +127,7 @@ restore_uninstall_rootfs() {
 }
 
 uninstall_aic8800() {
-    local module path rel existing reboot_required=0 modules_removed=0
+    local module path rel existing modeswitch_id reboot_required=0 modules_removed=0
     local update_persist
     local affected_releases=()
 
@@ -208,9 +215,16 @@ uninstall_aic8800() {
         depmod "$rel"
     done
 
+    modeswitch_id=1111:1111
+    if [ -f "$MODESWITCH_ID_FILE" ]; then
+        read -r modeswitch_id < "$MODESWITCH_ID_FILE"
+        [[ "$modeswitch_id" =~ ^[0-9a-fA-F]{4}:[0-9a-fA-F]{4}$ ]] \
+            || { log "unsafe stored mode-switch ID: $modeswitch_id" >&2; return 1; }
+    fi
     rm -f /etc/modprobe.d/aic8800.conf \
         /etc/udev/rules.d/40-aic8800-modeswitch.rules \
-        /etc/usb_modeswitch.d/1111:1111 \
+        "/etc/usb_modeswitch.d/$modeswitch_id" \
+        /etc/usb_modeswitch.d/1111:1111 "$MODESWITCH_ID_FILE" \
         "$SERVICE_UNIT" "$ROOT_HELPER" \
         /etc/aic8800-ensure-modules.sh /etc/aic8800-paths.conf \
         /etc/systemd/system/multi-user.target.wants/aic8800-modules.service \
@@ -302,12 +316,21 @@ fi
 [ "$REPO" = "${REPO%[[:space:]]*}" ] \
     || { echo "The AIC8800 source path cannot contain whitespace."; exit 1; }
 DRV=$REPO/src/USB/driver_fw/drivers/aic8800
-FW_SOURCE=$REPO/src/USB/driver_fw/fw/aic8800D80
+FW_SOURCE=$REPO/src/USB/driver_fw/fw
 TOOLKIT_ROOT=$(cd "$REPO/.." && pwd)
 KERNEL_TREE=$TOOLKIT_ROOT/bc250-audio-fix/valve-kernel
-FW=$ROOT_DATA_DIR/aic8800/firmware/aic8800D80
+FW=$ROOT_DATA_DIR/aic8800/firmware
 BUILD_USER=$REAL_USER
 ROOT_MODULE_STAGE=$ROOT_DATA_DIR/aic8800/modules/$KREL
+MODESWITCH_ID=${AIC_MODESWITCH_ID:-1111:1111}
+MODESWITCH_MESSAGE=${AIC_MODESWITCH_MESSAGE:-555342431234567800000000000010fd0000000000000000000000000000f2}
+MODESWITCH_ID=${MODESWITCH_ID,,}
+[[ "$MODESWITCH_ID" =~ ^[0-9a-f]{4}:[0-9a-f]{4}$ ]] \
+    || { echo "AIC_MODESWITCH_ID must be a USB ID such as 1111:1111."; exit 1; }
+[[ "$MODESWITCH_MESSAGE" =~ ^([0-9a-fA-F]{2})+$ ]] \
+    || { echo "AIC_MODESWITCH_MESSAGE must contain an even number of hexadecimal digits."; exit 1; }
+MODESWITCH_VENDOR=${MODESWITCH_ID%:*}
+MODESWITCH_PRODUCT=${MODESWITCH_ID#*:}
 
 [ -d "$DRV" ] || { echo "Driver source not found at $DRV"; exit 1; }
 [ -d "$FW_SOURCE" ] || { echo "Firmware source not found at $FW_SOURCE"; exit 1; }
@@ -371,7 +394,7 @@ find_storage_device() {
         [ -r "$device/idVendor" ] && [ -r "$device/idProduct" ] || continue
         vendor=$(<"$device/idVendor")
         product=$(<"$device/idProduct")
-        if [ "$vendor:$product" = 1111:1111 ]; then
+        if [ "${vendor,,}:${product,,}" = "$MODESWITCH_ID" ]; then
             printf '%s\n' "${device##*/}"
             return 0
         fi
@@ -437,22 +460,29 @@ make -C "$DRV" install
 echo "== [6/7] Writing /etc configuration =="
 mkdir -p /etc/usb_modeswitch.d /etc/udev/rules.d /etc/modprobe.d
 
-# Dongle enumerates as fake USB mass-storage 1111:1111 (removable disk, so
-# the standard CD-ROM eject doesn't work). This vendor SCSI message switches
-# it to its actual firmware-loader and WiFi device IDs.
-cat > '/etc/usb_modeswitch.d/1111:1111' <<'EOF'
-# AIC8800D80 WiFi dongle: fake mass-storage -> WiFi mode
-MessageContent="555342431234567800000000000010fd0000000000000000000000000000f2"
+# Some dongles enumerate as fake USB mass storage. Their manufacturer-specific
+# VID/PID and SCSI switch message can be overridden at install time.
+if [ -f "$MODESWITCH_ID_FILE" ]; then
+    read -r previous_modeswitch_id < "$MODESWITCH_ID_FILE"
+    if [[ "$previous_modeswitch_id" =~ ^[0-9a-fA-F]{4}:[0-9a-fA-F]{4}$ ]] \
+       && [ "${previous_modeswitch_id,,}" != "$MODESWITCH_ID" ]; then
+        rm -f "/etc/usb_modeswitch.d/$previous_modeswitch_id"
+    fi
+fi
+cat > "/etc/usb_modeswitch.d/$MODESWITCH_ID" <<EOF
+# AIC8800 WiFi dongle: fake mass-storage -> WiFi mode
+MessageContent="$MODESWITCH_MESSAGE"
 ResetUSB=1
 EOF
 
-cat > /etc/udev/rules.d/40-aic8800-modeswitch.rules <<'EOF'
-# AIC8800D80 WiFi dongle: auto-switch from fake mass-storage to WiFi mode
-ACTION=="add", SUBSYSTEM=="usb", ENV{DEVTYPE}=="usb_device", ATTR{idVendor}=="1111", ATTR{idProduct}=="1111", RUN+="/usr/lib/udev/usb_modeswitch '%b/%k'"
+cat > /etc/udev/rules.d/40-aic8800-modeswitch.rules <<EOF
+# AIC8800 WiFi dongle: auto-switch from fake mass-storage to WiFi mode
+ACTION=="add", SUBSYSTEM=="usb", ENV{DEVTYPE}=="usb_device", ATTR{idVendor}=="$MODESWITCH_VENDOR", ATTR{idProduct}=="$MODESWITCH_PRODUCT", RUN+="/usr/lib/udev/usb_modeswitch '%b/%k'"
 EOF
+printf '%s\n' "$MODESWITCH_ID" > "$MODESWITCH_ID_FILE"
 
 cat > /etc/modprobe.d/aic8800.conf <<EOF
-# udev can discover 8d80 before persistent firmware storage is mounted. The
+# udev can discover a firmware-loader device before persistent storage is mounted. The
 # boot service loads this module explicitly after storage recovery.
 blacklist aic_load_fw
 options aic_load_fw aic_fw_path=$FW
@@ -495,8 +525,8 @@ modprobe cfg80211
 
 if storage_device=$(find_storage_device); then
     echo "Switching dongle to WiFi mode..."
-    usb_modeswitch -v 1111 -p 1111 \
-        -M "555342431234567800000000000010fd0000000000000000000000000000f2" -R || true
+    usb_modeswitch -v "$MODESWITCH_VENDOR" -p "$MODESWITCH_PRODUCT" \
+        -M "$MODESWITCH_MESSAGE" -R || true
 
     wifi_id=
     for _ in {1..15}; do

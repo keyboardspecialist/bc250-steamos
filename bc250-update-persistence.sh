@@ -53,7 +53,7 @@ legacy_keep_file_owned() {
             /etc/dbus-1/system.d/com.cyan.SkillFishGovernor.conf|\
             /etc/modprobe.d/aic8800.conf|\
             /etc/udev/rules.d/40-aic8800-modeswitch.rules|\
-            /etc/usb_modeswitch.d/1111:1111|\
+            /etc/usb_modeswitch.d/[0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F]:[0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F]|\
             /etc/aic8800-*|/etc/systemd/system/bc250-*|\
             /etc/systemd/system/aic8800-*|\
             /etc/systemd/system/cyan-skillfish-governor-smu.service|\
@@ -78,7 +78,7 @@ print_storage_paths() {
 }
 
 write_keep_file() {
-    local component="$1" target="$KEEP_DIR/bc250-$1.conf" tmp
+    local component="$1" target="$KEEP_DIR/bc250-$1.conf" tmp modeswitch_id
     case "$component" in
         compute|power|ram|swap|cec|aic|desktop|amdgpu) ;;
         *) die "Unknown component: $component" ;;
@@ -156,10 +156,17 @@ EOF
                 print_storage_paths
                 ;;
             aic)
+                modeswitch_id=1111:1111
+                if [[ -f /etc/aic8800-modeswitch-id && ! -L /etc/aic8800-modeswitch-id ]]; then
+                    IFS= read -r modeswitch_id < /etc/aic8800-modeswitch-id
+                    [[ "$modeswitch_id" =~ ^[0-9a-fA-F]{4}:[0-9a-fA-F]{4}$ ]] \
+                        || die "Invalid AIC8800 mode-switch ID: $modeswitch_id"
+                fi
                 cat << EOF
+/etc/aic8800-modeswitch-id
 /etc/modprobe.d/aic8800.conf
 /etc/udev/rules.d/40-aic8800-modeswitch.rules
-/etc/usb_modeswitch.d/1111:1111
+/etc/usb_modeswitch.d/$modeswitch_id
 /etc/systemd/system/aic8800-modules.service
 /etc/systemd/system/aic8800-modules.service.d/10-bc250-storage.conf
 /etc/systemd/system/multi-user.target.wants/aic8800-modules.service

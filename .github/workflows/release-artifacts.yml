@@ -143,8 +143,8 @@ jobs:
             aic8800/src/USB/driver_fw/drivers/ \
             "$package_dir/aic8800/src/USB/driver_fw/drivers/"
           rsync -a \
-            aic8800/src/USB/driver_fw/fw/aic8800D80/ \
-            "$package_dir/aic8800/src/USB/driver_fw/fw/aic8800D80/"
+            aic8800/src/USB/driver_fw/fw/ \
+            "$package_dir/aic8800/src/USB/driver_fw/fw/"
           find release-toolkit -exec touch --date="@$SOURCE_DATE_EPOCH" {} +
           (cd release-toolkit && find bc250-steamos -print | LC_ALL=C sort \
             | zip -X -9 "../${TOOLKIT_ARTIFACT_BASENAME}.zip" -@)

@@ -173,6 +173,7 @@ component_has_artifacts() {
             [[ -e /etc/systemd/system/aic8800-modules.service \
                 || -e /etc/modprobe.d/aic8800.conf \
                 || -e /etc/udev/rules.d/40-aic8800-modeswitch.rules \
+                || -e /etc/aic8800-modeswitch-id \
                 || -e /etc/usb_modeswitch.d/1111:1111 \
                 || -e /etc/atomic-update.conf.d/bc250-aic.conf \
                 || -e /var/lib/bc250-control/aic8800/uninstall-pending \

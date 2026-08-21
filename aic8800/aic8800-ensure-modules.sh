@@ -9,7 +9,7 @@ exec 9>/run/lock/bc250-aic8800.lock
 flock 9
 KVER="$(uname -r)"
 DRV=/var/lib/bc250-control/aic8800/source
-FWDIR=/var/lib/bc250-control/aic8800/firmware/aic8800D80
+FWDIR=/var/lib/bc250-control/aic8800/firmware
 STAGE=/var/lib/bc250-control/aic8800/modules/$KVER
 BUILD_LOADFW_KO="$DRV/aic_load_fw/aic_load_fw.ko"
 BUILD_FDRV_KO="$DRV/aic8800_fdrv/aic8800_fdrv.ko"
@@ -20,14 +20,39 @@ log() { echo "$*"; }
 ko_kver() { modinfo -F vermagic "$1" 2>/dev/null | cut -d' ' -f1; }
 [ -f "$DRV/Makefile" ] || { log "trusted AIC8800 source is missing; rerun steamdeck-setup.sh"; exit 1; }
 
-usb_device_has_id() {
-    local expected_vendor="$1" expected_product="$2" device vendor product
+module_supports_usb_device() {
+    local module="$1" vendor="$2" product="$3" alias target
+    vendor=$(printf '%s' "$vendor" | tr '[:lower:]' '[:upper:]')
+    product=$(printf '%s' "$product" | tr '[:lower:]' '[:upper:]')
+    if modinfo -k "$KVER" "$module" >/dev/null 2>&1; then
+        target=$module
+    elif [ "$module" = aic_load_fw ] && [ -f "$LOADFW_KO" ]; then
+        target=$LOADFW_KO
+    elif [ "$module" = aic8800_fdrv ] && [ -f "$FDRV_KO" ]; then
+        target=$FDRV_KO
+    elif [ "$module" = aic_load_fw ] && [ -f "$BUILD_LOADFW_KO" ]; then
+        target=$BUILD_LOADFW_KO
+    elif [ "$module" = aic8800_fdrv ] && [ -f "$BUILD_FDRV_KO" ]; then
+        target=$BUILD_FDRV_KO
+    else
+        return 1
+    fi
+    while IFS= read -r alias; do
+        case "$alias" in
+            "usb:v${vendor}p${product}"*) return 0 ;;
+        esac
+    done < <(modinfo -F alias "$target" 2>/dev/null)
+    return 1
+}
+
+aic_loader_present() {
+    local device vendor product
     for device in /sys/bus/usb/devices/*; do
         [ -f "$device/idVendor" ] && [ -f "$device/idProduct" ] || continue
         read -r vendor < "$device/idVendor"
         read -r product < "$device/idProduct"
-        [ "${vendor,,}" = "$expected_vendor" ] \
-            && [ "${product,,}" = "$expected_product" ] && return 0
+        module_supports_usb_device aic_load_fw "$vendor" "$product" || continue
+        module_supports_usb_device aic8800_fdrv "$vendor" "$product" || return 0
     done
     return 1
 }
@@ -38,7 +63,8 @@ reprobe_aic_loader() {
         [ -f "$device/idVendor" ] && [ -f "$device/idProduct" ] || continue
         read -r vendor < "$device/idVendor"
         read -r product < "$device/idProduct"
-        [ "${vendor,,}" = a69c ] && [ "${product,,}" = 8d80 ] || continue
+        module_supports_usb_device aic_load_fw "$vendor" "$product" || continue
+        module_supports_usb_device aic8800_fdrv "$vendor" "$product" && continue
         for interface in "$device":*; do
             [ -d "$interface" ] || continue
             if [ -L "$interface/driver" ]; then
@@ -57,7 +83,7 @@ aic_runtime_ready() {
         [ -f "$device/idVendor" ] && [ -f "$device/idProduct" ] || continue
         read -r vendor < "$device/idVendor"
         read -r product < "$device/idProduct"
-        [ "${vendor,,}" = a69c ] && [ "${product,,}" = 8d81 ] || continue
+        module_supports_usb_device aic8800_fdrv "$vendor" "$product" || continue
         for interface in "$device":*; do
             [ -L "$interface/driver" ] || continue
             driver=$(basename "$(readlink -f "$interface/driver")")
@@ -92,7 +118,7 @@ relock_rootfs() {
 trap relock_rootfs EXIT
 
 loader_present=0
-usb_device_has_id a69c 8d80 && loader_present=1
+aic_loader_present && loader_present=1
 
 if modinfo -k "$KVER" aic_load_fw >/dev/null 2>&1 \
    && modinfo -k "$KVER" aic8800_fdrv >/dev/null 2>&1; then
@@ -160,14 +186,14 @@ else
     module_source=staged
 fi
 
-if [ "$loader_present" = 1 ] || usb_device_has_id a69c 8d80; then
+if [ "$loader_present" = 1 ] || aic_loader_present; then
     sleep 1
-    if usb_device_has_id a69c 8d80; then
+    if aic_loader_present; then
         log "reprobing AIC8800 firmware-loader device after persistent storage recovery"
         reprobe_aic_loader
     fi
     wait_for_aic_runtime \
-        || { log "AIC8800 firmware loader did not transition from 8d80 to a bound 8d81 runtime"; exit 1; }
+        || { log "AIC8800 firmware loader did not transition to a runtime device bound to aic8800_fdrv"; exit 1; }
 fi
 
 log "$module_source modules loaded for $KVER"

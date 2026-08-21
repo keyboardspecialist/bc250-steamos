@@ -308,7 +308,7 @@ migrate_helper() {
 migrate_aic_helper() {
     local old=/etc/aic8800-ensure-modules.sh
     local source="$SCRIPT_DIR/aic8800/src/USB/driver_fw/drivers/aic8800"
-    local firmware="$SCRIPT_DIR/aic8800/src/USB/driver_fw/fw/aic8800D80"
+    local firmware="$SCRIPT_DIR/aic8800/src/USB/driver_fw/fw"
     local helper="$SCRIPT_DIR/aic8800/aic8800-ensure-modules.sh"
     local unit=/etc/systemd/system/aic8800-modules.service
     local stage repo_line repo source_link firmware_link header_fetcher
@@ -323,7 +323,7 @@ migrate_aic_helper() {
         repo=${repo_line#AIC8800_REPO=}
         if [[ "$repo" =~ ^/[A-Za-z0-9_./-]+$ ]]; then
             source="$repo/src/USB/driver_fw/drivers/aic8800"
-            firmware="$repo/src/USB/driver_fw/fw/aic8800D80"
+            firmware="$repo/src/USB/driver_fw/fw"
             helper="$repo/aic8800-ensure-modules.sh"
         fi
     fi
@@ -355,9 +355,9 @@ migrate_aic_helper() {
     chmod -R go-w "$stage"
     rm -rf "$ROOT_DIR/aic8800/source"
     mv "$stage" "$ROOT_DIR/aic8800/source"
-    rm -rf "$ROOT_DIR/aic8800/firmware/aic8800D80"
-    install -d -o root -g root -m 0755 "$ROOT_DIR/aic8800/firmware/aic8800D80"
-    cp -a "$firmware"/. "$ROOT_DIR/aic8800/firmware/aic8800D80"/
+    rm -rf "$ROOT_DIR/aic8800/firmware"
+    install -d -o root -g root -m 0755 "$ROOT_DIR/aic8800/firmware"
+    cp -a "$firmware"/. "$ROOT_DIR/aic8800/firmware"/
     chown -R root:root "$ROOT_DIR/aic8800"
     chmod -R go-w "$ROOT_DIR/aic8800"
     install -D -o root -g root -m 0755 "$helper" \

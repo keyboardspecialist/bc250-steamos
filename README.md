@@ -85,7 +85,7 @@ sudo ./bc250-power.sh status
 | [`trainer/`](#bc250-trainer) | Standalone native Qt control application |
 | [`bc250-audio-fix/`](#amdgpu-driver) | DisplayPort clock, GPU telemetry, and GFX1013 compute repair |
 | [`bc250-mesh-shader.sh`](#mesa--radv-async-compute-patch-optional-recommended) | Optional, recommended Mesa / RADV async-compute driver enabled globally for the user session |
-| [`aic8800/`](#wifi-and-bluetooth) | AIC8800D80 USB WiFi and Bluetooth driver |
+| [`aic8800/`](#wifi-and-bluetooth) | AIC8800 USB WiFi and Bluetooth driver |
 
 The unified launcher and individual component scripts remain independently usable. Use the child scripts directly for command-line automation.
 
@@ -639,7 +639,7 @@ hashes, and transactionally restores the prior global environment generator.
 
 ## AIC8800 Class WiFi and Bluetooth Driver
 
-Install the AIC8800D80 USB modules and firmware configuration:
+Install the AIC8800 USB modules and firmware configuration:
 
 ```bash
 sudo bash aic8800/steamdeck-setup.sh

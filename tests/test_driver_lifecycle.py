@@ -211,10 +211,12 @@ class DriverLifecycleTests(unittest.TestCase):
         self.assertIn("RequiresMountsFor=/var/lib/bc250-control", service)
         self.assertIn("After=bc250-persistence-recovery.service", service)
         self.assertNotIn("network-online.target", service)
-        self.assertIn("usb_device_has_id a69c 8d80", helper)
+        self.assertIn("module_supports_usb_device aic_load_fw", helper)
+        self.assertIn("module_supports_usb_device aic8800_fdrv", helper)
+        self.assertNotIn("usb_device_has_id a69c 8d80", helper)
         self.assertIn("/sys/bus/usb/drivers_probe", helper)
         self.assertIn("wait_for_aic_runtime", helper)
-        self.assertIn("did not transition from 8d80 to a bound 8d81 runtime", helper)
+        self.assertIn("did not transition to a runtime device bound to aic8800_fdrv", helper)
 
     def test_lifecycle_scripts_parse(self):
         subprocess.run(
