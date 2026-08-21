@@ -140,6 +140,7 @@ EOF
             swap)
                 cat << EOF
 /etc/systemd/zram-generator.conf.d/90-bc250-swap.conf
+/etc/tmpfiles.d/00-bc250-zswap.conf
 /etc/systemd/system/bc250-zswap-setup.service
 /etc/systemd/system/var-lib-bc250\\x2dcontrol-swap-swapfile.swap
 /etc/systemd/system/swap.target.wants/var-lib-bc250\\x2dcontrol-swap-swapfile.swap
@@ -207,6 +208,7 @@ component_has_state() {
                     || -e "$ROOT_DATA_DIR/bin/bc250memcfg" \
                     || -e "$ROOT_DATA_DIR/ram-split/install.conf" ]] ;;
         swap)    [[ -e /etc/systemd/zram-generator.conf.d/90-bc250-swap.conf \
+                    || -e /etc/tmpfiles.d/00-bc250-zswap.conf \
                     || -e "$ROOT_DATA_DIR/swap/install.conf" \
                     || -e /etc/systemd/system/bc250-zswap-setup.service ]] ;;
         cec)     [[ -e "$ROOT_DATA_DIR/helper/bc250-cec-poweroff-standby" || -e /etc/systemd/system-sleep/bc250-cec-amp.sh ]] ;;

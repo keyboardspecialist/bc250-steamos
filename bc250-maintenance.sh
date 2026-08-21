@@ -147,6 +147,7 @@ component_has_artifacts() {
             [[ -e /var/lib/bc250-control/swap/install.conf \
                 || -e /var/lib/bc250-control/swap/swapfile \
                 || -e /etc/systemd/zram-generator.conf.d/90-bc250-swap.conf \
+                || -e /etc/tmpfiles.d/00-bc250-zswap.conf \
                 || -e /etc/systemd/system/bc250-zswap-setup.service \
                 || -e '/etc/systemd/system/var-lib-bc250\x2dcontrol-swap-swapfile.swap' \
                 || -L '/etc/systemd/system/swap.target.wants/var-lib-bc250\x2dcontrol-swap-swapfile.swap' \

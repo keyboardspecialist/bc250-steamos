@@ -1,4 +1,5 @@
 import os
+import shutil
 import subprocess
 import tempfile
 import unittest
@@ -20,6 +21,7 @@ class SwapTests(unittest.TestCase):
                 "BC250_SWAPFILE": str(root / "data/swap/swapfile"),
                 "BC250_SWAP_HELPER": str(root / "data/swap/bc250-zswap-setup"),
                 "BC250_ZRAM_CONFIG": str(root / "etc/90-bc250-swap.conf"),
+                "BC250_ZSWAP_TMPFILES": str(root / "tmpfiles/00-bc250-zswap.conf"),
                 "BC250_ZSWAP_SERVICE": str(root / "systemd/bc250-zswap-setup.service"),
                 "BC250_ZSWAP_UNIT": str(root / "systemd/swapfile.swap"),
                 "BC250_ZSWAP_WANTS": str(root / "systemd/swap.target.wants/swapfile.swap"),
@@ -66,15 +68,21 @@ class SwapTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             result = self.run_sourced(
                 'render_zram_config; echo ===; render_zswap_config; echo ===; '
-                "render_service; echo ===; render_swap_unit",
+                "render_zswap_tmpfiles; echo ===; render_service; echo ===; render_swap_unit",
                 Path(directory),
             )
             self.assertIn("zram-size = ram/2", result.stdout)
             self.assertIn("compression-algorithm = zstd", result.stdout)
             self.assertIn("swap-priority = 100", result.stdout)
             self.assertIn("zram-size = 0", result.stdout)
-            self.assertIn("DefaultDependencies=no", result.stdout)
+            self.assertIn("/sys/module/zswap/parameters/enabled", result.stdout)
+            self.assertIn("- - - - Y", result.stdout)
+            self.assertIn("Requires=systemd-tmpfiles-setup.service", result.stdout)
+            self.assertIn("After=systemd-tmpfiles-setup.service", result.stdout)
+            self.assertIn("systemd-tmpfiles --create", result.stdout)
+            self.assertNotIn("RequiresMountsFor", result.stdout.split("===")[3])
             self.assertIn("Before=swap.target", result.stdout)
+            self.assertIn("Requires=bc250-zswap-setup.service", result.stdout)
             self.assertNotIn("swapoff", result.stdout)
 
     def test_machine_probe_requires_complete_owned_profile(self):
@@ -128,9 +136,9 @@ systemctl() { :; }
 begin_cleanup_lifecycle() { preflight_ownership; }
 mkdir -p "$STATE_DIR" "$(dirname "$ZRAM_CONFIG")" "$(dirname "$SERVICE")" "$(dirname "$SWAP_WANTS")"
 render_zswap_config > "$ZRAM_CONFIG"; chmod 644 "$ZRAM_CONFIG"
-render_helper > "$HELPER"; chmod 755 "$HELPER"
-render_service > "$SERVICE"; chmod 644 "$SERVICE"
-render_swap_unit > "$SWAP_UNIT"; chmod 644 "$SWAP_UNIT"
+render_legacy_helper > "$HELPER"; chmod 755 "$HELPER"
+render_legacy_service > "$SERVICE"; chmod 644 "$SERVICE"
+render_legacy_swap_unit > "$SWAP_UNIT"; chmod 644 "$SWAP_UNIT"
 render_state zswap 16 none > "$STATE_FILE"; chmod 644 "$STATE_FILE"
 truncate -s 16G "$SWAPFILE"; chmod 600 "$SWAPFILE"
 ln -s "../$SWAP_UNIT_NAME" "$SWAP_WANTS"
@@ -142,6 +150,22 @@ grep -qx 'pending=uninstall' "$STATE_FILE"
             result = self.run_sourced(body, root)
             self.assertIn("Reboot, then rerun uninstall", result.stdout)
 
+    def test_reinstall_recognizes_legacy_service_profile(self):
+        with tempfile.TemporaryDirectory() as directory:
+            body = r'''
+file_secure() { [[ -f "$1" && ! -L "$1" ]]; }
+mkdir -p "$STATE_DIR" "$(dirname "$ZRAM_CONFIG")" "$(dirname "$SERVICE")" "$(dirname "$SWAP_WANTS")"
+render_zswap_config > "$ZRAM_CONFIG"; chmod 644 "$ZRAM_CONFIG"
+render_legacy_helper > "$HELPER"; chmod 755 "$HELPER"
+render_legacy_service > "$SERVICE"; chmod 644 "$SERVICE"
+render_legacy_swap_unit > "$SWAP_UNIT"; chmod 644 "$SWAP_UNIT"
+render_state zswap 16 reboot > "$STATE_FILE"; chmod 644 "$STATE_FILE"
+truncate -s 16G "$SWAPFILE"; chmod 600 "$SWAPFILE"
+ln -s "../$SWAP_UNIT_NAME" "$SWAP_WANTS"
+preflight_ownership
+'''
+            self.run_sourced(body, Path(directory))
+
     def test_clean_uninstall_is_a_noop(self):
         with tempfile.TemporaryDirectory() as directory:
             result = self.run_sourced(
@@ -152,6 +176,16 @@ grep -qx 'pending=uninstall' "$STATE_FILE"
             )
             self.assertIn("No toolkit swap profile is installed", result.stdout)
             self.assertNotIn("unexpected-storage-install", result.stdout)
+
+    def test_orphaned_zswap_tmpfiles_is_partial(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            tmpfiles = root / "tmpfiles/00-bc250-zswap.conf"
+            tmpfiles.parent.mkdir(parents=True)
+            tmpfiles.write_text("orphaned\n", encoding="utf-8")
+            result = self.run_sourced("cmd_status", root, check=False)
+            self.assertEqual(result.returncode, 2)
+            self.assertIn("configured: partial", result.stdout)
 
     def test_interrupted_staged_swapfile_is_recoverable(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -204,6 +238,10 @@ grep -qx 'pending=uninstall' "$STATE_FILE"
         self.assertIn("component:swap", (ROOT / "bc250-storage.sh").read_text())
         self.assertNotIn("redbeard1083", source)
 
+    @unittest.skipUnless(
+        shutil.which("mkswap") and shutil.which("blkid"),
+        "requires Linux swap utilities",
+    )
     def test_privileged_swap_signature_validation_rejects_plain_file(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

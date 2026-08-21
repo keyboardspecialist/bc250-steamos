@@ -250,7 +250,10 @@ The two profiles are mutually exclusive:
 | Zswap + disk | Global kernel zswap cache using `lz4` and a 25% RAM pool, backed by a 16 GiB toolkit-owned disk swapfile at priority 10 |
 
 The disk swapfile lives under `/var/lib/bc250-control/swap`, which is backed by
-SteamOS's shared `/home/.steamos/offload` storage. Its size can be selected from
+SteamOS's shared `/home/.steamos/offload` storage. A local tmpfiles rule
+configures zswap after local filesystems are available and takes precedence over
+SteamOS's packaged zswap default. A late setup service applies only that rule
+and must succeed before the disk swap starts. Swapfile size can be selected from
 4 through 64 GiB with the direct CLI. Zswap applies to pages sent to every
 active disk swap device, but the toolkit never disables or removes unrelated
 swapfiles.
@@ -658,7 +661,7 @@ by SCSI eject, while `1111:1111` adapters use the required two-message sequence.
 | GPU compute-unit unlock | Run `sudo ./bc250-40cu.sh verify` after an update |
 | Power management | The keep list retains tuning and GRUB defaults; the ACPI service validates and restores the `/boot` override and EFI GRUB config |
 | RAM / VRAM split | CMOS persists independently; the keep list retains the TTM GRUB drop-in |
-| Compressed swap | The keep list retains the selected zram configuration or the zswap setup service and disk-swap unit; the swapfile persists in toolkit storage |
+| Compressed swap | The keep list retains the selected zram configuration or the zswap tmpfiles configuration, setup service, and disk-swap unit; the swapfile persists in toolkit storage |
 | CEC | Home configuration and allowlisted system integration carry forward |
 | Patched AMDGPU module | Run `bc250-audio-fix/patch-driver.sh` after each kernel update to rebuild the kernel-specific module; the rebuild disables any retained scheduler policy until RADV setup is rerun |
 | Mesa / RADV async-compute patch | Rerun `bc250-mesh-shader.sh setup` after a SteamOS update to restore the root-owned driver, safety-gated environment generator, and scheduler policy |

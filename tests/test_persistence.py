@@ -250,6 +250,7 @@ class PersistenceUnitTests(unittest.TestCase):
             )
             payload = (keep / "bc250-swap.conf").read_text(encoding="utf-8")
             self.assertIn("zram-generator.conf.d/90-bc250-swap.conf", payload)
+            self.assertIn("tmpfiles.d/00-bc250-zswap.conf", payload)
             self.assertIn("bc250-zswap-setup.service", payload)
             self.assertIn("swapfile.swap", payload)
             self.assertIn("bc250-persistence-recovery.service", payload)

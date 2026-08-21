@@ -12,6 +12,7 @@ STATE_FILE="$STATE_DIR/install.conf"
 SWAPFILE="${BC250_SWAPFILE:-$STATE_DIR/swapfile}"
 HELPER="${BC250_SWAP_HELPER:-$STATE_DIR/bc250-zswap-setup}"
 ZRAM_CONFIG="${BC250_ZRAM_CONFIG:-/etc/systemd/zram-generator.conf.d/90-bc250-swap.conf}"
+ZSWAP_TMPFILES="${BC250_ZSWAP_TMPFILES:-/etc/tmpfiles.d/00-bc250-zswap.conf}"
 SERVICE_NAME=bc250-zswap-setup.service
 SERVICE="${BC250_ZSWAP_SERVICE:-/etc/systemd/system/$SERVICE_NAME}"
 SWAP_UNIT_NAME='var-lib-bc250\x2dcontrol-swap-swapfile.swap'
@@ -54,7 +55,16 @@ zram-size = 0
 EOF
 }
 
-render_helper() {
+render_zswap_tmpfiles() {
+    cat <<'EOF'
+# BC-250 zswap profile. Managed by bc250-swap.sh.
+w /sys/module/zswap/parameters/compressor - - - - lz4
+w /sys/module/zswap/parameters/max_pool_percent - - - - 25
+w /sys/module/zswap/parameters/enabled - - - - Y
+EOF
+}
+
+render_legacy_helper() {
     cat <<EOF
 #!/usr/bin/env bash
 set -euo pipefail
@@ -69,6 +79,31 @@ EOF
 }
 
 render_service() {
+    cat <<EOF
+[Unit]
+Description=Configure zswap for BC-250 disk swap
+DefaultDependencies=no
+Requires=systemd-tmpfiles-setup.service
+After=systemd-tmpfiles-setup.service
+Before=$SWAP_UNIT_NAME
+Conflicts=shutdown.target
+Before=shutdown.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/systemd-tmpfiles --create $ZSWAP_TMPFILES
+RemainAfterExit=yes
+NoNewPrivileges=yes
+ProtectSystem=strict
+ReadWritePaths=$ZSWAP_PARAMS
+PrivateTmp=yes
+RestrictAddressFamilies=AF_UNIX
+LockPersonality=yes
+TimeoutStartSec=30
+EOF
+}
+
+render_legacy_service() {
     cat <<EOF
 [Unit]
 Description=Configure zswap for BC-250 disk swap
@@ -94,6 +129,25 @@ EOF
 }
 
 render_swap_unit() {
+    cat <<EOF
+[Unit]
+Description=BC-250 zswap-backed disk swap
+Requires=$SERVICE_NAME
+After=$SERVICE_NAME
+RequiresMountsFor=$STATE_DIR
+Before=swap.target
+
+[Swap]
+What=$SWAPFILE
+Priority=10
+TimeoutSec=120
+
+[Install]
+WantedBy=swap.target
+EOF
+}
+
+render_legacy_swap_unit() {
     cat <<EOF
 [Unit]
 Description=BC-250 zswap-backed disk swap
@@ -169,9 +223,12 @@ config_owned() {
         && { file_matches "$ZRAM_CONFIG" render_zram_config \
             || file_matches "$ZRAM_CONFIG" render_zswap_config; }
 }
+tmpfiles_owned() { file_mode_is "$ZSWAP_TMPFILES" 644 && file_matches "$ZSWAP_TMPFILES" render_zswap_tmpfiles; }
 service_owned() { file_mode_is "$SERVICE" 644 && file_matches "$SERVICE" render_service; }
+service_recognized() { service_owned || { file_mode_is "$SERVICE" 644 && file_matches "$SERVICE" render_legacy_service; }; }
 swap_unit_owned() { file_mode_is "$SWAP_UNIT" 644 && file_matches "$SWAP_UNIT" render_swap_unit; }
-helper_owned() { file_mode_is "$HELPER" 755 && file_matches "$HELPER" render_helper; }
+swap_unit_recognized() { swap_unit_owned || { file_mode_is "$SWAP_UNIT" 644 && file_matches "$SWAP_UNIT" render_legacy_swap_unit; }; }
+legacy_helper_owned() { file_mode_is "$HELPER" 755 && file_matches "$HELPER" render_legacy_helper; }
 
 enablement_owned() {
     [[ -L "$SWAP_WANTS" && "$(readlink "$SWAP_WANTS")" == "../$SWAP_UNIT_NAME" ]]
@@ -181,14 +238,17 @@ preflight_ownership() {
     if [[ -e "$ZRAM_CONFIG" || -L "$ZRAM_CONFIG" ]]; then
         config_owned || die "Refusing unrecognized zram configuration: $ZRAM_CONFIG"
     fi
+    if [[ -e "$ZSWAP_TMPFILES" || -L "$ZSWAP_TMPFILES" ]]; then
+        tmpfiles_owned || die "Refusing unrecognized zswap tmpfiles configuration: $ZSWAP_TMPFILES"
+    fi
     if [[ -e "$SERVICE" || -L "$SERVICE" ]]; then
-        service_owned || die "Refusing unrecognized zswap service: $SERVICE"
+        service_recognized || die "Refusing unrecognized zswap service: $SERVICE"
     fi
     if [[ -e "$SWAP_UNIT" || -L "$SWAP_UNIT" ]]; then
-        swap_unit_owned || die "Refusing unrecognized swap unit: $SWAP_UNIT"
+        swap_unit_recognized || die "Refusing unrecognized swap unit: $SWAP_UNIT"
     fi
     if [[ -e "$HELPER" || -L "$HELPER" ]]; then
-        helper_owned || die "Refusing unrecognized zswap helper: $HELPER"
+        legacy_helper_owned || die "Refusing unrecognized zswap helper: $HELPER"
     fi
     if [[ -e "$SWAP_WANTS" || -L "$SWAP_WANTS" ]]; then
         enablement_owned || die "Refusing unrecognized swap enablement: $SWAP_WANTS"
@@ -209,7 +269,8 @@ configured_complete() {
         zram)
             [[ "$PENDING" == none || ( "$PENDING" == reboot && zram_runtime_matches ) ]] \
                 && file_matches "$ZRAM_CONFIG" render_zram_config \
-                && [[ ! -e "$SERVICE" && ! -L "$SERVICE" \
+                && [[ ! -e "$ZSWAP_TMPFILES" && ! -L "$ZSWAP_TMPFILES" \
+                    && ! -e "$SERVICE" && ! -L "$SERVICE" \
                     && ! -e "$SWAP_UNIT" && ! -L "$SWAP_UNIT" \
                     && ! -e "$HELPER" && ! -L "$HELPER" \
                     && ! -e "$SWAPFILE" && ! -L "$SWAPFILE" \
@@ -218,7 +279,8 @@ configured_complete() {
         zswap)
             [[ "$PENDING" == none || "$PENDING" == reboot ]] \
                 && file_matches "$ZRAM_CONFIG" render_zswap_config \
-                && service_owned && swap_unit_owned && helper_owned \
+                && tmpfiles_owned && service_owned && swap_unit_owned \
+                && [[ ! -e "$HELPER" && ! -L "$HELPER" ]] \
                 && validate_swapfile_metadata "$((SIZE_GIB * 1024 * 1024 * 1024))" \
                 && enablement_owned
             ;;
@@ -359,7 +421,7 @@ install_enablement() {
 
 remove_zswap_files() {
     swap_active "$SWAPFILE" && die "The toolkit swapfile is active. Reboot, then retry cleanup."
-    rm -f "$SWAP_WANTS" "$SWAP_UNIT" "$SERVICE" "$HELPER" "$SWAPFILE"
+    rm -f "$SWAP_WANTS" "$SWAP_UNIT" "$ZSWAP_TMPFILES" "$SERVICE" "$HELPER" "$SWAPFILE"
     systemctl daemon-reload
 }
 
@@ -381,6 +443,7 @@ begin_install_lifecycle() {
 
 swap_has_artifacts() {
     [[ -e "$ZRAM_CONFIG" || -L "$ZRAM_CONFIG" \
+        || -e "$ZSWAP_TMPFILES" || -L "$ZSWAP_TMPFILES" \
         || -e "$SERVICE" || -L "$SERVICE" \
         || -e "$SWAP_UNIT" || -L "$SWAP_UNIT" \
         || -e "$SWAP_WANTS" || -L "$SWAP_WANTS" \
@@ -402,7 +465,7 @@ cmd_install_zram() {
     local previous_size=0
     if read_state; then previous_size="$SIZE_GIB"; fi
     render_zram_config | atomic_write "$ZRAM_CONFIG" 0644
-    rm -f "$SWAP_WANTS"
+    rm -f "$SWAP_WANTS" "$ZSWAP_TMPFILES" "$SERVICE" "$HELPER"
     systemctl daemon-reload
     if swap_active "$SWAPFILE"; then
         write_profile_state zram "$previous_size" zswap-removal
@@ -434,10 +497,11 @@ cmd_install_zswap() {
         write_profile_state zswap "$size_gib" creating
     fi
     create_swapfile "$size_gib"
-    render_helper | atomic_write "$HELPER" 0755
+    render_zswap_tmpfiles | atomic_write "$ZSWAP_TMPFILES" 0644
     render_service | atomic_write "$SERVICE" 0644
     render_swap_unit | atomic_write "$SWAP_UNIT" 0644
     render_zswap_config | atomic_write "$ZRAM_CONFIG" 0644
+    rm -f "$HELPER"
     install_enablement
     systemctl daemon-reload
     install_persistence
@@ -456,7 +520,7 @@ cmd_status() {
     local zswap_enabled="unknown" compressor="unknown" pool="unknown"
     if read_state; then
         configured="$MODE"
-    elif [[ -e "$ZRAM_CONFIG" || -e "$SERVICE" || -e "$SWAP_UNIT" \
+    elif [[ -e "$ZRAM_CONFIG" || -e "$ZSWAP_TMPFILES" || -e "$SERVICE" || -e "$SWAP_UNIT" \
         || -e "$HELPER" || -e "$SWAPFILE" ]]; then
         configured="partial"
     fi
@@ -523,7 +587,7 @@ cmd_uninstall() {
     local current_mode=""
     if read_state; then current_mode="$MODE"; fi
     if swap_active "$SWAPFILE"; then
-        rm -f "$SWAP_WANTS" "$ZRAM_CONFIG"
+        rm -f "$SWAP_WANTS" "$ZRAM_CONFIG" "$ZSWAP_TMPFILES" "$SERVICE" "$HELPER"
         write_profile_state zswap "${SIZE_GIB:-$DEFAULT_SWAP_GIB}" uninstall
         systemctl daemon-reload
         log "The disk swap remains active for this boot. Reboot, then rerun uninstall to remove it safely."
