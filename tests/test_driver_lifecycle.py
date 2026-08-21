@@ -9,6 +9,7 @@ ROOT = Path(__file__).resolve().parents[1]
 AIC_INSTALLER = ROOT / "aic8800/steamdeck-setup.sh"
 AIC_HELPER = ROOT / "aic8800/aic8800-ensure-modules.sh"
 AIC_SERVICE = ROOT / "aic8800/aic8800-modules.service"
+AIC_DRIVER = ROOT / "aic8800/src/USB/driver_fw/drivers/aic8800"
 AUDIO_INSTALLER = ROOT / "bc250-audio-fix/patch-driver.sh"
 AUDIO_ROLLBACK = ROOT / "bc250-audio-fix/rollback.sh"
 AUDIO_BOOT_CONFIG = ROOT / "bc250-audio-fix/boot-config.sh"
@@ -201,6 +202,24 @@ class DriverLifecycleTests(unittest.TestCase):
         )
         self.assertNotIn('rm -rf "$ROOT_SOURCE"', script)
         self.assertIn("persistent source preserved", script)
+        self.assertIn("aic_zlp_quirk aic8800_fdrv aic_load_fw", script)
+        self.assertIn("aic_zlp_quirk.ko", script)
+
+    def test_aic_new_driver_ids_and_switch_paths_are_integrated(self):
+        installer = AIC_INSTALLER.read_text(encoding="utf-8")
+        usb_header = (AIC_DRIVER / "aic8800_fdrv/aicwf_usb.h").read_text(
+            encoding="utf-8"
+        )
+        usb_source = (AIC_DRIVER / "aic8800_fdrv/aicwf_usb.c").read_text(
+            encoding="utf-8"
+        )
+
+        self.assertIn("USB_PRODUCT_ID_AIC8800D80_UGREEN  0x8D88", usb_header)
+        self.assertIn("USB_PRODUCT_ID_AIC8800D80_UGREEN", usb_source)
+        self.assertIn('ATTRS{idProduct}=="5724"', installer)
+        self.assertIn('eject "$msc_block"', installer)
+        self.assertIn("MODESWITCH_MESSAGE2", installer)
+        self.assertTrue((AIC_DRIVER / "aic_zlp_quirk/aic_zlp_quirk.c").is_file())
 
     def test_aic_boot_defers_firmware_probe_until_persistent_storage(self):
         installer = AIC_INSTALLER.read_text(encoding="utf-8")
@@ -217,6 +236,8 @@ class DriverLifecycleTests(unittest.TestCase):
         self.assertIn("/sys/bus/usb/drivers_probe", helper)
         self.assertIn("wait_for_aic_runtime", helper)
         self.assertIn("did not transition to a runtime device bound to aic8800_fdrv", helper)
+        self.assertIn("BUILD_ZLP_KO", helper)
+        self.assertIn("zlp_target_present", helper)
 
     def test_lifecycle_scripts_parse(self):
         subprocess.run(

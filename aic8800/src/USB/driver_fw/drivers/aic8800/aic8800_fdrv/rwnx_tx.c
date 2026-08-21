@@ -671,18 +671,14 @@ void rwnx_tx_push(struct rwnx_hw *rwnx_hw, struct rwnx_txhdr *txhdr, int flags)
     aicwf_frame_tx((void *)(rwnx_hw->sdiodev), skb);
 #endif
 #ifdef AICWF_USB_SUPPORT
-    /* On AP/GO interfaces, cfm-class EAPOL is transmitted by the fw at
-     * 1 Mbps DSSS regardless of the BSS basic rates; P2P clients (e.g. the
-     * SHIELD controller) cannot decode 11b, so the WPS EAP exchange loops
-     * forever. Send GO-side EAPOL as normal data at a fixed 6 Mbps OFDM
-     * (the lowest basic rate) instead. STA EAPOL keeps vendor behavior. */
+    /* Keep GO-side EAPOL off the firmware's incompatible 1 Mbps DSSS path. */
     bool eapol_go_fix = (sw_txhdr->desc.host.ethertype == 0x8e88) &&
         (RWNX_VIF_TYPE(sw_txhdr->rwnx_vif) == NL80211_IFTYPE_AP ||
          RWNX_VIF_TYPE(sw_txhdr->rwnx_vif) == NL80211_IFTYPE_P2P_GO);
     if (eapol_go_fix) {
         sw_txhdr->fixed_rate = 1;
         sw_txhdr->rate_config = (FORMATMOD_NON_HT << FORMAT_MOD_TX_RCX_OFT) |
-                                (4 << MCS_INDEX_TX_RCX_OFT); /* 6 Mbps OFDM */
+                                (4 << MCS_INDEX_TX_RCX_OFT);
         AICWFDBG(LOGINFO, "eapol fixed-rate 6M (GO), sta_idx:%d\n",
                  sw_txhdr->desc.host.staid);
     }
@@ -2006,7 +2002,7 @@ free_use:
 
 netdev_tx_t rwnx_start_monitor_if_xmit(struct sk_buff *skb, struct net_device *dev)
 {
-    int rtap_len, ret, idx, tmp_len;
+    int rtap_len, ret, idx;
     struct ieee80211_radiotap_header *rtap_hdr; // net/ieee80211_radiotap.h
     struct ieee80211_radiotap_iterator iterator; // net/cfg80211.h
     u8_l *rtap_buf = (u8_l *)skb->data;
@@ -2027,9 +2023,29 @@ netdev_tx_t rwnx_start_monitor_if_xmit(struct sk_buff *skb, struct net_device *d
     bool offchan = false;
     int nx_off_chan_txq_idx = NX_OFF_CHAN_TXQ_IDX;
 
-    rtap_hdr = (struct ieee80211_radiotap_header*)(rtap_buf);
-    rtap_len = ieee80211_get_radiotap_len(rtap_buf);//max_length
     frame_len = skb->len;
+
+    if (unlikely(skb->len < sizeof(*rtap_hdr))) {
+        AICWFDBG(LOGERROR, "%s radiotap header is truncated\n", __func__);
+        goto free_tag;
+    }
+
+    rtap_hdr = (struct ieee80211_radiotap_header*)(rtap_buf);
+    if (unlikely(rtap_hdr->it_version)) {
+        AICWFDBG(LOGERROR, "%s itv \r\n", __func__);
+        goto free_tag;
+    }
+
+    rtap_len = ieee80211_get_radiotap_len(rtap_buf);//max_length
+    if (unlikely(rtap_len < sizeof(*rtap_hdr))) {
+        AICWFDBG(LOGERROR, "%s rtap_len < sizeof(struct ieee80211_radiotap_header) \r\n", __func__);
+        goto free_tag;
+    }
+
+    if (unlikely(skb->len < rtap_len)) {
+        AICWFDBG(LOGERROR, "%s skb->len < rtap_len \r\n", __func__);
+        goto free_tag;
+    }
 
     AICWFDBG(LOGINFO, "rwnx_start_monitor_if_xmit, skb_len=%d, rtap_len=%d\n", skb->len, rtap_len);
 //rwnx_data_dump((char*)__func__, skb->data, skb->len);
@@ -2038,23 +2054,6 @@ netdev_tx_t rwnx_start_monitor_if_xmit(struct sk_buff *skb, struct net_device *d
         g_rwnx_plat->usbdev->chipid == PRODUCT_ID_AIC8800DW) && chip_id < 3)){
             nx_off_chan_txq_idx = NX_OFF_CHAN_TXQ_IDX_FOR_OLD_IC;
     }
-
-
-    if (unlikely(rtap_hdr->it_version)){
-        AICWFDBG(LOGERROR, "%s itv \r\n", __func__);
-        goto free_tag;
-        }
-
-    if (unlikely(skb->len < rtap_len)){
-        AICWFDBG(LOGERROR, "%s skb->len < rtap_len \r\n", __func__);
-        goto free_tag;
-        }
-
-    if (unlikely(rtap_len < sizeof(struct ieee80211_radiotap_header))){
-        AICWFDBG(LOGERROR, "%s rtap_len < sizeof(struct ieee80211_radiotap_header) \r\n", __func__);
-        goto free_tag;
-        }
-
     frame_len -= rtap_len;
     pframe = rtap_buf + rtap_len;
 

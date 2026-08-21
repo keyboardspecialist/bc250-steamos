@@ -8,7 +8,7 @@
 #   1. unlock the read-only rootfs
 #   2. install build tools (make/gcc/...)
 #   3. fetch kernel headers matching the running kernel (into the repo, no rootfs pollution)
-#   4. build aic_load_fw.ko + aic8800_fdrv.ko
+#   4. build aic_load_fw.ko + aic8800_fdrv.ko + aic_zlp_quirk.ko
 #   5. install them to /usr/lib/modules/$(uname -r)/updates/aic8800 + depmod
 #   6. write /etc configs (usb_modeswitch, udev rule, modprobe firmware path)
 #   7. relock the rootfs and switch the dongle to WiFi mode
@@ -24,17 +24,29 @@ ROOT_SOURCE=$AIC_DATA_DIR/source
 ROOT_HELPER=$ROOT_DATA_DIR/helper/aic8800-ensure-modules
 UNINSTALL_PENDING=$AIC_DATA_DIR/uninstall-pending
 SERVICE_UNIT=/etc/systemd/system/aic8800-modules.service
-KEEP_FILE=/etc/atomic-update.conf.d/bc250-aic.conf
 MODESWITCH_ID_FILE=/etc/aic8800-modeswitch-id
 KREL=$(uname -r)
 
 log() { echo "[aic8800] $*"; }
+
+usb_device_has_id() {
+    local expected_vendor="$1" expected_product="$2" device vendor product
+    for device in /sys/bus/usb/devices/*; do
+        [ -r "$device/idVendor" ] && [ -r "$device/idProduct" ] || continue
+        vendor=$(<"$device/idVendor")
+        product=$(<"$device/idProduct")
+        [ "${vendor,,}" = "$expected_vendor" ] \
+            && [ "${product,,}" = "$expected_product" ] && return 0
+    done
+    return 1
+}
 
 runtime_artifact_present() {
     local path
     for path in \
         /usr/lib/modules/*/updates/aic8800/aic_load_fw.ko \
         /usr/lib/modules/*/updates/aic8800/aic8800_fdrv.ko \
+        /usr/lib/modules/*/updates/aic8800/aic_zlp_quirk.ko \
         "$AIC_DATA_DIR/firmware" "$AIC_DATA_DIR/modules" "$ROOT_HELPER" \
         "$UNINSTALL_PENDING" \
         /etc/modprobe.d/aic8800.conf \
@@ -58,10 +70,12 @@ show_status() {
 
     module_dir="/usr/lib/modules/$KREL/updates/aic8800"
     if [ -f "$module_dir/aic_load_fw.ko" ] \
-       && [ -f "$module_dir/aic8800_fdrv.ko" ]; then
+       && [ -f "$module_dir/aic8800_fdrv.ko" ] \
+       && [ -f "$module_dir/aic_zlp_quirk.ko" ]; then
         state=installed
     elif [ -f "$AIC_DATA_DIR/modules/$KREL/aic_load_fw.ko" ] \
-         && [ -f "$AIC_DATA_DIR/modules/$KREL/aic8800_fdrv.ko" ]; then
+         && [ -f "$AIC_DATA_DIR/modules/$KREL/aic8800_fdrv.ko" ] \
+         && [ -f "$AIC_DATA_DIR/modules/$KREL/aic_zlp_quirk.ko" ]; then
         state=staged
     else
         state=missing
@@ -75,6 +89,18 @@ show_status() {
         state=not-loaded
     fi
     log "module runtime: $state"
+
+    if usb_device_has_id 368b 8d81; then
+        if [ -d /sys/module/aic_zlp_quirk ]; then
+            state=loaded
+        else
+            state=required-but-not-loaded
+            failed=1
+        fi
+    else
+        state=not-required
+    fi
+    log "Bluetooth ZLP quirk: $state"
 
     if [ -f "$SERVICE_UNIT" ] && [ -x "$ROOT_HELPER" ] \
        && [ -f "$ROOT_SOURCE/Makefile" ] \
@@ -111,7 +137,11 @@ show_status() {
         failed=1
     fi
     log "runtime firmware: $state"
-    [ "$failed" = 0 ] && log "state: installed" || log "state: incomplete"
+    if [ "$failed" = 0 ]; then
+        log "state: installed"
+    else
+        log "state: incomplete"
+    fi
     return "$failed"
 }
 
@@ -162,7 +192,7 @@ uninstall_aic8800() {
         modules_removed=1
     fi
 
-    for module in aic8800_fdrv aic_load_fw; do
+    for module in aic_zlp_quirk aic8800_fdrv aic_load_fw; do
         if [ -d "/sys/module/$module" ]; then
             if ! modprobe -r "$module"; then
                 log "could not unload $module; removal will finish after reboot"
@@ -177,7 +207,8 @@ uninstall_aic8800() {
     fi
 
     for path in /usr/lib/modules/*/updates/aic8800/aic_load_fw.ko \
-                /usr/lib/modules/*/updates/aic8800/aic8800_fdrv.ko; do
+                /usr/lib/modules/*/updates/aic8800/aic8800_fdrv.ko \
+                /usr/lib/modules/*/updates/aic8800/aic_zlp_quirk.ko; do
         [ -e "$path" ] || [ -L "$path" ] || continue
         [ -f "$path" ] && [ ! -L "$path" ] \
             || { log "refusing unsafe module path: $path" >&2; return 1; }
@@ -206,7 +237,8 @@ uninstall_aic8800() {
         chmod 0644 "$UNINSTALL_PENDING"
     fi
     for path in /usr/lib/modules/*/updates/aic8800/aic_load_fw.ko \
-                /usr/lib/modules/*/updates/aic8800/aic8800_fdrv.ko; do
+                /usr/lib/modules/*/updates/aic8800/aic8800_fdrv.ko \
+                /usr/lib/modules/*/updates/aic8800/aic_zlp_quirk.ko; do
         [ -e "$path" ] || [ -L "$path" ] || continue
         rm -f "$path"
     done
@@ -323,12 +355,22 @@ FW=$ROOT_DATA_DIR/aic8800/firmware
 BUILD_USER=$REAL_USER
 ROOT_MODULE_STAGE=$ROOT_DATA_DIR/aic8800/modules/$KREL
 MODESWITCH_ID=${AIC_MODESWITCH_ID:-1111:1111}
-MODESWITCH_MESSAGE=${AIC_MODESWITCH_MESSAGE:-555342431234567800000000000010fd0000000000000000000000000000f2}
+MODESWITCH_MESSAGE=${AIC_MODESWITCH_MESSAGE:-555342438765432100000000000010fd0000000000000000000000000000f3}
+MODESWITCH_MESSAGE2=${AIC_MODESWITCH_MESSAGE2-}
 MODESWITCH_ID=${MODESWITCH_ID,,}
+if [ "$MODESWITCH_ID" = 1111:1111 ] \
+   && [ -z "${AIC_MODESWITCH_MESSAGE+x}" ] \
+   && [ -z "${AIC_MODESWITCH_MESSAGE2+x}" ]; then
+    MODESWITCH_MESSAGE2=555342438765432100000000000010fd0000000000000000000000000000f2
+fi
 [[ "$MODESWITCH_ID" =~ ^[0-9a-f]{4}:[0-9a-f]{4}$ ]] \
     || { echo "AIC_MODESWITCH_ID must be a USB ID such as 1111:1111."; exit 1; }
 [[ "$MODESWITCH_MESSAGE" =~ ^([0-9a-fA-F]{2})+$ ]] \
     || { echo "AIC_MODESWITCH_MESSAGE must contain an even number of hexadecimal digits."; exit 1; }
+if [ -n "$MODESWITCH_MESSAGE2" ]; then
+    [[ "$MODESWITCH_MESSAGE2" =~ ^([0-9a-fA-F]{2})+$ ]] \
+        || { echo "AIC_MODESWITCH_MESSAGE2 must contain an even number of hexadecimal digits."; exit 1; }
+fi
 MODESWITCH_VENDOR=${MODESWITCH_ID%:*}
 MODESWITCH_PRODUCT=${MODESWITCH_ID#*:}
 
@@ -402,6 +444,32 @@ find_storage_device() {
     return 1
 }
 
+find_aic_msc_block_device() {
+    local block parent vendor product
+
+    for block in /sys/class/block/sd*; do
+        [ -e "$block" ] || continue
+        parent=$(readlink -f "$block/device")
+        while [[ "$parent" = /sys/* ]]; do
+            if [ -r "$parent/idVendor" ] && [ -r "$parent/idProduct" ]; then
+                vendor=$(<"$parent/idVendor")
+                product=$(<"$parent/idProduct")
+                if [ "${vendor,,}" = a69c ]; then
+                    case "${product,,}" in
+                        5721|5722|5723|5724|5725|5726|5727|572a|572c|572f)
+                            printf '/dev/%s\n' "${block##*/}"
+                            return 0
+                            ;;
+                    esac
+                fi
+            fi
+            [ "$parent" != /sys ] || break
+            parent=${parent%/*}
+        done
+    done
+    return 1
+}
+
 find_wifi_device_id() {
     local expected_device="${1:-}" device vendor product vendor_upper product_upper alias
 
@@ -433,7 +501,7 @@ unlock_rootfs
 echo "== [2/7] Installing build tools =="
 pacman-key --init >/dev/null 2>&1 || true
 pacman-key --populate archlinux holo >/dev/null 2>&1 || true
-pacman -Sy --noconfirm --needed base-devel git
+pacman -Sy --noconfirm --needed base-devel git eject usb_modeswitch
 relock_rootfs
 
 echo "== [3/7] Kernel headers for $KREL =="
@@ -447,7 +515,9 @@ fi
 echo "== [4/7] Building driver =="
 runuser -u "$BUILD_USER" -- make -C "$DRV" clean
 runuser -u "$BUILD_USER" -- make -C "$DRV"
-for module in "$DRV/aic_load_fw/aic_load_fw.ko" "$DRV/aic8800_fdrv/aic8800_fdrv.ko"; do
+for module in "$DRV/aic_load_fw/aic_load_fw.ko" \
+              "$DRV/aic8800_fdrv/aic8800_fdrv.ko" \
+              "$DRV/aic_zlp_quirk/aic_zlp_quirk.ko"; do
     BUILT_REL=$(modinfo -F vermagic "$module" 2>/dev/null | cut -d' ' -f1)
     [ "$BUILT_REL" = "$KREL" ] \
         || { echo "Built module $module targets '$BUILT_REL', expected '$KREL'."; exit 1; }
@@ -469,15 +539,36 @@ if [ -f "$MODESWITCH_ID_FILE" ]; then
         rm -f "/etc/usb_modeswitch.d/$previous_modeswitch_id"
     fi
 fi
-cat > "/etc/usb_modeswitch.d/$MODESWITCH_ID" <<EOF
-# AIC8800 WiFi dongle: fake mass-storage -> WiFi mode
-MessageContent="$MODESWITCH_MESSAGE"
-ResetUSB=1
-EOF
+{
+    printf '%s\n' \
+        '# AIC8800 WiFi dongle: fake mass-storage -> WiFi mode' \
+        "DefaultVendor=0x$MODESWITCH_VENDOR" \
+        "DefaultProduct=0x$MODESWITCH_PRODUCT" \
+        "MessageContent=\"$MODESWITCH_MESSAGE\""
+    if [ -n "$MODESWITCH_MESSAGE2" ]; then
+        printf 'MessageContent2="%s"\nNeedResponse=1\n' "$MODESWITCH_MESSAGE2"
+    else
+        printf '%s\n' 'ResetUSB=1'
+    fi
+    if [ "$MODESWITCH_ID" = 1111:1111 ]; then
+        printf '%s\n' 'TargetVendor=0xa69c' 'TargetProduct=0x8d80'
+    fi
+} > "/etc/usb_modeswitch.d/$MODESWITCH_ID"
 
 cat > /etc/udev/rules.d/40-aic8800-modeswitch.rules <<EOF
 # AIC8800 WiFi dongle: auto-switch from fake mass-storage to WiFi mode
 ACTION=="add", SUBSYSTEM=="usb", ENV{DEVTYPE}=="usb_device", ATTR{idVendor}=="$MODESWITCH_VENDOR", ATTR{idProduct}=="$MODESWITCH_PRODUCT", RUN+="/usr/lib/udev/usb_modeswitch '%b/%k'"
+# AIC OEM adapters switch their SCSI mass-storage personality by ejecting it.
+KERNEL=="sd*", ATTRS{idVendor}=="a69c", ATTRS{idProduct}=="5721", RUN+="/usr/bin/eject /dev/%k"
+KERNEL=="sd*", ATTRS{idVendor}=="a69c", ATTRS{idProduct}=="5722", RUN+="/usr/bin/eject /dev/%k"
+KERNEL=="sd*", ATTRS{idVendor}=="a69c", ATTRS{idProduct}=="5723", RUN+="/usr/bin/eject /dev/%k"
+KERNEL=="sd*", ATTRS{idVendor}=="a69c", ATTRS{idProduct}=="5724", RUN+="/usr/bin/eject /dev/%k"
+KERNEL=="sd*", ATTRS{idVendor}=="a69c", ATTRS{idProduct}=="5725", RUN+="/usr/bin/eject /dev/%k"
+KERNEL=="sd*", ATTRS{idVendor}=="a69c", ATTRS{idProduct}=="5726", RUN+="/usr/bin/eject /dev/%k"
+KERNEL=="sd*", ATTRS{idVendor}=="a69c", ATTRS{idProduct}=="5727", RUN+="/usr/bin/eject /dev/%k"
+KERNEL=="sd*", ATTRS{idVendor}=="a69c", ATTRS{idProduct}=="572a", RUN+="/usr/bin/eject /dev/%k"
+KERNEL=="sd*", ATTRS{idVendor}=="a69c", ATTRS{idProduct}=="572c", RUN+="/usr/bin/eject /dev/%k"
+KERNEL=="sd*", ATTRS{idVendor}=="a69c", ATTRS{idProduct}=="572f", RUN+="/usr/bin/eject /dev/%k"
 EOF
 printf '%s\n' "$MODESWITCH_ID" > "$MODESWITCH_ID_FILE"
 
@@ -503,6 +594,8 @@ install -o root -g root -m 0644 "$DRV/aic_load_fw/aic_load_fw.ko" \
     "$ROOT_MODULE_STAGE/aic_load_fw.ko"
 install -o root -g root -m 0644 "$DRV/aic8800_fdrv/aic8800_fdrv.ko" \
     "$ROOT_MODULE_STAGE/aic8800_fdrv.ko"
+install -o root -g root -m 0644 "$DRV/aic_zlp_quirk/aic_zlp_quirk.ko" \
+    "$ROOT_MODULE_STAGE/aic_zlp_quirk.ko"
 chown -R root:root "$ROOT_DATA_DIR/aic8800"
 chmod -R go-w "$ROOT_DATA_DIR/aic8800"
 install -o root -g root -m 0755 "$REPO/aic8800-ensure-modules.sh" "$ROOT_HELPER"
@@ -523,10 +616,33 @@ relock_rootfs
 # dependency explicit instead of relying solely on generated module metadata.
 modprobe cfg80211
 
-if storage_device=$(find_storage_device); then
+if msc_block=$(find_aic_msc_block_device); then
+    echo "Ejecting AIC mass-storage mode device $msc_block..."
+    eject "$msc_block" || true
+    wifi_id=
+    for _ in {1..15}; do
+        if wifi_id=$(find_wifi_device_id); then
+            break
+        fi
+        sleep 1
+    done
+    if [ -n "$wifi_id" ]; then
+        echo "Dongle switched to WiFi mode as $wifi_id."
+        if [ "$wifi_id" = 368b:8d81 ]; then
+            modprobe aic_zlp_quirk
+        fi
+    else
+        echo "WiFi device did not appear; check: journalctl -k -u systemd-udevd"
+    fi
+elif storage_device=$(find_storage_device); then
     echo "Switching dongle to WiFi mode..."
-    usb_modeswitch -v "$MODESWITCH_VENDOR" -p "$MODESWITCH_PRODUCT" \
-        -M "$MODESWITCH_MESSAGE" -R || true
+    modeswitch_args=(-v "$MODESWITCH_VENDOR" -p "$MODESWITCH_PRODUCT" -M "$MODESWITCH_MESSAGE")
+    if [ -n "$MODESWITCH_MESSAGE2" ]; then
+        modeswitch_args+=(-2 "$MODESWITCH_MESSAGE2")
+    else
+        modeswitch_args+=(-R)
+    fi
+    usb_modeswitch "${modeswitch_args[@]}" || true
 
     wifi_id=
     for _ in {1..15}; do
@@ -537,13 +653,19 @@ if storage_device=$(find_storage_device); then
     done
     if [ -n "$wifi_id" ]; then
         echo "Dongle switched to WiFi mode as $wifi_id."
+        if [ "$wifi_id" = 368b:8d81 ]; then
+            modprobe aic_zlp_quirk
+        fi
     else
         echo "WiFi device did not appear; check: journalctl -k -u systemd-udevd"
     fi
 elif wifi_id=$(find_wifi_device_id); then
     echo "Dongle already in WiFi mode as $wifi_id; reloading driver..."
-    modprobe -r aic8800_fdrv aic_load_fw 2>/dev/null || true
+    modprobe -r aic_zlp_quirk aic8800_fdrv aic_load_fw 2>/dev/null || true
     modprobe aic8800_fdrv
+    if [ "$wifi_id" = 368b:8d81 ]; then
+        modprobe aic_zlp_quirk
+    fi
 else
     echo "Dongle not detected - plug it in and it will switch automatically."
 fi

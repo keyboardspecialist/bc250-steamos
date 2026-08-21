@@ -647,6 +647,10 @@ sudo bash aic8800/steamdeck-setup.sh
 
 The installer snapshots driver source, firmware, and verified per-kernel modules into root-owned storage. When Valve omitted headers, interactive setup prepares the exact source and builds AIC8800 without compiling the complete kernel if module versioning is disabled. The boot helper reuses staged modules or rebuilds from published headers, but never prepares kernel source as root.
 
+The integrated driver includes AIC and OEM runtime IDs such as the UGREEN
+`368b:8d88` variant. Known `a69c:572x` mass-storage personalities are switched
+by SCSI eject, while `1111:1111` adapters use the required two-message sequence.
+
 ## SteamOS Updates
 
 | Component | Update action |
@@ -743,4 +747,4 @@ Run the normal component setup commands afterward to regenerate services for the
 | Valve kernel mirror | [Repository](https://github.com/Evlav/linux-integration) | `bc250-audio-fix/fetch-sources.sh` |
 | SteamOS package mirror | [Package index](https://steamdeck-packages.steamos.cloud/archlinux-mirror/) | Audio-driver and AIC8800 build scripts; stable channels are discovered automatically |
 | SteamOS atomic-update keep list | [Defaults](https://github.com/evlaV/steamos-customizations/blob/master/atomic-update/rauc/atomic-update-keep.conf.in) · [Drop-in example](https://github.com/evlaV/steamos-customizations/blob/master/atomic-update/rauc/example-additional-keep-list.conf.in) | `bc250-update-persistence.sh` |
-| AIC8800 | [Repository](https://github.com/radxa-pkg/aic8800) | `aic8800/steamdeck-setup.sh` |
+| AIC8800 | [Repository](https://github.com/shenmintao/aic8800d80) · [integrated commit](https://github.com/shenmintao/aic8800d80/commit/e93a7d2b6b9634acefc2aae2891e787fb48fdb01) | `aic8800/steamdeck-setup.sh` |

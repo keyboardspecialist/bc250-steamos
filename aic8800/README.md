@@ -1,33 +1,79 @@
-# aic8800
+# AIC8800 USB Driver
 
-[![Release](https://github.com/radxa-pkg/aic8800/actions/workflows/release.yaml/badge.svg)](https://github.com/radxa-pkg/aic8800/actions/workflows/release.yaml)
+This package installs AIC8800 USB Wi-Fi support on SteamOS.
 
-## Build
+## Install
 
-1. `git clone --recurse-submodules https://github.com/radxa-pkg/aic8800.git`
-2. Open in [`devcontainer`](https://code.visualstudio.com/docs/devcontainers/containers)
-3. `make deb`
+Run:
 
-## SteamOS
+```sh
+sudo bash steamdeck-setup.sh install
+```
 
-Use `sudo bash steamdeck-setup.sh` from the BC-250 toolkit. It first downloads the headers matching the running kernel. If Valve never published that exact package, interactive setup checks out the exact Evlav source, reconstructs the running configuration, and runs `modules_prepare` before compiling AIC8800.
+The setup performs these tasks:
 
-SteamOS has `CONFIG_MODVERSIONS` disabled, so this WiFi-only fallback can defer exported-symbol validation to module load time instead of compiling the complete kernel for `Module.symvers`. Exact release checks still run, and the kernel refuses a module if any required symbol is unavailable. The boot service only reuses staged modules or published headers; rerun `steamdeck-setup.sh` when it reports that interactive source preparation is required.
+1. Downloads headers for the active kernel.
+2. Prepares matching Valve kernel source when the kernel requires source preparation.
+3. Builds and validates each kernel module.
+4. Installs firmware and device rules in persistent storage.
+5. Enables module recovery after a SteamOS update.
 
-Run `bash steamdeck-setup.sh status` as the logged-in user to inspect the
-installation. Run `sudo bash steamdeck-setup.sh uninstall` to disable automatic
-repair and remove runtime modules, firmware, and configuration. Uninstall keeps
-the persistent source snapshot and downloaded kernel/build caches for reuse.
+Run setup again when the recovery service requests source preparation.
 
-Dongles that use a different fake mass-storage identity or switch command can
-override both values during installation:
+## Status
+
+Run:
+
+```sh
+bash steamdeck-setup.sh status
+```
+
+The command reports module, firmware, device-rule, and recovery-service status.
+
+## Remove
+
+Run:
+
+```sh
+sudo bash steamdeck-setup.sh uninstall
+```
+
+The command removes modules, firmware, device rules, and the recovery service.
+Persistent source and build caches remain available for reuse.
+
+## Mode Switching
+
+The setup supports these mass-storage identities:
+
+| USB identity | Switch method | Runtime identity |
+|---|---|---|
+| `1111:1111` | Two usb_modeswitch messages | `a69c:8d80` loader |
+| `a69c:5724` | SCSI eject | `368b:8d88` Wi-Fi |
+| Known `a69c:572x` variants | SCSI eject | Device-specific AIC8800 identity |
+
+Use custom values for another usb_modeswitch device:
 
 ```sh
 sudo AIC_MODESWITCH_ID=1234:5678 \
   AIC_MODESWITCH_MESSAGE=0123456789abcdef \
+  AIC_MODESWITCH_MESSAGE2=fedcba9876543210 \
   bash steamdeck-setup.sh install
 ```
 
-Use the pre-switch USB VID:PID and the manufacturer-provided mode-switch message.
-The firmware-loader and runtime identities are discovered from the bundled
-modules' USB device tables and do not need to be configured separately.
+Set `AIC_MODESWITCH_MESSAGE2` for a device that uses two messages.
+Use values supplied by the device manufacturer.
+
+## Modules
+
+| Module | Function |
+|---|---|
+| `aic_load_fw` | Loads AIC firmware |
+| `aic8800_fdrv` | Provides Wi-Fi support |
+| `aic_zlp_quirk` | Applies the Bluetooth ZLP correction for `368b:8d81` |
+
+## Source
+
+The USB driver uses
+[`shenmintao/aic8800d80`](https://github.com/shenmintao/aic8800d80)
+commit `e93a7d2b6b9634acefc2aae2891e787fb48fdb01`.
+The integrated source includes SteamOS build, firmware-path, teardown, and Wi-Fi Direct adaptations.

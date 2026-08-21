@@ -1071,11 +1071,12 @@ void aicwf_rx_deinit(struct aicwf_rx_priv* rx_priv)
         reord_deinit_sta(rx_priv, reord_info);
     }
 
-    /* drain the deferred free_work items before the driver goes away */
+    /* Drain deferred timer/work cancellation before releasing RX state. */
     if (rx_priv->reord_free_wq) {
         destroy_workqueue(rx_priv->reord_free_wq);
         rx_priv->reord_free_wq = NULL;
     }
+
 #endif
 	AICWFDBG(LOGINFO, "stio rx thread\n");
 #ifdef AICWF_SDIO_SUPPORT
@@ -1363,4 +1364,3 @@ bool aicwf_rxbuff_enqueue(struct device *dev, struct rx_frame_queue *rxq, struct
     }
 }
 #endif
-

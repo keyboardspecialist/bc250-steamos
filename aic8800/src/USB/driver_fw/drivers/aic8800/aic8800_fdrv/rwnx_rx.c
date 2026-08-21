@@ -481,7 +481,9 @@ static bool rwnx_rx_data_skb(struct rwnx_hw *rwnx_hw, struct rwnx_vif *rwnx_vif,
         rwnx_rxdata_process_amsdu(rwnx_hw, skb, flags_vif_idx, &list);
         #else
         int count;
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 3, 0)
+// Debian 6.1.0-26 backported the new function call, but not Ubuntu 6.2.
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 3, 0) || \
+    (LINUX_VERSION_CODE >= KERNEL_VERSION(6, 1, 109) && LINUX_VERSION_CODE < KERNEL_VERSION(6, 2, 0))
         ieee80211_amsdu_to_8023s(skb, &list, rwnx_vif->ndev->dev_addr,
                                  RWNX_VIF_TYPE(rwnx_vif), 0, NULL, NULL, false);
 #else
@@ -1308,7 +1310,7 @@ static void rwnx_rx_add_rtap_hdr(struct rwnx_hw* rwnx_hw,
 
     // Check for HE frames
     if (rxvect->format_mod == FORMATMOD_HE_SU) {
-        struct ieee80211_radiotap_he he;
+        struct ieee80211_radiotap_he he = {0};
         #define HE_PREP(f, val) cpu_to_le16(FIELD_PREP(IEEE80211_RADIOTAP_HE_##f, val))
         #define D1_KNOWN(f) cpu_to_le16(IEEE80211_RADIOTAP_HE_DATA1_##f##_KNOWN)
         #define D2_KNOWN(f) cpu_to_le16(IEEE80211_RADIOTAP_HE_DATA2_##f##_KNOWN)
@@ -1364,10 +1366,18 @@ static void rwnx_rx_add_rtap_hdr(struct rwnx_hw* rwnx_hw,
         while ((pos - (u8 *)rtap) & 1)
             pos++;
         rtap->it_present |= cpu_to_le32(1 << IEEE80211_RADIOTAP_HE);
-        //memcpy(pos, &he, sizeof(he));
-		//pos += sizeof(he);
-		*(struct ieee80211_radiotap_he *)pos = he;
-		pos += sizeof(struct ieee80211_radiotap_he);
+        put_unaligned_le16(le16_to_cpu(he.data1), pos);
+        pos += 2;
+        put_unaligned_le16(le16_to_cpu(he.data2), pos);
+        pos += 2;
+        put_unaligned_le16(le16_to_cpu(he.data3), pos);
+        pos += 2;
+        put_unaligned_le16(le16_to_cpu(he.data4), pos);
+        pos += 2;
+        put_unaligned_le16(le16_to_cpu(he.data5), pos);
+        pos += 2;
+        put_unaligned_le16(le16_to_cpu(he.data6), pos);
+        pos += 2;
     }
 
     // Rx Chains
@@ -1587,10 +1597,9 @@ int reord_flush_tid(struct aicwf_rx_priv *rx_priv, struct sk_buff *skb, u8 tid)
 	AICWFDBG(LOGINFO, "flush:tid=%d", tid);
     preorder_ctrl->enable = false;
     spin_unlock_irqrestore(&preorder_ctrl->reord_list_lock, flags);
-    /* async cancels only: this runs on the RX path, which may be atomic.
-     * A late-running worker sees enable=false and an empty list. */
+    /* This RX path may be atomic. A late worker sees the disabled control. */
 #if (LINUX_VERSION_CODE >= KERNEL_VERSION(6, 15, 0))
-    timer_delete(&preorder_ctrl->reord_timer);
+	    timer_delete(&preorder_ctrl->reord_timer);
 #else
     del_timer(&preorder_ctrl->reord_timer);
 #endif
@@ -1606,13 +1615,12 @@ static void reord_info_free_worker(struct work_struct *work)
     struct reord_ctrl *preorder_ctrl;
     u8 i;
 
-    /* process context: the sleeping cancels are legal here */
     for (i = 0; i < 8; i++) {
         preorder_ctrl = &reord_info->preorder_ctrl[i];
 #if (LINUX_VERSION_CODE >= KERNEL_VERSION(6, 15, 0))
         timer_delete_sync(&preorder_ctrl->reord_timer);
         cancel_work_sync(&preorder_ctrl->reord_timer_work);
-        /* a worker caught mid-run may have re-armed the timer */
+        /* A worker caught mid-run may have rearmed the timer. */
         timer_delete_sync(&preorder_ctrl->reord_timer);
 #else
         del_timer_sync(&preorder_ctrl->reord_timer);
@@ -1636,10 +1644,7 @@ void reord_deinit_sta(struct aicwf_rx_priv* rx_priv, struct reord_ctrl_info *reo
 
 	AICWFDBG(LOGINFO, "%s\n", __func__);
 
-    /* Called in atomic context on the firmware disconnect-indication path
-     * (in_atomic, bh disabled), so nothing here may sleep: stop the timer
-     * asynchronously, flush the pending frames under the spinlock, and
-     * defer the sleeping *_sync() cancels plus the kfree to a worker. */
+    /* This path can be atomic; defer sleeping cancellation and the final free. */
     for (i=0; i < 8; i++) {
         struct recv_msdu *req, *next;
         preorder_ctrl = &reord_info->preorder_ctrl[i];
@@ -1660,13 +1665,13 @@ void reord_deinit_sta(struct aicwf_rx_priv* rx_priv, struct reord_ctrl_info *reo
             req->pkt = NULL;
             reord_rxframe_free(&rx_priv->freeq_lock, &rx_priv->rxframes_freequeue, &req->rxframe_list);
         }
+
         spin_unlock_bh(&preorder_ctrl->reord_list_lock);
     }
 
     spin_lock_bh(&rx_priv->stas_reord_lock);
     list_del(&reord_info->list);
     spin_unlock_bh(&rx_priv->stas_reord_lock);
-
     INIT_WORK(&reord_info->free_work, reord_info_free_worker);
     if (rx_priv->reord_free_wq)
         queue_work(rx_priv->reord_free_wq, &reord_info->free_work);
@@ -2294,6 +2299,11 @@ u8 rwnx_rxdataind_aicwf(struct rwnx_hw *rwnx_hw, void *hostid, void *rx_priv)
     if(hw_rxhdr->flags_upload)
         status |= RX_STAT_FORWARD;
 
+#ifndef CONFIG_RWNX_MON_DATA
+    if (status & RX_STAT_MONITOR)
+        status &= ~RX_STAT_FORWARD;
+#endif
+
     /* Check if we need to delete the buffer */
     if (status & RX_STAT_DELETE) {
         /* Remove the SK buffer from the rxbuf_elems table */
@@ -2356,11 +2366,22 @@ u8 rwnx_rxdataind_aicwf(struct rwnx_hw *rwnx_hw, void *hostid, void *rx_priv)
         } else {
         #ifdef CONFIG_RWNX_MON_DATA
         skb_monitor = skb_copy_expand(skb, rtap_len, 0, GFP_ATOMIC);
-        skb_monitor->data += (msdu_offset + 2); //sdio/usb word allign
+        if (skb_monitor) {
+            skb_monitor->data += (msdu_offset + 2); //sdio/usb word allign
 
-        //Save frame length
-        frm_len = le32_to_cpu(hw_rxhdr->hwvect.len);
+            //Save frame length
+            frm_len = le32_to_cpu(hw_rxhdr->hwvect.len);
+        }
         #endif
+        }
+
+        if (!skb_monitor) {
+            if (status == RX_STAT_MONITOR) {
+                dev_kfree_skb(skb);
+                goto end;
+            }
+
+            goto check_len_update;
         }
 
         //skb_reset_tail_pointer(skb);
@@ -2950,4 +2971,3 @@ end:
     REG_SW_CLEAR_PROFILING(rwnx_hw, SW_PROF_RWNXDATAIND);
     return 0;
 }
-

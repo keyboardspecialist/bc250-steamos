@@ -1,5 +1,5 @@
 [Unit]
-Description=AIC8800 dongle: rebuild and load WiFi/BT modules if missing
+Description=AIC8800 dongle: rebuild and load WiFi/BT support modules if missing
 Requires=bc250-persistence-recovery.service
 After=bc250-persistence-recovery.service local-fs.target
 RequiresMountsFor=/var/lib/bc250-control

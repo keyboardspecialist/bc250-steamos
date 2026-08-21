@@ -55,7 +55,7 @@ static void __exit aic_bluetooth_mod_exit(void)
 {
     printk("%s\n", __func__);
     aicwf_usb_exit();
-    
+
 #ifdef CONFIG_PREALLOC_RX_SKB
     aicwf_prealloc_exit();
 #endif

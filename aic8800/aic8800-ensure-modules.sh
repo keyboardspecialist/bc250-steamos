@@ -13,8 +13,10 @@ FWDIR=/var/lib/bc250-control/aic8800/firmware
 STAGE=/var/lib/bc250-control/aic8800/modules/$KVER
 BUILD_LOADFW_KO="$DRV/aic_load_fw/aic_load_fw.ko"
 BUILD_FDRV_KO="$DRV/aic8800_fdrv/aic8800_fdrv.ko"
+BUILD_ZLP_KO="$DRV/aic_zlp_quirk/aic_zlp_quirk.ko"
 LOADFW_KO="$STAGE/aic_load_fw.ko"
 FDRV_KO="$STAGE/aic8800_fdrv.ko"
+ZLP_KO="$STAGE/aic_zlp_quirk.ko"
 
 log() { echo "$*"; }
 ko_kver() { modinfo -F vermagic "$1" 2>/dev/null | cut -d' ' -f1; }
@@ -93,9 +95,20 @@ aic_runtime_ready() {
     return 1
 }
 
+zlp_target_present() {
+    local device vendor product
+    for device in /sys/bus/usb/devices/*; do
+        [ -f "$device/idVendor" ] && [ -f "$device/idProduct" ] || continue
+        read -r vendor < "$device/idVendor"
+        read -r product < "$device/idProduct"
+        [ "${vendor,,}:${product,,}" = 368b:8d81 ] && return 0
+    done
+    return 1
+}
+
 wait_for_aic_runtime() {
-    local attempt
-    for attempt in {1..15}; do
+    local _
+    for _ in {1..15}; do
         aic_runtime_ready && return 0
         sleep 1
     done
@@ -121,17 +134,20 @@ loader_present=0
 aic_loader_present && loader_present=1
 
 if modinfo -k "$KVER" aic_load_fw >/dev/null 2>&1 \
-   && modinfo -k "$KVER" aic8800_fdrv >/dev/null 2>&1; then
+   && modinfo -k "$KVER" aic8800_fdrv >/dev/null 2>&1 \
+   && modinfo -k "$KVER" aic_zlp_quirk >/dev/null 2>&1; then
     modprobe aic_load_fw
     modprobe aic8800_fdrv
     module_source=installed
 else
     if [ "$(ko_kver "$LOADFW_KO")" = "$KVER" ] \
-       && [ "$(ko_kver "$FDRV_KO")" = "$KVER" ]; then
+       && [ "$(ko_kver "$FDRV_KO")" = "$KVER" ] \
+       && [ "$(ko_kver "$ZLP_KO")" = "$KVER" ]; then
         log "reusing staged modules for $KVER"
     else
         if [ "$(ko_kver "$BUILD_LOADFW_KO")" != "$KVER" ] \
-           || [ "$(ko_kver "$BUILD_FDRV_KO")" != "$KVER" ]; then
+           || [ "$(ko_kver "$BUILD_FDRV_KO")" != "$KVER" ] \
+           || [ "$(ko_kver "$BUILD_ZLP_KO")" != "$KVER" ]; then
             if ! command -v gcc >/dev/null || ! command -v make >/dev/null; then
                 log "toolchain missing (wiped by OS update); reinstalling base-devel"
                 unlock_rootfs
@@ -156,15 +172,20 @@ else
                 || { log "built firmware-loader module does not match $KVER"; exit 1; }
             [ "$(ko_kver "$BUILD_FDRV_KO")" = "$KVER" ] \
                 || { log "built WiFi module does not match $KVER"; exit 1; }
+            [ "$(ko_kver "$BUILD_ZLP_KO")" = "$KVER" ] \
+                || { log "built Bluetooth ZLP quirk does not match $KVER"; exit 1; }
         fi
 
         install -d -o root -g root -m 0755 "$STAGE"
         install -o root -g root -m 0644 "$BUILD_LOADFW_KO" "$LOADFW_KO"
         install -o root -g root -m 0644 "$BUILD_FDRV_KO" "$FDRV_KO"
+        install -o root -g root -m 0644 "$BUILD_ZLP_KO" "$ZLP_KO"
         [ "$(ko_kver "$LOADFW_KO")" = "$KVER" ] \
             || { log "staged firmware-loader module does not match $KVER"; exit 1; }
         [ "$(ko_kver "$FDRV_KO")" = "$KVER" ] \
             || { log "staged WiFi module does not match $KVER"; exit 1; }
+        [ "$(ko_kver "$ZLP_KO")" = "$KVER" ] \
+            || { log "staged Bluetooth ZLP quirk does not match $KVER"; exit 1; }
     fi
 
     # A source-prepared WiFi build may not carry kernel dependency metadata when
@@ -194,6 +215,15 @@ if [ "$loader_present" = 1 ] || aic_loader_present; then
     fi
     wait_for_aic_runtime \
         || { log "AIC8800 firmware loader did not transition to a runtime device bound to aic8800_fdrv"; exit 1; }
+fi
+
+if zlp_target_present && [ ! -d /sys/module/aic_zlp_quirk ]; then
+    modprobe btusb
+    if [ "$module_source" = installed ]; then
+        modprobe aic_zlp_quirk
+    else
+        insmod "$ZLP_KO"
+    fi
 fi
 
 log "$module_source modules loaded for $KVER"

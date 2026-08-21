@@ -297,7 +297,7 @@ ccflags-y += -DNX_TXQ_CNT=4
 endif
 
 # For old kernel (<=3.19)
-ifeq ($(shell test $(VERSION) -lt 4 -a "$(CONFIG_VENDOR_RWNX)" = y ; echo $$?),0)
+ifeq ($(shell test "$(if $(VERSION),$(VERSION),0)" -lt 4 -a "$(CONFIG_VENDOR_RWNX)" = y; echo $$?),0)
 ccflags-y += -DCONFIG_VENDOR_RWNX_VHT_NO80
 endif
 
@@ -349,8 +349,6 @@ ccflags-$(CONFIG_TEMP_CONTROL) += -DCONFIG_TEMP_CONTROL
 ccflags-$(CONFIG_POWER_LIMIT) += -DCONFIG_POWER_LIMIT
 ccflags-$(CONFIG_EXT_FEM_8800DCDW) += -DCONFIG_EXT_FEM_8800DCDW
 ccflags-$(CONFIG_WOWLAN) += -DCONFIG_WOWLAN
-MAKEFLAGS +=-j$(shell nproc)
-
 # Platform support list
 CONFIG_PLATFORM_ROCKCHIP ?= n
 CONFIG_PLATFORM_ALLWINNER ?= n
@@ -389,10 +387,10 @@ KDIR ?= /home/yaya/D/Workspace/CyberQuantum/JinHaoYue/amls905x3/SDK/20191101-0tt
 endif
 
 ifeq ($(CONFIG_PLATFORM_UBUNTU), y)
-KDIR  ?= /lib/modules/$(shell uname -r)/build
+KVER ?= $(shell uname -r)
+KDIR ?= /lib/modules/$(KVER)/build
 #KDIR ?= ~/D/Workspace/CyberQuantum/Linux/linux-4.15/
 PWD   ?= $(shell pwd)
-KVER ?= $(shell uname -r)
 MODDESTDIR ?= /lib/modules/$(KVER)/kernel/drivers/net/wireless/aic8800
 SUBARCH = $(shell uname -m | sed -e s/i.86/i386/ -e s/armv.l/arm/ -e s/aarch64/arm64/)
 ARCH ?= $(SUBARCH)
@@ -415,4 +413,3 @@ uninstall:
 
 clean:
 	rm -rf *.o *.ko *.o.* *.mod.* modules.* Module.* .a* .o* .*.o.* *.mod .tmp* .cache.mk .modules.order.cmd .Module.symvers.cmd
-
