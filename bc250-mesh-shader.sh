@@ -27,6 +27,12 @@ FALLBACK_ICD="${BC250_MESH_32BIT_ICD:-/usr/share/vulkan/icd.d/radeon_icd.i686.js
 GLOBAL_ICDS="$ICD:$FALLBACK_ICD"
 GENERATOR="${BC250_GFX1013_GENERATOR:-/usr/lib/systemd/user-environment-generators/60-bc250-gfx1013}"
 BUILD_ROOT="$STATE_DIR/build"
+MESA_SOURCE="$BUILD_ROOT/$DEFAULT_MESA_TAG"
+MESA_BUILD="$MESA_SOURCE/build"
+MESA_OUTPUT="$MESA_BUILD/src/amd/vulkan/libvulkan_radeon.so"
+MESA_NINJA="$MESA_BUILD/build.ninja"
+MESA_COREDATA="$MESA_BUILD/meson-private/coredata.dat"
+BUILD_STATE="$BUILD_ROOT/$DEFAULT_MESA_TAG.profile"
 FSR4_DIR="$STATE_DIR/fsr4"
 FSR4_DRIVER="$FSR4_DIR/libvulkan_radeon.so"
 FSR4_ICD="$FSR4_DIR/radeon_fsr4_icd.x86_64.json"
@@ -101,6 +107,183 @@ sha256_file() {
     else
         shasum -a 256 "$1" | awk '{print $1}'
     fi
+}
+
+sha256_stream() {
+    if command -v sha256sum >/dev/null 2>&1; then
+        sha256sum | awk '{print $1}'
+    else
+        shasum -a 256 | awk '{print $1}'
+    fi
+}
+
+mesa_source_diff_sha() {
+    git -C "$MESA_SOURCE" diff HEAD --binary --full-index --no-ext-diff | sha256_stream
+}
+
+mesa_source_tree_sha() {
+    python3 - "$MESA_SOURCE" <<'PY'
+import hashlib
+import os
+from pathlib import Path
+import stat
+import sys
+
+base = Path(sys.argv[1]).resolve()
+digest = hashlib.sha256()
+for root, directories, files in os.walk(base, topdown=True, followlinks=False):
+    relative_root = Path(root).relative_to(base)
+    if relative_root == Path("."):
+        directories[:] = [name for name in directories if name not in (".git", "build")]
+    directories.sort()
+    files.sort()
+    entries = [(name, True) for name in directories] + [(name, False) for name in files]
+    for name, is_directory in sorted(entries):
+        path = Path(root) / name
+        relative = os.fsencode(str(path.relative_to(base)))
+        metadata = path.lstat()
+        digest.update(len(relative).to_bytes(8, "little"))
+        digest.update(relative)
+        digest.update(stat.S_IMODE(metadata.st_mode).to_bytes(4, "little"))
+        if path.is_symlink():
+            target = os.fsencode(os.readlink(path))
+            resolved = path.resolve(strict=True)
+            try:
+                resolved.relative_to(base)
+            except ValueError:
+                raise SystemExit("external symlink in Mesa source cache: %s" % path)
+            digest.update(b"L" + len(target).to_bytes(8, "little") + target)
+            if is_directory:
+                directories.remove(name)
+        elif path.is_dir():
+            digest.update(b"D")
+        elif path.is_file():
+            digest.update(b"F" + metadata.st_size.to_bytes(8, "little"))
+            with path.open("rb") as stream:
+                for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+                    digest.update(chunk)
+        else:
+            raise SystemExit("unsupported file in Mesa source cache: %s" % path)
+print(digest.hexdigest())
+PY
+}
+
+mesa_build_tree_sha() {
+    python3 - "$MESA_BUILD" "$MESA_SOURCE" <<'PY'
+import hashlib
+import os
+from pathlib import Path
+import stat
+import sys
+
+base = Path(sys.argv[1]).resolve()
+source = Path(sys.argv[2]).resolve()
+digest = hashlib.sha256()
+for root, directories, files in os.walk(base, topdown=True, followlinks=False):
+    directories.sort()
+    files.sort()
+    entries = [(name, True) for name in directories] + [(name, False) for name in files]
+    for name, is_directory in sorted(entries):
+        path = Path(root) / name
+        relative = os.fsencode(str(path.relative_to(base)))
+        metadata = path.lstat()
+        digest.update(len(relative).to_bytes(8, "little"))
+        digest.update(relative)
+        digest.update(stat.S_IMODE(metadata.st_mode).to_bytes(4, "little"))
+        if path.is_symlink():
+            target = os.fsencode(os.readlink(path))
+            resolved = path.resolve(strict=True)
+            if not any(
+                resolved == allowed or allowed in resolved.parents
+                for allowed in (base, source)
+            ):
+                raise SystemExit("external symlink in Mesa build cache: %s" % path)
+            digest.update(b"L" + len(target).to_bytes(8, "little") + target)
+            if is_directory:
+                directories.remove(name)
+        elif path.is_dir():
+            digest.update(b"D")
+        elif path.is_file():
+            digest.update(b"F" + metadata.st_size.to_bytes(8, "little"))
+            with path.open("rb") as stream:
+                for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+                    digest.update(chunk)
+        else:
+            raise SystemExit("unsupported file in Mesa build cache: %s" % path)
+print(digest.hexdigest())
+PY
+}
+
+read_build_state() {
+    local extra line
+    BUILD_STATE_PROFILE="" BUILD_STATE_DRIVER_SHA="" BUILD_STATE_SOURCE_SHA=""
+    BUILD_STATE_SOURCE_TREE_SHA="" BUILD_STATE_TREE_SHA="" BUILD_STATE_NINJA_SHA=""
+    BUILD_STATE_COREDATA_SHA="" BUILD_STATE_MESA_COMMIT=""
+    BUILD_STATE_UPSTREAM_COMMIT="" BUILD_STATE_FSR4_SHA=""
+    [[ -f "$BUILD_STATE" && ! -L "$BUILD_STATE" ]] || return 1
+    IFS= read -r line < "$BUILD_STATE" || return 1
+    read -r BUILD_STATE_PROFILE BUILD_STATE_DRIVER_SHA BUILD_STATE_SOURCE_SHA \
+        BUILD_STATE_SOURCE_TREE_SHA BUILD_STATE_TREE_SHA BUILD_STATE_NINJA_SHA \
+        BUILD_STATE_COREDATA_SHA BUILD_STATE_MESA_COMMIT BUILD_STATE_UPSTREAM_COMMIT \
+        BUILD_STATE_FSR4_SHA extra <<< "$line"
+    [[ -z "$extra" && ( "$BUILD_STATE_PROFILE" == base || "$BUILD_STATE_PROFILE" == fsr4 ) \
+        && "$BUILD_STATE_DRIVER_SHA" =~ ^[0-9a-f]{64}$ \
+        && "$BUILD_STATE_SOURCE_SHA" =~ ^[0-9a-f]{64}$ \
+        && "$BUILD_STATE_SOURCE_TREE_SHA" =~ ^[0-9a-f]{64}$ \
+        && "$BUILD_STATE_TREE_SHA" =~ ^[0-9a-f]{64}$ \
+        && "$BUILD_STATE_NINJA_SHA" =~ ^[0-9a-f]{64}$ \
+        && "$BUILD_STATE_COREDATA_SHA" =~ ^[0-9a-f]{64}$ \
+        && "$BUILD_STATE_MESA_COMMIT" == "$MESA_COMMIT" \
+        && "$BUILD_STATE_UPSTREAM_COMMIT" == "$UPSTREAM_COMMIT" \
+        && "$(wc -l < "$BUILD_STATE")" -eq 1 ]] || return 1
+    if [[ "$BUILD_STATE_PROFILE" == base ]]; then
+        [[ "$BUILD_STATE_FSR4_SHA" == - ]]
+    else
+        [[ "$BUILD_STATE_FSR4_SHA" == "$FSR4_PATCH_SHA256" ]]
+    fi
+}
+
+verify_cached_build() {
+    local expected_profile="$1" expected_driver_sha="${2:-}" actual
+    read_build_state || return 1
+    [[ "$BUILD_STATE_PROFILE" == "$expected_profile" \
+        && -d "$MESA_SOURCE/.git" && ! -L "$MESA_SOURCE" \
+        && -d "$MESA_BUILD" && ! -L "$MESA_BUILD" \
+        && -f "$MESA_OUTPUT" && ! -L "$MESA_OUTPUT" \
+        && -f "$MESA_NINJA" && ! -L "$MESA_NINJA" \
+        && -f "$MESA_COREDATA" && ! -L "$MESA_COREDATA" \
+        && "$(git -C "$MESA_SOURCE" rev-parse HEAD 2>/dev/null)" == "$MESA_COMMIT" ]] \
+        || return 1
+    git -C "$MESA_SOURCE" diff --check >/dev/null || return 1
+    [[ -z "$(git -C "$MESA_SOURCE" ls-files --others --exclude-standard)" ]] || return 1
+    actual=$(sha256_file "$MESA_OUTPUT")
+    [[ "$actual" == "$BUILD_STATE_DRIVER_SHA" \
+        && "$(mesa_source_diff_sha)" == "$BUILD_STATE_SOURCE_SHA" \
+        && "$(mesa_source_tree_sha)" == "$BUILD_STATE_SOURCE_TREE_SHA" \
+        && "$(mesa_build_tree_sha)" == "$BUILD_STATE_TREE_SHA" \
+        && "$(sha256_file "$MESA_NINJA")" == "$BUILD_STATE_NINJA_SHA" \
+        && "$(sha256_file "$MESA_COREDATA")" == "$BUILD_STATE_COREDATA_SHA" ]] \
+        || return 1
+    [[ -z "$expected_driver_sha" || "$actual" == "$expected_driver_sha" ]]
+}
+
+write_build_state() {
+    local profile="$1" driver_sha source_sha source_tree_sha tree_sha
+    local ninja_sha coredata_sha fsr4_sha=- tmp
+    [[ "$profile" == base || "$profile" == fsr4 ]] || die "Invalid Mesa build profile: $profile"
+    driver_sha=$(sha256_file "$MESA_OUTPUT")
+    source_sha=$(mesa_source_diff_sha)
+    source_tree_sha=$(mesa_source_tree_sha)
+    tree_sha=$(mesa_build_tree_sha)
+    ninja_sha=$(sha256_file "$MESA_NINJA")
+    coredata_sha=$(sha256_file "$MESA_COREDATA")
+    if [[ "$profile" == fsr4 ]]; then fsr4_sha=$FSR4_PATCH_SHA256; fi
+    tmp=$(mktemp "$BUILD_ROOT/.profile.XXXXXX")
+    printf '%s %s %s %s %s %s %s %s %s %s\n' "$profile" "$driver_sha" \
+        "$source_sha" "$source_tree_sha" "$tree_sha" "$ninja_sha" \
+        "$coredata_sha" "$MESA_COMMIT" "$UPSTREAM_COMMIT" "$fsr4_sha" > "$tmp"
+    chmod 0600 "$tmp"
+    mv -f "$tmp" "$BUILD_STATE"
 }
 
 fsync_paths() {
@@ -856,10 +1039,95 @@ for path in sys.argv[1:]:
 PY
 }
 
+install_default_profile() {
+    local output="$1" mesa_tag="$2"
+    log "Installing audited $mesa_tag with DryhoppedIPA's patch series ${UPSTREAM_COMMIT:0:7}."
+    log "The alternate ICD will become global for this user after the user manager reloads."
+    arm_install_transaction
+    unlock_root
+    as_root install -o root -g root -m 0755 "$output" "$staged_driver"
+    as_root mv -f "$staged_driver" "$DRIVER"
+    as_root sync -f "$DRIVER"
+    as_root sync -d "${DRIVER%/*}"
+    relock_root
+    cat > "$work/icd" <<EOF
+{
+  "file_format_version": "1.0.1",
+  "ICD": {"library_path": "$DRIVER", "api_version": "1.4.354", "library_arch": "64"}
+}
+EOF
+    chmod 0644 "$work/icd"
+    mv -f "$work/icd" "$ICD"
+    python3 - "$ICD" "${ICD%/*}" <<'PY'
+import os
+import sys
+for path in sys.argv[1:]:
+    descriptor = os.open(path, os.O_RDONLY)
+    try:
+        os.fsync(descriptor)
+    finally:
+        os.close(descriptor)
+PY
+
+    [[ -f "$DRIVER" && ! -L "$DRIVER" ]] || die "Driver installation failed: $DRIVER"
+    [[ -f "$ICD" && ! -L "$ICD" ]] || die "Upstream build did not create $ICD"
+    grep -qF "\"library_path\": \"$DRIVER\"" "$ICD" \
+        || die "Generated ICD does not reference the expected alternate driver"
+    [[ ! -L "$GENERATOR" ]] || die "Refusing symlinked environment generator: $GENERATOR"
+    render_generator > "$work/generator"
+    chmod 0755 "$work/generator"
+    unlock_root
+    as_root install -D -o root -g root -m 0755 "$work/generator" "$GENERATOR"
+    as_root sync -f "$GENERATOR"
+    as_root sync -d "${GENERATOR%/*}"
+    relock_root
+    generator_owned || die "Installed GFX1013 environment generator failed verification"
+    write_manifest "$mesa_tag"
+    rm -rf "$TRANSACTION_DIR"
+    python3 - "$STATE_DIR" <<'PY'
+import os
+import sys
+descriptor = os.open(sys.argv[1], os.O_RDONLY)
+try:
+    os.fsync(descriptor)
+finally:
+    os.close(descriptor)
+PY
+    if ! verify_scheduler_configured; then
+        as_root bash "$BOOT_CONFIG" install \
+            || die "RADV was installed but amdgpu.sched_policy=2 could not be configured. The safety gate will keep RADV disabled; fix the boot policy and retry."
+    fi
+    log "Patched RADV async-compute support is installed."
+    if verify_scheduler_active; then
+        log "Sign out and back in so the complete graphical session inherits the new Vulkan environment."
+    else
+        log "Reboot to activate amdgpu.sched_policy=2 and the patched RADV driver together."
+    fi
+}
+
+validate_mesa_output() {
+    local output="$1" linkage
+    [[ -s "$output" && ! -L "$output" ]] || die "Mesa build did not produce the alternate RADV driver"
+    python3 - "$output" <<'PY'
+from pathlib import Path
+import sys
+with Path(sys.argv[1]).open("rb") as stream:
+    valid = stream.read(5) == b"\x7fELF\x02"
+raise SystemExit(0 if valid else 1)
+PY
+    readelf -h "$output" | grep -Eq 'Class:[[:space:]]+ELF64' \
+        || die "Mesa build did not produce a valid 64-bit ELF driver"
+    linkage=$(ldd -r "$output" 2>&1) \
+        || die "Built RADV driver failed dynamic-link validation: $linkage"
+    ! grep -Eq 'not found|undefined symbol:' <<< "$linkage" \
+        || die "Built RADV driver has unresolved dynamic dependencies: $linkage"
+}
+
 cmd_setup() (
     require_normal_user
     local profile="${1:-default}" mesa_tag="$DEFAULT_MESA_TAG"
-    local work source build output staged_driver committed=0
+    local work source build output staged_driver base_output base_driver_sha
+    local cache_profile="" expected_sha="" committed=0 default_ready=0 default_bootstrapped=0
     local ro_was_enabled=0 root_unlocked=0 need_packages=0
     [[ "$profile" == default || "$profile" == fsr4 ]] || die "Unknown RADV profile: $profile"
     command -v curl >/dev/null 2>&1 || die "curl is required"
@@ -877,8 +1145,12 @@ cmd_setup() (
     if [[ "$profile" == default ]]; then
         preflight_runtime_ownership
     else
-        verify_current_runtime \
-            || die "Install and validate the default Mesa / RADV profile before adding FSR4."
+        if verify_current_runtime; then
+            default_ready=1
+        else
+            preflight_runtime_ownership
+            log "The async-compute RADV prerequisite is missing or stale; FSR4 setup will install it first."
+        fi
         if [[ -e "$FSR4_DIR" || -L "$FSR4_DIR" ]]; then
             verify_owned_fsr4_runtime \
                 || die "Existing FSR4 profile is incomplete or not a recorded toolkit install."
@@ -978,61 +1250,95 @@ cmd_setup() (
 
     stage_upstream
 
-    source="$BUILD_ROOT/$DEFAULT_MESA_TAG"
-    if [[ "$profile" == fsr4 ]]; then source="${source}-fsr4"; fi
-    build="$source/build"
-    rm -rf "$source"
-    git clone --no-checkout "$MESA_GIT_CACHE" "$source"
-    git -C "$source" checkout --detach "$MESA_COMMIT"
-    [[ "$(git -C "$source" rev-parse HEAD)" == "$MESA_COMMIT" ]] \
-        || die "Mesa worktree does not match pinned commit $MESA_COMMIT"
-    mkdir -p "$source/subprojects/packagecache"
-    cp "$CACHE_DIR/$LIBDRM_TARBALL" "$source/subprojects/packagecache/"
-    local patch_name
-    for patch_name in \
-        0001-gfx1013-compute-queue-fix.patch \
-        0002-gfx1013-mesh-task-shaders.patch \
-        0003-gfx1013-taskmesh-queries.patch; do
-        patch -d "$source" -p1 --fuzz=0 --dry-run -i "$CACHE_DIR/$patch_name"
-        patch -d "$source" -p1 --fuzz=0 -i "$CACHE_DIR/$patch_name"
-    done
-    if [[ "$profile" == fsr4 ]]; then
+    source="$MESA_SOURCE"
+    build="$MESA_BUILD"
+    output="$MESA_OUTPUT"
+    export TMPDIR="$STATE_DIR/tmp"
+    mkdir -p "$TMPDIR"
+
+    if [[ "$profile" == fsr4 && $default_ready -eq 1 ]] \
+        && verify_current_fsr4_runtime \
+        && verify_cached_build fsr4 "$STORED_FSR4_DRIVER_SHA" \
+        && [[ "$BUILD_STATE_DRIVER_SHA" != "$STORED_DRIVER_SHA" ]]; then
+        cache_profile=fsr4
+        log "Reusing the verified FSR4 Mesa build output."
+    else
+        expected_sha=""
+        if verify_current_runtime; then expected_sha=$STORED_DRIVER_SHA; fi
+        if [[ -n "$expected_sha" ]] && verify_cached_build base "$expected_sha"; then
+            cache_profile=base
+            log "Reusing the verified async-compute Mesa build for the incremental FSR4 phase."
+        else
+            log "Preparing a clean pinned Mesa tree for the async-compute base build."
+            rm -f "$BUILD_STATE"
+            rm -rf "$source"
+            git clone --no-checkout "$MESA_GIT_CACHE" "$source"
+            git -C "$source" checkout --detach "$MESA_COMMIT"
+            [[ "$(git -C "$source" rev-parse HEAD)" == "$MESA_COMMIT" ]] \
+                || die "Mesa worktree does not match pinned commit $MESA_COMMIT"
+            mkdir -p "$source/subprojects/packagecache"
+            cp "$CACHE_DIR/$LIBDRM_TARBALL" "$source/subprojects/packagecache/"
+            local patch_name
+            for patch_name in \
+                0001-gfx1013-compute-queue-fix.patch \
+                0002-gfx1013-mesh-task-shaders.patch \
+                0003-gfx1013-taskmesh-queries.patch; do
+                patch -d "$source" -p1 --fuzz=0 --dry-run -i "$CACHE_DIR/$patch_name"
+                patch -d "$source" -p1 --fuzz=0 -i "$CACHE_DIR/$patch_name"
+            done
+            grep -qF has_async_compute_threadgroup_bug "$source/src/amd/common/ac_gpu_info.c" \
+                && grep -qF has_gfx1013_mesh_queries "$source/src/amd/common/ac_gpu_info.c" \
+                || die "Patched Mesa source is missing the GFX1013 compute/mesh markers"
+            meson setup "$build" "$source" \
+                -Dbuildtype=release \
+                -Dvulkan-drivers=amd -Dgallium-drivers= -Dplatforms=x11,wayland \
+                -Dglx=disabled -Degl=disabled -Dgles2=disabled -Dvideo-codecs= \
+                -Dshared-llvm=disabled -Dllvm=disabled -Dxmlconfig=enabled \
+                -Dlmsensors=disabled -Dvalgrind=disabled \
+                -Dallow-fallback-for=libdrm -Dlibdrm:default_library=static
+            ninja -C "$build" src/amd/vulkan/libvulkan_radeon.so
+            validate_mesa_output "$output"
+            write_build_state base
+            cache_profile=base
+        fi
+    fi
+
+    validate_mesa_output "$output"
+    require_compute_kernel
+
+    if [[ "$profile" == default ]]; then
+        install_default_profile "$output" "$mesa_tag"
+        committed=1
+        return 0
+    fi
+
+    if [[ "$cache_profile" == base ]]; then
+        base_driver_sha=$(sha256_file "$output")
+        if [[ $default_ready -eq 0 ]]; then
+            base_output="$work/libvulkan_radeon-async.so"
+            install -m 0755 "$output" "$base_output"
+            log "Installing the async-compute RADV prerequisite before the FSR4 profile."
+            install_default_profile "$base_output" "$mesa_tag"
+            verify_current_runtime \
+                || die "The automatically installed async-compute RADV prerequisite failed validation."
+            default_ready=1
+            default_bootstrapped=1
+        fi
+        log "Applying the FSR4 patch to the verified async-compute tree."
         patch -d "$source" -p1 --fuzz=0 --dry-run -i "$FSR4_PATCH"
         patch -d "$source" -p1 --fuzz=0 -i "$FSR4_PATCH"
         grep -qF radv_gfx1013_optimize_sdot "$source/src/amd/vulkan/radv_shader.c" \
             || die "Patched Mesa source is missing the clean-room FSR4 lowering"
+        log "Incrementally rebuilding only the Mesa targets affected by FSR4."
+        ninja -C "$build" src/amd/vulkan/libvulkan_radeon.so
+        validate_mesa_output "$output"
+        [[ "$(sha256_file "$output")" != "$base_driver_sha" ]] \
+            || die "Incremental FSR4 build did not change the async-compute driver."
+        write_build_state fsr4
     fi
-    grep -qF has_async_compute_threadgroup_bug "$source/src/amd/common/ac_gpu_info.c" \
-        && grep -qF has_gfx1013_mesh_queries "$source/src/amd/common/ac_gpu_info.c" \
-        || die "Patched Mesa source is missing the GFX1013 compute/mesh markers"
 
-    export TMPDIR="$STATE_DIR/tmp"
-    mkdir -p "$TMPDIR"
-    meson setup "$build" "$source" \
-        -Dbuildtype=release \
-        -Dvulkan-drivers=amd -Dgallium-drivers= -Dplatforms=x11,wayland \
-        -Dglx=disabled -Degl=disabled -Dgles2=disabled -Dvideo-codecs= \
-        -Dshared-llvm=disabled -Dllvm=disabled -Dxmlconfig=enabled \
-        -Dlmsensors=disabled -Dvalgrind=disabled \
-        -Dallow-fallback-for=libdrm -Dlibdrm:default_library=static
-    ninja -C "$build" src/amd/vulkan/libvulkan_radeon.so
-    output="$build/src/amd/vulkan/libvulkan_radeon.so"
-    [[ -s "$output" && ! -L "$output" ]] || die "Mesa build did not produce the alternate RADV driver"
-    python3 - "$output" <<'PY'
-from pathlib import Path
-import sys
-with Path(sys.argv[1]).open("rb") as stream:
-    valid = stream.read(5) == b"\x7fELF\x02"
-raise SystemExit(0 if valid else 1)
-PY
-    readelf -h "$output" | grep -Eq 'Class:[[:space:]]+ELF64' \
-        || die "Mesa build did not produce a valid 64-bit ELF driver"
-    local linkage
-    linkage=$(ldd -r "$output" 2>&1) \
-        || die "Built RADV driver failed dynamic-link validation: $linkage"
-    ! grep -Eq 'not found|undefined symbol:' <<< "$linkage" \
-        || die "Built RADV driver has unresolved dynamic dependencies: $linkage"
-    require_compute_kernel
+    ! cmp -s "$output" "$DRIVER" \
+        || die "Refusing to install an FSR4 profile identical to the global async-compute driver."
 
     if [[ "$profile" == fsr4 ]]; then
         local profile_stage="$work/fsr4" transaction_stage="$work/fsr4-transaction"
@@ -1096,72 +1402,12 @@ EOF
         committed=1
         log "Installed the experimental clean-room FSR4 profile for private per-game activation."
         log "Steam launch option: $FSR4_RUNNER %command%"
-        log "The global Vulkan environment was not changed."
+        if [[ $default_bootstrapped -eq 1 ]]; then
+            log "The global async-compute runtime was installed as the FSR4 prerequisite."
+        else
+            log "The global Vulkan environment was not changed."
+        fi
         return 0
-    fi
-
-    log "Installing audited $mesa_tag with DryhoppedIPA's patch series ${UPSTREAM_COMMIT:0:7}."
-    log "The alternate ICD will become global for this user after the user manager reloads."
-    arm_install_transaction
-    unlock_root
-    as_root install -o root -g root -m 0755 "$output" "$staged_driver"
-    as_root mv -f "$staged_driver" "$DRIVER"
-    as_root sync -f "$DRIVER"
-    as_root sync -d "${DRIVER%/*}"
-    relock_root
-    cat > "$work/icd" <<EOF
-{
-  "file_format_version": "1.0.1",
-  "ICD": {"library_path": "$DRIVER", "api_version": "1.4.354", "library_arch": "64"}
-}
-EOF
-    chmod 0644 "$work/icd"
-    mv -f "$work/icd" "$ICD"
-    python3 - "$ICD" "${ICD%/*}" <<'PY'
-import os
-import sys
-for path in sys.argv[1:]:
-    descriptor = os.open(path, os.O_RDONLY)
-    try:
-        os.fsync(descriptor)
-    finally:
-        os.close(descriptor)
-PY
-
-    [[ -f "$DRIVER" && ! -L "$DRIVER" ]] || die "Driver installation failed: $DRIVER"
-    [[ -f "$ICD" && ! -L "$ICD" ]] || die "Upstream build did not create $ICD"
-    grep -qF "\"library_path\": \"$DRIVER\"" "$ICD" \
-        || die "Generated ICD does not reference the expected alternate driver"
-    [[ ! -L "$GENERATOR" ]] || die "Refusing symlinked environment generator: $GENERATOR"
-    render_generator > "$work/generator"
-    chmod 0755 "$work/generator"
-    unlock_root
-    as_root install -D -o root -g root -m 0755 "$work/generator" "$GENERATOR"
-    as_root sync -f "$GENERATOR"
-    as_root sync -d "${GENERATOR%/*}"
-    relock_root
-    generator_owned || die "Installed GFX1013 environment generator failed verification"
-    write_manifest "$mesa_tag"
-    rm -rf "$TRANSACTION_DIR"
-    python3 - "$STATE_DIR" <<'PY'
-import os
-import sys
-descriptor = os.open(sys.argv[1], os.O_RDONLY)
-try:
-    os.fsync(descriptor)
-finally:
-    os.close(descriptor)
-PY
-    committed=1
-    if ! verify_scheduler_configured; then
-        as_root bash "$BOOT_CONFIG" install \
-            || die "RADV was installed but amdgpu.sched_policy=2 could not be configured. The safety gate will keep RADV disabled; fix the boot policy and retry."
-    fi
-    log "Patched RADV async-compute support is installed."
-    if verify_scheduler_active; then
-        log "Sign out and back in so the complete graphical session inherits the new Vulkan environment."
-    else
-        log "Reboot to activate amdgpu.sched_policy=2 and the patched RADV driver together."
     fi
 )
 
@@ -1637,7 +1883,7 @@ cmd_menu() {
         local items=(
             "Status overview|${runtime_state}|Verify the patched AMDGPU module, scheduler policy, RADV runtime, and global activation."
             "Build / install RADV async-compute patch|${runtime_state}|Optional but highly recommended. Enables GFX1013 async compute, requires Step 1 AMDGPU fixes, and usually takes 3-5 minutes."
-            "Build experimental FSR4 profile|${fsr4_state}|Optional clean-room signed-dot lowering. Installs a private per-game profile without changing the global Vulkan environment."
+            "Build experimental FSR4 profile|${fsr4_state}|Installs async RADV if needed, then incrementally builds a private per-game FSR4 driver from the same Mesa tree."
             "Older per-game setup cleanup|${legacy_state}|Migration only: remove old MESA_DRICONF_EXECUTABLE_OVERRIDE and VK_ICD_FILENAMES Steam launch options, then clear their records."
             "Uninstall Mesa / RADV runtime|${runtime_state}|Remove the alternate driver, ICD, and user environment generator; preserve build caches."
             "Full help||Show CLI commands, activation behavior, and upstream source."
@@ -1667,9 +1913,9 @@ Usage: $0 [menu|setup [--fsr4]|status|status-json|legacy-clear|uninstall [--fsr4
                                audited Mesa RADV driver with GFX1013 async
                                compute, install a separate ICD, and configure
                                safe global activation. Usually takes 3-5 minutes.
-  setup --fsr4                 Build the experimental clean-room FSR4 signed-dot
-                               profile after the default runtime validates. It is
-                               installed privately and is never globally enabled.
+  setup --fsr4                 Ensure the default async RADV runtime is installed,
+                               then apply FSR4 incrementally in the same Mesa tree.
+                               The second driver is private and never globally enabled.
   status                       Verify the AMDGPU module, scheduler policy, and
                                global runtime ownership.
   status-json                  Print machine-readable runtime status.
@@ -1690,6 +1936,9 @@ processes through the same global driver list.
 
 After 'setup --fsr4', opt in one Steam game with this launch option:
   $FSR4_RUNNER %command%
+
+FSR4 setup reuses an integrity-checked cache only while it still matches the
+installed base driver. Otherwise it clean-builds before the incremental pass.
 
 Upstream (pinned to $UPSTREAM_COMMIT):
   $UPSTREAM_REPO

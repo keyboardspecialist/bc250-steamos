@@ -43,6 +43,12 @@ patch -p1 --fuzz=0 < 0004-gfx1013-fsr4-sdot-lowering.patch
 Patch `0004` is intentionally based on the post-`0001`-`0003` tree. It does not
 duplicate their compute-queue, mesh/task, or query changes.
 
+The toolkit builds both profiles incrementally from one tree. It builds and
+preserves the global async-compute driver after `0001`-`0003`, then applies
+`0004` and runs Ninja again to produce the distinct private FSR4 driver. The
+second pass recompiles only affected targets; the two installed drivers retain
+separate ICDs and manifests.
+
 ## Architecture and scope
 
 The default optimization gate requires ACO (`!compiler_info->key.use_llvm`),

@@ -531,6 +531,25 @@ class MeshShaderTests(unittest.TestCase):
             self.assertEqual(status["fsr4State"], "ready")
             self.assertTrue(status["globalEnabled"])
             self.assertNotIn(status["fsr4IcdPath"], env["VK_DRIVER_FILES"])
+            default_driver = Path(env["BC250_MESH_DRIVER"])
+            fsr4_driver = (
+                Path(env["BC250_MESH_STATE_DIR"]) / "fsr4/libvulkan_radeon.so"
+            )
+            self.assertNotEqual(
+                default_driver.read_bytes(), fsr4_driver.read_bytes()
+            )
+            self.assertEqual(
+                json.loads(Path(env["BC250_MESH_ICD"]).read_text())["ICD"][
+                    "library_path"
+                ],
+                str(default_driver),
+            )
+            self.assertEqual(
+                json.loads(Path(status["fsr4IcdPath"]).read_text())["ICD"][
+                    "library_path"
+                ],
+                str(fsr4_driver),
+            )
 
             result = subprocess.run(
                 [status["fsr4RunnerPath"], "sh", "-c", "printf '%s' \"$VK_DRIVER_FILES\""],
@@ -569,6 +588,16 @@ class MeshShaderTests(unittest.TestCase):
             env = self.environment(Path(directory))
             self.install_runtime(env)
             self.install_fsr4_runtime(env)
+            state = Path(env["BC250_MESH_STATE_DIR"])
+            preserved = {
+                path: hashlib.sha256(path.read_bytes()).hexdigest()
+                for path in (
+                    Path(env["BC250_MESH_DRIVER"]),
+                    Path(env["BC250_MESH_ICD"]),
+                    Path(env["BC250_GFX1013_GENERATOR"]),
+                    state / "install.conf",
+                )
+            }
             subprocess.run(
                 ["bash", str(MESH), "uninstall", "--fsr4"],
                 check=True,
@@ -580,6 +609,199 @@ class MeshShaderTests(unittest.TestCase):
             self.assertEqual(status["runtimeState"], "ready")
             self.assertEqual(status["fsr4State"], "not-installed")
             self.assertTrue(Path(env["BC250_MESH_DRIVER"]).exists())
+            for path, expected in preserved.items():
+                self.assertEqual(
+                    hashlib.sha256(path.read_bytes()).hexdigest(), expected
+                )
+
+    def test_fsr4_setup_bootstraps_and_incrementally_reuses_base_build(self):
+        source = MESH.read_text(encoding="utf-8")
+        setup = source.split("cmd_setup() (", 1)[1].split(
+            "\n)\n\nmanage_games", 1
+        )[0]
+        ninja = 'ninja -C "$build" src/amd/vulkan/libvulkan_radeon.so'
+        first_ninja = setup.index(ninja)
+        fsr4_patch = setup.index(
+            'patch -d "$source" -p1 --fuzz=0 -i "$FSR4_PATCH"'
+        )
+        second_ninja = setup.index(ninja, first_ninja + len(ninja))
+
+        self.assertLess(first_ninja, fsr4_patch)
+        self.assertLess(fsr4_patch, second_ninja)
+        self.assertEqual(setup.count('meson setup "$build" "$source"'), 1)
+        self.assertIn('source="$MESA_SOURCE"', setup)
+        self.assertNotIn('${source}-fsr4', setup)
+        self.assertIn(
+            "FSR4 setup will install it first",
+            setup,
+        )
+        self.assertIn('install_default_profile "$base_output" "$mesa_tag"', setup)
+        self.assertIn("write_build_state base", setup)
+        self.assertIn("write_build_state fsr4", setup)
+        self.assertNotIn(
+            "Install and validate the default Mesa / RADV profile before adding FSR4.",
+            setup,
+        )
+
+    def test_incremental_build_state_rejects_source_drift(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            env = self.environment(root)
+            source = root / "mesa"
+            build = source / "build/src/amd/vulkan"
+            source.mkdir()
+            tracked = source / "tracked.c"
+            tracked.write_text("int value = 1;\n", encoding="ascii")
+            (source / ".gitignore").write_text(
+                "/build/\n/ignored-input\n", encoding="ascii"
+            )
+            subprocess.run(["git", "init", "-q", str(source)], check=True)
+            subprocess.run(
+                ["git", "-C", str(source), "add", "tracked.c", ".gitignore"],
+                check=True,
+            )
+            subprocess.run(
+                [
+                    "git",
+                    "-C",
+                    str(source),
+                    "-c",
+                    "user.name=BC250 Tests",
+                    "-c",
+                    "user.email=tests@example.invalid",
+                    "commit",
+                    "-qm",
+                    "fixture",
+                ],
+                check=True,
+            )
+            build.mkdir(parents=True)
+            output = build / "libvulkan_radeon.so"
+            output.write_bytes(b"cached driver\n")
+            cached_object = source / "build/cached-object.o"
+            cached_object.write_bytes(b"cached object\n")
+            ignored_input = source / "ignored-input"
+            ignored_input.write_bytes(b"fallback source\n")
+            ninja_file = source / "build/build.ninja"
+            ninja_file.write_text("# generated build graph\n", encoding="ascii")
+            coredata = source / "build/meson-private/coredata.dat"
+            coredata.parent.mkdir()
+            coredata.write_bytes(b"meson core data\n")
+            state = root / "mesa.profile"
+            command = (
+                'script=$1; source_dir=$2; build_dir=$3; output=$4; state=$5; '
+                'set -- help; source "$script" >/dev/null; '
+                'MESA_SOURCE=$source_dir; MESA_BUILD=$build_dir; '
+                'MESA_OUTPUT=$output; BUILD_STATE=$state; BUILD_ROOT=${state%/*}; '
+                'MESA_NINJA=$MESA_BUILD/build.ninja; '
+                'MESA_COREDATA=$MESA_BUILD/meson-private/coredata.dat; '
+                'MESA_COMMIT=$(git -C "$MESA_SOURCE" rev-parse HEAD); '
+                'write_build_state base; '
+                'verify_cached_build base "$(sha256_file "$MESA_OUTPUT")"'
+            )
+            subprocess.run(
+                [
+                    "bash",
+                    "-c",
+                    command,
+                    "_",
+                    str(MESH),
+                    str(source),
+                    str(source / "build"),
+                    str(output),
+                    str(state),
+                ],
+                check=True,
+                capture_output=True,
+                text=True,
+                env=env,
+            )
+
+            tracked.write_text("int value = 2;\n", encoding="ascii")
+            subprocess.run(
+                ["git", "-C", str(source), "add", "tracked.c"], check=True
+            )
+            verify = command.replace("write_build_state base; ", "")
+            result = subprocess.run(
+                [
+                    "bash",
+                    "-c",
+                    verify,
+                    "_",
+                    str(MESH),
+                    str(source),
+                    str(source / "build"),
+                    str(output),
+                    str(state),
+                ],
+                capture_output=True,
+                text=True,
+                env=env,
+            )
+            self.assertNotEqual(result.returncode, 0)
+
+            tracked.write_text("int value = 1;\n", encoding="ascii")
+            subprocess.run(
+                ["git", "-C", str(source), "add", "tracked.c"], check=True
+            )
+            ignored_input.write_bytes(b"tampered fallback source\n")
+            result = subprocess.run(
+                [
+                    "bash",
+                    "-c",
+                    verify,
+                    "_",
+                    str(MESH),
+                    str(source),
+                    str(source / "build"),
+                    str(output),
+                    str(state),
+                ],
+                capture_output=True,
+                text=True,
+                env=env,
+            )
+            self.assertNotEqual(result.returncode, 0)
+
+            ignored_input.write_bytes(b"fallback source\n")
+            cached_object.write_bytes(b"tampered object\n")
+            result = subprocess.run(
+                [
+                    "bash",
+                    "-c",
+                    verify,
+                    "_",
+                    str(MESH),
+                    str(source),
+                    str(source / "build"),
+                    str(output),
+                    str(state),
+                ],
+                capture_output=True,
+                text=True,
+                env=env,
+            )
+            self.assertNotEqual(result.returncode, 0)
+
+            cached_object.write_bytes(b"cached object\n")
+            ninja_file.write_text("# tampered build graph\n", encoding="ascii")
+            result = subprocess.run(
+                [
+                    "bash",
+                    "-c",
+                    verify,
+                    "_",
+                    str(MESH),
+                    str(source),
+                    str(source / "build"),
+                    str(output),
+                    str(state),
+                ],
+                capture_output=True,
+                text=True,
+                env=env,
+            )
+            self.assertNotEqual(result.returncode, 0)
 
     def test_interrupted_fsr4_replacement_restores_previous_profile(self):
         with tempfile.TemporaryDirectory() as directory:

@@ -581,6 +581,7 @@ Or use the CLI:
 
 ```bash
 ./bc250-mesh-shader.sh setup
+./bc250-mesh-shader.sh setup --fsr4
 ./bc250-mesh-shader.sh status
 ```
 
@@ -628,17 +629,26 @@ stock SteamOS RADV fallback instead.
 
 ### Experimental FSR4 Profile
 
-After installing and validating the default RADV runtime, an additional
-clean-room FSR4-oriented profile can be built explicitly:
+An additional clean-room FSR4-oriented profile can be built explicitly:
 
 ```bash
 ./bc250-mesh-shader.sh setup --fsr4
 ```
 
-This profile is disabled by default. It installs entirely under
-`~/.local/share/bc250-mesh-shader/fsr4` and does not replace the global driver
-or alter the systemd environment generator. Enable it for one Steam game with
-the launch option printed by setup:
+FSR4 setup can be selected first. If the default async-compute RADV runtime is
+missing or stale, setup builds and installs it automatically. The base output
+is preserved after patches `0001`-`0003`; patch `0004` is then applied to the
+same Mesa source and build directory, and Ninja incrementally rebuilds only the
+affected targets for the private FSR4 driver. An integrity-checked cached base
+is reused only while it still matches the installed global driver. A first-run,
+missing, stale, or unverifiable base triggers one clean build before the
+incremental phase.
+
+This profile is disabled by default. The private FSR4 artifact installs entirely
+under `~/.local/share/bc250-mesh-shader/fsr4` and does not replace the global
+driver or alter the systemd environment generator after any required base
+runtime bootstrap. Enable it for one Steam game with the launch option printed
+by setup:
 
 ```text
 $HOME/.local/share/bc250-mesh-shader/fsr4/bc250-fsr4-run %command%
@@ -648,6 +658,11 @@ The launcher rechecks the selected AMDGPU module, all module attestations,
 loaded repair revision, scheduler policy, profile hashes, and 64/32-bit ICD
 routing before starting the game. Remove only this profile with
 `./bc250-mesh-shader.sh uninstall --fsr4`.
+
+The two installed artifacts remain distinct: the global driver contains
+patches `0001`-`0003`, while the per-game FSR4 driver contains `0001`-`0004`.
+Each has its own ICD and manifest even though setup shares one incremental
+build tree.
 
 The repository-owned patch is a full independent Unlicense implementation for
 GFX1013 ACO compute shaders. It defers signed-dot lowering through a private NIR
@@ -687,9 +702,11 @@ patch application. The Mesa patches retain their upstream MIT license; the
 kernel patches are `GPL-2.0-only`.
 
 This remains alpha hardware research tested upstream on one board, not a full
-Vulkan conformance result. The toolkit restores the previous alternate ICD
-after build failure, restores SteamOS read-only-root state, records installed
-hashes, and transactionally restores the prior global environment generator.
+Vulkan conformance result. The toolkit restores SteamOS read-only-root state,
+records installed hashes, and transactionally restores a prior profile if its
+installation fails. If first-run FSR4 compilation fails after the async profile
+was installed successfully, that valid prerequisite remains installed. Retry
+FSR4 setup; invalid intermediate build state falls back to a clean base build.
 
 ## AIC8800 Class WiFi and Bluetooth Driver
 
