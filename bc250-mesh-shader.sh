@@ -999,7 +999,7 @@ cmd_setup() (
     if [[ "$profile" == fsr4 ]]; then
         patch -d "$source" -p1 --fuzz=0 --dry-run -i "$FSR4_PATCH"
         patch -d "$source" -p1 --fuzz=0 -i "$FSR4_PATCH"
-        grep -qF radv_lower_gfx1013_sdot "$source/src/amd/vulkan/radv_shader.c" \
+        grep -qF radv_gfx1013_optimize_sdot "$source/src/amd/vulkan/radv_shader.c" \
             || die "Patched Mesa source is missing the clean-room FSR4 lowering"
     fi
     grep -qF has_async_compute_threadgroup_bug "$source/src/amd/common/ac_gpu_info.c" \

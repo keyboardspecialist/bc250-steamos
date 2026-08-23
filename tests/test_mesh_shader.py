@@ -765,6 +765,9 @@ class MeshShaderTests(unittest.TestCase):
             "!compiler_info->key.use_llvm",
         ):
             self.assertIn(marker, patch)
+        script = MESH.read_text(encoding="utf-8")
+        self.assertIn("grep -qF radv_gfx1013_optimize_sdot", script)
+        self.assertIn("radv_gfx1013_optimize_sdot", patch)
         self.assertNotIn("RADV_GFX103", patch)
         self.assertNotIn("gfx_level = GFX10_3", patch)
 
