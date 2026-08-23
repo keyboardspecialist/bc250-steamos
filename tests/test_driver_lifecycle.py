@@ -218,6 +218,11 @@ class DriverLifecycleTests(unittest.TestCase):
         self.assertIn("USB_PRODUCT_ID_AIC8800D80_UGREEN", usb_source)
         self.assertIn('ATTRS{idProduct}=="5724"', installer)
         self.assertIn('eject "$msc_block"', installer)
+        self.assertIn(
+            "base-devel git util-linux usb_modeswitch",
+            installer,
+        )
+        self.assertNotIn("base-devel git eject usb_modeswitch", installer)
         self.assertIn("MODESWITCH_MESSAGE2", installer)
         self.assertTrue((AIC_DRIVER / "aic_zlp_quirk/aic_zlp_quirk.c").is_file())
 
