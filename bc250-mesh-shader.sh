@@ -39,8 +39,11 @@ FSR4_ICD="$FSR4_DIR/radeon_fsr4_icd.x86_64.json"
 FSR4_RUNNER="$FSR4_DIR/bc250-fsr4-run"
 FSR4_MANIFEST="$FSR4_DIR/install.conf"
 FSR4_TRANSACTION_DIR="$STATE_DIR/fsr4-install-transaction"
-FSR4_PATCH="${SELF%/*}/bc250-mesa-patches/0004-gfx1013-fsr4-sdot-lowering.patch"
-FSR4_PATCH_SHA256="10075b7d9669b60d6eafa32984f8696775b2d0287086c434147d139749b66b19"
+FSR4_UPSTREAM_COMMIT="741ff3e369026f34820c41a846cf5e55d08e2a61"
+FSR4_PATCH_NAME="bc250-fsr4-v3.patch"
+FSR4_PATCH_URL="https://raw.githubusercontent.com/dmorazasanchez/bc250-fsr4/$FSR4_UPSTREAM_COMMIT/$FSR4_PATCH_NAME"
+FSR4_PATCH="$CACHE_DIR/$FSR4_PATCH_NAME"
+FSR4_PATCH_SHA256="7fde37fad572b4ba4dcac6052792d10d8d3df65982b01236c63a3eff0a25d225"
 LOCK_FILE="${BC250_MESH_LOCK_FILE:-$HOME/.cache/bc250-mesh-shader.lock}"
 MODULE_UPDATES="/usr/lib/modules/$(uname -r)/updates"
 DEFAULT_COMPUTE_MODULE="$MODULE_UPDATES/amdgpu.ko.zst"
@@ -318,6 +321,7 @@ fetch_verified() {
 }
 
 stage_upstream() {
+    local profile="${1:-default}"
     fetch_verified upstream-MIT-LICENSE \
         ddf5d9be5c762bcc5237e36235a1c5f00be521cfc92d8c264dfcce392e2c1313 \
         "$RAW_BASE/LICENSE"
@@ -336,6 +340,9 @@ stage_upstream() {
     fetch_verified 0003-gfx1013-taskmesh-queries.patch \
         8056be93d6f15358275cffe8798b13f90e41c228a8832c563dc30116372d2995 \
         "$RAW_BASE/patches/mesa/0003-gfx1013-taskmesh-queries.patch"
+    if [[ "$profile" == fsr4 ]]; then
+        fetch_verified "$FSR4_PATCH_NAME" "$FSR4_PATCH_SHA256" "$FSR4_PATCH_URL"
+    fi
     fetch_verified "$LIBDRM_TARBALL" "$LIBDRM_SHA256" "$LIBDRM_URL"
     [[ ! -L "$MESA_GIT_CACHE" ]] || die "Refusing symlinked Mesa Git cache: $MESA_GIT_CACHE"
     if [[ ! -d "$MESA_GIT_CACHE" ]]; then
@@ -787,7 +794,7 @@ verify_current_fsr4_profile() {
     verify_owned_fsr4_runtime \
         && [[ "$STORED_FSR4_MESA_TAG" == "$DEFAULT_MESA_TAG" \
             && "$STORED_FSR4_PATCH_SHA" == "$FSR4_PATCH_SHA256" ]] \
-        && cmp -s "$FSR4_RUNNER" <(render_fsr4_runner) && verify_fsr4_patch
+        && cmp -s "$FSR4_RUNNER" <(render_fsr4_runner)
 }
 
 verify_current_fsr4_runtime() {
@@ -1173,7 +1180,6 @@ cmd_setup() (
             verify_owned_fsr4_runtime \
                 || die "Existing FSR4 profile is incomplete or not a recorded toolkit install."
         fi
-        verify_fsr4_patch || die "The clean-room FSR4 patch is missing or failed checksum verification."
     fi
     require_compute_kernel
     verify_32bit_fallback \
@@ -1286,7 +1292,10 @@ cmd_setup() (
             || die "Signed SteamOS packages did not provide development metadata: $command"
     done
 
-    stage_upstream
+    stage_upstream "$profile"
+    if [[ "$profile" == fsr4 ]]; then
+        verify_fsr4_patch || die "The upstream FSR4 patch failed checksum verification."
+    fi
 
     source="$MESA_SOURCE"
     build="$MESA_BUILD"
@@ -1363,11 +1372,17 @@ cmd_setup() (
             default_ready=1
             default_bootstrapped=1
         fi
-        log "Applying the FSR4 patch to the verified async-compute tree."
+        log "Replacing the duplicated compute-queue patch with the pinned upstream FSR4 V3 patch."
+        patch -d "$source" -R -p1 --fuzz=0 --dry-run \
+            -i "$CACHE_DIR/0001-gfx1013-compute-queue-fix.patch"
+        patch -d "$source" -R -p1 --fuzz=0 \
+            -i "$CACHE_DIR/0001-gfx1013-compute-queue-fix.patch"
         patch -d "$source" -p1 --fuzz=0 --dry-run -i "$FSR4_PATCH"
         patch -d "$source" -p1 --fuzz=0 -i "$FSR4_PATCH"
-        grep -qF radv_gfx1013_optimize_sdot "$source/src/amd/vulkan/radv_shader.c" \
-            || die "Patched Mesa source is missing the clean-room FSR4 lowering"
+        grep -qF bc250_lower_dense_sdot4x8 "$source/src/amd/vulkan/radv_shader.c" \
+            && grep -qF 'debug_get_bool_option("RADV_GFX103"' \
+                "$source/src/amd/vulkan/radv_physical_device.c" \
+            || die "Patched Mesa source is missing the upstream FSR4 V3 markers"
         log "Incrementally rebuilding only the Mesa targets affected by FSR4."
         ninja -C "$build" src/amd/vulkan/libvulkan_radeon.so
         validate_mesa_output "$output"
@@ -1439,7 +1454,7 @@ EOF
         rm -rf "$FSR4_TRANSACTION_DIR"
         fsync_paths "$STATE_DIR"
         committed=1
-        log "Installed the experimental clean-room FSR4 profile for private per-game activation."
+        log "Installed the experimental upstream FSR4 V3 profile for private per-game activation."
         log "Steam launch option: $FSR4_RUNNER %command%"
         if [[ $default_bootstrapped -eq 1 ]]; then
             log "The global async-compute runtime was installed as the FSR4 prerequisite."

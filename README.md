@@ -656,7 +656,7 @@ stock SteamOS RADV fallback instead.
 
 ### Experimental FSR4 Profile
 
-An additional clean-room FSR4-oriented profile can be built explicitly:
+An additional upstream FSR4 V3 profile can be built explicitly:
 
 ```bash
 ./bc250-mesh-shader.sh setup --fsr4
@@ -664,12 +664,12 @@ An additional clean-room FSR4-oriented profile can be built explicitly:
 
 FSR4 setup can be selected first. If the default async-compute RADV runtime is
 missing or stale, setup builds and installs it automatically. The base output
-is preserved after patches `0001`-`0003`; patch `0004` is then applied to the
-same Mesa source and build directory, and Ninja incrementally rebuilds only the
-affected targets for the private FSR4 driver. An integrity-checked cached base
-is reused only while it still matches the installed global driver. A first-run,
-missing, stale, or unverifiable base triggers one clean build before the
-incremental phase.
+is preserved after DryhoppedIPA patches `0001`-`0003`. Because upstream FSR4 V3
+already contains the compute-queue changes from `0001`, setup then reverses
+`0001` in the source tree and applies the exact V3 patch. Non-overlapping mesh
+and query patches `0002` and `0003` remain applied, and Ninja incrementally
+rebuilds the affected targets for the private driver. An integrity-checked
+cached base is reused only while it still matches the installed global driver.
 
 This profile is disabled by default. The private FSR4 artifact installs entirely
 under `~/.local/share/bc250-mesh-shader/fsr4` and does not replace the global
@@ -687,9 +687,9 @@ routing before starting the game. Remove only this profile with
 `./bc250-mesh-shader.sh uninstall --fsr4`.
 
 The two installed artifacts remain distinct: the global driver contains
-patches `0001`-`0003`, while the per-game FSR4 driver contains `0001`-`0004`.
-Each has its own ICD and manifest even though setup shares one incremental
-build tree.
+DryhoppedIPA patches `0001`-`0003`, while the per-game driver contains upstream
+FSR4 V3 plus DryhoppedIPA patches `0002` and `0003`. Each has its own ICD and
+manifest even though setup shares one incremental build tree.
 
 When FSR4 setup was selected first, it has already installed the global
 async-compute artifact before producing the private driver. Selecting the
@@ -700,32 +700,21 @@ replaces only the global artifact. The private FSR4 driver, ICD, runner, and
 manifest are never removed or overwritten by async setup, and their resulting
 validation state is reported explicitly.
 
-The repository-owned patch is a full independent Unlicense implementation for
-GFX1013 ACO compute shaders. It defers signed-dot lowering through a private NIR
-optimization round, folds surrounding accumulators, selects linear or split
-signed MAD24 chains, recognizes large dense reduction shaders structurally,
-adds the required ACO MUL24/MAD24 selection, rejects leaked native signed dots,
-and bounds eligible LDS spill slots for pathological wave64 workloads. LLVM
-retains Mesa's generic software lowering. The patch does not advertise or use
-the BC-250's broken native signed packed-dot path and contains no code from
-`dmorazasanchez/bc250-fsr4`. Mesa's existing MIT notices still apply to the
-Mesa source and resulting Mesa work.
-
-The investigation and published results in
+Setup fetches `bc250-fsr4-v3.patch` from
 [`dmorazasanchez/bc250-fsr4`](https://github.com/dmorazasanchez/bc250-fsr4)
-inspired this clean-room direction, particularly the finding that optimizing
-the software fallback is preferable to enabling the broken native instruction.
-Credit also belongs to `higorprado` and the BC-250 community acknowledged by
-that project. The upstream repository had no redistribution license when this
-implementation was written, so none of its source or patch content is shipped.
+at immutable commit `741ff3e369026f34820c41a846cf5e55d08e2a61` and verifies SHA-256
+`7fde37fad572b4ba4dcac6052792d10d8d3df65982b01236c63a3eff0a25d225`.
+The patch is not copied into this repository. Its upstream repository currently
+declares no license; users should account for that before redistribution.
 
-The full clean-room stack has passed zero-fuzz composition, NIR and ACO library
-compilation, one million randomized arithmetic cases, dense-strategy checks,
-LLVM/ACO and family-gate checks, and spill-policy comparisons. It
-still has not been benchmarked on a BC-250, validated with captured FSR4
-shaders, disassembled on hardware, or run through Vulkan CTS. It does not claim
-benchmark parity with the inspiration project. Treat it as experimental: games
-may regress, corrupt frames, hang, or reset the GPU.
+V3 implements deferred signed-dot optimization, software signed i24 MUL/MAD
+lowering, FSR4 wrapper fusion, tuned dense-reduction strategies, and the tested
+ACO spill policy. It does not use the BC-250's broken native signed packed-dot
+instruction. V3 also includes an optional `RADV_GFX103` override; the toolkit
+does not set that variable. Upstream reports 63 FPS in its Cyberpunk 2077 test
+and no new spill or resident-wave regressions across its 64 captured shaders.
+The toolkit has not independently reproduced those results. Treat the profile
+as experimental: games may regress, corrupt frames, hang, or reset the GPU.
 
 The upstream series is pinned to commit
 [`d3e6dc0`](https://github.com/DryhoppedIPA/bc250-gfx1013-fix/commit/d3e6dc062c34d2523db0abe5741d1f5b0dea00d9),
@@ -852,7 +841,7 @@ Run the normal component setup commands afterward to regenerate services for the
 | BC-250 CPU Core Unlock | [Linux helper](https://github.com/rw-r-r-0644/bc250-core-unlock) · [EFI source](https://github.com/Hexxeh/bc250-efi-core-unlock) · [EFI headers](https://github.com/yoppeh/efi) | Original SMU method and the optional pre-boot implementation adapted by `bc250-power.sh` |
 | BC-250 Memory Config | [Repository](https://github.com/fanoush/bc250_memcfg) · [VRAM guide](https://elektricm.github.io/amd-bc250-docs/bios/vram/) | CMOS UMA utility fetched by `bc250-ram-split.sh` |
 | BC-250 GFX1013 Fix | [Repository](https://github.com/DryhoppedIPA/bc250-gfx1013-fix) · [integrated commit](https://github.com/DryhoppedIPA/bc250-gfx1013-fix/commit/d3e6dc062c34d2523db0abe5741d1f5b0dea00d9) | Kernel compute lifecycle repair and pinned alternate RADV build by DryhoppedIPA |
-| BC-250 FSR4 experiment | [Repository](https://github.com/dmorazasanchez/bc250-fsr4) | Technical inspiration for the independently implemented, optional software signed-dot lowering; no upstream code is included |
+| BC-250 FSR4 experiment | [Repository](https://github.com/dmorazasanchez/bc250-fsr4) · [integrated commit](https://github.com/dmorazasanchez/bc250-fsr4/commit/741ff3e369026f34820c41a846cf5e55d08e2a61) | Integrity-checked upstream V3 patch fetched for the optional private FSR4 RADV profile |
 | BC-250 HDMI AC-3 encoding | [Implementation guide and scripts](https://github.com/rpf16rj/bc250-steamos-real-toolkit/tree/main/extras/hdmi-ac3-encoding) | ALSA `a52` routing and WirePlumber profile behavior adapted by `hdmi-ac3/hdmi-ac3.sh` |
 | Valve kernel mirror | [Repository](https://github.com/Evlav/linux-integration) | `bc250-audio-fix/fetch-sources.sh` |
 | SteamOS package mirror | [Package index](https://steamdeck-packages.steamos.cloud/archlinux-mirror/) | Audio-driver and AIC8800 build scripts; stable channels are discovered automatically |

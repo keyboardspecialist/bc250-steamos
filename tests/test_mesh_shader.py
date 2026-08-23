@@ -198,9 +198,7 @@ class MeshShaderTests(unittest.TestCase):
         )
         runner.chmod(0o755)
         digest = lambda path: hashlib.sha256(path.read_bytes()).hexdigest()
-        patch_digest = hashlib.sha256(
-            (ROOT / "bc250-mesa-patches/0004-gfx1013-fsr4-sdot-lowering.patch").read_bytes()
-        ).hexdigest()
+        patch_digest = "7fde37fad572b4ba4dcac6052792d10d8d3df65982b01236c63a3eff0a25d225"
         (profile / "install.conf").write_text(
             f"{digest(driver)} {digest(icd)} {digest(runner)} mesa-26.2.0 {patch_digest}\n",
             encoding="ascii",
@@ -624,9 +622,13 @@ class MeshShaderTests(unittest.TestCase):
         fsr4_patch = setup.index(
             'patch -d "$source" -p1 --fuzz=0 -i "$FSR4_PATCH"'
         )
+        reverse_base = setup.index(
+            'patch -d "$source" -R -p1 --fuzz=0 --dry-run'
+        )
         second_ninja = setup.index(ninja, first_ninja + len(ninja))
 
         self.assertLess(first_ninja, fsr4_patch)
+        self.assertLess(reverse_base, fsr4_patch)
         self.assertLess(fsr4_patch, second_ninja)
         self.assertEqual(setup.count('meson setup "$build" "$source"'), 1)
         self.assertIn('source="$MESA_SOURCE"', setup)
@@ -1087,29 +1089,25 @@ class MeshShaderTests(unittest.TestCase):
         self.assertIn("-Dlibdrm:default_library=static", source)
         self.assertIn("-Dbuildtype=release", source)
 
-    def test_fsr4_patch_contains_full_bc250_compiler_stack(self):
-        patch = (
-            ROOT / "bc250-mesa-patches/0004-gfx1013-fsr4-sdot-lowering.patch"
-        ).read_text(encoding="utf-8")
-        for marker in (
-            "radv_gfx1013_analyze_sdot",
-            "radv_gfx1013_use_dense_sdot",
-            "radv_gfx1013_lower_one_sdot",
-            "deferred_options.has_sdot_4x8 = true",
-            "nir_op_imad24_ir3",
-            "nir_op_imul24",
-            "v_mad_i32_i24",
-            "GFX1013 signed dot must be lowered",
-            "gfx1013_pathological_spill",
-            "max_lds_spill_slots = MIN2(max_lds_spill_slots, 8u)",
-            "!compiler_info->key.use_llvm",
-        ):
-            self.assertIn(marker, patch)
+    def test_fsr4_patch_is_pinned_upstream_v3(self):
         script = MESH.read_text(encoding="utf-8")
-        self.assertIn("grep -qF radv_gfx1013_optimize_sdot", script)
-        self.assertIn("radv_gfx1013_optimize_sdot", patch)
-        self.assertNotIn("RADV_GFX103", patch)
-        self.assertNotIn("gfx_level = GFX10_3", patch)
+        self.assertIn(
+            'FSR4_UPSTREAM_COMMIT="741ff3e369026f34820c41a846cf5e55d08e2a61"',
+            script,
+        )
+        self.assertIn('FSR4_PATCH_NAME="bc250-fsr4-v3.patch"', script)
+        self.assertIn(
+            'FSR4_PATCH_SHA256="7fde37fad572b4ba4dcac6052792d10d8d3df65982b01236c63a3eff0a25d225"',
+            script,
+        )
+        self.assertIn(
+            'fetch_verified "$FSR4_PATCH_NAME" "$FSR4_PATCH_SHA256" "$FSR4_PATCH_URL"',
+            script,
+        )
+        self.assertIn("grep -qF bc250_lower_dense_sdot4x8", script)
+        self.assertFalse(
+            (ROOT / "bc250-mesa-patches/0004-gfx1013-fsr4-sdot-lowering.patch").exists()
+        )
 
 
 if __name__ == "__main__":
