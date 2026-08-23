@@ -49,6 +49,12 @@ reported spread therefore causes audio to drift from video. The upstream quirk
 sets `ignore_dpref_ss` only for `AMD_APU_IS_CYAN_SKILLFISH2`; it does not rewrite
 the clock manager's spread-spectrum state.
 
+For receivers that require a compressed surround bitstream, the separate
+[`hdmi-ac3`](../hdmi-ac3/) component enables real-time Dolby Digital 5.1 after
+this kernel correction is installed and active. Its ALSA and WirePlumber setup
+is adapted from the
+[`rpf16rj/bc250-steamos-real-toolkit` HDMI AC-3 guide](https://github.com/rpf16rj/bc250-steamos-real-toolkit/tree/main/extras/hdmi-ac3-encoding).
+
 ## GPU Metrics Patches
 
 Display/audio and telemetry corrections share the same per-kernel `amdgpu`

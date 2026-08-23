@@ -7,7 +7,7 @@ KEEP_DIR=/etc/atomic-update.conf.d
 LEGACY_KEEP_FILE="$KEEP_DIR/bc250-steamos.conf"
 PREVIOUS_ETC=/etc/previous
 BACKUP_DIR=/var/lib/steamos-atomupd/etc_backup
-COMPONENTS=(compute power ram swap cec aic desktop amdgpu)
+COMPONENTS=(compute power ram swap cec ac3 aic desktop amdgpu)
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 STORAGE_SH="$SCRIPT_DIR/bc250-storage.sh"
 STORAGE_UNIT='/etc/systemd/system/var-lib-bc250\x2dcontrol.mount'
@@ -80,7 +80,7 @@ print_storage_paths() {
 write_keep_file() {
     local component="$1" target="$KEEP_DIR/bc250-$1.conf" tmp modeswitch_id
     case "$component" in
-        compute|power|ram|swap|cec|aic|desktop|amdgpu) ;;
+        compute|power|ram|swap|cec|ac3|aic|desktop|amdgpu) ;;
         *) die "Unknown component: $component" ;;
     esac
     if [[ -e "$target" || -L "$target" ]]; then
@@ -156,6 +156,10 @@ EOF
 EOF
                 print_storage_paths
                 ;;
+            ac3)
+                printf '%s\n' /etc/udev/rules.d/91-bc250-hdmi-ac3.rules
+                print_storage_paths
+                ;;
             aic)
                 modeswitch_id=1111:1111
                 if [[ -f /etc/aic8800-modeswitch-id && ! -L /etc/aic8800-modeswitch-id ]]; then
@@ -212,6 +216,7 @@ component_has_state() {
                     || -e "$ROOT_DATA_DIR/swap/install.conf" \
                     || -e /etc/systemd/system/bc250-zswap-setup.service ]] ;;
         cec)     [[ -e "$ROOT_DATA_DIR/helper/bc250-cec-poweroff-standby" || -e /etc/systemd/system-sleep/bc250-cec-amp.sh ]] ;;
+        ac3)     [[ -e /etc/udev/rules.d/91-bc250-hdmi-ac3.rules ]] ;;
         aic)     [[ -e "$ROOT_DATA_DIR/aic8800/source" || -e /etc/systemd/system/aic8800-modules.service ]] ;;
         desktop) [[ -e "$ROOT_DATA_DIR/desktop" || -e /etc/systemd/system/bc250-control.service ]] ;;
         amdgpu)  [[ -e /etc/default/grub.d/bc250-amdgpu.cfg ]] ;;
@@ -236,10 +241,13 @@ install_keep_list() {
     case "$requested" in
         all)
             for component in "${COMPONENTS[@]}"; do
+                if [[ "$component" == ac3 ]] && ! component_has_state ac3; then
+                    continue
+                fi
                 write_keep_file "$component"
             done
             ;;
-        compute|power|ram|swap|cec|aic|desktop|amdgpu) write_keep_file "$requested" ;;
+        compute|power|ram|swap|cec|ac3|aic|desktop|amdgpu) write_keep_file "$requested" ;;
         *) die "Unknown component: $requested" ;;
     esac
 }
@@ -250,7 +258,7 @@ remove_keep_list() {
     local -a selected=()
     case "$requested" in
         all) selected=("${COMPONENTS[@]}") ;;
-        compute|power|ram|swap|cec|aic|desktop|amdgpu) selected=("$requested") ;;
+        compute|power|ram|swap|cec|ac3|aic|desktop|amdgpu) selected=("$requested") ;;
         *) die "Unknown component: $requested" ;;
     esac
 
@@ -559,12 +567,13 @@ cmd_menu() {
 
 cmd_help() {
     cat << EOF
-Usage: $0 {install|remove} [compute|power|ram|swap|cec|aic|desktop|amdgpu|all]
+Usage: $0 {install|remove} [compute|power|ram|swap|cec|ac3|aic|desktop|amdgpu|all]
        $0 recover [compute|power|all] [--force]
        $0 {status|menu|help}
 
   remove COMPONENT     Remove only this helper's matching component keep list.
-                       COMPONENT is compute, power, ram, swap, cec, aic, desktop, amdgpu, or all.
+                       COMPONENT is compute, power, ram, swap, cec, ac3, aic,
+                       desktop, amdgpu, or all.
 
 Run with no arguments in a terminal to open the interactive menu.
 EOF
@@ -580,7 +589,7 @@ case "$1" in
     remove)
         shift
         [[ $# -eq 1 ]] \
-            || die "Usage: $0 remove {compute|power|ram|swap|cec|aic|desktop|amdgpu|all}"
+            || die "Usage: $0 remove {compute|power|ram|swap|cec|ac3|aic|desktop|amdgpu|all}"
         remove_keep_list "$1"
         ;;
     recover) shift; recover_settings "${1:-all}" "${2:-}" ;;

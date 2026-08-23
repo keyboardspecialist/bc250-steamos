@@ -16,6 +16,7 @@ AIC_SETUP_SH="$SCRIPT_DIR/aic8800/steamdeck-setup.sh"
 AUDIO_FIX_SH="$SCRIPT_DIR/bc250-audio-fix/patch-driver.sh"
 AUDIO_CLEAN_SH="$SCRIPT_DIR/bc250-audio-fix/clean.sh"
 AMDGPU_BOOT_CONFIG_SH="$SCRIPT_DIR/bc250-audio-fix/boot-config.sh"
+HDMI_AC3_SH="$SCRIPT_DIR/hdmi-ac3/hdmi-ac3.sh"
 MESH_SHADER_SH="$SCRIPT_DIR/bc250-mesh-shader.sh"
 DECKY_INSTALL_SH="$SCRIPT_DIR/decky-plugin/install.sh"
 DESKTOP_INSTALL_SH="$SCRIPT_DIR/desktop-control/install.sh"
@@ -131,6 +132,22 @@ clean_audio_fix() {
         bash "$AUDIO_CLEAN_SH"
 }
 
+enable_hdmi_ac3() {
+    require_normal_user
+    require_script "$HDMI_AC3_SH"
+    confirm_action \
+        "Enable real-time Dolby Digital 5.1 encoding for HDMI/DisplayPort?" \
+        bash "$HDMI_AC3_SH" install
+}
+
+revert_hdmi_ac3() {
+    require_normal_user
+    require_script "$HDMI_AC3_SH"
+    confirm_action \
+        "Remove the toolkit AC-3 profile and restore default HDMI stereo?" \
+        bash "$HDMI_AC3_SH" revert
+}
+
 scheduler_policy_badge() {
     if [[ ! -f "$AMDGPU_BOOT_CONFIG_SH" || -L "$AMDGPU_BOOT_CONFIG_SH" ]]; then
         printf '%s' "${CR}[unavailable]${C0}"
@@ -184,6 +201,21 @@ amdgpu_badge() {
     status=$(bash "$AUDIO_FIX_SH" status 2>/dev/null || true)
     case "$status" in
         *"state: installed"*) printf '%s' "${CG}[installed]${C0}" ;;
+        *"state: incomplete"*) printf '%s' "${CY}[incomplete]${C0}" ;;
+        *) printf '%s' "${CD}[not installed]${C0}" ;;
+    esac
+}
+
+hdmi_ac3_badge() {
+    local status=""
+    if [[ ! -f "$HDMI_AC3_SH" || -L "$HDMI_AC3_SH" ]]; then
+        printf '%s' "${CR}[unavailable]${C0}"
+        return
+    fi
+    status=$(bash "$HDMI_AC3_SH" status 2>/dev/null || true)
+    case "$status" in
+        *"state: active"*) printf '%s' "${CG}[active]${C0}" ;;
+        *"state: configured"*) printf '%s' "${CY}[configured]${C0}" ;;
         *"state: incomplete"*) printf '%s' "${CY}[incomplete]${C0}" ;;
         *) printf '%s' "${CD}[not installed]${C0}" ;;
     esac
@@ -477,7 +509,7 @@ cmd_guided_setup_menu() {
             "Optional performance|$(radv_badge)|Build the Mesa RADV patch that enables GFX1013 async compute, or tune GPU and CPU behavior. RADV takes about 3-5 minutes."
             "Optional GPU CU unlock|$(component_badge "$COMPUTE_SH")|Inspect the harvest map, test live routing, stress-test it, then choose whether to persist it."
             "Optional CPU core unlock|${CD}[guided test]${C0}|Test eight cores once, then choose one automatic unlock method: standard Linux or EFI pre-boot."
-            "Optional devices||Configure HDMI-CEC or install AIC8800 support only when matching hardware is present."
+            "Optional devices||Configure HDMI audio or CEC, or install AIC8800 support only when matching hardware is present."
             "Choose control interface||Install Decky for Gaming Mode, Plasma for desktop, or the standalone Trainer."
             "Finish - Verify system|${CD}[read only]${C0}|Run the complete status report after required reboot and sign-out checkpoints."
         )
@@ -616,13 +648,31 @@ cmd_devices_menu() {
     require_normal_user
     while true; do
         local items=(
+            "HDMI audio|${CG}[menu]${C0}|Enable Dolby Digital 5.1 encoding or revert to the default HDMI stereo profile."
             "CEC / HDMI control|$(component_badge "$CEC_SH")|Set up TV and receiver behavior, then access everyday HDMI controls."
             "AIC8800 WiFi / Bluetooth|${CY}[hardware specific]${C0}|Install only when the system uses the AIC8800 wireless adapter."
         )
         menu_select "BC-250 display & connectivity" "${items[@]}" || { echo; break; }
         case $MENU_CHOICE in
-            0) run_menu_child cec ;;
-            1) run_menu_action wifi ;;
+            0) cmd_audio_menu ;;
+            1) run_menu_child cec ;;
+            2) run_menu_action wifi ;;
+        esac
+    done
+}
+
+cmd_audio_menu() {
+    require_terminal
+    require_normal_user
+    while true; do
+        local items=(
+            "Enable HDMI AC-3 5.1|$(hdmi_ac3_badge)|Encode system audio as Dolby Digital 5.1. Requires the AMDGPU audio fix, an AC-3 receiver, and SteamOS audio packages."
+            "Revert HDMI AC-3 to stereo|${CY}[revert]${C0}|Remove toolkit AC-3 configuration and restore the default HDMI stereo profile and sink."
+        )
+        menu_select "BC-250 HDMI audio" "${items[@]}" || { echo; break; }
+        case $MENU_CHOICE in
+            0) run_menu_action hdmi-ac3-enable ;;
+            1) run_menu_action hdmi-ac3-revert ;;
         esac
     done
 }
@@ -657,7 +707,7 @@ cmd_menu() {
             "Core system|${CG}[menu]${C0}|Configure storage, AMDGPU, power foundations, memory balance, and update protection."
             "Performance tuning|${CG}[menu]${C0}|Configure Mesa / RADV and optional GPU or CPU tuning after setup is stable."
             "Hardware unlocks|${CG}[menu]${C0}|Test GPU compute units or CPU cores with explicit stability and recovery steps."
-            "Display & connectivity|${CG}[menu]${C0}|Configure HDMI-CEC or hardware-specific AIC8800 wireless support."
+            "Display & connectivity|${CG}[menu]${C0}|Configure HDMI audio, HDMI-CEC, or hardware-specific AIC8800 wireless support."
             "Control interfaces|${CG}[menu]${C0}|Install Decky, Plasma, or the standalone BC250 Trainer."
             "Maintenance & recovery|${CG}[menu]${C0}|Verify, repair, clean build state, remove components, or purge preserved data."
             "System status|${CD}[read only]${C0}|Show system integration, graphics-driver, and GPU compute-unit status."
@@ -678,7 +728,7 @@ cmd_menu() {
 
 cmd_help() {
     cat << EOF
-Usage: $0 [menu|setup|status|inventory-json|action OPERATION_ID|drivers|unlocks|storage-updates|interfaces|power|ram|swap|compute|cpu-unlock|cec|storage|persistence|wifi|amdgpu|amdgpu-clean|scheduler-policy|radv|decky|desktop|trainer|manage|help]
+Usage: $0 [menu|setup|status|inventory-json|action OPERATION_ID|drivers|unlocks|storage-updates|interfaces|power|ram|swap|compute|cpu-unlock|cec|audio-output|hdmi-ac3-enable|hdmi-ac3-revert|storage|persistence|wifi|amdgpu|amdgpu-clean|scheduler-policy|radv|decky|desktop|trainer|manage|help]
 
 Run without arguments in a terminal to open the unified toolkit menu.
 Run the toolkit as the logged-in Deck user, not with sudo; child tools request
@@ -699,6 +749,9 @@ Commands:
   compute                Open the GPU Compute-Unit Unlock menu
   cpu-unlock             Open the CPU Core Unlock menu
   cec                    Open the CEC / HDMI Control menu
+  audio-output           Open the HDMI audio menu
+  hdmi-ac3-enable        Confirm and enable Dolby Digital 5.1 encoding
+  hdmi-ac3-revert        Confirm and restore default HDMI stereo
   storage                Open the Persistent Storage menu
   persistence            Open the SteamOS Update Persistence menu
   wifi                   Confirm and run the AIC8800 installer
@@ -755,6 +808,9 @@ case "$command_name" in
     compute) (($# == 0)) || die "Usage: $0 compute"; run_sudo_script "$COMPUTE_SH" menu ;;
     cpu-unlock) (($# == 0)) || die "Usage: $0 cpu-unlock"; run_sudo_script "$POWER_SH" cpu-unlock menu ;;
     cec) (($# == 0)) || die "Usage: $0 cec"; require_normal_user; run_script "$CEC_SH" menu ;;
+    audio-output) (($# == 0)) || die "Usage: $0 audio-output"; cmd_audio_menu ;;
+    hdmi-ac3-enable) (($# == 0)) || die "Usage: $0 hdmi-ac3-enable"; enable_hdmi_ac3 ;;
+    hdmi-ac3-revert) (($# == 0)) || die "Usage: $0 hdmi-ac3-revert"; revert_hdmi_ac3 ;;
     storage) (($# == 0)) || die "Usage: $0 storage"; run_script "$STORAGE_SH" menu ;;
     persistence) (($# == 0)) || die "Usage: $0 persistence"; run_script "$PERSISTENCE_SH" menu ;;
     wifi) (($# == 0)) || die "Usage: $0 wifi"; install_wifi ;;

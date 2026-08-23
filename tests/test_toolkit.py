@@ -32,6 +32,9 @@ class ToolkitTests(unittest.TestCase):
             "compute",
             "cpu-unlock",
             "cec",
+            "audio-output",
+            "hdmi-ac3-enable",
+            "hdmi-ac3-revert",
             "storage",
             "persistence",
             "wifi",
@@ -119,6 +122,11 @@ class ToolkitTests(unittest.TestCase):
         self.assertNotIn("without confusing the two workflows", source)
         self.assertIn("0) run_menu_child compute", unlocks_menu)
         self.assertIn("1) run_menu_child cpu-unlock", unlocks_menu)
+        self.assertIn('"HDMI audio|', source)
+        self.assertIn('"Enable HDMI AC-3 5.1|', source)
+        self.assertIn('"Revert HDMI AC-3 to stereo|', source)
+        self.assertIn("0) run_menu_action hdmi-ac3-enable", source)
+        self.assertIn("1) run_menu_action hdmi-ac3-revert", source)
         self.assertIn("amdgpu|audio)", source)
         self.assertIn("radv|mesh)", source)
         self.assertIn('python3 "$TRAINER_RELEASE_INSTALLER"', source)
@@ -313,6 +321,7 @@ class ToolkitTests(unittest.TestCase):
             "aic8800/steamdeck-setup.sh",
             "bc250-audio-fix/patch-driver.sh",
             "bc250-audio-fix/clean.sh",
+            "hdmi-ac3/hdmi-ac3.sh",
             "decky-plugin/install.sh",
             "desktop-control/install.sh",
         )
@@ -348,6 +357,7 @@ class ToolkitTests(unittest.TestCase):
             "bc250-mesh-shader.sh": ("status", 0),
             "aic8800/steamdeck-setup.sh": ("status", 0),
             "bc250-audio-fix/patch-driver.sh": ("status", 0),
+            "hdmi-ac3/hdmi-ac3.sh": ("status", 0),
             "decky-plugin/install.sh": ("status", 1),
             "desktop-control/install.sh": ("status", 0),
             "trainer/install.sh": ("status", 0),
@@ -645,6 +655,7 @@ class ToolkitTests(unittest.TestCase):
                     "desktop",
                     "decky",
                     "cec",
+                    "ac3",
                     "power",
                     "ram",
                     "swap",

@@ -28,6 +28,7 @@ Open the unified toolkit menu as the logged-in Deck user:
 | Compressed swap (optional) | `sudo ./bc250-swap.sh`, then choose zram or zswap-backed disk swap |
 | GPU compute-unit unlock | `sudo ./bc250-40cu.sh` |
 | CEC | `./bc250-cec.sh setup` |
+| HDMI Dolby Digital 5.1 (optional) | **Display & Connectivity > HDMI audio** or `./hdmi-ac3/hdmi-ac3.sh install` |
 | AIC8800 | `sudo bash ./aic8800/steamdeck-setup.sh` |
 | Decky plugin | `bash ./decky-plugin/install.sh` |
 | Plasma desktop control | `bash ./desktop-control/install.sh install` |
@@ -84,6 +85,7 @@ sudo ./bc250-power.sh status
 | [`desktop-control/`](#plasma-desktop-control) | Plasma system-tray and windowed controls |
 | [`trainer/`](#bc250-trainer) | Standalone native Qt control application |
 | [`bc250-audio-fix/`](#amdgpu-driver) | DisplayPort clock, GPU telemetry, and GFX1013 compute repair |
+| [`hdmi-ac3/`](#hdmi-ac-3-surround-encoding-optional) | Real-time Dolby Digital 5.1 encoding over HDMI/DisplayPort |
 | [`bc250-mesh-shader.sh`](#mesa--radv-async-compute-patch-optional-recommended) | Optional, recommended Mesa / RADV async-compute driver enabled globally for the user session |
 | [`aic8800/`](#wifi-and-bluetooth) | AIC8800 USB WiFi and Bluetooth driver |
 
@@ -112,6 +114,7 @@ Each child requests administrator access only when needed.
 | `./bc250-toolkit.sh swap` | Choose a compressed swap profile |
 | `./bc250-toolkit.sh amdgpu` | Build the AMDGPU kernel fixes |
 | `./bc250-toolkit.sh radv` | Open the global Mesa / RADV async-compute menu |
+| `./bc250-toolkit.sh audio-output` | Open HDMI AC-3 enable and stereo-revert options |
 | `./bc250-toolkit.sh trainer` | Download, verify, and install the latest native BC250 Trainer release |
 | `./bc250-toolkit.sh manage` | Review and remove installed components |
 | `./bc250-toolkit.sh help` | List launcher commands and components |
@@ -534,6 +537,28 @@ Removing a frontend releases only its marker, and the service is removed only
 after the final registered frontend is gone. Tuning profiles and helper state
 remain preserved.
 
+## HDMI AC-3 Surround Encoding (Optional)
+
+SteamOS ships an ALSA AC-3 profile for Valve hardware, but the BC-250's DMI
+identity does not activate it. The toolkit can select that profile for the AMD
+HDMI card and encode six-channel PCM to Dolby Digital with ALSA's `a52` plugin.
+Install the AMDGPU audio correction and reboot first, then open **Display &
+Connectivity > HDMI audio** and choose **Enable HDMI AC-3 5.1**.
+
+The setup requires an AC-3-capable receiver or soundbar. It installs a
+toolkit-owned udev rule, adds a user WirePlumber fragment, selects the encoded
+sink, and retains the system rule across SteamOS updates. The same audio menu
+has a separate **Revert HDMI AC-3 to stereo** option. Command-line equivalents:
+
+```bash
+./hdmi-ac3/hdmi-ac3.sh install
+./hdmi-ac3/hdmi-ac3.sh status
+./hdmi-ac3/hdmi-ac3.sh revert
+```
+
+See [`hdmi-ac3/README.md`](hdmi-ac3/README.md) for requirements, behavior, and
+upstream attribution.
+
 ## AMDGPU Driver
 
 Build and install the matching `amdgpu` module:
@@ -740,6 +765,7 @@ by SCSI eject, while `1111:1111` adapters use the required two-message sequence.
 | RAM / VRAM split | CMOS persists independently; the keep list retains the TTM GRUB drop-in |
 | Compressed swap | The keep list retains the selected zram configuration or the zswap tmpfiles configuration, setup service, and disk-swap unit; the swapfile persists in toolkit storage |
 | CEC | Home configuration and allowlisted system integration carry forward |
+| HDMI AC-3 encoding | The udev profile selector is retained; the WirePlumber fragment lives in the user's home directory |
 | Patched AMDGPU module | Run `bc250-audio-fix/patch-driver.sh` after each kernel update to rebuild the kernel-specific module; the rebuild disables any retained scheduler policy until RADV setup is rerun |
 | Mesa / RADV async-compute patch | Rerun `bc250-mesh-shader.sh setup` after a SteamOS update to restore the root-owned driver, safety-gated environment generator, and scheduler policy |
 | AIC8800 modules | The boot helper reuses staged modules or published headers; rerun setup if it requests interactive source preparation |
@@ -825,6 +851,7 @@ Run the normal component setup commands afterward to regenerate services for the
 | BC-250 Memory Config | [Repository](https://github.com/fanoush/bc250_memcfg) · [VRAM guide](https://elektricm.github.io/amd-bc250-docs/bios/vram/) | CMOS UMA utility fetched by `bc250-ram-split.sh` |
 | BC-250 GFX1013 Fix | [Repository](https://github.com/DryhoppedIPA/bc250-gfx1013-fix) · [integrated commit](https://github.com/DryhoppedIPA/bc250-gfx1013-fix/commit/d3e6dc062c34d2523db0abe5741d1f5b0dea00d9) | Kernel compute lifecycle repair and pinned alternate RADV build by DryhoppedIPA |
 | BC-250 FSR4 experiment | [Repository](https://github.com/dmorazasanchez/bc250-fsr4) | Technical inspiration for the independently implemented, optional software signed-dot lowering; no upstream code is included |
+| BC-250 HDMI AC-3 encoding | [Implementation guide and scripts](https://github.com/rpf16rj/bc250-steamos-real-toolkit/tree/main/extras/hdmi-ac3-encoding) | ALSA `a52` routing and WirePlumber profile behavior adapted by `hdmi-ac3/hdmi-ac3.sh` |
 | Valve kernel mirror | [Repository](https://github.com/Evlav/linux-integration) | `bc250-audio-fix/fetch-sources.sh` |
 | SteamOS package mirror | [Package index](https://steamdeck-packages.steamos.cloud/archlinux-mirror/) | Audio-driver and AIC8800 build scripts; stable channels are discovered automatically |
 | SteamOS atomic-update keep list | [Defaults](https://github.com/evlaV/steamos-customizations/blob/master/atomic-update/rauc/atomic-update-keep.conf.in) · [Drop-in example](https://github.com/evlaV/steamos-customizations/blob/master/atomic-update/rauc/example-additional-keep-list.conf.in) | `bc250-update-persistence.sh` |

@@ -15,6 +15,7 @@ AUDIO_ROLLBACK = ROOT / "bc250-audio-fix/rollback.sh"
 AUDIO_BOOT_CONFIG = ROOT / "bc250-audio-fix/boot-config.sh"
 AUDIO_CLEAN = ROOT / "bc250-audio-fix/clean.sh"
 AUDIO_PREREQS = ROOT / "bc250-audio-fix/ensure-build-prereqs.sh"
+HDMI_AC3 = ROOT / "hdmi-ac3/hdmi-ac3.sh"
 METRICS_PATCH = ROOT / "bc250-audio-fix/bc250-cyan-skillfish-gpu-telemetry.patch"
 GFXCLK_PATCH = ROOT / "bc250-audio-fix/bc250-cyan-skillfish-gfxclk.patch"
 DP_AUDIO_PATCH = ROOT / "bc250-audio-fix/0002-bc250-audio.patch"
@@ -257,6 +258,7 @@ class DriverLifecycleTests(unittest.TestCase):
                 str(AUDIO_CLEAN),
                 str(AUDIO_ROLLBACK),
                 str(AUDIO_PREREQS),
+                str(HDMI_AC3),
             ],
             check=True,
         )

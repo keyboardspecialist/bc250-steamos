@@ -30,6 +30,7 @@ class MaintenanceTests(unittest.TestCase):
             "SWAP_SH": "swap",
             "COMPUTE_SH": "compute",
             "CEC_SH": "cec",
+            "HDMI_AC3_SH": "ac3",
             "STORAGE_SH": "storage",
             "AIC_SH": "aic",
             "AUDIO_SH": "audio",
@@ -110,7 +111,7 @@ class MaintenanceTests(unittest.TestCase):
                 text=True,
                 env=env,
             )
-            self.assertEqual(status.stdout.count("installed"), 12)
+            self.assertEqual(status.stdout.count("installed"), 13)
             self.assertIn("Saved tuning profiles", plan.stdout)
             self.assertFalse(call_log.exists())
 
@@ -132,6 +133,7 @@ class MaintenanceTests(unittest.TestCase):
                     "decky:uninstall",
                     "cec:uninstall",
                     "persistence:remove cec",
+                    "ac3:uninstall",
                     "power:uninstall",
                     "persistence:remove power",
                     "ram:uninstall",

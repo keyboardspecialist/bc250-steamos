@@ -230,6 +230,28 @@ class PersistenceUnitTests(unittest.TestCase):
             self.assertIn("Atomic-update keep list installed", result.stdout)
             self.assertIn("/etc/default/grub.d/bc250-amdgpu.cfg", payload)
 
+    def test_ac3_keep_list_contains_udev_profile_selector(self):
+        with tempfile.TemporaryDirectory() as directory:
+            keep = Path(directory)
+            subprocess.run(
+                [
+                    "bash",
+                    "-c",
+                    'script=$1; keep=$2; set -- help; source "$script" >/dev/null; '
+                    'require_root() { :; }; install_storage() { :; }; KEEP_DIR=$keep; '
+                    'LEGACY_KEEP_FILE="$keep/bc250-steamos.conf"; install_keep_list ac3',
+                    "_",
+                    str(PERSISTENCE),
+                    str(keep),
+                ],
+                check=True,
+                capture_output=True,
+                text=True,
+            )
+            payload = (keep / "bc250-ac3.conf").read_text(encoding="utf-8")
+            self.assertIn("/etc/udev/rules.d/91-bc250-hdmi-ac3.rules", payload)
+            self.assertIn("bc250-persistence-recovery.service", payload)
+
     def test_swap_keep_list_contains_generator_and_disk_units(self):
         with tempfile.TemporaryDirectory() as directory:
             keep = Path(directory)
@@ -649,7 +671,7 @@ grep -Fxq "daemon-reload" "$SYSTEMCTL_LOG"
         )
         storage = STORAGE.read_text(encoding="utf-8")
         for expected in (
-            "COMPONENTS=(compute power ram swap cec aic desktop amdgpu)",
+            "COMPONENTS=(compute power ram swap cec ac3 aic desktop amdgpu)",
             "/etc/systemd/system/bc250-control.service",
             "/etc/systemd/system/bc250-desktop-control-repair.service",
             "/etc/dbus-1/system.d/io.github.keyboardspecialist.BC250Control1.conf",
