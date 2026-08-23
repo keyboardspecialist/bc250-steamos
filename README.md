@@ -484,7 +484,9 @@ Use `./bc250-cec.sh help` for boot, suspend, poweroff, receiver-follow, and beha
 
 ## Big Picture Plugin
 
-[`decky-plugin/`](decky-plugin/) provides a Decky Loader Quick Access interface with vertical sections for CU status, power health, GPU tuning, saved CPU tuning, and CEC controls.
+[`decky-plugin/`](decky-plugin/) provides a Decky Loader Quick Access interface
+with vertical sections for CU status, power health, GPU tuning, saved CPU
+tuning, HDMI surround/stereo selection, and CEC controls.
 
 The plugin uses the toolkit checkout at `~/.local/share/bc250-fixes/bc250-steamos`. Build instructions are in [`decky-plugin/README.md`](decky-plugin/README.md).
 

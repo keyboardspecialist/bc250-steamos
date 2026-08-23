@@ -40,6 +40,18 @@ class BackendParsingTests(unittest.TestCase):
         ):
             self.assertFalse(ToolkitBackend._cpu_helper_available())
 
+    def test_hdmi_helper_availability_requires_trusted_dependencies(self):
+        backend = object.__new__(ToolkitBackend)
+        with patch.object(ToolkitBackend, "_trusted_root_file", return_value=True):
+            self.assertTrue(backend._hdmi_audio_helper_available())
+        missing = backend_module.HDMI_AUDIO_REQUIRED_PATHS[1]
+        with patch.object(
+            ToolkitBackend,
+            "_trusted_root_file",
+            side_effect=lambda path: path != missing,
+        ):
+            self.assertFalse(backend._hdmi_audio_helper_available())
+
     def test_cpu_clock_uses_fastest_effective_core(self):
         backend = object.__new__(ToolkitBackend)
         backend._read = MagicMock(
@@ -581,6 +593,156 @@ class BackendMutationTests(unittest.IsolatedAsyncioTestCase):
         backend = object.__new__(ToolkitBackend)
         with self.assertRaises(CommandError):
             await backend.set_cec_toggle("wake-tv", "true")
+
+    async def test_hdmi_audio_status_parses_managed_lifecycle(self):
+        backend = object.__new__(ToolkitBackend)
+        backend._hdmi_audio_helper_available = MagicMock(return_value=True)
+        backend._hdmi_audio_user_exec = AsyncMock(
+            return_value=(
+                0,
+                "\n".join(
+                    (
+                        "[bc250-hdmi-ac3] udev rule: installed",
+                        "[bc250-hdmi-ac3] WirePlumber config: installed",
+                        "[bc250-hdmi-ac3] update persistence: installed",
+                        "[bc250-hdmi-ac3] active profile: output:hdmi-ac3-surround",
+                        "[bc250-hdmi-ac3] state: active",
+                    )
+                ),
+                "",
+            )
+        )
+
+        status = await backend.get_hdmi_audio_status()
+
+        self.assertTrue(status["available"])
+        self.assertTrue(status["controllable"])
+        self.assertTrue(status["enabled"])
+        self.assertTrue(status["active"])
+        self.assertEqual(status["state"], "active")
+        backend._hdmi_audio_user_exec.assert_awaited_once_with(
+            "status", check=False
+        )
+
+    async def test_hdmi_audio_status_rejects_inconsistent_output(self):
+        backend = object.__new__(ToolkitBackend)
+        backend._hdmi_audio_helper_available = MagicMock(return_value=True)
+        backend._hdmi_audio_user_exec = AsyncMock(
+            return_value=(
+                0,
+                "\n".join(
+                    (
+                        "[bc250-hdmi-ac3] udev rule: missing",
+                        "[bc250-hdmi-ac3] WirePlumber config: missing",
+                        "[bc250-hdmi-ac3] update persistence: missing",
+                        "[bc250-hdmi-ac3] active profile: unknown",
+                        "[bc250-hdmi-ac3] state: active",
+                    )
+                ),
+                "",
+            )
+        )
+
+        with self.assertRaisesRegex(CommandError, "internally inconsistent"):
+            await backend.get_hdmi_audio_status()
+
+    async def test_hdmi_surround_maps_boolean_to_fixed_helper_phases(self):
+        backend = object.__new__(ToolkitBackend)
+        prepare_mutation_backend(backend)
+        backend.get_hdmi_audio_status = AsyncMock(
+            side_effect=[
+                {
+                    "state": "not-installed",
+                    "controllable": True,
+                },
+                {
+                    "state": "active",
+                    "controllable": True,
+                },
+            ]
+        )
+        backend._hdmi_audio_root_exec = AsyncMock(return_value=None)
+        backend._hdmi_audio_user_exec = AsyncMock(return_value=(0, "", ""))
+
+        await backend.set_hdmi_surround(True)
+        await backend.set_hdmi_surround(False)
+
+        self.assertEqual(
+            backend._hdmi_audio_root_exec.await_args_list,
+            [call("install-system"), call("remove-system")],
+        )
+        self.assertEqual(
+            backend._hdmi_audio_user_exec.await_args_list,
+            [call("install-user"), call("revert-user")],
+        )
+
+    async def test_hdmi_root_phase_uses_fixed_trusted_environment(self):
+        backend = object.__new__(ToolkitBackend)
+        backend._hdmi_audio_helper_available = MagicMock(return_value=True)
+        backend._exec = AsyncMock(return_value=(0, "", ""))
+
+        await backend._hdmi_audio_root_exec("install-system")
+
+        argv = backend._exec.await_args.args[0]
+        options = backend._exec.await_args.kwargs
+        self.assertEqual(
+            argv,
+            [
+                backend_module.BASH,
+                str(backend_module.HDMI_AUDIO_HELPER_PATH),
+                "install-system",
+            ],
+        )
+        self.assertEqual(options["env"]["HOME"], "/root")
+        self.assertEqual(
+            options["env"]["PERSISTENCE_SH"],
+            "/var/lib/bc250-control/helper/bc250-update-persistence.sh",
+        )
+        self.assertNotIn("UDEV_RULE", options["env"])
+        self.assertNotIn("KEEP_FILE", options["env"])
+
+    async def test_hdmi_surround_rolls_back_system_after_user_failure(self):
+        backend = object.__new__(ToolkitBackend)
+        prepare_mutation_backend(backend)
+        backend.get_hdmi_audio_status = AsyncMock(
+            return_value={"state": "not-installed", "controllable": True}
+        )
+        backend._hdmi_audio_root_exec = AsyncMock(return_value=None)
+        backend._hdmi_audio_user_exec = AsyncMock(
+            side_effect=CommandError("audio activation failed")
+        )
+
+        with self.assertRaisesRegex(CommandError, "audio activation failed"):
+            await backend.set_hdmi_surround(True)
+
+        self.assertEqual(
+            backend._hdmi_audio_root_exec.await_args_list,
+            [call("install-system"), call("remove-system")],
+        )
+
+    async def test_hdmi_stereo_restores_system_after_user_failure(self):
+        backend = object.__new__(ToolkitBackend)
+        prepare_mutation_backend(backend)
+        backend.get_hdmi_audio_status = AsyncMock(
+            return_value={"state": "active", "controllable": True}
+        )
+        backend._hdmi_audio_root_exec = AsyncMock(return_value=None)
+        backend._hdmi_audio_user_exec = AsyncMock(
+            side_effect=CommandError("stereo activation failed")
+        )
+
+        with self.assertRaisesRegex(CommandError, "stereo activation failed"):
+            await backend.set_hdmi_surround(False)
+
+        self.assertEqual(
+            backend._hdmi_audio_root_exec.await_args_list,
+            [call("remove-system"), call("install-system")],
+        )
+
+    async def test_hdmi_surround_rejects_non_boolean_input(self):
+        backend = object.__new__(ToolkitBackend)
+        with self.assertRaisesRegex(CommandError, "must be a boolean"):
+            await backend.set_hdmi_surround("true")
 
     async def test_cec_name_uses_existing_tool_command(self):
         backend = object.__new__(ToolkitBackend)
@@ -1897,6 +2059,8 @@ class DeckyRuntimeTests(unittest.TestCase):
                 Path("bc250-storage.sh"): repository / "bc250-storage.sh",
                 Path("bc250-update-persistence.sh"): repository
                 / "bc250-update-persistence.sh",
+                Path("hdmi-ac3/hdmi-ac3.sh"): repository
+                / "hdmi-ac3/hdmi-ac3.sh",
                 Path("acpi-tables/SSDT-CST.dsl"): repository
                 / "acpi-tables/SSDT-CST.dsl",
                 Path("acpi-tables/SSDT-PST.dsl"): repository

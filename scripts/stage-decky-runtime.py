@@ -84,6 +84,10 @@ def stage(output: Path, epoch: int) -> None:
             "topology.sh",
         ):
             copy_file(REPOSITORY / name, temporary / "privileged-helper" / name)
+        copy_file(
+            REPOSITORY / "hdmi-ac3/hdmi-ac3.sh",
+            temporary / "privileged-helper/hdmi-ac3/hdmi-ac3.sh",
+        )
         for directory in ("acpi-tables", "smu-oc-patches"):
             copy_tree(
                 REPOSITORY / directory,

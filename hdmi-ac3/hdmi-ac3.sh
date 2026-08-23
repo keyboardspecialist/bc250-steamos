@@ -15,6 +15,15 @@ INSTALL_TRANSACTION=0
 HAD_UDEV_RULE=0
 HAD_WP_CONF=0
 HAD_KEEP_FILE=0
+USER_INSTALL_TRANSACTION=0
+USER_HAD_WP_CONF=0
+USER_REVERT_TRANSACTION=0
+USER_REVERT_HAD_WP_CONF=0
+SYSTEM_TRANSACTION=""
+SYSTEM_HAD_UDEV_RULE=0
+SYSTEM_HAD_KEEP_FILE=0
+USER_PREVIOUS_PROFILE=""
+USER_PREVIOUS_SINK=""
 
 log() { echo "[bc250-hdmi-ac3] $*"; }
 die() { echo "[bc250-hdmi-ac3] $*" >&2; exit 1; }
@@ -116,6 +125,36 @@ finish_rootfs() {
     trap - EXIT
 }
 
+system_transaction_cleanup() {
+    [[ -n "$SYSTEM_TRANSACTION" ]] || return 0
+    local failed=0
+    set +e
+    if [[ "$SYSTEM_TRANSACTION" == install ]]; then
+        if [[ $SYSTEM_HAD_KEEP_FILE -eq 0 ]]; then
+            bash "$PERSISTENCE_SH" remove ac3 || failed=1
+        fi
+        if [[ $SYSTEM_HAD_UDEV_RULE -eq 0 ]]; then
+            rm -f -- "$UDEV_RULE" || failed=1
+        fi
+    elif [[ "$SYSTEM_TRANSACTION" == remove ]]; then
+        if [[ $SYSTEM_HAD_UDEV_RULE -eq 1 ]]; then
+            write_managed_file "$UDEV_RULE" udev_rule_content || failed=1
+        fi
+        if [[ $SYSTEM_HAD_KEEP_FILE -eq 1 ]]; then
+            bash "$PERSISTENCE_SH" install ac3 || failed=1
+        fi
+    fi
+    udevadm control --reload-rules || failed=1
+    udevadm trigger --subsystem-match=sound || failed=1
+    restore_rootfs || failed=1
+    if [[ $failed -eq 0 ]]; then
+        log "Failed system phase rolled back to its previous state."
+    else
+        echo "[bc250-hdmi-ac3] System rollback was incomplete; run status and repair from the toolkit." >&2
+        return 1
+    fi
+}
+
 require_root() { [[ $EUID -eq 0 ]] || die "Internal system action requires sudo."; }
 
 install_system_config() {
@@ -125,16 +164,19 @@ install_system_config() {
         || die "Update persistence helper is missing or unsafe: $PERSISTENCE_SH"
     preflight_managed_file "$UDEV_RULE" udev_rule_content
     [[ -e "$UDEV_RULE" || -L "$UDEV_RULE" ]] && had_rule=1
-    trap restore_rootfs EXIT
+    SYSTEM_HAD_UDEV_RULE=$had_rule
+    [[ -e "$KEEP_FILE" || -L "$KEEP_FILE" ]] && SYSTEM_HAD_KEEP_FILE=1
+    SYSTEM_TRANSACTION=install
+    trap system_transaction_cleanup EXIT
     unlock_rootfs
     write_managed_file "$UDEV_RULE" udev_rule_content
     if ! bash "$PERSISTENCE_SH" install ac3; then
-        [[ $had_rule -eq 1 ]] || rm -f -- "$UDEV_RULE"
         die "Could not register the AC-3 udev rule for SteamOS updates."
     fi
     udevadm control --reload-rules
     udevadm trigger --subsystem-match=sound || true
     finish_rootfs
+    SYSTEM_TRANSACTION=""
 }
 
 rollback_system_config() {
@@ -161,13 +203,17 @@ remove_system_config() {
     [[ -f "$PERSISTENCE_SH" && ! -L "$PERSISTENCE_SH" ]] \
         || die "Update persistence helper is missing or unsafe: $PERSISTENCE_SH"
     preflight_managed_file "$UDEV_RULE" udev_rule_content
-    trap restore_rootfs EXIT
+    [[ -e "$UDEV_RULE" || -L "$UDEV_RULE" ]] && SYSTEM_HAD_UDEV_RULE=1
+    [[ -e "$KEEP_FILE" || -L "$KEEP_FILE" ]] && SYSTEM_HAD_KEEP_FILE=1
+    SYSTEM_TRANSACTION=remove
+    trap system_transaction_cleanup EXIT
     unlock_rootfs
     bash "$PERSISTENCE_SH" remove ac3
     rm -f -- "$UDEV_RULE"
     udevadm control --reload-rules
     udevadm trigger --subsystem-match=sound || true
     finish_rootfs
+    SYSTEM_TRANSACTION=""
 }
 
 require_normal_user() {
@@ -175,9 +221,9 @@ require_normal_user() {
         || die "Run as the logged-in Deck user, not with sudo. The script requests administrator access when needed."
 }
 
-require_runtime() {
+require_user_runtime() {
     local executable linker_cache
-    for executable in pactl systemctl sudo; do
+    for executable in pactl systemctl; do
         command -v "$executable" >/dev/null 2>&1 || die "Required command is missing: $executable"
     done
     [[ -f "$ACP_PROFILE_FILE" ]] \
@@ -187,6 +233,10 @@ require_runtime() {
     linker_cache=$(ldconfig -p 2>/dev/null || true)
     grep -q libavcodec <<< "$linker_cache" \
         || die "FFmpeg libavcodec is missing. Install the SteamOS ffmpeg package."
+}
+
+require_sudo() {
+    command -v sudo >/dev/null 2>&1 || die "Required command is missing: sudo"
 }
 
 find_hdmi_card() {
@@ -252,7 +302,7 @@ select_default_sink() {
 }
 
 restore_stereo_sink() {
-    local card card_path sink
+    local strict="${1:-0}" card card_path sink
     card=$(find_hdmi_card || true)
     if [[ -z "$card" ]]; then
         log "No active AMD HDMI card was found; stereo will be selected when WirePlumber discovers it."
@@ -260,6 +310,7 @@ restore_stereo_sink() {
     fi
     if ! pactl set-card-profile "$card" output:hdmi-stereo; then
         log "Could not select HDMI stereo now; the AC-3 override has still been removed."
+        [[ "$strict" == 0 ]] || return 1
         return 0
     fi
     sleep 1
@@ -284,9 +335,91 @@ rollback_install() {
     log "Installation failed; previous HDMI audio configuration was restored."
 }
 
+rollback_user_install() {
+    [[ $USER_INSTALL_TRANSACTION -eq 1 ]] || return 0
+    local failed=0 card=""
+    set +e
+    if [[ $USER_HAD_WP_CONF -eq 0 ]] && managed_file_matches "$WP_CONF" wireplumber_content; then
+        rm -f -- "$WP_CONF" || failed=1
+    fi
+    systemctl --user restart wireplumber || failed=1
+    card=$(find_hdmi_card || true)
+    if [[ -n "$card" && -n "$USER_PREVIOUS_PROFILE" \
+        && "$USER_PREVIOUS_PROFILE" != unknown ]]; then
+        pactl set-card-profile "$card" "$USER_PREVIOUS_PROFILE" || failed=1
+    fi
+    if [[ -n "$USER_PREVIOUS_SINK" ]]; then
+        pactl set-default-sink "$USER_PREVIOUS_SINK" || failed=1
+    fi
+    if [[ $failed -eq 0 ]]; then
+        log "User audio activation failed; previous profile and sink were restored."
+    else
+        echo "[bc250-hdmi-ac3] User audio rollback was incomplete; restart WirePlumber and select the previous output." >&2
+        return 1
+    fi
+}
+
+rollback_user_revert() {
+    [[ $USER_REVERT_TRANSACTION -eq 1 ]] || return 0
+    local failed=0
+    set +e
+    if [[ $USER_REVERT_HAD_WP_CONF -eq 1 ]]; then
+        write_managed_file "$WP_CONF" wireplumber_content || failed=1
+        systemctl --user restart wireplumber || failed=1
+        select_default_sink output:hdmi-ac3-surround hdmi-ac3-surround || failed=1
+    fi
+    if [[ $failed -eq 0 ]]; then
+        log "User stereo activation failed; previous WirePlumber configuration was restored."
+    else
+        echo "[bc250-hdmi-ac3] User stereo rollback was incomplete; run status and repair from the toolkit." >&2
+        return 1
+    fi
+}
+
+install_user_config() {
+    require_normal_user
+    local card
+    require_user_runtime
+    find_hdmi_card >/dev/null \
+        || die "No AMD HDMI/DisplayPort audio card was found."
+    preflight_managed_file "$WP_CONF" wireplumber_content
+    managed_file_matches "$WP_CONF" wireplumber_content && USER_HAD_WP_CONF=1
+    card=$(find_hdmi_card)
+    USER_PREVIOUS_PROFILE=$(active_profile_for_card "$card" || true)
+    USER_PREVIOUS_SINK=$(pactl get-default-sink 2>/dev/null || true)
+    USER_INSTALL_TRANSACTION=1
+    trap rollback_user_install EXIT
+    write_managed_file "$WP_CONF" wireplumber_content
+    restart_wireplumber
+    select_default_sink output:hdmi-ac3-surround hdmi-ac3-surround
+    USER_INSTALL_TRANSACTION=0
+    trap - EXIT
+    log "User audio state: active"
+}
+
+revert_user_config() {
+    require_normal_user
+    local executable
+    for executable in pactl systemctl; do
+        command -v "$executable" >/dev/null 2>&1 || die "Required command is missing: $executable"
+    done
+    preflight_managed_file "$WP_CONF" wireplumber_content
+    managed_file_matches "$WP_CONF" wireplumber_content && USER_REVERT_HAD_WP_CONF=1
+    USER_REVERT_TRANSACTION=1
+    trap rollback_user_revert EXIT
+    rm -f -- "$WP_CONF"
+    rmdir "${WP_CONF%/*}" 2>/dev/null || true
+    restart_wireplumber
+    restore_stereo_sink 1
+    USER_REVERT_TRANSACTION=0
+    trap - EXIT
+    log "User audio state: stereo"
+}
+
 install_ac3() {
     require_normal_user
-    require_runtime
+    require_user_runtime
+    require_sudo
     find_hdmi_card >/dev/null \
         || die "No AMD HDMI/DisplayPort audio card was found."
     preflight_managed_file "$WP_CONF" wireplumber_content
@@ -366,7 +499,8 @@ show_status() {
         return 0
     fi
     if [[ "$udev_state" == missing && "$wp_state" == missing \
-        && "$keep_state" == missing ]]; then
+        && "$keep_state" == missing \
+        && "$active_profile" != output:hdmi-ac3-surround* ]]; then
         log "state: not-installed"
         return 1
     fi
@@ -394,6 +528,8 @@ case "${1:-help}" in
     install-system) (($# == 1)) || exit 2; install_system_config ;;
     remove-system) (($# == 1)) || exit 2; remove_system_config ;;
     rollback-system) (($# == 3)) || exit 2; rollback_system_config "$2" "$3" ;;
+    install-user) (($# == 1)) || exit 2; install_user_config ;;
+    revert-user) (($# == 1)) || exit 2; revert_user_config ;;
     help|-h|--help) (($# == 1)) || die "Usage: $0 help"; show_help ;;
     *) show_help >&2; exit 1 ;;
 esac

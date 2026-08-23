@@ -130,6 +130,18 @@ export interface CecStatus {
   protected: boolean;
 }
 
+export interface HdmiAudioStatus {
+  available: boolean;
+  controllable: boolean;
+  state: "active" | "configured" | "not-installed" | "incomplete" | "unavailable";
+  enabled: boolean;
+  active: boolean;
+  udevState: "installed" | "missing" | "foreign";
+  wireplumberState: "installed" | "missing" | "foreign";
+  persistenceState: "installed" | "missing" | "foreign";
+  activeProfile: string;
+}
+
 export interface MeshGame {
   executable: string;
   name: string;
@@ -157,6 +169,7 @@ export interface Snapshot {
     powerAvailable: boolean;
     cpuControlAvailable: boolean;
     cecAvailable: boolean;
+    audioAvailable: boolean;
     path: string;
   };
   cu: CuStatus;
@@ -164,4 +177,5 @@ export interface Snapshot {
   gpu: GpuStatus;
   cpu: CpuStatus;
   cec: CecStatus;
+  audio: HdmiAudioStatus;
 }

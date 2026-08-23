@@ -76,6 +76,36 @@ class HdmiAc3Tests(unittest.TestCase):
             self.assertIn("WirePlumber config: foreign", result.stdout)
             self.assertIn("state: incomplete", result.stdout)
 
+    def test_live_ac3_profile_without_managed_files_is_incomplete(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            env = os.environ.copy()
+            env.update(
+                {
+                    "UDEV_RULE": str(root / "missing-rule"),
+                    "WP_CONF": str(root / "missing-config"),
+                    "KEEP_FILE": str(root / "missing-keep"),
+                }
+            )
+            result = subprocess.run(
+                [
+                    "bash",
+                    "-c",
+                    'script=$1; set -- help; source "$script" >/dev/null; '
+                    'pactl() { :; }; find_hdmi_card() { echo card; }; '
+                    'active_profile_for_card() { echo output:hdmi-ac3-surround; }; '
+                    "show_status",
+                    "_",
+                    str(SCRIPT),
+                ],
+                capture_output=True,
+                text=True,
+                env=env,
+            )
+            self.assertEqual(result.returncode, 1)
+            self.assertIn("active profile: output:hdmi-ac3-surround", result.stdout)
+            self.assertIn("state: incomplete", result.stdout)
+
     def test_profile_settings_and_revert_guards_are_present(self):
         source = SCRIPT.read_text(encoding="utf-8")
         self.assertIn('device.profile-set = "hdmi-ac3.conf"', source)
@@ -111,7 +141,8 @@ class HdmiAc3Tests(unittest.TestCase):
                     "bash",
                     "-c",
                     'script=$1; set -- help; source "$script" >/dev/null; '
-                    'require_runtime() { :; }; find_hdmi_card() { echo card; }; '
+                    'require_user_runtime() { :; }; require_sudo() { :; }; '
+                    'find_hdmi_card() { echo card; }; '
                     'sudo() { printf "%s\\n" "$*" >> "$CALLS"; }; '
                     'restart_wireplumber() { return 1; }; install_ac3',
                     "_",
@@ -131,6 +162,70 @@ class HdmiAc3Tests(unittest.TestCase):
                 ],
             )
             self.assertIn("previous HDMI audio configuration was restored", result.stdout)
+
+    def test_decky_user_phases_do_not_invoke_sudo(self):
+        source = SCRIPT.read_text(encoding="utf-8")
+        install_user = source[
+            source.index("install_user_config() {") : source.index("revert_user_config() {")
+        ]
+        revert_user = source[
+            source.index("revert_user_config() {") : source.index("install_ac3() {")
+        ]
+        self.assertNotIn("sudo", install_user)
+        self.assertNotIn("sudo", revert_user)
+        self.assertIn("install-user)", source)
+        self.assertIn("revert-user)", source)
+
+    def test_decky_system_phase_rolls_back_late_failure(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            persistence = root / "persistence.sh"
+            calls = root / "calls"
+            persistence.write_text(
+                "#!/usr/bin/env bash\n"
+                'printf "%s\\n" "$1" >> "$CALLS"\n'
+                'if [[ "$1" == install ]]; then touch "$KEEP_FILE"; '
+                'else rm -f "$KEEP_FILE"; fi\n',
+                encoding="utf-8",
+            )
+            env = os.environ.copy()
+            env.update(
+                {
+                    "UDEV_RULE": str(root / "udev.rules"),
+                    "KEEP_FILE": str(root / "keep.conf"),
+                    "PERSISTENCE_SH": str(persistence),
+                    "CALLS": str(calls),
+                }
+            )
+            result = subprocess.run(
+                [
+                    "bash",
+                    "-c",
+                    'script=$1; set -- help; source "$script" >/dev/null; '
+                    'require_root() { :; }; '
+                    'udevadm() { [[ "$1" != control ]]; }; '
+                    "install_system_config",
+                    "_",
+                    str(SCRIPT),
+                ],
+                capture_output=True,
+                text=True,
+                env=env,
+            )
+            self.assertNotEqual(result.returncode, 0)
+            self.assertFalse(Path(env["UDEV_RULE"]).exists())
+            self.assertFalse(Path(env["KEEP_FILE"]).exists())
+            self.assertEqual(
+                calls.read_text(encoding="utf-8").splitlines(),
+                ["install", "remove"],
+            )
+
+    def test_toolkit_release_packages_hdmi_component(self):
+        workflow = (ROOT / ".github/workflows/release-artifacts.yml").read_text(
+            encoding="utf-8"
+        )
+        archive = workflow[workflow.index("git archive --format=tar HEAD") :]
+        self.assertIn("hdmi-ac3", archive.split("| tar -xf", 1)[0])
 
 
 if __name__ == "__main__":

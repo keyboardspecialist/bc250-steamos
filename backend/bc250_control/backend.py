@@ -35,6 +35,14 @@ SYSTEMCTL = "/usr/bin/systemctl"
 GPU_CONFIG_PATH = Path("/etc/cyan-skillfish-governor-smu/config.toml")
 GPU_STATE_PATH = Path("/var/lib/bc250-control/governor/freq-state")
 CPU_HELPER_PATH = Path("/var/lib/bc250-control/helper/bc250-power.sh")
+HDMI_AUDIO_HELPER_PATH = Path(
+    "/var/lib/bc250-control/helper/hdmi-ac3/hdmi-ac3.sh"
+)
+HDMI_AUDIO_REQUIRED_PATHS = (
+    HDMI_AUDIO_HELPER_PATH,
+    HDMI_AUDIO_HELPER_PATH.parent.parent / "bc250-update-persistence.sh",
+    HDMI_AUDIO_HELPER_PATH.parent.parent / ".decky-helper-manifest",
+)
 CPU_HELPER_REQUIRED_PATHS = (
     CPU_HELPER_PATH,
     CPU_HELPER_PATH.parent / "bc250-storage.sh",
@@ -449,6 +457,45 @@ class ToolkitBackend:
             [BASH, str(RAM_HELPER_PATH), *args], timeout=timeout, env=env
         )
         return out
+
+    def _hdmi_audio_helper_available(self) -> bool:
+        return all(
+            self._trusted_root_file(path) for path in HDMI_AUDIO_REQUIRED_PATHS
+        )
+
+    async def _hdmi_audio_user_exec(
+        self, command: str, *, check: bool = True
+    ) -> tuple[int, str, str]:
+        if not self._hdmi_audio_helper_available():
+            raise CommandError(
+                "HDMI audio helper is missing or unsafe; reinstall the plugin."
+            )
+        return await self._user_exec(
+            [BASH, str(HDMI_AUDIO_HELPER_PATH), command],
+            timeout=120,
+            check=check,
+        )
+
+    async def _hdmi_audio_root_exec(self, command: str) -> None:
+        if not self._hdmi_audio_helper_available():
+            raise CommandError(
+                "HDMI audio helper is missing or unsafe; reinstall the plugin."
+            )
+        env = {
+            "PATH": "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+            "HOME": "/root",
+            "USER": "root",
+            "LOGNAME": "root",
+            "PERSISTENCE_SH": str(
+                HDMI_AUDIO_HELPER_PATH.parent.parent
+                / "bc250-update-persistence.sh"
+            ),
+        }
+        await self._exec(
+            [BASH, str(HDMI_AUDIO_HELPER_PATH), command],
+            timeout=120,
+            env=env,
+        )
 
     async def _service(self, name: str, *, user: bool = False) -> dict[str, str]:
         runner = self._user_exec if user else self._exec
@@ -2250,6 +2297,87 @@ class ToolkitBackend:
             raise CommandError("RAM status returned an invalid tool version.")
         return status
 
+    async def get_hdmi_audio_status(self) -> dict[str, Any]:
+        unavailable = {
+            "available": False,
+            "controllable": False,
+            "state": "unavailable",
+            "enabled": False,
+            "active": False,
+            "udevState": "missing",
+            "wireplumberState": "missing",
+            "persistenceState": "missing",
+            "activeProfile": "unknown",
+        }
+        if not self._hdmi_audio_helper_available():
+            return unavailable
+
+        rc, output, error = await self._hdmi_audio_user_exec(
+            "status", check=False
+        )
+        if rc not in {0, 1}:
+            raise CommandError(
+                (error or output or "HDMI audio status failed.")[-1200:]
+            )
+
+        prefix = r"^\[bc250-hdmi-ac3\] "
+        patterns = {
+            "udevState": prefix + r"udev rule: (installed|missing|foreign)$",
+            "wireplumberState": prefix
+            + r"WirePlumber config: (installed|missing|foreign)$",
+            "persistenceState": prefix
+            + r"update persistence: (installed|missing|foreign)$",
+            "activeProfile": prefix
+            + r"active profile: (unknown|[A-Za-z0-9_.:+-]{1,160})$",
+            "state": prefix
+            + r"state: (active|configured|not-installed|incomplete)$",
+        }
+        parsed: dict[str, str] = {}
+        for line in output.splitlines():
+            for key, pattern in patterns.items():
+                match = re.fullmatch(pattern, line)
+                if match is not None:
+                    if key in parsed:
+                        raise CommandError(
+                            "HDMI audio status contained duplicate fields."
+                        )
+                    parsed[key] = match.group(1)
+        if set(parsed) != set(patterns):
+            raise CommandError("HDMI audio status returned incomplete data.")
+
+        installed = (
+            parsed["udevState"] == "installed"
+            and parsed["wireplumberState"] == "installed"
+            and parsed["persistenceState"] == "installed"
+        )
+        missing = (
+            parsed["udevState"] == "missing"
+            and parsed["wireplumberState"] == "missing"
+            and parsed["persistenceState"] == "missing"
+        )
+        if (
+            parsed["state"] in {"active", "configured"} and not installed
+        ) or (parsed["state"] == "not-installed" and not missing):
+            raise CommandError("HDMI audio status was internally inconsistent.")
+        if parsed["state"] == "incomplete" and (installed or missing):
+            raise CommandError("HDMI audio status was internally inconsistent.")
+        if rc == 0 and parsed["state"] not in {"active", "configured"}:
+            raise CommandError("HDMI audio status exit code was inconsistent.")
+        if rc == 1 and parsed["state"] in {"active", "configured"}:
+            raise CommandError("HDMI audio status exit code was inconsistent.")
+
+        return {
+            "available": True,
+            "controllable": parsed["state"] != "incomplete",
+            "state": parsed["state"],
+            "enabled": parsed["state"] in {"active", "configured"},
+            "active": parsed["state"] == "active",
+            "udevState": parsed["udevState"],
+            "wireplumberState": parsed["wireplumberState"],
+            "persistenceState": parsed["persistenceState"],
+            "activeProfile": parsed["activeProfile"],
+        }
+
     async def _get_snapshot(self) -> dict[str, Any]:
         power_available = self._user_script_available("bc250-power.sh")
         cec_available = self._user_script_available("bc250-cec.sh")
@@ -2259,13 +2387,14 @@ class ToolkitBackend:
             and power_available
             and cec_available
         )
-        cu, power, gpu, cpu, cec, ram = await asyncio.gather(
+        cu, power, gpu, cpu, cec, ram, audio = await asyncio.gather(
             self.get_cu_status(),
             self.get_power_status(),
             self.get_gpu_status(),
             self.get_cpu_status(),
             self.get_cec_status(),
             self.get_ram_status(),
+            self.get_hdmi_audio_status(),
         )
         return {
             "toolkit": {
@@ -2275,6 +2404,7 @@ class ToolkitBackend:
                 "cpuControlAvailable": cpu_control_available,
                 "cecAvailable": cec_available,
                 "ramControlAvailable": ram["available"],
+                "audioAvailable": audio["available"],
                 "path": str(self.toolkit),
             },
             "cu": cu,
@@ -2283,6 +2413,7 @@ class ToolkitBackend:
             "cpu": cpu,
             "cec": cec,
             "ram": ram,
+            "audio": audio,
         }
 
     async def get_snapshot(self) -> dict[str, Any]:
@@ -2720,6 +2851,63 @@ class ToolkitBackend:
             await self._cpu_tool(
                 "cpu-mitigations", "enable" if enabled else "disable", timeout=180
             )
+
+        return await self._mutate(action)
+
+    async def set_hdmi_surround(self, enabled: bool) -> None:
+        if type(enabled) is not bool:
+            raise CommandError("HDMI surround state must be a boolean.")
+
+        async def action() -> None:
+            status = await self.get_hdmi_audio_status()
+            state = status["state"]
+            if not status["controllable"]:
+                raise CommandError(
+                    "HDMI audio configuration is incomplete; repair it from the toolkit."
+                )
+            if enabled:
+                if state == "active":
+                    return
+                if state == "configured":
+                    await self._hdmi_audio_user_exec("install-user")
+                    return
+                await self._hdmi_audio_root_exec("install-system")
+                try:
+                    await self._hdmi_audio_user_exec("install-user")
+                except BaseException as error:
+                    rollback_task = asyncio.ensure_future(
+                        self._hdmi_audio_root_exec("remove-system")
+                    )
+                    try:
+                        await asyncio.shield(rollback_task)
+                    except asyncio.CancelledError:
+                        await rollback_task
+                        raise
+                    except Exception as rollback_error:
+                        raise CommandError(
+                            f"{error}; HDMI audio rollback failed: {rollback_error}"
+                        ) from error
+                    raise
+                return
+            if state == "not-installed":
+                return
+            await self._hdmi_audio_root_exec("remove-system")
+            try:
+                await self._hdmi_audio_user_exec("revert-user")
+            except BaseException as error:
+                rollback_task = asyncio.ensure_future(
+                    self._hdmi_audio_root_exec("install-system")
+                )
+                try:
+                    await asyncio.shield(rollback_task)
+                except asyncio.CancelledError:
+                    await rollback_task
+                    raise
+                except Exception as rollback_error:
+                    raise CommandError(
+                        f"{error}; HDMI audio rollback failed: {rollback_error}"
+                    ) from error
+                raise
 
         return await self._mutate(action)
 

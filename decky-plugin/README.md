@@ -13,6 +13,7 @@ CEC quick controls. Select
 - GPU frequency, load target, and ramp behavior
 - CPU overclock detection, apply, boot replay, and stock restore controls
 - HDMI-CEC controls
+- HDMI Dolby Digital 5.1 / stereo output toggle
 - Global Mesa / RADV async-compute status and AMDGPU prerequisite
 
 GPU voltage editing and saving WGP routing for boot remain in the toolkit CLI.
@@ -69,8 +70,8 @@ Access actions.
 - Toolkit checkout at `~/.local/share/bc250-fixes/bc250-steamos`
 - Installed toolkit components for the controls being used
 
-The plugin backend runs with Decky's `root` flag. CEC and Mesa / RADV commands
-are delegated to the logged-in Deck user session.
+The plugin backend runs with Decky's `root` flag. HDMI audio, CEC, and Mesa /
+RADV user-session commands are delegated to the logged-in Deck user session.
 
 ### Privileged operations
 
@@ -80,6 +81,12 @@ paths, and argument allowlists. CEC operations use `runuser` with a clean user
 session environment. Live WGP changes are delegated to a root-owned CU manager;
 user-writable copies are rejected. Privileged helpers, UMR, and state use the
 root-owned `/var/lib/bc250-control/` SteamOS offload mount.
+
+The HDMI audio toggle uses a bundled, root-owned AC-3 lifecycle helper. System
+udev and update-retention phases run through the privileged backend, while
+WirePlumber restart, profile selection, and default-sink changes run as the
+logged-in Deck user. **On** selects Dolby Digital 5.1 encoding; **Off** removes
+managed AC-3 configuration and restores HDMI stereo.
 
 ## Install
 
@@ -116,8 +123,8 @@ copies of `bc250_control` and the Python 3.8 `tomli` fallback.
 copied into the Decky artifact at build time; the installed plugin never imports
 or calls the Plasma desktop utility. Hardware mutations are serialized and
 validated. Privileged GPU changes use fixed D-Bus, configuration interfaces, or
-the trusted CU manager. CEC commands invoke a toolkit script after dropping to
-the logged-in Deck user. GFX1013 runtime status uses the same user boundary;
+the trusted CU manager. HDMI audio and CEC commands drop to the logged-in Deck
+user for session changes. GFX1013 runtime status uses the same user boundary;
 global activation is managed by the toolkit's systemd user-environment
 generator.
 

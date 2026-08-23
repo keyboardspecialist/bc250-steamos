@@ -19,12 +19,14 @@ import {
   FaProjectDiagram,
   FaSyncAlt,
   FaTv,
+  FaVolumeUp,
 } from "react-icons/fa";
 import { getSnapshot, getTelemetry } from "./api";
 import { EmptyState, StatusRow } from "./components/Common";
 import { ScrollViewport } from "./components/ScrollViewport";
 import { VerticalTabs, type VerticalTab } from "./components/VerticalTabs";
 import { CecTab } from "./tabs/CecTab";
+import { AudioTab } from "./tabs/AudioTab";
 import { CpuTab } from "./tabs/CpuTab";
 import { CuTab } from "./tabs/CuTab";
 import { GpuTab } from "./tabs/GpuTab";
@@ -299,6 +301,13 @@ function FullControl() {
       content: <CpuTab {...tabProps} />,
     },
     {
+      id: "audio",
+      label: "Audio",
+      icon: <FaVolumeUp />,
+      healthy: snapshot.audio.active || snapshot.audio.state === "not-installed",
+      content: <AudioTab {...tabProps} />,
+    },
+    {
       id: "cec",
       label: "CEC",
       icon: <FaTv />,
@@ -478,6 +487,7 @@ function QuickPanel() {
           >
             {[
               ["summary", "Summary"],
+              ["audio", "Audio"],
               ["cec", "CEC"],
             ].map(([id, label]) => (
               <Focusable
@@ -520,6 +530,12 @@ function QuickPanel() {
                 busy={Boolean(busyLabel)}
                 runMutation={runMutation}
                 compact
+              />
+            ) : activeTab === "audio" ? (
+              <AudioTab
+                snapshot={snapshot}
+                busy={Boolean(busyLabel)}
+                runMutation={runMutation}
               />
             ) : (
               <OverviewSummary snapshot={snapshot} history={history} compact />

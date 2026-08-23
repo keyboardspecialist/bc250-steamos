@@ -32,4 +32,7 @@ export const setCecToggle = callable<
   void
 >("set_cec_toggle");
 export const setCecName = callable<[name: string], void>("set_cec_name");
+export const setHdmiSurround = callable<[enabled: boolean], void>(
+  "set_hdmi_surround",
+);
 export const getMeshStatus = callable<[], MeshStatus>("get_mesh_status");

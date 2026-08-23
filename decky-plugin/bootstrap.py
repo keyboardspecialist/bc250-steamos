@@ -16,6 +16,7 @@ INSTALL_MARKER = Path(".decky-helper-manifest")
 PAYLOAD_FILES: Tuple[Tuple[Path, int], ...] = (
     (Path("bc250-storage.sh"), 0o755),
     (Path("bc250-update-persistence.sh"), 0o755),
+    (Path("hdmi-ac3/hdmi-ac3.sh"), 0o755),
     (Path("acpi-tables/SSDT-CST.dsl"), 0o644),
     (Path("acpi-tables/SSDT-PST.dsl"), 0o644),
     (Path("smu-oc-patches/0001-transaction-level-flock.patch"), 0o644),
