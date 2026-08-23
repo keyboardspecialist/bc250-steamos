@@ -664,6 +664,15 @@ patches `0001`-`0003`, while the per-game FSR4 driver contains `0001`-`0004`.
 Each has its own ICD and manifest even though setup shares one incremental
 build tree.
 
+When FSR4 setup was selected first, it has already installed the global
+async-compute artifact before producing the private driver. Selecting the
+async-compute setup option afterward verifies that installed artifact and its
+kernel prerequisites, restores scheduler policy if necessary, and reports it
+ready without rebuilding Mesa. If an async rebuild is genuinely required, it
+replaces only the global artifact. The private FSR4 driver, ICD, runner, and
+manifest are never removed or overwritten by async setup, and their resulting
+validation state is reported explicitly.
+
 The repository-owned patch is a full independent Unlicense implementation for
 GFX1013 ACO compute shaders. It defers signed-dot lowering through a private NIR
 optimization round, folds surrounding accumulators, selects linear or split

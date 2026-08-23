@@ -783,11 +783,24 @@ verify_owned_fsr4_runtime() {
         && grep -Eq '"library_arch"[[:space:]]*:[[:space:]]*"64"' "$FSR4_ICD"
 }
 
-verify_current_fsr4_runtime() {
-    verify_current_runtime && verify_owned_fsr4_runtime \
+verify_current_fsr4_profile() {
+    verify_owned_fsr4_runtime \
         && [[ "$STORED_FSR4_MESA_TAG" == "$DEFAULT_MESA_TAG" \
             && "$STORED_FSR4_PATCH_SHA" == "$FSR4_PATCH_SHA256" ]] \
         && cmp -s "$FSR4_RUNNER" <(render_fsr4_runner) && verify_fsr4_patch
+}
+
+verify_current_fsr4_runtime() {
+    verify_current_runtime && verify_current_fsr4_profile
+}
+
+report_fsr4_preserved() {
+    [[ -e "$FSR4_DIR" || -L "$FSR4_DIR" ]] || return 0
+    if verify_current_fsr4_profile; then
+        log "The private per-game FSR4 profile remains installed and verified."
+    else
+        log "The private FSR4 files were left unchanged but require validation; rerun FSR4 setup before using them."
+    fi
 }
 
 recover_fsr4_install_transaction() {
@@ -805,6 +818,12 @@ recover_fsr4_install_transaction() {
     if [[ "$phase" == prepared ]]; then
         rm -rf "$FSR4_TRANSACTION_DIR"
         fsync_paths "$STATE_DIR"
+        return 0
+    fi
+    if verify_owned_fsr4_runtime; then
+        rm -rf "$FSR4_TRANSACTION_DIR"
+        fsync_paths "$STATE_DIR"
+        log "Completed recovery of an intact FSR4 profile installation."
         return 0
     fi
     rm -rf "$FSR4_DIR"
@@ -1130,7 +1149,6 @@ cmd_setup() (
     local cache_profile="" expected_sha="" committed=0 default_ready=0 default_bootstrapped=0
     local ro_was_enabled=0 root_unlocked=0 need_packages=0
     [[ "$profile" == default || "$profile" == fsr4 ]] || die "Unknown RADV profile: $profile"
-    command -v curl >/dev/null 2>&1 || die "curl is required"
     command -v python3 >/dev/null 2>&1 || die "python3 is required"
     command -v flock >/dev/null 2>&1 || die "flock is required"
     command -v systemctl >/dev/null 2>&1 || die "systemctl is required for global RADV activation"
@@ -1160,6 +1178,23 @@ cmd_setup() (
     require_compute_kernel
     verify_32bit_fallback \
         || die "SteamOS's 32-bit RADV ICD is unavailable or invalid. Install lib32-vulkan-radeon and retry."
+    if [[ "$profile" == default ]] && verify_current_runtime; then
+        if ! verify_scheduler_configured; then
+            if ! as_root bash "$BOOT_CONFIG" install; then
+                report_fsr4_preserved
+                die "RADV is installed, but amdgpu.sched_policy=2 could not be configured."
+            fi
+        fi
+        log "The async-compute RADV profile is already installed and verified; no Mesa rebuild is needed."
+        if verify_scheduler_active; then
+            log "The async-compute profile is active."
+        else
+            log "Reboot to activate amdgpu.sched_policy=2 and the patched RADV driver together."
+        fi
+        report_fsr4_preserved
+        return 0
+    fi
+    command -v curl >/dev/null 2>&1 || die "curl is required"
     work=$(mktemp -d "$STATE_DIR/.setup.XXXXXX")
     staged_driver="${DRIVER}.bc250-new"
     [[ ! -e "$staged_driver" && ! -L "$staged_driver" ]] \
@@ -1193,6 +1228,9 @@ cmd_setup() (
             as_root rm -f "$staged_driver" >/dev/null 2>&1 || rc=1
         fi
         relock_root || rc=1
+        if [[ $rc -ne 0 && "$profile" == default ]]; then
+            report_fsr4_preserved || rc=1
+        fi
         rm -rf "$work"
         exit "$rc"
     }
@@ -1308,6 +1346,7 @@ cmd_setup() (
 
     if [[ "$profile" == default ]]; then
         install_default_profile "$output" "$mesa_tag"
+        report_fsr4_preserved
         committed=1
         return 0
     fi
@@ -1882,7 +1921,7 @@ cmd_menu() {
         fi
         local items=(
             "Status overview|${runtime_state}|Verify the patched AMDGPU module, scheduler policy, RADV runtime, and global activation."
-            "Build / install RADV async-compute patch|${runtime_state}|Optional but highly recommended. Enables GFX1013 async compute, requires Step 1 AMDGPU fixes, and usually takes 3-5 minutes."
+            "Build / install RADV async-compute patch|${runtime_state}|Optional but highly recommended after Step 1 AMDGPU fixes. Enables GFX1013 async compute; usually takes 3-5 minutes. A verified profile is reused."
             "Build experimental FSR4 profile|${fsr4_state}|Installs async RADV if needed, then incrementally builds a private per-game FSR4 driver from the same Mesa tree."
             "Older per-game setup cleanup|${legacy_state}|Migration only: remove old MESA_DRICONF_EXECUTABLE_OVERRIDE and VK_ICD_FILENAMES Steam launch options, then clear their records."
             "Uninstall Mesa / RADV runtime|${runtime_state}|Remove the alternate driver, ICD, and user environment generator; preserve build caches."

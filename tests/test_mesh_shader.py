@@ -643,6 +643,124 @@ class MeshShaderTests(unittest.TestCase):
             setup,
         )
 
+    def test_async_setup_reuses_verified_fsr4_bootstrap_without_building(self):
+        source = MESH.read_text(encoding="utf-8")
+        setup = source.split("cmd_setup() (", 1)[1].split(
+            "\n)\n\nmanage_games", 1
+        )[0]
+        guard = 'if [[ "$profile" == default ]] && verify_current_runtime; then'
+        guard_index = setup.index(guard)
+        message_index = setup.index(
+            "already installed and verified; no Mesa rebuild is needed",
+            guard_index,
+        )
+        return_index = setup.index("return 0", message_index)
+
+        self.assertLess(return_index, setup.index('command -v curl', guard_index))
+        self.assertLess(return_index, setup.index('work=$(mktemp', guard_index))
+        self.assertLess(return_index, setup.index("stage_upstream", guard_index))
+        self.assertIn("verify_scheduler_configured", setup[guard_index:return_index])
+        self.assertIn("verify_scheduler_active", setup[guard_index:return_index])
+        self.assertIn("report_fsr4_preserved", setup[guard_index:return_index])
+        default_install = setup.index('install_default_profile "$output" "$mesa_tag"')
+        preserve = setup.index("report_fsr4_preserved", default_install)
+        self.assertLess(default_install, preserve)
+        self.assertLess(preserve, setup.index("return 0", preserve))
+
+    def test_fsr4_preservation_report_does_not_modify_private_profile(self):
+        with tempfile.TemporaryDirectory() as directory:
+            env = self.environment(Path(directory))
+            self.install_runtime(env)
+            self.install_fsr4_runtime(env)
+            profile = Path(env["BC250_MESH_STATE_DIR"]) / "fsr4"
+            before = {
+                path.name: hashlib.sha256(path.read_bytes()).hexdigest()
+                for path in profile.iterdir()
+            }
+            result = subprocess.run(
+                [
+                    "bash",
+                    "-c",
+                    'script=$1; set -- help; source "$script" >/dev/null; '
+                    "report_fsr4_preserved",
+                    "_",
+                    str(MESH),
+                ],
+                check=True,
+                capture_output=True,
+                text=True,
+                env=env,
+            )
+            after = {
+                path.name: hashlib.sha256(path.read_bytes()).hexdigest()
+                for path in profile.iterdir()
+            }
+            self.assertEqual(after, before)
+            self.assertIn("remains installed and verified", result.stdout)
+
+    def test_recovery_keeps_a_verified_new_fsr4_profile(self):
+        for had_previous, global_ready, current_metadata in (
+            (0, True, True),
+            (1, True, True),
+            (0, False, True),
+            (1, False, True),
+            (0, False, False),
+            (1, False, False),
+        ):
+            with self.subTest(
+                had_previous=had_previous,
+                global_ready=global_ready,
+                current_metadata=current_metadata,
+            ), tempfile.TemporaryDirectory() as directory:
+                env = self.environment(Path(directory))
+                self.install_runtime(env)
+                self.install_fsr4_runtime(env)
+                if not global_ready:
+                    Path(env["BC250_MESH_DRIVER"]).unlink()
+                state = Path(env["BC250_MESH_STATE_DIR"])
+                profile = state / "fsr4"
+                if not current_metadata:
+                    manifest = profile / "install.conf"
+                    fields = manifest.read_text(encoding="ascii").split()
+                    fields[-1] = "0" * 64
+                    manifest.write_text(" ".join(fields) + "\n", encoding="ascii")
+                transaction = state / "fsr4-install-transaction"
+                transaction.mkdir()
+                if had_previous:
+                    previous = transaction / "previous"
+                    previous.mkdir()
+                    (previous / "obsolete").write_bytes(b"old profile\n")
+                (transaction / "transaction.conf").write_text(
+                    f"swapping {had_previous}\n", encoding="ascii"
+                )
+                before = {
+                    path.name: hashlib.sha256(path.read_bytes()).hexdigest()
+                    for path in profile.iterdir()
+                }
+
+                result = subprocess.run(
+                    [
+                        "bash",
+                        "-c",
+                        'script=$1; set -- help; source "$script" >/dev/null; '
+                        "recover_fsr4_install_transaction",
+                        "_",
+                        str(MESH),
+                    ],
+                    check=True,
+                    capture_output=True,
+                    text=True,
+                    env=env,
+                )
+
+                after = {
+                    path.name: hashlib.sha256(path.read_bytes()).hexdigest()
+                    for path in profile.iterdir()
+                }
+                self.assertEqual(after, before)
+                self.assertFalse(transaction.exists())
+                self.assertIn("intact FSR4 profile", result.stdout)
+
     def test_incremental_build_state_rejects_source_drift(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
