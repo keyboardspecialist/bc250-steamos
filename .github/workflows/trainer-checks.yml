@@ -12,6 +12,7 @@ on:
       - "acpi-tables/**"
       - "aic8800/*.sh"
       - "bc250-*.sh"
+      - "bc250-mesa-patches/**"
       - "topology.sh"
       - ".github/workflows/trainer-checks.yml"
       - ".github/workflows/trainer-release.yml"

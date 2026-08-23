@@ -627,7 +627,7 @@ class BackendMutationTests(unittest.IsolatedAsyncioTestCase):
                 {
                     "scriptAvailable": True,
                     "runtimeState": "ready",
-                    "mesaVersion": "mesa-26.2.0-rc3",
+                    "mesaVersion": "mesa-26.2.0",
                     "icdPath": "/home/deck/radeon_driconf_icd.x86_64.json",
                     "configValid": True,
                     "kernelReady": True,

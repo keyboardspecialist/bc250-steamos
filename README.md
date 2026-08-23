@@ -626,12 +626,63 @@ The upstream alpha build itself remains x86-64 only. Its compute and mesh
 changes therefore do not apply to 32-bit processes; those processes use the
 stock SteamOS RADV fallback instead.
 
+### Experimental FSR4 Profile
+
+After installing and validating the default RADV runtime, an additional
+clean-room FSR4-oriented profile can be built explicitly:
+
+```bash
+./bc250-mesh-shader.sh setup --fsr4
+```
+
+This profile is disabled by default. It installs entirely under
+`~/.local/share/bc250-mesh-shader/fsr4` and does not replace the global driver
+or alter the systemd environment generator. Enable it for one Steam game with
+the launch option printed by setup:
+
+```text
+$HOME/.local/share/bc250-mesh-shader/fsr4/bc250-fsr4-run %command%
+```
+
+The launcher rechecks the selected AMDGPU module, all module attestations,
+loaded repair revision, scheduler policy, profile hashes, and 64/32-bit ICD
+routing before starting the game. Remove only this profile with
+`./bc250-mesh-shader.sh uninstall --fsr4`.
+
+The repository-owned patch is a full independent Unlicense implementation for
+GFX1013 ACO compute shaders. It defers signed-dot lowering through a private NIR
+optimization round, folds surrounding accumulators, selects linear or split
+signed MAD24 chains, recognizes large dense reduction shaders structurally,
+adds the required ACO MUL24/MAD24 selection, rejects leaked native signed dots,
+and bounds eligible LDS spill slots for pathological wave64 workloads. LLVM
+retains Mesa's generic software lowering. The patch does not advertise or use
+the BC-250's broken native signed packed-dot path and contains no code from
+`dmorazasanchez/bc250-fsr4`. Mesa's existing MIT notices still apply to the
+Mesa source and resulting Mesa work.
+
+The investigation and published results in
+[`dmorazasanchez/bc250-fsr4`](https://github.com/dmorazasanchez/bc250-fsr4)
+inspired this clean-room direction, particularly the finding that optimizing
+the software fallback is preferable to enabling the broken native instruction.
+Credit also belongs to `higorprado` and the BC-250 community acknowledged by
+that project. The upstream repository had no redistribution license when this
+implementation was written, so none of its source or patch content is shipped.
+
+The full clean-room stack has passed zero-fuzz composition, NIR and ACO library
+compilation, one million randomized arithmetic cases, dense-strategy checks,
+LLVM/ACO and family-gate checks, and spill-policy comparisons. It
+still has not been benchmarked on a BC-250, validated with captured FSR4
+shaders, disassembled on hardware, or run through Vulkan CTS. It does not claim
+benchmark parity with the inspiration project. Treat it as experimental: games
+may regress, corrupt frames, hang, or reset the GPU.
+
 The upstream series is pinned to commit
 [`d3e6dc0`](https://github.com/DryhoppedIPA/bc250-gfx1013-fix/commit/d3e6dc062c34d2523db0abe5741d1f5b0dea00d9),
 tagged `v0.2.0-alpha`. DryhoppedIPA developed the scoped V33 kernel repair and
 the narrow GFX1013 compute, mesh, and task implementation through direct
 hardware testing. Setup downloads all three Mesa patches and the pristine
-`mesa-26.2.0-rc3` archive, verifies their SHA-256 hashes, and requires zero-fuzz
+final `mesa-26.2.0` source at commit `9f0a761`. Setup verifies the Git commit,
+the downloaded patch and libdrm SHA-256 hashes, and requires zero-fuzz
 patch application. The Mesa patches retain their upstream MIT license; the
 kernel patches are `GPL-2.0-only`.
 
@@ -747,6 +798,7 @@ Run the normal component setup commands afterward to regenerate services for the
 | BC-250 CPU Core Unlock | [Linux helper](https://github.com/rw-r-r-0644/bc250-core-unlock) · [EFI source](https://github.com/Hexxeh/bc250-efi-core-unlock) · [EFI headers](https://github.com/yoppeh/efi) | Original SMU method and the optional pre-boot implementation adapted by `bc250-power.sh` |
 | BC-250 Memory Config | [Repository](https://github.com/fanoush/bc250_memcfg) · [VRAM guide](https://elektricm.github.io/amd-bc250-docs/bios/vram/) | CMOS UMA utility fetched by `bc250-ram-split.sh` |
 | BC-250 GFX1013 Fix | [Repository](https://github.com/DryhoppedIPA/bc250-gfx1013-fix) · [integrated commit](https://github.com/DryhoppedIPA/bc250-gfx1013-fix/commit/d3e6dc062c34d2523db0abe5741d1f5b0dea00d9) | Kernel compute lifecycle repair and pinned alternate RADV build by DryhoppedIPA |
+| BC-250 FSR4 experiment | [Repository](https://github.com/dmorazasanchez/bc250-fsr4) | Technical inspiration for the independently implemented, optional software signed-dot lowering; no upstream code is included |
 | Valve kernel mirror | [Repository](https://github.com/Evlav/linux-integration) | `bc250-audio-fix/fetch-sources.sh` |
 | SteamOS package mirror | [Package index](https://steamdeck-packages.steamos.cloud/archlinux-mirror/) | Audio-driver and AIC8800 build scripts; stable channels are discovered automatically |
 | SteamOS atomic-update keep list | [Defaults](https://github.com/evlaV/steamos-customizations/blob/master/atomic-update/rauc/atomic-update-keep.conf.in) · [Drop-in example](https://github.com/evlaV/steamos-customizations/blob/master/atomic-update/rauc/example-additional-keep-list.conf.in) | `bc250-update-persistence.sh` |

@@ -8,16 +8,16 @@ UPSTREAM_REPO="https://github.com/DryhoppedIPA/bc250-gfx1013-fix"
 UPSTREAM_COMMIT="d3e6dc062c34d2523db0abe5741d1f5b0dea00d9"
 LEGACY_UPSTREAM_COMMIT="b66203e012594204e5e3049856b28a2681112985"
 RAW_BASE="https://raw.githubusercontent.com/DryhoppedIPA/bc250-gfx1013-fix/$UPSTREAM_COMMIT"
-DEFAULT_MESA_TAG="mesa-26.2.0-rc3"
-MESA_TARBALL="mesa-26.2.0-rc3.tar.xz"
-MESA_URL="https://archive.mesa3d.org/$MESA_TARBALL"
-MESA_SHA256="f733c005660d342a51c6727d1ad481f43d05b4c601ac72247fa641e1d73a8ad1"
+DEFAULT_MESA_TAG="mesa-26.2.0"
+MESA_COMMIT="9f0a761020bca92f2b07156a0621e5360cb8eca5"
+MESA_REPO="https://gitlab.freedesktop.org/mesa/mesa.git"
 LIBDRM_TARBALL="libdrm-2.4.133.tar.xz"
 LIBDRM_URL="https://dri.freedesktop.org/libdrm/$LIBDRM_TARBALL"
 LIBDRM_SHA256="fc68f9d0ba2ea63c9432a299e14fea09fad7a8a66e8039fcd7802ca59f77b4f5"
 
 STATE_DIR="${BC250_MESH_STATE_DIR:-$HOME/.local/share/bc250-mesh-shader}"
 CACHE_DIR="$STATE_DIR/upstream-$UPSTREAM_COMMIT"
+MESA_GIT_CACHE="$CACHE_DIR/mesa.git"
 MANIFEST="$STATE_DIR/install.conf"
 TRANSACTION_DIR="$STATE_DIR/install-transaction"
 DRIRC="${BC250_MESH_DRIRC:-$HOME/.drirc}"
@@ -27,6 +27,14 @@ FALLBACK_ICD="${BC250_MESH_32BIT_ICD:-/usr/share/vulkan/icd.d/radeon_icd.i686.js
 GLOBAL_ICDS="$ICD:$FALLBACK_ICD"
 GENERATOR="${BC250_GFX1013_GENERATOR:-/usr/lib/systemd/user-environment-generators/60-bc250-gfx1013}"
 BUILD_ROOT="$STATE_DIR/build"
+FSR4_DIR="$STATE_DIR/fsr4"
+FSR4_DRIVER="$FSR4_DIR/libvulkan_radeon.so"
+FSR4_ICD="$FSR4_DIR/radeon_fsr4_icd.x86_64.json"
+FSR4_RUNNER="$FSR4_DIR/bc250-fsr4-run"
+FSR4_MANIFEST="$FSR4_DIR/install.conf"
+FSR4_TRANSACTION_DIR="$STATE_DIR/fsr4-install-transaction"
+FSR4_PATCH="${SELF%/*}/bc250-mesa-patches/0004-gfx1013-fsr4-sdot-lowering.patch"
+FSR4_PATCH_SHA256="10075b7d9669b60d6eafa32984f8696775b2d0287086c434147d139749b66b19"
 LOCK_FILE="${BC250_MESH_LOCK_FILE:-$HOME/.cache/bc250-mesh-shader.lock}"
 MODULE_UPDATES="/usr/lib/modules/$(uname -r)/updates"
 DEFAULT_COMPUTE_MODULE="$MODULE_UPDATES/amdgpu.ko.zst"
@@ -95,6 +103,19 @@ sha256_file() {
     fi
 }
 
+fsync_paths() {
+    python3 - "$@" <<'PY'
+import os
+import sys
+for value in sys.argv[1:]:
+    descriptor = os.open(value, os.O_RDONLY)
+    try:
+        os.fsync(descriptor)
+    finally:
+        os.close(descriptor)
+PY
+}
+
 fetch_verified() {
     local name="$1" expected="$2" url="${3:-$RAW_BASE/$1}" target="$CACHE_DIR/$1" actual tmp
     if [[ -f "$target" && ! -L "$target" ]] \
@@ -132,8 +153,26 @@ stage_upstream() {
     fetch_verified 0003-gfx1013-taskmesh-queries.patch \
         8056be93d6f15358275cffe8798b13f90e41c228a8832c563dc30116372d2995 \
         "$RAW_BASE/patches/mesa/0003-gfx1013-taskmesh-queries.patch"
-    fetch_verified "$MESA_TARBALL" "$MESA_SHA256" "$MESA_URL"
     fetch_verified "$LIBDRM_TARBALL" "$LIBDRM_SHA256" "$LIBDRM_URL"
+    [[ ! -L "$MESA_GIT_CACHE" ]] || die "Refusing symlinked Mesa Git cache: $MESA_GIT_CACHE"
+    if [[ ! -d "$MESA_GIT_CACHE" ]]; then
+        git init --bare "$MESA_GIT_CACHE" >/dev/null
+        git --git-dir="$MESA_GIT_CACHE" remote add origin "$MESA_REPO"
+    fi
+    [[ "$(git --git-dir="$MESA_GIT_CACHE" remote get-url origin)" == "$MESA_REPO" ]] \
+        || die "Mesa Git cache has an unexpected origin"
+    if [[ "$(git --git-dir="$MESA_GIT_CACHE" rev-parse --verify \
+        refs/heads/bc250-pinned-mesa 2>/dev/null || true)" != "$MESA_COMMIT" ]]; then
+        git --git-dir="$MESA_GIT_CACHE" fetch --depth=1 origin \
+            "+$MESA_COMMIT:refs/heads/bc250-pinned-mesa"
+    fi
+    [[ "$(git --git-dir="$MESA_GIT_CACHE" rev-parse "$MESA_COMMIT")" == "$MESA_COMMIT" ]] \
+        || die "Fetched Mesa source does not match pinned commit $MESA_COMMIT"
+}
+
+verify_fsr4_patch() {
+    [[ -f "$FSR4_PATCH" && ! -L "$FSR4_PATCH" ]] \
+        && [[ "$(sha256_file "$FSR4_PATCH")" == "$FSR4_PATCH_SHA256" ]]
 }
 
 verify_compute_kernel() {
@@ -207,6 +246,7 @@ verify_32bit_fallback() {
     python3 - "$FALLBACK_ICD" <<'PY'
 import json
 from pathlib import Path
+import struct
 import sys
 
 manifest = Path(sys.argv[1])
@@ -223,9 +263,24 @@ try:
         and not library.is_symlink()
     )
     if valid:
-        with library.open("rb") as stream:
-            valid = stream.read(5) == b"\x7fELF\x01"
-except (KeyError, OSError, TypeError, ValueError):
+        content = library.read_bytes()
+        valid = len(content) >= 52 and content[:7] == b"\x7fELF\x01\x01\x01"
+    if valid:
+        e_type, e_machine, e_version = struct.unpack_from("<HHI", content, 16)
+        e_phoff = struct.unpack_from("<I", content, 28)[0]
+        e_ehsize, e_phentsize, e_phnum = struct.unpack_from("<HHH", content, 40)
+        valid = (
+            e_type == 3 and e_machine == 3 and e_version == 1
+            and e_ehsize >= 52 and e_phentsize >= 32 and e_phnum > 0
+            and e_phoff + e_phentsize * e_phnum <= len(content)
+        )
+    if valid:
+        types = {
+            struct.unpack_from("<I", content, e_phoff + index * e_phentsize)[0]
+            for index in range(e_phnum)
+        }
+        valid = 1 in types and 2 in types
+except (KeyError, OSError, struct.error, TypeError, ValueError):
     valid = False
 raise SystemExit(0 if valid else 1)
 PY
@@ -241,6 +296,23 @@ read_manifest() {
         && "$STORED_MESA_TAG" =~ ^mesa-[0-9][0-9A-Za-z._-]*$ \
         && ( "$STORED_COMMIT" == "$UPSTREAM_COMMIT" \
             || "$STORED_COMMIT" == "$LEGACY_UPSTREAM_COMMIT" ) ]]
+}
+
+read_fsr4_manifest() {
+    local extra line
+    STORED_FSR4_DRIVER_SHA="" STORED_FSR4_ICD_SHA="" STORED_FSR4_RUNNER_SHA=""
+    STORED_FSR4_MESA_TAG="" STORED_FSR4_PATCH_SHA=""
+    [[ -f "$FSR4_MANIFEST" && ! -L "$FSR4_MANIFEST" ]] || return 1
+    IFS= read -r line < "$FSR4_MANIFEST" || return 1
+    read -r STORED_FSR4_DRIVER_SHA STORED_FSR4_ICD_SHA STORED_FSR4_RUNNER_SHA \
+        STORED_FSR4_MESA_TAG STORED_FSR4_PATCH_SHA extra <<< "$line"
+    [[ -z "$extra" \
+        && "$STORED_FSR4_DRIVER_SHA" =~ ^[0-9a-f]{64}$ \
+        && "$STORED_FSR4_ICD_SHA" =~ ^[0-9a-f]{64}$ \
+        && "$STORED_FSR4_RUNNER_SHA" =~ ^[0-9a-f]{64}$ \
+        && "$STORED_FSR4_MESA_TAG" =~ ^mesa-[0-9][0-9A-Za-z._-]*$ \
+        && "$STORED_FSR4_PATCH_SHA" =~ ^[0-9a-f]{64}$ \
+        && "$(wc -l < "$FSR4_MANIFEST")" -eq 1 ]]
 }
 
 verify_owned_runtime() {
@@ -399,6 +471,171 @@ printf 'VK_ICD_FILENAMES=%s\n' "\$ICD"
 EOF
 }
 
+render_fsr4_runner() {
+    local marker_q audio_marker_q metrics_marker_q module_q active_q policy_q
+    local driver_q icd_q fallback_icd_q manifest_q runner_q commit_q patch_sha_q
+    marker_q=$(shell_word "$COMPUTE_MARKER")
+    audio_marker_q=$(shell_word "$AUDIO_MARKER")
+    metrics_marker_q=$(shell_word "$METRICS_MARKER")
+    module_q=$(shell_word "$COMPUTE_MODULE")
+    active_q=$(shell_word "$COMPUTE_ACTIVE")
+    policy_q=$(shell_word "$SCHED_POLICY")
+    driver_q=$(shell_word "$FSR4_DRIVER")
+    icd_q=$(shell_word "$FSR4_ICD")
+    fallback_icd_q=$(shell_word "$FALLBACK_ICD")
+    manifest_q=$(shell_word "$FSR4_MANIFEST")
+    runner_q=$(shell_word "$FSR4_RUNNER")
+    commit_q=$(shell_word "$UPSTREAM_COMMIT")
+    patch_sha_q=$(shell_word "$FSR4_PATCH_SHA256")
+    cat <<EOF
+#!/usr/bin/env bash
+set -euo pipefail
+MARKER=$marker_q
+AUDIO_MARKER=$audio_marker_q
+METRICS_MARKER=$metrics_marker_q
+MODULE=$module_q
+ACTIVE=$active_q
+SCHED_POLICY=$policy_q
+DRIVER=$driver_q
+ICD=$icd_q
+FALLBACK_ICD=$fallback_icd_q
+MANIFEST=$manifest_q
+RUNNER=$runner_q
+COMMIT=$commit_q
+PATCH_SHA=$patch_sha_q
+fail() { printf '[bc250-fsr4] %s\n' "\$*" >&2; exit 1; }
+[[ \$# -gt 0 ]] || fail "No game command was provided."
+for path in "\$MARKER" "\$AUDIO_MARKER" "\$METRICS_MARKER" "\$MODULE" \
+    "\$DRIVER" "\$ICD" "\$FALLBACK_ICD" "\$MANIFEST" "\$RUNNER"; do
+    [[ -f "\$path" && ! -L "\$path" ]] || fail "Required attested file is missing or unsafe: \$path"
+done
+[[ -r "\$ACTIVE" && ! -L "\$ACTIVE" && -r "\$SCHED_POLICY" && ! -L "\$SCHED_POLICY" ]] \
+    || fail "The patched AMDGPU runtime is not active."
+actual=\$(sha256sum "\$MODULE" | awk '{print \$1}')
+for marker in "\$MARKER" "\$AUDIO_MARKER" "\$METRICS_MARKER"; do
+    read -r expected < "\$marker" || fail "Could not read \$marker"
+    [[ "\$expected" =~ ^[0-9a-f]{64}\$ && "\$actual" == "\$expected" ]] \
+        || fail "The selected AMDGPU module does not match its attestations."
+done
+resolved=\$(modinfo -k "\$(uname -r)" -F filename amdgpu 2>/dev/null) \
+    || fail "Could not resolve the selected AMDGPU module."
+[[ "\$(readlink -f "\$resolved")" == "\$(readlink -f "\$MODULE")" ]] \
+    || fail "The selected AMDGPU module is not the attested module."
+[[ "\$(cat "\$ACTIVE")" == "\$COMMIT" ]] || fail "The loaded AMDGPU repair does not match RADV."
+[[ "\$(cat "\$SCHED_POLICY")" == 2 ]] || fail "amdgpu.sched_policy=2 is not active."
+read -r driver_sha icd_sha runner_sha mesa_version patch_sha extra < "\$MANIFEST" \
+    || fail "The FSR4 profile manifest is malformed."
+[[ -z "\${extra:-}" && "\$driver_sha" =~ ^[0-9a-f]{64}\$ \
+    && "\$icd_sha" =~ ^[0-9a-f]{64}\$ && "\$runner_sha" =~ ^[0-9a-f]{64}\$ \
+    && "\$mesa_version" == "$DEFAULT_MESA_TAG" && "\$patch_sha" == "\$PATCH_SHA" ]] \
+    || fail "The FSR4 profile manifest is invalid."
+[[ "\$(sha256sum "\$DRIVER" | awk '{print \$1}')" == "\$driver_sha" \
+    && "\$(sha256sum "\$ICD" | awk '{print \$1}')" == "\$icd_sha" \
+    && "\$(sha256sum "\$RUNNER" | awk '{print \$1}')" == "\$runner_sha" ]] \
+    || fail "The FSR4 profile failed hash verification."
+grep -qF "\"library_path\": \"\$DRIVER\"" "\$ICD" \
+    && grep -Eq '"library_arch"[[:space:]]*:[[:space:]]*"64"' "\$ICD" \
+    || fail "The Vulkan ICD architecture routing is invalid."
+python3 - "\$FALLBACK_ICD" <<'PY' || fail "The 32-bit Vulkan fallback is invalid."
+import json
+from pathlib import Path
+import struct
+import sys
+
+manifest = Path(sys.argv[1])
+try:
+    data = json.loads(manifest.read_text(encoding="utf-8"))
+    icd = data["ICD"]
+    library = Path(icd["library_path"])
+    if not library.is_absolute():
+        library = manifest.parent / library
+    valid = (
+        data.get("file_format_version") == "1.0.1"
+        and icd.get("library_arch") == "32"
+        and library.is_file()
+        and not library.is_symlink()
+    )
+    if valid:
+        content = library.read_bytes()
+        valid = len(content) >= 52 and content[:7] == b"\x7fELF\x01\x01\x01"
+    if valid:
+        e_type, e_machine, e_version = struct.unpack_from("<HHI", content, 16)
+        e_phoff = struct.unpack_from("<I", content, 28)[0]
+        e_ehsize, e_phentsize, e_phnum = struct.unpack_from("<HHH", content, 40)
+        valid = (
+            e_type == 3 and e_machine == 3 and e_version == 1
+            and e_ehsize >= 52 and e_phentsize >= 32 and e_phnum > 0
+            and e_phoff + e_phentsize * e_phnum <= len(content)
+        )
+    if valid:
+        types = {
+            struct.unpack_from("<I", content, e_phoff + index * e_phentsize)[0]
+            for index in range(e_phnum)
+        }
+        valid = 1 in types and 2 in types
+except (KeyError, OSError, struct.error, TypeError, ValueError):
+    valid = False
+raise SystemExit(0 if valid else 1)
+PY
+export VK_DRIVER_FILES="\$ICD:\$FALLBACK_ICD"
+export VK_ICD_FILENAMES="\$VK_DRIVER_FILES"
+exec "\$@"
+EOF
+}
+
+verify_owned_fsr4_runtime() {
+    local actual
+    read_fsr4_manifest || return 1
+    [[ -d "$FSR4_DIR" && ! -L "$FSR4_DIR" \
+        && -f "$FSR4_DRIVER" && ! -L "$FSR4_DRIVER" \
+        && -f "$FSR4_ICD" && ! -L "$FSR4_ICD" \
+        && -f "$FSR4_RUNNER" && ! -L "$FSR4_RUNNER" && -x "$FSR4_RUNNER" ]] || return 1
+    actual=$(sha256_file "$FSR4_DRIVER")
+    [[ "$actual" == "$STORED_FSR4_DRIVER_SHA" ]] || return 1
+    actual=$(sha256_file "$FSR4_ICD")
+    [[ "$actual" == "$STORED_FSR4_ICD_SHA" ]] || return 1
+    actual=$(sha256_file "$FSR4_RUNNER")
+    [[ "$actual" == "$STORED_FSR4_RUNNER_SHA" ]] || return 1
+    grep -qF "\"library_path\": \"$FSR4_DRIVER\"" "$FSR4_ICD" \
+        && grep -Eq '"library_arch"[[:space:]]*:[[:space:]]*"64"' "$FSR4_ICD"
+}
+
+verify_current_fsr4_runtime() {
+    verify_current_runtime && verify_owned_fsr4_runtime \
+        && [[ "$STORED_FSR4_MESA_TAG" == "$DEFAULT_MESA_TAG" \
+            && "$STORED_FSR4_PATCH_SHA" == "$FSR4_PATCH_SHA256" ]] \
+        && cmp -s "$FSR4_RUNNER" <(render_fsr4_runner) && verify_fsr4_patch
+}
+
+recover_fsr4_install_transaction() {
+    [[ -e "$FSR4_TRANSACTION_DIR" || -L "$FSR4_TRANSACTION_DIR" ]] || return 0
+    [[ -d "$FSR4_TRANSACTION_DIR" && ! -L "$FSR4_TRANSACTION_DIR" \
+        && -f "$FSR4_TRANSACTION_DIR/transaction.conf" \
+        && ! -L "$FSR4_TRANSACTION_DIR/transaction.conf" ]] \
+        || die "Invalid FSR4 install transaction; manual recovery required."
+    local phase had_previous extra
+    read -r phase had_previous extra < "$FSR4_TRANSACTION_DIR/transaction.conf" \
+        || die "Malformed FSR4 install transaction; manual recovery required."
+    [[ ( "$phase" == prepared || "$phase" == swapping ) \
+        && ( "$had_previous" == 0 || "$had_previous" == 1 ) && -z "$extra" ]] \
+        || die "Malformed FSR4 install transaction; manual recovery required."
+    if [[ "$phase" == prepared ]]; then
+        rm -rf "$FSR4_TRANSACTION_DIR"
+        fsync_paths "$STATE_DIR"
+        return 0
+    fi
+    rm -rf "$FSR4_DIR"
+    if [[ "$had_previous" == 1 ]]; then
+        [[ -d "$FSR4_TRANSACTION_DIR/previous" \
+            && ! -L "$FSR4_TRANSACTION_DIR/previous" ]] \
+            || die "FSR4 transaction backup is missing; manual recovery required."
+        mv "$FSR4_TRANSACTION_DIR/previous" "$FSR4_DIR"
+    fi
+    rm -rf "$FSR4_TRANSACTION_DIR"
+    fsync_paths "$STATE_DIR"
+    log "Recovered an interrupted FSR4 profile installation."
+}
+
 generator_owned() {
     [[ -f "$GENERATOR" && ! -L "$GENERATOR" && -x "$GENERATOR" ]] \
         && cmp -s "$GENERATOR" <(render_generator)
@@ -413,7 +650,8 @@ generator_recorded() {
 }
 
 verify_current_runtime() {
-    verify_owned_runtime && [[ "$STORED_COMMIT" == "$UPSTREAM_COMMIT" ]] \
+    verify_owned_runtime && [[ "$STORED_COMMIT" == "$UPSTREAM_COMMIT" \
+        && "$STORED_MESA_TAG" == "$DEFAULT_MESA_TAG" ]] \
         && generator_owned && verify_32bit_fallback
 }
 
@@ -620,8 +858,10 @@ PY
 
 cmd_setup() (
     require_normal_user
-    local mesa_tag="$DEFAULT_MESA_TAG" work source build output staged_driver committed=0
+    local profile="${1:-default}" mesa_tag="$DEFAULT_MESA_TAG"
+    local work source build output staged_driver committed=0
     local ro_was_enabled=0 root_unlocked=0 need_packages=0
+    [[ "$profile" == default || "$profile" == fsr4 ]] || die "Unknown RADV profile: $profile"
     command -v curl >/dev/null 2>&1 || die "curl is required"
     command -v python3 >/dev/null 2>&1 || die "python3 is required"
     command -v flock >/dev/null 2>&1 || die "flock is required"
@@ -633,12 +873,21 @@ cmd_setup() (
     exec 9> "$LOCK_FILE"
     flock 9
     recover_install_transaction
-    preflight_runtime_ownership
+    recover_fsr4_install_transaction
+    if [[ "$profile" == default ]]; then
+        preflight_runtime_ownership
+    else
+        verify_current_runtime \
+            || die "Install and validate the default Mesa / RADV profile before adding FSR4."
+        if [[ -e "$FSR4_DIR" || -L "$FSR4_DIR" ]]; then
+            verify_owned_fsr4_runtime \
+                || die "Existing FSR4 profile is incomplete or not a recorded toolkit install."
+        fi
+        verify_fsr4_patch || die "The clean-room FSR4 patch is missing or failed checksum verification."
+    fi
     require_compute_kernel
     verify_32bit_fallback \
         || die "SteamOS's 32-bit RADV ICD is unavailable or invalid. Install lib32-vulkan-radeon and retry."
-    stage_upstream
-
     work=$(mktemp -d "$STATE_DIR/.setup.XXXXXX")
     staged_driver="${DRIVER}.bc250-new"
     [[ ! -e "$staged_driver" && ! -L "$staged_driver" ]] \
@@ -665,6 +914,7 @@ cmd_setup() (
         if [[ $committed -eq 0 && $rc -ne 0 ]]; then
             relock_root || rc=1
             recover_install_transaction || rc=1
+            recover_fsr4_install_transaction || rc=1
         fi
         if [[ -e "$staged_driver" || -L "$staged_driver" ]]; then
             unlock_root || rc=1
@@ -681,7 +931,7 @@ cmd_setup() (
         ro_was_enabled=1
     fi
 
-    local required_commands=(gcc g++ meson ninja patch pkg-config tar readelf ldd glslangValidator spirv-as)
+    local required_commands=(gcc g++ git meson ninja patch pkg-config tar readelf ldd glslangValidator spirv-as)
     local development_packages=(
         glibc linux-api-headers libdrm expat libelf zlib zstd wayland wayland-protocols
         libffi libxau libxdmcp xorgproto libxcb xcb-util xcb-util-wm
@@ -704,7 +954,7 @@ cmd_setup() (
         as_root pacman-key --init
         as_root pacman-key --populate archlinux holo 2>/dev/null || as_root pacman-key --populate
         as_root pacman -S --needed --noconfirm \
-            base-devel meson ninja python-mako python-packaging python-yaml pkgconf \
+            base-devel git meson ninja python-mako python-packaging python-yaml pkgconf \
             glslang spirv-tools \
             "${development_packages[@]}"
         # SteamOS images can record these packages while omitting development
@@ -726,10 +976,16 @@ cmd_setup() (
             || die "Signed SteamOS packages did not provide development metadata: $command"
     done
 
+    stage_upstream
+
     source="$BUILD_ROOT/$DEFAULT_MESA_TAG"
+    if [[ "$profile" == fsr4 ]]; then source="${source}-fsr4"; fi
     build="$source/build"
     rm -rf "$source"
-    tar -C "$BUILD_ROOT" -xf "$CACHE_DIR/$MESA_TARBALL"
+    git clone --no-checkout "$MESA_GIT_CACHE" "$source"
+    git -C "$source" checkout --detach "$MESA_COMMIT"
+    [[ "$(git -C "$source" rev-parse HEAD)" == "$MESA_COMMIT" ]] \
+        || die "Mesa worktree does not match pinned commit $MESA_COMMIT"
     mkdir -p "$source/subprojects/packagecache"
     cp "$CACHE_DIR/$LIBDRM_TARBALL" "$source/subprojects/packagecache/"
     local patch_name
@@ -740,6 +996,12 @@ cmd_setup() (
         patch -d "$source" -p1 --fuzz=0 --dry-run -i "$CACHE_DIR/$patch_name"
         patch -d "$source" -p1 --fuzz=0 -i "$CACHE_DIR/$patch_name"
     done
+    if [[ "$profile" == fsr4 ]]; then
+        patch -d "$source" -p1 --fuzz=0 --dry-run -i "$FSR4_PATCH"
+        patch -d "$source" -p1 --fuzz=0 -i "$FSR4_PATCH"
+        grep -qF radv_lower_gfx1013_sdot "$source/src/amd/vulkan/radv_shader.c" \
+            || die "Patched Mesa source is missing the clean-room FSR4 lowering"
+    fi
     grep -qF has_async_compute_threadgroup_bug "$source/src/amd/common/ac_gpu_info.c" \
         && grep -qF has_gfx1013_mesh_queries "$source/src/amd/common/ac_gpu_info.c" \
         || die "Patched Mesa source is missing the GFX1013 compute/mesh markers"
@@ -772,6 +1034,72 @@ PY
         || die "Built RADV driver has unresolved dynamic dependencies: $linkage"
     require_compute_kernel
 
+    if [[ "$profile" == fsr4 ]]; then
+        local profile_stage="$work/fsr4" transaction_stage="$work/fsr4-transaction"
+        local had_previous=0 transaction_tmp
+        mkdir -m 0700 "$profile_stage"
+        install -m 0755 "$output" "$profile_stage/libvulkan_radeon.so"
+        render_fsr4_runner > "$profile_stage/bc250-fsr4-run"
+        chmod 0755 "$profile_stage/bc250-fsr4-run"
+        cat > "$profile_stage/radeon_fsr4_icd.x86_64.json" <<EOF
+{
+  "file_format_version": "1.0.1",
+  "ICD": {"library_path": "$FSR4_DRIVER", "api_version": "1.4.354", "library_arch": "64"}
+}
+EOF
+        chmod 0644 "$profile_stage/radeon_fsr4_icd.x86_64.json"
+        printf '%s %s %s %s %s\n' \
+            "$(sha256_file "$profile_stage/libvulkan_radeon.so")" \
+            "$(sha256_file "$profile_stage/radeon_fsr4_icd.x86_64.json")" \
+            "$(sha256_file "$profile_stage/bc250-fsr4-run")" \
+            "$DEFAULT_MESA_TAG" "$FSR4_PATCH_SHA256" > "$profile_stage/install.conf"
+        chmod 0600 "$profile_stage/install.conf"
+        mkdir -m 0700 "$transaction_stage"
+        if [[ -d "$FSR4_DIR" ]]; then
+            cp -a "$FSR4_DIR" "$transaction_stage/previous"
+            if ! { cmp -s "$FSR4_DRIVER" "$transaction_stage/previous/libvulkan_radeon.so" \
+                && cmp -s "$FSR4_ICD" "$transaction_stage/previous/radeon_fsr4_icd.x86_64.json" \
+                && cmp -s "$FSR4_RUNNER" "$transaction_stage/previous/bc250-fsr4-run" \
+                && cmp -s "$FSR4_MANIFEST" "$transaction_stage/previous/install.conf"; }; then
+                die "Could not verify the previous FSR4 profile backup."
+            fi
+            had_previous=1
+        fi
+        printf 'prepared %s\n' "$had_previous" > "$transaction_stage/transaction.conf"
+        if [[ "$had_previous" == 1 ]]; then
+            fsync_paths "$transaction_stage/previous/libvulkan_radeon.so" \
+                "$transaction_stage/previous/radeon_fsr4_icd.x86_64.json" \
+                "$transaction_stage/previous/bc250-fsr4-run" \
+                "$transaction_stage/previous/install.conf" "$transaction_stage/previous"
+        fi
+        fsync_paths "$transaction_stage/transaction.conf" "$transaction_stage"
+        mv "$transaction_stage" "$FSR4_TRANSACTION_DIR"
+        fsync_paths "$STATE_DIR"
+        transaction_tmp=$(mktemp "$FSR4_TRANSACTION_DIR/.transaction.XXXXXX")
+        printf 'swapping %s\n' "$had_previous" > "$transaction_tmp"
+        fsync_paths "$transaction_tmp"
+        mv -f "$transaction_tmp" "$FSR4_TRANSACTION_DIR/transaction.conf"
+        fsync_paths "$FSR4_TRANSACTION_DIR/transaction.conf" "$FSR4_TRANSACTION_DIR"
+        rm -rf "$FSR4_DIR"
+        if ! mv "$profile_stage" "$FSR4_DIR"; then
+            recover_fsr4_install_transaction
+            die "Could not install the private FSR4 profile."
+        fi
+        if ! verify_current_fsr4_runtime; then
+            recover_fsr4_install_transaction
+            die "Installed FSR4 profile failed attestation; the previous profile was restored."
+        fi
+        fsync_paths "$FSR4_DRIVER" "$FSR4_ICD" "$FSR4_RUNNER" "$FSR4_MANIFEST" \
+            "$FSR4_DIR" "$STATE_DIR"
+        rm -rf "$FSR4_TRANSACTION_DIR"
+        fsync_paths "$STATE_DIR"
+        committed=1
+        log "Installed the experimental clean-room FSR4 profile for private per-game activation."
+        log "Steam launch option: $FSR4_RUNNER %command%"
+        log "The global Vulkan environment was not changed."
+        return 0
+    fi
+
     log "Installing audited $mesa_tag with DryhoppedIPA's patch series ${UPSTREAM_COMMIT:0:7}."
     log "The alternate ICD will become global for this user after the user manager reloads."
     arm_install_transaction
@@ -784,7 +1112,7 @@ PY
     cat > "$work/icd" <<EOF
 {
   "file_format_version": "1.0.1",
-  "ICD": {"library_path": "$DRIVER", "api_version": "1.4.309", "library_arch": "64"}
+  "ICD": {"library_path": "$DRIVER", "api_version": "1.4.354", "library_arch": "64"}
 }
 EOF
     chmod 0644 "$work/icd"
@@ -946,6 +1274,7 @@ cmd_legacy_clear() {
     ensure_state_dir
     exec 9> "$LOCK_FILE"
     flock 9
+    recover_fsr4_install_transaction
     manage_games clear
     log "Cleared migration records from the older per-game workflow."
     log "Confirm MESA_DRICONF_EXECUTABLE_OVERRIDE and VK_ICD_FILENAMES were removed from those games' Steam launch options."
@@ -981,10 +1310,24 @@ cmd_status() {
         failed=2
     else
         echo "  runtime: not installed"
-        return 1
+        failed=1
     fi
-    echo "  activation: global user environment"
-    echo "  generator:  $GENERATOR"
+    if [[ -e "$DRIVER" || -L "$DRIVER" || -e "$ICD" || -L "$ICD" ]]; then
+        echo "  activation: global user environment"
+        echo "  generator:  $GENERATOR"
+    fi
+    if [[ -e "$FSR4_TRANSACTION_DIR" || -L "$FSR4_TRANSACTION_DIR" ]]; then
+        echo "  FSR4:      interrupted installation requires recovery"
+        failed=2
+    elif verify_current_fsr4_runtime; then
+        echo "  FSR4:      installed (experimental, private per-game profile)"
+        echo "  launcher:  $FSR4_RUNNER"
+    elif [[ -e "$FSR4_DIR" || -L "$FSR4_DIR" ]]; then
+        echo "  FSR4:      incomplete or ownership mismatch"
+        failed=2
+    else
+        echo "  FSR4:      not installed"
+    fi
     local legacy_games
     if ! legacy_games=$(manage_games list); then
         echo "  legacy games: configuration invalid"
@@ -999,6 +1342,7 @@ cmd_status() {
 cmd_status_json() {
     local runtime_state="not-installed" mesa_version="" config_valid=1 error="" games="[]" kernel_ready=0
     local global_enabled=0 restart_required=0 scheduler_configured=0 scheduler_active=0
+    local fsr4_state="not-installed"
     verify_compute_kernel && kernel_ready=1
     verify_scheduler_configured && scheduler_configured=1
     verify_scheduler_active && scheduler_active=1
@@ -1018,16 +1362,23 @@ cmd_status_json() {
         runtime_state="invalid"
         if read_manifest; then mesa_version="$STORED_MESA_TAG"; fi
     fi
+    if [[ -e "$FSR4_TRANSACTION_DIR" || -L "$FSR4_TRANSACTION_DIR" ]]; then
+        fsr4_state="invalid"
+    elif verify_current_fsr4_runtime; then
+        fsr4_state="ready"
+    elif [[ -e "$FSR4_DIR" || -L "$FSR4_DIR" ]]; then
+        fsr4_state="invalid"
+    fi
     if ! games=$(manage_games list-json 2>&1); then
         config_valid=0
         error="$games"
         games="[]"
     fi
-    python3 - "$runtime_state" "$mesa_version" "$ICD" "$config_valid" "$error" "$games" "$kernel_ready" "$global_enabled" "$restart_required" "$scheduler_configured" "$scheduler_active" <<'PY'
+    python3 - "$runtime_state" "$mesa_version" "$ICD" "$config_valid" "$error" "$games" "$kernel_ready" "$global_enabled" "$restart_required" "$scheduler_configured" "$scheduler_active" "$fsr4_state" "$FSR4_ICD" "$FSR4_RUNNER" <<'PY'
 import json
 import sys
 
-runtime_state, mesa_version, icd_path, config_valid, error, games, kernel_ready, global_enabled, restart_required, scheduler_configured, scheduler_active = sys.argv[1:]
+runtime_state, mesa_version, icd_path, config_valid, error, games, kernel_ready, global_enabled, restart_required, scheduler_configured, scheduler_active, fsr4_state, fsr4_icd, fsr4_runner = sys.argv[1:]
 print(json.dumps({
     "scriptAvailable": True,
     "runtimeState": runtime_state,
@@ -1041,9 +1392,29 @@ print(json.dumps({
     "schedulerActive": scheduler_active == "1",
     "globalEnabled": global_enabled == "1",
     "restartRequired": restart_required == "1",
+    "fsr4State": fsr4_state,
+    "fsr4IcdPath": fsr4_icd,
+    "fsr4RunnerPath": fsr4_runner,
 }, ensure_ascii=True, separators=(",", ":")))
 PY
 }
+
+cmd_uninstall_fsr4() (
+    require_normal_user
+    command -v flock >/dev/null 2>&1 || die "flock is required"
+    ensure_state_dir
+    exec 9> "$LOCK_FILE"
+    flock 9
+    recover_fsr4_install_transaction
+    if [[ ! -e "$FSR4_DIR" && ! -L "$FSR4_DIR" ]]; then
+        log "The private FSR4 profile is not installed."
+        return 0
+    fi
+    verify_owned_fsr4_runtime \
+        || die "FSR4 profile is not a recorded toolkit install; refusing removal."
+    rm -rf "$FSR4_DIR"
+    log "Removed the private FSR4 profile. The global RADV runtime was unchanged."
+)
 
 cmd_uninstall() (
     require_normal_user
@@ -1054,6 +1425,11 @@ cmd_uninstall() (
     exec 9> "$LOCK_FILE"
     flock 9
     recover_install_transaction
+    recover_fsr4_install_transaction
+    if [[ -e "$FSR4_DIR" || -L "$FSR4_DIR" ]]; then
+        verify_owned_fsr4_runtime \
+            || die "FSR4 profile is not a recorded toolkit install; refusing removal."
+    fi
     restore_readonly() {
         local rc=$?
         trap - EXIT INT TERM HUP
@@ -1103,6 +1479,7 @@ cmd_uninstall() (
         && verify_scheduler_active; then
         die "amdgpu.sched_policy=2 remains active for this boot. Reboot to deactivate it, then rerun uninstall; the patched RADV runtime was left intact."
     fi
+    if [[ -e "$FSR4_DIR" || -L "$FSR4_DIR" ]]; then rm -rf "$FSR4_DIR"; fi
     if [[ -e "$DRIVER" || -L "$DRIVER" ]]; then
         if command -v steamos-readonly >/dev/null 2>&1 \
             && steamos-readonly status 2>/dev/null | grep -qi enabled; then
@@ -1126,7 +1503,9 @@ cmd_purge() (
     flock 9
     [[ ! -e "$DRIVER" && ! -L "$DRIVER" && ! -e "$ICD" && ! -L "$ICD" \
         && ! -e "$GENERATOR" && ! -L "$GENERATOR" \
-        && ! -e "$MANIFEST" && ! -e "$TRANSACTION_DIR" ]] \
+        && ! -e "$MANIFEST" && ! -e "$TRANSACTION_DIR" \
+        && ! -e "$FSR4_DIR" && ! -L "$FSR4_DIR" \
+        && ! -e "$FSR4_TRANSACTION_DIR" && ! -L "$FSR4_TRANSACTION_DIR" ]] \
         || die "Mesa / RADV runtime remains; run '$0 uninstall' before purge."
     if grep -qF '<!-- BEGIN BC250 MESH SHADER MANAGED -->' "$DRIRC" 2>/dev/null; then
         die "Managed game entries remain; run '$0 uninstall' before purge."
@@ -1196,6 +1575,18 @@ runtime_badge() {
     fi
 }
 
+fsr4_badge() {
+    if [[ -e "$FSR4_TRANSACTION_DIR" || -L "$FSR4_TRANSACTION_DIR" ]]; then
+        printf '%s' "${CR}[recover]${C0}"
+    elif verify_current_fsr4_runtime; then
+        printf '%s' "${CG}[ready]${C0}"
+    elif [[ -e "$FSR4_DIR" || -L "$FSR4_DIR" ]]; then
+        printf '%s' "${CR}[repair]${C0}"
+    else
+        printf '%s' "${CY}[setup]${C0}"
+    fi
+}
+
 run_menu_action() {
     local rc=0
     echo
@@ -1232,8 +1623,9 @@ cmd_menu() {
     [[ -t 0 && -t 1 ]] \
         || die "The menu needs an interactive terminal. Use '$0 help' for CLI commands."
     while true; do
-        local runtime_state
+        local runtime_state fsr4_state
         runtime_state=$(runtime_badge)
+        fsr4_state=$(fsr4_badge)
         local legacy_games legacy_state
         if ! legacy_games=$(manage_games list 2>/dev/null); then
             legacy_state="${CR}[invalid]${C0}"
@@ -1245,6 +1637,7 @@ cmd_menu() {
         local items=(
             "Status overview|${runtime_state}|Verify the patched AMDGPU module, scheduler policy, RADV runtime, and global activation."
             "Build / install RADV async-compute patch|${runtime_state}|Optional but highly recommended. Enables GFX1013 async compute, requires Step 1 AMDGPU fixes, and usually takes 3-5 minutes."
+            "Build experimental FSR4 profile|${fsr4_state}|Optional clean-room signed-dot lowering. Installs a private per-game profile without changing the global Vulkan environment."
             "Older per-game setup cleanup|${legacy_state}|Migration only: remove old MESA_DRICONF_EXECUTABLE_OVERRIDE and VK_ICD_FILENAMES Steam launch options, then clear their records."
             "Uninstall Mesa / RADV runtime|${runtime_state}|Remove the alternate driver, ICD, and user environment generator; preserve build caches."
             "Full help||Show CLI commands, activation behavior, and upstream source."
@@ -1256,29 +1649,35 @@ cmd_menu() {
             1) confirm_menu_action \
                 "Build and install the global RADV async-compute patch?" setup ;;
             2) confirm_menu_action \
-                "Have you removed MESA_DRICONF_EXECUTABLE_OVERRIDE and VK_ICD_FILENAMES from the old per-game Steam launch options?" legacy-clear ;;
+                "Build and install the experimental private FSR4 profile?" setup --fsr4 ;;
             3) confirm_menu_action \
+                "Have you removed MESA_DRICONF_EXECUTABLE_OVERRIDE and VK_ICD_FILENAMES from the old per-game Steam launch options?" legacy-clear ;;
+            4) confirm_menu_action \
                 "Remove the global Mesa / RADV runtime?" uninstall ;;
-            4) echo; cmd_help; pause_key ;;
+            5) echo; cmd_help; pause_key ;;
         esac
     done
 }
 
 cmd_help() {
     cat <<EOF
-Usage: $0 [menu|setup|status|status-json|legacy-clear|uninstall|purge|help]
+Usage: $0 [menu|setup [--fsr4]|status|status-json|legacy-clear|uninstall [--fsr4]|purge|help]
 
   setup                        Fetch the verified upstream series, build the
                                audited Mesa RADV driver with GFX1013 async
                                compute, install a separate ICD, and configure
                                safe global activation. Usually takes 3-5 minutes.
+  setup --fsr4                 Build the experimental clean-room FSR4 signed-dot
+                               profile after the default runtime validates. It is
+                               installed privately and is never globally enabled.
   status                       Verify the AMDGPU module, scheduler policy, and
                                global runtime ownership.
   status-json                  Print machine-readable runtime status.
   legacy-clear                Migration cleanup for older toolkit installs only.
                                First remove MESA_DRICONF_EXECUTABLE_OVERRIDE and
                                VK_ICD_FILENAMES from their Steam launch options.
-  uninstall                    Remove the alternate ICD and global activation.
+  uninstall                    Remove the alternate ICD, FSR4 profile, and global activation.
+  uninstall --fsr4             Remove only the private FSR4 profile.
   purge                        After uninstall, remove patch/source/build caches.
 
 The environment generator exports VK_DRIVER_FILES and VK_ICD_FILENAMES only
@@ -1289,6 +1688,9 @@ an update when the policy is already active.
 The patched ICD serves 64-bit processes; SteamOS's stock RADV serves 32-bit
 processes through the same global driver list.
 
+After 'setup --fsr4', opt in one Steam game with this launch option:
+  $FSR4_RUNNER %command%
+
 Upstream (pinned to $UPSTREAM_COMMIT):
   $UPSTREAM_REPO
 EOF
@@ -1296,12 +1698,20 @@ EOF
 
 case "${1:-menu}" in
     menu) (($# <= 1)) || die "Usage: $0 menu"; cmd_menu ;;
-    setup) (($# == 1)) || die "Usage: $0 setup"; cmd_setup ;;
+    setup)
+        if (($# == 1)); then cmd_setup default
+        elif (($# == 2)) && [[ "$2" == --fsr4 ]]; then cmd_setup fsr4
+        else die "Usage: $0 setup [--fsr4]"
+        fi ;;
     status) (($# == 1)) || die "Usage: $0 status"; cmd_status ;;
     status-json) (($# == 1)) || die "Usage: $0 status-json"; cmd_status_json ;;
     game) shift; cmd_game "$@" ;;
     legacy-clear) (($# == 1)) || die "Usage: $0 legacy-clear"; cmd_legacy_clear ;;
-    uninstall) (($# == 1)) || die "Usage: $0 uninstall"; cmd_uninstall ;;
+    uninstall)
+        if (($# == 1)); then cmd_uninstall
+        elif (($# == 2)) && [[ "$2" == --fsr4 ]]; then cmd_uninstall_fsr4
+        else die "Usage: $0 uninstall [--fsr4]"
+        fi ;;
     purge) (($# == 1)) || die "Usage: $0 purge"; cmd_purge ;;
     help|-h|--help) (($# == 1)) || die "Usage: $0 help"; cmd_help ;;
     *) cmd_help >&2; exit 2 ;;

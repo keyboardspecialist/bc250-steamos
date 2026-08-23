@@ -1,6 +1,7 @@
 import hashlib
 import json
 import os
+import struct
 import subprocess
 import tempfile
 import unittest
@@ -120,7 +121,14 @@ class MeshShaderTests(unittest.TestCase):
         active.write_text(UPSTREAM_COMMIT + "\n", encoding="ascii")
         policy.write_text("2\n", encoding="ascii")
         driver.write_bytes(b"driver\n")
-        fallback_driver.write_bytes(b"\x7fELF\x01stock 32-bit driver\n")
+        fallback_elf = bytearray(52 + 2 * 32)
+        fallback_elf[:7] = b"\x7fELF\x01\x01\x01"
+        struct.pack_into("<HHI", fallback_elf, 16, 3, 3, 1)
+        struct.pack_into("<I", fallback_elf, 28, 52)
+        struct.pack_into("<HHH", fallback_elf, 40, 52, 32, 2)
+        struct.pack_into("<I", fallback_elf, 52, 1)
+        struct.pack_into("<I", fallback_elf, 84, 2)
+        fallback_driver.write_bytes(fallback_elf)
         fallback_icd.write_text(
             json.dumps(
                 {
@@ -155,12 +163,48 @@ class MeshShaderTests(unittest.TestCase):
         generator.chmod(0o755)
         digest = lambda path: hashlib.sha256(path.read_bytes()).hexdigest()
         (state / "install.conf").write_text(
-            f"{digest(driver)} {digest(icd)} mesa-26.2.0-rc3 {commit}\n",
+            f"{digest(driver)} {digest(icd)} mesa-26.2.0 {commit}\n",
             encoding="ascii",
         )
         driver_files = f'{icd}:{env["BC250_MESH_32BIT_ICD"]}'
         env["VK_DRIVER_FILES"] = driver_files
         env["VK_ICD_FILENAMES"] = driver_files
+
+    def install_fsr4_runtime(self, env):
+        state = Path(env["BC250_MESH_STATE_DIR"])
+        profile = state / "fsr4"
+        profile.mkdir(parents=True)
+        driver = profile / "libvulkan_radeon.so"
+        icd = profile / "radeon_fsr4_icd.x86_64.json"
+        runner = profile / "bc250-fsr4-run"
+        driver.write_bytes(b"fsr4 driver\n")
+        icd.write_text(
+            '{"file_format_version":"1.0.1","ICD":'
+            '{"library_path": "%s", "library_arch": "64"}}\n' % driver,
+            encoding="utf-8",
+        )
+        subprocess.run(
+            [
+                "bash",
+                "-c",
+                'script=$1; output=$2; set -- help; source "$script" >/dev/null; '
+                'render_fsr4_runner > "$output"',
+                "_",
+                str(MESH),
+                str(runner),
+            ],
+            check=True,
+            env=env,
+        )
+        runner.chmod(0o755)
+        digest = lambda path: hashlib.sha256(path.read_bytes()).hexdigest()
+        patch_digest = hashlib.sha256(
+            (ROOT / "bc250-mesa-patches/0004-gfx1013-fsr4-sdot-lowering.patch").read_bytes()
+        ).hexdigest()
+        (profile / "install.conf").write_text(
+            f"{digest(driver)} {digest(icd)} {digest(runner)} mesa-26.2.0 {patch_digest}\n",
+            encoding="ascii",
+        )
 
     def install_legacy_runtime(self, env):
         self.install_runtime(env)
@@ -176,7 +220,7 @@ class MeshShaderTests(unittest.TestCase):
         )
         digest = lambda path: hashlib.sha256(path.read_bytes()).hexdigest()
         (state / "install.conf").write_text(
-            f"{digest(driver)} {digest(icd)} mesa-26.2.0-rc3 {UPSTREAM_COMMIT}\n",
+            f"{digest(driver)} {digest(icd)} mesa-26.2.0 {UPSTREAM_COMMIT}\n",
             encoding="ascii",
         )
         subprocess.run(
@@ -226,7 +270,8 @@ class MeshShaderTests(unittest.TestCase):
             self.install_runtime(env)
             status = self.run_status_json(env)
             self.assertEqual(status["runtimeState"], "ready")
-            self.assertEqual(status["mesaVersion"], "mesa-26.2.0-rc3")
+            self.assertEqual(status["mesaVersion"], "mesa-26.2.0")
+            self.assertEqual(status["fsr4State"], "not-installed")
             self.assertTrue(status["kernelReady"])
             self.assertTrue(status["globalEnabled"])
             self.assertFalse(status["restartRequired"])
@@ -284,7 +329,7 @@ class MeshShaderTests(unittest.TestCase):
             driver = Path(env["BC250_MESH_DRIVER"])
             digest = lambda path: hashlib.sha256(path.read_bytes()).hexdigest()
             (state / "install.conf").write_text(
-                f"{digest(driver)} {digest(icd)} mesa-26.2.0-rc3 {UPSTREAM_COMMIT}\n",
+                f"{digest(driver)} {digest(icd)} mesa-26.2.0 {UPSTREAM_COMMIT}\n",
                 encoding="ascii",
             )
             generated = subprocess.run(
@@ -477,6 +522,100 @@ class MeshShaderTests(unittest.TestCase):
             self.assertNotEqual(result.returncode, 0)
             self.assertIn("global", result.stderr)
 
+    def test_private_fsr4_profile_is_attested_and_not_global(self):
+        with tempfile.TemporaryDirectory() as directory:
+            env = self.environment(Path(directory))
+            self.install_runtime(env)
+            self.install_fsr4_runtime(env)
+            status = self.run_status_json(env)
+            self.assertEqual(status["fsr4State"], "ready")
+            self.assertTrue(status["globalEnabled"])
+            self.assertNotIn(status["fsr4IcdPath"], env["VK_DRIVER_FILES"])
+
+            result = subprocess.run(
+                [status["fsr4RunnerPath"], "sh", "-c", "printf '%s' \"$VK_DRIVER_FILES\""],
+                check=True,
+                capture_output=True,
+                text=True,
+                env=env,
+            )
+            self.assertIn(status["fsr4IcdPath"], result.stdout)
+            self.assertIn(env["BC250_MESH_32BIT_ICD"], result.stdout)
+
+    def test_tampered_fsr4_profile_is_invalid(self):
+        with tempfile.TemporaryDirectory() as directory:
+            env = self.environment(Path(directory))
+            self.install_runtime(env)
+            self.install_fsr4_runtime(env)
+            state = Path(env["BC250_MESH_STATE_DIR"])
+            (state / "fsr4/libvulkan_radeon.so").write_bytes(b"tampered\n")
+            self.assertEqual(self.run_status_json(env)["fsr4State"], "invalid")
+
+    def test_fsr4_runner_refuses_inactive_scheduler(self):
+        with tempfile.TemporaryDirectory() as directory:
+            env = self.environment(Path(directory))
+            self.install_runtime(env)
+            self.install_fsr4_runtime(env)
+            Path(env["BC250_SCHED_POLICY_PARAM"]).write_text("0\n", encoding="ascii")
+            runner = Path(env["BC250_MESH_STATE_DIR"]) / "fsr4/bc250-fsr4-run"
+            result = subprocess.run(
+                [str(runner), "true"], capture_output=True, text=True, env=env
+            )
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("sched_policy=2", result.stderr)
+
+    def test_uninstall_fsr4_preserves_default_runtime(self):
+        with tempfile.TemporaryDirectory() as directory:
+            env = self.environment(Path(directory))
+            self.install_runtime(env)
+            self.install_fsr4_runtime(env)
+            subprocess.run(
+                ["bash", str(MESH), "uninstall", "--fsr4"],
+                check=True,
+                capture_output=True,
+                text=True,
+                env=env,
+            )
+            status = self.run_status_json(env)
+            self.assertEqual(status["runtimeState"], "ready")
+            self.assertEqual(status["fsr4State"], "not-installed")
+            self.assertTrue(Path(env["BC250_MESH_DRIVER"]).exists())
+
+    def test_interrupted_fsr4_replacement_restores_previous_profile(self):
+        with tempfile.TemporaryDirectory() as directory:
+            env = self.environment(Path(directory))
+            self.install_runtime(env)
+            self.install_fsr4_runtime(env)
+            state = Path(env["BC250_MESH_STATE_DIR"])
+            profile = state / "fsr4"
+            transaction = state / "fsr4-install-transaction"
+            transaction.mkdir()
+            previous = transaction / "previous"
+            previous.mkdir()
+            for source in profile.iterdir():
+                (previous / source.name).write_bytes(source.read_bytes())
+                (previous / source.name).chmod(source.stat().st_mode)
+            (transaction / "transaction.conf").write_text(
+                "swapping 1\n", encoding="ascii"
+            )
+            (profile / "libvulkan_radeon.so").write_bytes(b"interrupted\n")
+            subprocess.run(
+                [
+                    "bash",
+                    "-c",
+                    'script=$1; set -- help; source "$script" >/dev/null; '
+                    "recover_fsr4_install_transaction",
+                    "_",
+                    str(MESH),
+                ],
+                check=True,
+                capture_output=True,
+                text=True,
+                env=env,
+            )
+            self.assertFalse(transaction.exists())
+            self.assertEqual(self.run_status_json(env)["fsr4State"], "ready")
+
     def test_uninstall_removes_global_runtime_and_legacy_entries(self):
         with tempfile.TemporaryDirectory() as directory:
             env = self.environment(Path(directory))
@@ -567,6 +706,12 @@ class MeshShaderTests(unittest.TestCase):
         self.assertNotIn("20-40", source)
         self.assertNotIn("Enable one executable|", source)
         self.assertIn("DryhoppedIPA/bc250-gfx1013-fix", source)
+        self.assertIn('DEFAULT_MESA_TAG="mesa-26.2.0"', source)
+        self.assertIn("setup --fsr4", source)
+        self.assertIn("render_fsr4_runner", source)
+        self.assertIn("FSR4_PATCH_SHA256", source)
+        self.assertIn("refs/heads/bc250-pinned-mesa", source)
+        self.assertIn("recover_fsr4_install_transaction", source)
         self.assertIn("/usr/lib/systemd/user-environment-generators", source)
 
     def test_setup_force_reinstalls_development_metadata_packages(self):
@@ -601,6 +746,27 @@ class MeshShaderTests(unittest.TestCase):
         self.assertIn("-Dallow-fallback-for=libdrm", source)
         self.assertIn("-Dlibdrm:default_library=static", source)
         self.assertIn("-Dbuildtype=release", source)
+
+    def test_fsr4_patch_contains_full_bc250_compiler_stack(self):
+        patch = (
+            ROOT / "bc250-mesa-patches/0004-gfx1013-fsr4-sdot-lowering.patch"
+        ).read_text(encoding="utf-8")
+        for marker in (
+            "radv_gfx1013_analyze_sdot",
+            "radv_gfx1013_use_dense_sdot",
+            "radv_gfx1013_lower_one_sdot",
+            "deferred_options.has_sdot_4x8 = true",
+            "nir_op_imad24_ir3",
+            "nir_op_imul24",
+            "v_mad_i32_i24",
+            "GFX1013 signed dot must be lowered",
+            "gfx1013_pathological_spill",
+            "max_lds_spill_slots = MIN2(max_lds_spill_slots, 8u)",
+            "!compiler_info->key.use_llvm",
+        ):
+            self.assertIn(marker, patch)
+        self.assertNotIn("RADV_GFX103", patch)
+        self.assertNotIn("gfx_level = GFX10_3", patch)
 
 
 if __name__ == "__main__":

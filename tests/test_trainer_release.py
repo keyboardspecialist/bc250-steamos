@@ -424,6 +424,7 @@ class TrainerReleaseTests(unittest.TestCase):
             'printf \'%s\\n\' "$GITHUB_REF_NAME" > "$package_dir/VERSION"',
             "trainer/install-release.py trainer/install.sh trainer/install-flatpak.sh",
             "acpi-tables decky-plugin desktop-control core-unlock backend scripts topology.sh",
+            "bc250-mesa-patches",
             'rm "$package_dir/scripts/stage-trainer-runtime.py"',
         ):
             self.assertIn(expected, workflow)
