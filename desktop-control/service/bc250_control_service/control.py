@@ -126,11 +126,11 @@ class ControlService:
         _whole(maximum, "GPU frequencies must be whole numbers.")
         if mode not in ("adaptive", "max", "pin", "range"):
             raise InvalidArguments("Unknown GPU frequency mode.")
-        if mode == "pin" and not 300 <= maximum <= 2150:
-            raise InvalidArguments("Pinned frequency must be 300-2150 MHz.")
+        if mode == "pin" and not 300 <= maximum <= 2230:
+            raise InvalidArguments("Pinned frequency must be 300-2230 MHz.")
         if mode == "range" and (
-            (minimum != 0 and not 300 <= minimum <= 2150)
-            or not 300 <= maximum <= 2150
+            (minimum != 0 and not 300 <= minimum <= 2230)
+            or not 300 <= maximum <= 2230
             or (minimum != 0 and minimum > maximum)
         ):
             raise InvalidArguments("GPU frequency range is invalid.")

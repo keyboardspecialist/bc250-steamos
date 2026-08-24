@@ -960,7 +960,7 @@ frequency = 2000
 voltage = 1000
 
 [[safe-points]]
-frequency = 2150
+frequency = 2230
 voltage = 1000
 EOF
 }
@@ -1402,7 +1402,7 @@ cmd_freq() {
 # These commands edit the curve in config.toml, restart the governor, and
 # reapply the saved freq setting (a restart otherwise drops runtime state).
 GPU_FREQ_MIN=300
-GPU_FREQ_MAX=2150
+GPU_FREQ_MAX=2230
 VOLT_MIN=700    # below: artifact/crash territory even at low clocks
 VOLT_MAX=1050   # above the community flat-1000 ceiling + small margin
 
@@ -1544,7 +1544,7 @@ def mutate_points(points, operation, values):
     if operation == "reset":
         if values:
             raise CurveError("reset takes no values.")
-        return [(300, 700), (1000, 800), (1500, 900), (2000, 1000), (2150, 1000)]
+        return [(300, 700), (1000, 800), (1500, 900), (2000, 1000), (2230, 1000)]
 
     validate_points(points)
     if operation == "offset":
@@ -4109,7 +4109,7 @@ menu_voltage_curve() {
         items+=(
             "Add curve point||Insert a sorted frequency/voltage point."
             "Offset whole curve||Shift every voltage by the same signed mV amount."
-            "Reset tuned defaults||Restore the 300-2150 MHz, 700-1000 mV default curve."
+            "Reset tuned defaults||Restore the 300-2230 MHz, 700-1000 mV default curve."
         )
         menu_select "GPU frequency / voltage curve  ${CD}(atomic + rollback protected)${C0}" "${items[@]}" || return 0
         if (( MENU_CHOICE < count )); then
@@ -4362,7 +4362,7 @@ SETUP COMMANDS (run once, in this order)
   governor    Install cyan-skillfish-governor-smu (filippor): adaptive
               GPU freq/voltage via SMU firmware calls, no kernel patch.
               Downloads the latest release, writes a tuned config
-              (voltage curve from 300 to 2150 MHz, operating cap 1500 MHz,
+              (voltage curve from 300 to 2230 MHz, operating cap 1500 MHz,
               thermal throttle 85C), TEST-STARTS the service but does
               not enable it at boot -- verify under load first.
 
@@ -4499,7 +4499,7 @@ EVERYDAY COMMANDS
                           change a point's frequency and voltage
     gpu-volt remove 1250  remove a point (at least two must remain)
     gpu-volt reset        restore the tuned default curve
-              Bounds 300-2150 MHz and 700-1050 mV are enforced, with
+              Bounds 300-2230 MHz and 700-1050 mV are enforced, with
               sorted unique frequencies and nondecreasing voltages. Updates
               are atomic and rollback config/runtime after reload failure.
               Small steps (10-25 mV) and stress test after -- undervolts

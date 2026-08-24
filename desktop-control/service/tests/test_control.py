@@ -233,7 +233,7 @@ class ControlServiceTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_validation_happens_before_authorization_or_backend_call(self):
         with self.assertRaises(InvalidArguments):
-            await self.service.set_gpu_frequency(":1.1", "pin", 0, 2200)
+            await self.service.set_gpu_frequency(":1.1", "pin", 0, 2231)
         with self.assertRaises(InvalidArguments):
             await self.service.set_gpu_frequency(":1.1", "pin", 0, 299)
         with self.assertRaises(InvalidArguments):

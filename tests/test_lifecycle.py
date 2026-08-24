@@ -265,7 +265,7 @@ run_action failing_action >/dev/null
                 "[load-target]\nupper = 0.80\nlower = 0.65\n\n"
                 "[[safe-points]]\nfrequency = 300\nvoltage = 700\n\n"
                 "[[safe-points]]\nfrequency = 1000\nvoltage = 800\n\n"
-                "[[safe-points]]\nfrequency = 2150\nvoltage = 1000\n\n"
+                "[[safe-points]]\nfrequency = 2230\nvoltage = 1000\n\n"
                 '["after]curve"]\nkept = true\n',
                 encoding="utf-8",
             )
@@ -312,7 +312,7 @@ volt_remove 1600 >/dev/null
                 [
                     {"frequency": 300, "voltage": 700},
                     {"frequency": 1000, "voltage": 825},
-                    {"frequency": 2150, "voltage": 1000},
+                    {"frequency": 2230, "voltage": 1000},
                 ],
             )
             self.assertEqual(parsed["after]curve"], {"kept": True})
@@ -329,8 +329,9 @@ set -- help
 source "$script" >/dev/null
 validate_gpu_frequency_request 300
 validate_gpu_frequency_request 0 300
-validate_gpu_frequency_request 300 2150
+validate_gpu_frequency_request 300 2230
 if (validate_gpu_frequency_request 299) >/dev/null 2>&1; then exit 1; fi
+if (validate_gpu_frequency_request 2231) >/dev/null 2>&1; then exit 1; fi
 if (validate_gpu_frequency_request 100 1500) >/dev/null 2>&1; then exit 1; fi
 ''',
                     "_",

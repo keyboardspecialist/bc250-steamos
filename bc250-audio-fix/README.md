@@ -30,8 +30,9 @@ sudo reboot
 
 Both versions also apply the Cyan Skillfish telemetry patches. They preserve
 the firmware's published metrics-table transfer size, query and validate the
-GFX clock through the SMU, sample GPU activity from GC status, and apply the
-three-part GFX1013 PASID/GFXOFF compute-queue repair.
+GFX clock through the SMU, expose the 300-2230 MHz SCLK range, sample GPU
+activity from GC status, guard partial TTM cleanup, and apply the three-part
+GFX1013 PASID/GFXOFF compute-queue repair.
 The build selects the display patch from the running kernel and produces
 `amdgpu.ko.zst` for that exact release.
 
@@ -66,10 +67,17 @@ override.
 |---|---|
 | `bc250-cyan-skillfish-gpu-telemetry.patch` | Apply bounded GC activity sampling while retaining `SmuMetrics_t` |
 | `bc250-cyan-skillfish-gfxclk.patch` | Apply range-checked direct SMU GFX-clock reporting |
+| `bc250-cyan-skillfish-sclk-range.patch` | Widen the kernel SCLK interface to 300-2230 MHz |
+| `bc250-amdgpu-ttm-null-page-guard.patch` | Safely clean up partially populated TTM page vectors |
 | `0001-gfx1013-mmio-pasid-route.patch` | Route GFX1013 PASID invalidation through MMIO |
 | `0002-gfx1013-compute-gfxoff-guard.patch` | Manage GFXOFF across the BC-250 compute lifecycle |
 | `0003-gfx1013-scoped-pasid-type0.patch` | Scope type-0 invalidation to the GFX1013 PASID path |
 | `bc250-gfx1013-attestation.patch` | Expose the loaded repair commit as a read-only module parameter |
+
+The SCLK and TTM changes are adapted from the stable `linux-cachyos` patch set
+in [`MastaG/linux-cachyos-bc250`](https://github.com/MastaG/linux-cachyos-bc250/tree/main/patches/linux-cachyos).
+The stable SCLK ceiling is retained; its 350 MHz floor is widened to 300 MHz to
+match the toolkit's established governor range.
 
 The GFX1013 series is fetched from
 [`DryhoppedIPA/bc250-gfx1013-fix`](https://github.com/DryhoppedIPA/bc250-gfx1013-fix)
@@ -101,14 +109,18 @@ exports. The `average_gfx_activity` member name follows the
 `gfxclk` maps `SMU_MSG_GetGfxclkFrequency` to Cyan Skillfish firmware command
 `PPSMC_MSG_GetGfxFrequency`. One SMU reply populates `METRICS_CURR_GFXCLK`,
 `current_gfxclk`, and `average_gfxclk_frequency`. Query errors and replies
-outside the supported 1000-2000 MHz range propagate to the metrics caller.
+outside the patched 300-2230 MHz range propagate to the metrics caller. The
+widened kernel range also lets SMU governors use their lower-power and
+overclocking ranges through the kernel frequency interface.
 
 ### Compute Queues
 
 The GFX1013 repair keeps PASID TLB invalidation off the KIQ path, guards GFXOFF
 during KFD compute activity, and uses the GFXHUB semaphore/type-0 transaction
 only for BC-250 PASID invalidation. The three patches are mandatory and applied
-in upstream order. The module installer does not change scheduler policy.
+in upstream order. A stable TTM guard also handles partially populated page
+vectors during allocation-failure cleanup. The module installer does not change
+scheduler policy.
 
 The kernel repair does not expose compute queues by itself. The optional,
 recommended Mesa / RADV workflow in `bc250-mesh-shader.sh` builds the matching

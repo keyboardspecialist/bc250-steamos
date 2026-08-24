@@ -2636,12 +2636,12 @@ class ToolkitBackend:
             raise CommandError("Unknown GPU frequency mode.")
         if type(minimum) is not int or type(maximum) is not int:
             raise CommandError("GPU frequencies must be whole numbers.")
-        if mode == "pin" and not 300 <= maximum <= 2150:
-            raise CommandError("Pinned frequency must be 300-2150 MHz.")
+        if mode == "pin" and not 300 <= maximum <= 2230:
+            raise CommandError("Pinned frequency must be 300-2230 MHz.")
         if mode == "range":
-            if (minimum != 0 and not 300 <= minimum <= 2150) or not 300 <= maximum <= 2150:
+            if (minimum != 0 and not 300 <= minimum <= 2230) or not 300 <= maximum <= 2230:
                 raise CommandError(
-                    "Frequency range must use 0 for no floor or stay within 300-2150 MHz."
+                    "Frequency range must use 0 for no floor or stay within 300-2230 MHz."
                 )
             if minimum and minimum > maximum:
                 raise CommandError("Minimum frequency exceeds maximum frequency.")

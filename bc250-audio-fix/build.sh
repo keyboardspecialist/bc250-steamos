@@ -282,12 +282,23 @@ GFXCLK_PATCH=$HERE/bc250-cyan-skillfish-gfxclk.patch
 
 METRICS_SOURCE=drivers/gpu/drm/amd/pm/swsmu/smu11/cyan_skillfish_ppt.c
 
-TELEMETRY_SOURCE_SHA=ab86a4598bf907c6963c0a9b4c43f7a50727ce11993833a0b307d9ae0ae0e017
-GFXCLK_SOURCE_SHA=572014e03cff22fb57f21121e8e8722f11d3d99822ee86e60fbfe50ed6e76f30
+case "$BASE" in
+    6.16.*)
+        TELEMETRY_SOURCE_SHA=ab86a4598bf907c6963c0a9b4c43f7a50727ce11993833a0b307d9ae0ae0e017
+        GFXCLK_SOURCE_SHA=572014e03cff22fb57f21121e8e8722f11d3d99822ee86e60fbfe50ed6e76f30
+        SCLK_SOURCE_SHA=fdb9c3fff8a9ff813cdc37907dace041f89f6db15158c56a4bd8f238352b6e42
+        ;;
+    6.18.*)
+        TELEMETRY_SOURCE_SHA=014893afe640644c17bdab24737a35207a18666ae20bbfa7aa42188948b49c6b
+        GFXCLK_SOURCE_SHA=d03f716c621b76533761c09eaffa9911c696c30c1604d61072152e02d8d14ba5
+        SCLK_SOURCE_SHA=3b99663fc90a031e30bca0cf76ce869885f058d3acb6089ff68dad07114d3a97
+        ;;
+esac
 
 METRICS_SOURCE_SHA=$(sha256sum "$METRICS_SOURCE" | cut -d' ' -f1)
 if [ "$METRICS_SOURCE_SHA" = "$TELEMETRY_SOURCE_SHA" ] \
-   || [ "$METRICS_SOURCE_SHA" = "$GFXCLK_SOURCE_SHA" ]; then
+   || [ "$METRICS_SOURCE_SHA" = "$GFXCLK_SOURCE_SHA" ] \
+   || [ "$METRICS_SOURCE_SHA" = "$SCLK_SOURCE_SHA" ]; then
     echo "GPU telemetry patch already applied"
 elif patch -p1 --dry-run -s -f < "$METRICS_PATCH" >/dev/null 2>&1; then
     patch -p1 -s < "$METRICS_PATCH"
@@ -297,13 +308,42 @@ else
 fi
 
 METRICS_SOURCE_SHA=$(sha256sum "$METRICS_SOURCE" | cut -d' ' -f1)
-if [ "$METRICS_SOURCE_SHA" = "$GFXCLK_SOURCE_SHA" ]; then
+if [ "$METRICS_SOURCE_SHA" = "$GFXCLK_SOURCE_SHA" ] \
+   || [ "$METRICS_SOURCE_SHA" = "$SCLK_SOURCE_SHA" ]; then
     echo "GPU clock query patch already applied"
 elif patch -p1 --dry-run -s -f < "$GFXCLK_PATCH" >/dev/null 2>&1; then
     patch -p1 -s < "$GFXCLK_PATCH"
     echo "GPU clock query patch applied"
 else
     die_tree_drift "GPU clock query patch neither applies nor reverses cleanly — tree has drifted"
+fi
+
+SCLK_PATCH=$HERE/bc250-cyan-skillfish-sclk-range.patch
+METRICS_SOURCE_SHA=$(sha256sum "$METRICS_SOURCE" | cut -d' ' -f1)
+if [ "$METRICS_SOURCE_SHA" = "$SCLK_SOURCE_SHA" ]; then
+    echo "Cyan Skillfish SCLK range patch already applied"
+elif patch -p1 --dry-run -s -f < "$SCLK_PATCH" >/dev/null 2>&1; then
+    patch -p1 -s < "$SCLK_PATCH"
+    echo "Cyan Skillfish SCLK range widened to 300-2230 MHz"
+else
+    die_tree_drift "Cyan Skillfish SCLK range patch neither applies nor reverses cleanly — tree has drifted"
+fi
+
+METRICS_SOURCE_SHA=$(sha256sum "$METRICS_SOURCE" | cut -d' ' -f1)
+[ "$METRICS_SOURCE_SHA" = "$SCLK_SOURCE_SHA" ] \
+    || die "Cyan Skillfish metrics source does not match the expected final composition"
+
+step "apply AMDGPU TTM cleanup guard"
+TTM_PATCH=$HERE/bc250-amdgpu-ttm-null-page-guard.patch
+TTM_SOURCE=drivers/gpu/drm/amd/amdgpu/amdgpu_ttm.c
+if grep -qF "Partial TTM population can leave NULL entries" "$TTM_SOURCE"; then
+    echo "AMDGPU TTM NULL-page guard already applied"
+elif patch -p1 --dry-run -s -f < "$TTM_PATCH" >/dev/null 2>&1; then
+    patch -p1 -s < "$TTM_PATCH"
+    rm -f "$TTM_SOURCE.orig"
+    echo "AMDGPU TTM NULL-page guard applied"
+else
+    die_tree_drift "AMDGPU TTM NULL-page guard neither applies nor is present — tree has drifted"
 fi
 
 step "apply GFX1013 compute-queue lifecycle patches"

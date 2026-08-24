@@ -18,6 +18,8 @@ AUDIO_PREREQS = ROOT / "bc250-audio-fix/ensure-build-prereqs.sh"
 HDMI_AC3 = ROOT / "hdmi-ac3/hdmi-ac3.sh"
 METRICS_PATCH = ROOT / "bc250-audio-fix/bc250-cyan-skillfish-gpu-telemetry.patch"
 GFXCLK_PATCH = ROOT / "bc250-audio-fix/bc250-cyan-skillfish-gfxclk.patch"
+SCLK_PATCH = ROOT / "bc250-audio-fix/bc250-cyan-skillfish-sclk-range.patch"
+TTM_PATCH = ROOT / "bc250-audio-fix/bc250-amdgpu-ttm-null-page-guard.patch"
 DP_AUDIO_PATCH = ROOT / "bc250-audio-fix/0002-bc250-audio.patch"
 DP_CLOCK_616_PATCH = ROOT / "bc250-audio-fix/bc250-dp-audio-clock-6.16.patch"
 GFX1013_ATTESTATION_PATCH = (
@@ -321,17 +323,22 @@ class DriverLifecycleTests(unittest.TestCase):
         rollback = AUDIO_ROLLBACK.read_text(encoding="utf-8")
         patch = METRICS_PATCH.read_text(encoding="utf-8")
         gfxclk_patch = GFXCLK_PATCH.read_text(encoding="utf-8")
+        sclk_patch = SCLK_PATCH.read_text(encoding="utf-8")
+        ttm_patch = TTM_PATCH.read_text(encoding="utf-8")
         gfx1013_attestation_patch = GFX1013_ATTESTATION_PATCH.read_text(
             encoding="utf-8"
         )
         self.assertIn("bc250-cyan-skillfish-gpu-telemetry.patch", builder)
         self.assertIn("bc250-cyan-skillfish-gfxclk.patch", builder)
+        self.assertIn("bc250-cyan-skillfish-sclk-range.patch", builder)
+        self.assertIn("bc250-amdgpu-ttm-null-page-guard.patch", builder)
         self.assertLess(
             builder.index(str(METRICS_PATCH.name)),
             builder.index(str(GFXCLK_PATCH.name)),
         )
         self.assertNotIn("LEGACY_", builder)
         self.assertIn("METRICS_SOURCE_SHA", builder)
+        self.assertIn("SCLK_SOURCE_SHA", builder)
         self.assertIn("GRBM_STATUS__GUI_ACTIVE_MASK", patch)
         self.assertIn("AMDGPU_PP_SENSOR_GPU_LOAD", patch)
         self.assertIn("average_gfx_activity", patch)
@@ -340,6 +347,10 @@ class DriverLifecycleTests(unittest.TestCase):
         self.assertIn("cyan_skillfish_get_gfxclk_frequency", gfxclk_patch)
         self.assertIn("return -ERANGE", gfxclk_patch)
         self.assertIn("gpu_metrics->current_gfxclk = gfxclk", gfxclk_patch)
+        self.assertNotIn("smu_table->gpu_metrics_table", gfxclk_patch)
+        self.assertIn("CYAN_SKILLFISH_SCLK_MIN\t\t\t300", sclk_patch)
+        self.assertIn("CYAN_SKILLFISH_SCLK_MAX\t\t\t2230", sclk_patch)
+        self.assertIn("if (ttm->pages[i])", ttm_patch)
         for name in (
             "0001-gfx1013-mmio-pasid-route.patch",
             "0002-gfx1013-compute-gfxoff-guard.patch",

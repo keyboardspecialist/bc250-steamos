@@ -324,7 +324,7 @@ sudo ./bc250-power.sh ramp reset
 ```
 
 Frequency, voltage, load-target, and ramp settings persist across boots. The
-default voltage curve spans 300-2150 MHz; points use a 700-1050 mV range and
+default voltage curve spans 300-2230 MHz; points use a 700-1050 mV range and
 must have increasing frequencies with nondecreasing voltages. Curve updates
 are atomic and restore the prior config/runtime if governor reload or saved
 frequency replay fails. The guided TUI can list, add, edit, and remove points.

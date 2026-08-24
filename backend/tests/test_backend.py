@@ -577,11 +577,13 @@ class BackendMutationTests(unittest.IsolatedAsyncioTestCase):
 
         await backend.set_gpu_frequency("pin", 0, 300)
         await backend.set_gpu_frequency("range", 0, 300)
-        await backend.set_gpu_frequency("range", 300, 2150)
+        await backend.set_gpu_frequency("range", 300, 2230)
         for mode, minimum, maximum in (
             ("pin", 0, 299),
             ("range", 0, 299),
             ("range", 100, 1500),
+            ("pin", 0, 2231),
+            ("range", 300, 2231),
         ):
             with self.subTest(mode=mode, minimum=minimum, maximum=maximum):
                 with self.assertRaises(CommandError):
