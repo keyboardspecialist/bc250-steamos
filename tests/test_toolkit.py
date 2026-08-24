@@ -41,6 +41,7 @@ class ToolkitTests(unittest.TestCase):
             "amdgpu",
             "amdgpu-clean",
             "scheduler-policy",
+            "kfd-runlist",
             "radv",
             "audio",
             "mesh",
@@ -91,6 +92,7 @@ class ToolkitTests(unittest.TestCase):
         self.assertNotIn("[optional]", drivers_menu)
         self.assertIn("Mesa / RADV async-compute patch (optional)", drivers_menu)
         self.assertIn("AMDGPU scheduler policy (advanced)", drivers_menu)
+        self.assertIn("KFD HWS runlist TLB flush (experimental)", drivers_menu)
         self.assertIn("Clean AMDGPU build tree", drivers_menu)
         self.assertIn("[menu]", drivers_menu)
         self.assertLess(
@@ -103,6 +105,10 @@ class ToolkitTests(unittest.TestCase):
         )
         self.assertLess(
             drivers_menu.index("AMDGPU scheduler policy (advanced)"),
+            drivers_menu.index("KFD HWS runlist TLB flush (experimental)"),
+        )
+        self.assertLess(
+            drivers_menu.index("KFD HWS runlist TLB flush (experimental)"),
             drivers_menu.index("Mesa / RADV async-compute patch"),
         )
         self.assertLess(
@@ -112,7 +118,8 @@ class ToolkitTests(unittest.TestCase):
         self.assertIn("0) run_menu_action amdgpu", drivers_menu)
         self.assertIn("1) run_menu_action amdgpu-clean", drivers_menu)
         self.assertIn("2) run_menu_action scheduler-policy", drivers_menu)
-        self.assertIn("3) run_menu_child radv", drivers_menu)
+        self.assertIn("3) run_menu_action kfd-runlist", drivers_menu)
+        self.assertIn("4) run_menu_child radv", drivers_menu)
         self.assertIn("GPU compute-unit unlock", unlocks_menu)
         self.assertIn("CPU core unlock", unlocks_menu)
         self.assertIn(
@@ -268,10 +275,14 @@ class ToolkitTests(unittest.TestCase):
         self.assertIn('bash "$AMDGPU_BOOT_CONFIG_SH" active', toggle)
         self.assertIn('bash "$AMDGPU_BOOT_CONFIG_SH" present', toggle)
         self.assertIn('sudo bash "$AMDGPU_BOOT_CONFIG_SH" install', toggle)
-        self.assertIn('sudo bash "$AMDGPU_BOOT_CONFIG_SH" remove', toggle)
+        self.assertIn('sudo bash "$AMDGPU_BOOT_CONFIG_SH" policy-remove', toggle)
+        self.assertIn('sudo bash "$AMDGPU_BOOT_CONFIG_SH" runlist-install', toggle)
+        self.assertIn('sudo bash "$AMDGPU_BOOT_CONFIG_SH" runlist-remove', toggle)
+        self.assertIn("kfd_runlist_supported", toggle)
         self.assertIn('bash "$MESH_SHADER_SH" status-json', toggle)
         self.assertIn("before enabling amdgpu.sched_policy=2", toggle)
         self.assertIn("Scheduler policy state is incomplete", toggle)
+        self.assertIn("cannot coexist with sched_policy=2", source)
 
     def test_decky_install_bootstraps_loader_before_plugin_dependencies(self):
         installer = (ROOT / "decky-plugin/install.sh").read_text(encoding="utf-8")

@@ -5,7 +5,7 @@
 #   check-module.sh <module.ko[.zst]> [kernel-release]   (default: uname -r)
 #
 # Exit codes:
-#   0 — both guards pass
+#   0 — all guards pass
 #   1 — a guard FAILED: do not install this module
 #   2 — ABI guard could not run (stock module or objdump unavailable);
 #       vermagic guard passed. Both build.sh and install.sh treat this as
@@ -25,7 +25,13 @@ case "$MOD" in
     *)     cp "$MOD" "$TMPD/new.ko" ;;
 esac
 
-# Guard 1: refuse a module whose vermagic does not match the target kernel —
+# Guard 1: the module must include the disabled-by-default KFD workaround so
+# the toolkit cannot persist an option that the selected module ignores.
+modinfo -p "$TMPD/new.ko" | grep -q '^bc250_flush_by_runlist:' \
+    || { echo "ERROR: module lacks the BC-250 KFD runlist workaround — rebuild it"; exit 1; }
+echo "KFD runlist workaround present (disabled by default)"
+
+# Guard 2: refuse a module whose vermagic does not match the target kernel —
 # modprobe would reject it at boot and, with the updates/ override baked into
 # the initramfs, leave the system with no GPU driver (this is what forced the
 # 2026-07-02 recovery).
@@ -36,7 +42,7 @@ if [ "$VERMAGIC" != "$REL" ]; then
 fi
 echo "vermagic OK: $VERMAGIC"
 
-# Guard 2: vermagic is only a version-string compare and CONFIG_MODVERSIONS
+# Guard 3: vermagic is only a version-string compare and CONFIG_MODVERSIONS
 # is off in this kernel, so nothing else validates ABI. A module built with
 # a config missing CONFIG_SCHED_CLASS_EXT (happens silently when pahole is
 # absent) has every task_struct offset shifted by 256 bytes — it loads fine

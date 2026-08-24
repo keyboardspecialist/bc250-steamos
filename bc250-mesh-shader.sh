@@ -1773,7 +1773,7 @@ cmd_uninstall() (
         && "$COMPUTE_MARKER" == "$DEFAULT_COMPUTE_MARKER" \
         && "$SCHED_POLICY" == "$DEFAULT_SCHED_POLICY" \
         && -f "$BOOT_CONFIG" && ! -L "$BOOT_CONFIG" ]]; then
-        as_root env BC250_FORCE_GRUB_REGEN=1 bash "$BOOT_CONFIG" remove
+        as_root env BC250_FORCE_GRUB_REGEN=1 bash "$BOOT_CONFIG" policy-remove
     fi
     if [[ "$SCHED_POLICY" == "$DEFAULT_SCHED_POLICY" ]] \
         && verify_scheduler_active; then

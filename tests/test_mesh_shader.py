@@ -70,7 +70,7 @@ class MeshShaderTests(unittest.TestCase):
             "  configured) [ \"${BC250_TEST_POLICY_CONFIGURED:-1}\" = 1 ] ;;\n"
             "  present|policy-present) [ \"${BC250_TEST_POLICY_CONFIGURED:-1}\" = 1 ] ;;\n"
             "  active) [ -r \"$BC250_SCHED_POLICY_PARAM\" ] && [ \"$(cat \"$BC250_SCHED_POLICY_PARAM\")\" = 2 ] ;;\n"
-            "  install|remove) exit 0 ;;\n"
+            "  install|remove|policy-remove) exit 0 ;;\n"
             "  *) exit 2 ;;\n"
             "esac\n",
             encoding="utf-8",

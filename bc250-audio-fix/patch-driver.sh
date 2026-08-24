@@ -78,7 +78,7 @@ show_status() {
     elif "$HERE/boot-config.sh" present; then
         found=1
         "$HERE/boot-config.sh" status || true
-        echo "[bc250-amdgpu] scheduler policy is present without a module override"
+        echo "[bc250-amdgpu] AMDGPU boot options are present without a module override"
         failed=1
     fi
     for marker in /usr/lib/modules/*/updates/.bc250-audio-fix \

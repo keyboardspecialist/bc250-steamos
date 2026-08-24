@@ -539,7 +539,7 @@ cmd_menu() {
             "Protect CEC|$(keep_badge cec)|Preserve CEC poweroff and sleep integration."
             "Protect AIC8800|$(keep_badge aic)|Preserve AIC8800 service and device configuration."
             "Protect desktop control|$(keep_badge desktop)|Preserve the desktop service and repair integration after updates."
-            "Protect patched AMDGPU|$(keep_badge amdgpu)|Preserve the async-compute scheduler boot policy."
+            "Protect patched AMDGPU|$(keep_badge amdgpu)|Preserve the selected scheduler or KFD runlist boot option."
             "Protect all components||Install every component keep list."
             "Recover compute settings||Restore CU routing from the newest atomupd snapshot."
             "Recover power settings||Restore GPU and CPU tuning from the newest atomupd snapshot."

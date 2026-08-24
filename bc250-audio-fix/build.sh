@@ -243,8 +243,14 @@ step "apply display/audio clock patches (runbook step 7)"
 # selection is already upstream in 6.18. Both versions need the stable-tagged
 # Cyan Skillfish DP-audio quirk from upstream commit ff209cd04845.
 case "$BASE" in
-    6.16.*) CLOCK_PATCH=$HERE/bc250-dp-audio-clock-6.16.patch ;;
-    6.18.*) CLOCK_PATCH= ;;
+    6.16.*)
+        CLOCK_PATCH=$HERE/bc250-dp-audio-clock-6.16.patch
+        KFD_RUNLIST_PATCH=$HERE/bc250-kfd-flush-by-runlist-6.16.patch
+        ;;
+    6.18.*)
+        CLOCK_PATCH=
+        KFD_RUNLIST_PATCH=$HERE/bc250-kfd-flush-by-runlist-6.18.patch
+        ;;
     *)      die "no display/audio patch variant for kernel $BASE — check which fixes are already upstream, then add a case above" ;;
 esac
 
@@ -420,6 +426,28 @@ grep -qF "using MMIO PASID TLB flushes" drivers/gpu/drm/amd/amdgpu/gmc_v10_0.c \
     && grep -qF "PASID-only CPU type-0 invalidation" drivers/gpu/drm/amd/amdgpu/gmc_v10_0.c \
     && grep -qF "bc250_gfx1013_fix" drivers/gpu/drm/amd/amdgpu/amdgpu_drv.c \
     || die "GFX1013 compute-queue patch postcondition failed"
+
+KFD_DQM=drivers/gpu/drm/amd/amdkfd/kfd_device_queue_manager.c
+KFD_CHARDEV=drivers/gpu/drm/amd/amdkfd/kfd_chardev.c
+KFD_DQM_HEADER=drivers/gpu/drm/amd/amdkfd/kfd_device_queue_manager.h
+if grep -qF "module_param(bc250_flush_by_runlist" "$KFD_DQM" \
+    && grep -qF "kfd_bc250_flush_tlb_by_runlist(peer_pdd->dev)" "$KFD_CHARDEV" \
+    && grep -qF "int kfd_bc250_flush_tlb_by_runlist" "$KFD_DQM_HEADER"; then
+    echo "BC-250 KFD runlist TLB-flush workaround already applied"
+elif grep -qF "kfd_bc250_flush_tlb_by_runlist" \
+    "$KFD_DQM" "$KFD_CHARDEV" "$KFD_DQM_HEADER"; then
+    die_tree_drift "BC-250 KFD runlist TLB-flush patch is only partially applied"
+elif patch -p1 --fuzz=0 --dry-run -s -f < "$KFD_RUNLIST_PATCH" >/dev/null 2>&1; then
+    patch -p1 --fuzz=0 -s < "$KFD_RUNLIST_PATCH"
+    rm -f drivers/gpu/drm/amd/amdkfd/{kfd_chardev.c,kfd_device_queue_manager.c,kfd_device_queue_manager.h}.orig
+    echo "BC-250 KFD runlist TLB-flush workaround applied (disabled by default)"
+else
+    die_tree_drift "BC-250 KFD runlist TLB-flush patch does not apply exactly — tree has drifted"
+fi
+grep -qF "module_param(bc250_flush_by_runlist" "$KFD_DQM" \
+    && grep -qF "kfd_bc250_flush_tlb_by_runlist(peer_pdd->dev)" "$KFD_CHARDEV" \
+    && grep -qF "int kfd_bc250_flush_tlb_by_runlist" "$KFD_DQM_HEADER" \
+    || die "BC-250 KFD runlist TLB-flush patch postcondition failed"
 
 step "modules_prepare + config re-verify (runbook step 7)"
 make -j"$(nproc)" modules_prepare

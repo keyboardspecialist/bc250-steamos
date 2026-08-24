@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Manage the scheduler policy required by the GFX1013 async-compute repair.
+# Manage mutually exclusive BC-250 AMDGPU boot options.
 set -euo pipefail
 
 HERE=$(cd "$(dirname "$0")" && pwd)
@@ -8,6 +8,7 @@ GRUB_DEFAULT=${GRUB_DEFAULT:-/etc/default/grub}
 GRUB_CFG=${GRUB_CFG:-/efi/EFI/steamos/grub.cfg}
 PROC_CMDLINE=${PROC_CMDLINE:-/proc/cmdline}
 SCHED_POLICY_PARAM=${SCHED_POLICY_PARAM:-/sys/module/amdgpu/parameters/sched_policy}
+RUNLIST_PARAM=${RUNLIST_PARAM:-/sys/module/amdgpu/parameters/bc250_flush_by_runlist}
 KEEP_FILE=${AMDGPU_KEEP_FILE:-/etc/atomic-update.conf.d/bc250-amdgpu.conf}
 PERSISTENCE_SH=${PERSISTENCE_SH:-$HERE/../bc250-update-persistence.sh}
 GRUB_CONFIG_LOCK=${GRUB_CONFIG_LOCK:-/run/lock/bc250-grub-config.lock}
@@ -28,7 +29,7 @@ log() { echo "[bc250-amdgpu] $*"; }
 die() { log "$*" >&2; exit 1; }
 require_root() { [[ $EUID -eq 0 ]] || die "Run with sudo."; }
 
-render_config() {
+render_policy_config() {
     cat <<'EOF'
 # BC-250 AMDGPU scheduler policy managed by bc250-audio-fix/boot-config.sh.
 # Required by the GFX1013 async-compute queue repair.
@@ -36,9 +37,27 @@ GRUB_CMDLINE_LINUX_DEFAULT="${GRUB_CMDLINE_LINUX_DEFAULT:-} amdgpu.sched_policy=
 EOF
 }
 
-config_owned() {
+render_runlist_config() {
+    cat <<'EOF'
+# BC-250 KFD HWS runlist TLB-flush workaround managed by bc250-audio-fix/boot-config.sh.
+# Opt-in workaround for stale compute translations; incompatible with amdgpu.sched_policy=2.
+GRUB_CMDLINE_LINUX_DEFAULT="${GRUB_CMDLINE_LINUX_DEFAULT:-} amdgpu.bc250_flush_by_runlist=1"
+EOF
+}
+
+config_mode() {
     [[ -f "$SCHED_CONFIG" && ! -L "$SCHED_CONFIG" ]] || return 1
-    cmp -s "$SCHED_CONFIG" <(render_config)
+    if cmp -s "$SCHED_CONFIG" <(render_policy_config); then
+        printf '%s\n' policy
+    elif cmp -s "$SCHED_CONFIG" <(render_runlist_config); then
+        printf '%s\n' runlist
+    else
+        return 1
+    fi
+}
+
+config_owned() {
+    config_mode >/dev/null
 }
 
 keep_file_owned() {
@@ -62,12 +81,12 @@ secure_root_file() {
     (( (8#$mode & 8#022) == 0 ))
 }
 
-foreign_policy_source() {
+foreign_amdgpu_source() {
     local candidate
     for candidate in "$GRUB_DEFAULT" "${SCHED_CONFIG%/*}"/*; do
         [[ "$candidate" != "$SCHED_CONFIG" && -f "$candidate" && ! -L "$candidate" ]] \
             || continue
-        if grep -Eq "(^|[[:space:]\"'])amdgpu\\.sched_policy=" "$candidate"; then
+        if grep -Eq "(^|[[:space:]\"'])amdgpu\\.(sched_policy|bc250_flush_by_runlist)=" "$candidate"; then
             printf '%s\n' "$candidate"
             return 0
         fi
@@ -87,8 +106,8 @@ preflight() {
         secure_root_file "$KEEP_FILE" \
             || die "AMDGPU keep list must be root-owned and not group/other-writable: $KEEP_FILE"
     fi
-    if source=$(foreign_policy_source); then
-        die "Another GRUB source already sets amdgpu.sched_policy: $source"
+    if source=$(foreign_amdgpu_source); then
+        die "Another GRUB source already sets a managed AMDGPU option: $source"
     fi
     command -v grub-mkconfig >/dev/null 2>&1 \
         || command -v update-grub >/dev/null 2>&1 \
@@ -102,20 +121,28 @@ preflight() {
 }
 
 validate_generated_grub() {
-    local path="$1" expected="$2"
+    local path="$1" mode="$2"
     [[ -f "$path" && ! -L "$path" ]] || return 1
-    awk -v expected="$expected" '
+    awk -v mode="$mode" '
         $1 ~ /^linux/ || ($1 == "steamenv_boot" && $2 ~ /^linux/) {
             lines++
-            on_line = 0
+            policy = 0
+            runlist = 0
             for (i = 1; i <= NF; i++) {
                 if ($i ~ /^amdgpu\.sched_policy=/) {
-                    on_line++
-                    if (expected == "" || $i != "amdgpu.sched_policy=" expected)
+                    policy++
+                    if ($i != "amdgpu.sched_policy=2")
+                        bad = 1
+                }
+                if ($i ~ /^amdgpu\.bc250_flush_by_runlist=/) {
+                    runlist++
+                    if ($i != "amdgpu.bc250_flush_by_runlist=1")
                         bad = 1
                 }
             }
-            if ((expected == "" && on_line != 0) || (expected != "" && on_line != 1))
+            if ((mode == "policy" && (policy != 1 || runlist != 0)) ||
+                (mode == "runlist" && (policy != 0 || runlist != 1)) ||
+                (mode == "none" && (policy != 0 || runlist != 0)))
                 bad = 1
         }
         END {
@@ -125,12 +152,12 @@ validate_generated_grub() {
 }
 
 regenerate_grub() {
-    local expected="$1" tmp
+    local mode="$1" tmp
     mkdir -p "${GRUB_CFG%/*}"
     if command -v grub-mkconfig >/dev/null 2>&1; then
         tmp=$(mktemp "${GRUB_CFG%/*}/.bc250-grub.XXXXXX") || return 1
         if ! grub-mkconfig -o "$tmp" \
-            || ! validate_generated_grub "$tmp" "$expected"; then
+            || ! validate_generated_grub "$tmp" "$mode"; then
             rm -f "$tmp"
             return 1
         fi
@@ -138,7 +165,7 @@ regenerate_grub() {
         mv -f "$tmp" "$GRUB_CFG"
     else
         update-grub || return 1
-        validate_generated_grub "$GRUB_CFG" "$expected"
+        validate_generated_grub "$GRUB_CFG" "$mode"
     fi
 }
 
@@ -197,29 +224,44 @@ lock_grub_config() {
     flock 8 || die "Could not lock $GRUB_CONFIG_LOCK"
 }
 
-cmd_install() {
+cmd_install_mode() {
+    local mode="$1"
     require_root
     lock_grub_config
     preflight
+    if [[ "$mode" == runlist && $(config_mode 2>/dev/null || true) == policy ]]; then
+        die "Disable amdgpu.sched_policy=2 before enabling the HWS runlist workaround."
+    fi
     begin_transaction
     mkdir -p "${SCHED_CONFIG%/*}"
-    render_config > "$SCHED_CONFIG.new.$$"
+    case "$mode" in
+        policy) render_policy_config > "$SCHED_CONFIG.new.$$" ;;
+        runlist) render_runlist_config > "$SCHED_CONFIG.new.$$" ;;
+        *) die "Unknown AMDGPU boot mode: $mode" ;;
+    esac
     chown root:root "$SCHED_CONFIG.new.$$"
     chmod 0644 "$SCHED_CONFIG.new.$$"
     mv -f "$SCHED_CONFIG.new.$$" "$SCHED_CONFIG"
-    regenerate_grub 2 || die "GRUB regeneration did not produce amdgpu.sched_policy=2."
+    regenerate_grub "$mode" || die "GRUB regeneration did not produce the requested AMDGPU boot options."
     bash "$PERSISTENCE_SH" install amdgpu
     keep_file_owned || die "Atomic-update retention was not installed for $SCHED_CONFIG."
     TRANSACTION_OK=1
-    log "Configured persistent amdgpu.sched_policy=2. Reboot to activate it."
+    if [[ "$mode" == policy ]]; then
+        log "Configured persistent amdgpu.sched_policy=2 and disabled the runlist workaround. Reboot to activate it."
+    else
+        log "Configured persistent amdgpu.bc250_flush_by_runlist=1. Reboot to activate it."
+    fi
 }
+
+cmd_install() { cmd_install_mode policy; }
+cmd_runlist_install() { cmd_install_mode runlist; }
 
 cmd_remove() {
     require_root
     if [[ ! -e "$SCHED_CONFIG" && ! -L "$SCHED_CONFIG" \
         && ! -e "$KEEP_FILE" && ! -L "$KEEP_FILE" \
         && ${BC250_FORCE_GRUB_REGEN:-0} != 1 ]]; then
-        log "No toolkit-managed scheduler policy is installed."
+        log "No toolkit-managed AMDGPU boot options are installed."
         return 0
     fi
     lock_grub_config
@@ -227,11 +269,27 @@ cmd_remove() {
     begin_transaction
     rm -f "$SCHED_CONFIG"
     if [[ ${BC250_SKIP_GRUB_REGEN:-0} != 1 ]]; then
-        regenerate_grub "" || die "GRUB regeneration did not remove amdgpu.sched_policy."
+        regenerate_grub none || die "GRUB regeneration did not remove the managed AMDGPU boot options."
     fi
     bash "$PERSISTENCE_SH" remove amdgpu
     TRANSACTION_OK=1
-    log "Removed the toolkit-managed AMDGPU scheduler policy."
+    log "Removed the toolkit-managed AMDGPU boot options."
+}
+
+cmd_runlist_remove() {
+    if [[ $(config_mode 2>/dev/null || true) == policy ]]; then
+        log "The HWS runlist workaround is not configured; preserving amdgpu.sched_policy=2."
+        return 0
+    fi
+    cmd_remove
+}
+
+cmd_policy_remove() {
+    if [[ $(config_mode 2>/dev/null || true) == runlist ]]; then
+        log "Scheduler policy is not configured; preserving the KFD HWS runlist workaround."
+        return 0
+    fi
+    cmd_remove
 }
 
 active_policy() {
@@ -249,12 +307,28 @@ active_policy() {
     return 1
 }
 
-configured() {
-    config_owned && keep_file_owned \
+active_runlist() {
+    local token value
+    if [[ -r "$RUNLIST_PARAM" ]]; then
+        read -r value < "$RUNLIST_PARAM" || return 1
+        [[ "$value" == 1 || "$value" == Y ]]
+        return
+    fi
+    [[ -r "$PROC_CMDLINE" ]] || return 1
+    for token in $(< "$PROC_CMDLINE"); do
+        [[ "$token" == amdgpu.bc250_flush_by_runlist=1 ]] || continue
+        return 0
+    done
+    return 1
+}
+
+configured_mode() {
+    local mode="$1"
+    [[ $(config_mode 2>/dev/null || true) == "$mode" ]] && keep_file_owned \
         && secure_root_file "$SCHED_CONFIG" && secure_root_file "$KEEP_FILE" \
         || return 1
     if [[ -r "$GRUB_CFG" ]]; then
-        validate_generated_grub "$GRUB_CFG" 2
+        validate_generated_grub "$GRUB_CFG" "$mode"
     else
         # SteamOS mounts /efi as root-only. Installation validates GRUB before
         # committing these owned files; root/readable status remains strict.
@@ -262,12 +336,24 @@ configured() {
     fi
 }
 
+configured() { configured_mode policy; }
+runlist_configured() { configured_mode runlist; }
+
 cmd_status() {
     if configured; then
         if active_policy; then
             log "scheduler policy: configured and active (amdgpu.sched_policy=2)"
         else
             log "scheduler policy: configured; reboot needed (amdgpu.sched_policy=2)"
+        fi
+        return 0
+    fi
+    if runlist_configured; then
+        log "scheduler policy: not configured (KFD hardware scheduling retained)"
+        if active_runlist; then
+            log "KFD HWS runlist TLB-flush workaround: configured and active"
+        else
+            log "KFD HWS runlist TLB-flush workaround: configured; reboot needed"
         fi
         return 0
     fi
@@ -284,16 +370,21 @@ cmd_status() {
 case "${1:-}" in
     install) [[ $# -eq 1 ]] || die "Usage: $0 install"; cmd_install ;;
     remove) [[ $# -eq 1 ]] || die "Usage: $0 remove"; cmd_remove ;;
+    policy-remove) [[ $# -eq 1 ]] || die "Usage: $0 policy-remove"; cmd_policy_remove ;;
+    runlist-install) [[ $# -eq 1 ]] || die "Usage: $0 runlist-install"; cmd_runlist_install ;;
+    runlist-remove) [[ $# -eq 1 ]] || die "Usage: $0 runlist-remove"; cmd_runlist_remove ;;
     status) [[ $# -eq 1 ]] || die "Usage: $0 status"; cmd_status ;;
     configured) [[ $# -eq 1 ]] || exit 2; configured ;;
     active) [[ $# -eq 1 ]] || exit 2; active_policy ;;
+    runlist-configured) [[ $# -eq 1 ]] || exit 2; runlist_configured ;;
+    runlist-active) [[ $# -eq 1 ]] || exit 2; active_runlist ;;
     present)
         [[ $# -eq 1 ]] || exit 2
         [[ -e "$SCHED_CONFIG" || -L "$SCHED_CONFIG" || -e "$KEEP_FILE" || -L "$KEEP_FILE" ]]
         ;;
     policy-present)
         [[ $# -eq 1 ]] || exit 2
-        [[ -e "$SCHED_CONFIG" || -L "$SCHED_CONFIG" ]]
+        [[ $(config_mode 2>/dev/null || true) == policy ]]
         ;;
-    *) die "Usage: $0 {install|remove|status|configured|active|present|policy-present}" ;;
+    *) die "Usage: $0 {install|remove|policy-remove|runlist-install|runlist-remove|status|configured|active|runlist-configured|runlist-active|present|policy-present}" ;;
 esac

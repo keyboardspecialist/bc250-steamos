@@ -157,6 +157,33 @@ scheduler_policy_badge() {
         else
             printf '%s' "${CY}[reboot needed]${C0}"
         fi
+    elif bash "$AMDGPU_BOOT_CONFIG_SH" runlist-configured 2>/dev/null; then
+        printf '%s' "${CD}[disabled]${C0}"
+    elif bash "$AMDGPU_BOOT_CONFIG_SH" present 2>/dev/null; then
+        printf '%s' "${CY}[incomplete]${C0}"
+    else
+        printf '%s' "${CD}[disabled]${C0}"
+    fi
+}
+
+kfd_runlist_supported() {
+    command -v modinfo >/dev/null 2>&1 \
+        && modinfo -p amdgpu 2>/dev/null | grep -q '^bc250_flush_by_runlist:'
+}
+
+kfd_runlist_badge() {
+    if [[ ! -f "$AMDGPU_BOOT_CONFIG_SH" || -L "$AMDGPU_BOOT_CONFIG_SH" ]]; then
+        printf '%s' "${CR}[unavailable]${C0}"
+    elif ! kfd_runlist_supported; then
+        printf '%s' "${CY}[rebuild required]${C0}"
+    elif bash "$AMDGPU_BOOT_CONFIG_SH" runlist-configured 2>/dev/null; then
+        if bash "$AMDGPU_BOOT_CONFIG_SH" runlist-active 2>/dev/null; then
+            printf '%s' "${CG}[active]${C0}"
+        else
+            printf '%s' "${CY}[reboot needed]${C0}"
+        fi
+    elif bash "$AMDGPU_BOOT_CONFIG_SH" configured 2>/dev/null; then
+        printf '%s' "${CD}[blocked by policy 2]${C0}"
     elif bash "$AMDGPU_BOOT_CONFIG_SH" present 2>/dev/null; then
         printf '%s' "${CY}[incomplete]${C0}"
     else
@@ -241,7 +268,11 @@ toggle_scheduler_policy() {
     if bash "$AMDGPU_BOOT_CONFIG_SH" configured 2>/dev/null; then
         confirm_action \
             "Disable amdgpu.sched_policy=2? Compute repair will be incomplete until re-enabled; reboot required." \
-            sudo bash "$AMDGPU_BOOT_CONFIG_SH" remove
+            sudo bash "$AMDGPU_BOOT_CONFIG_SH" policy-remove
+    elif bash "$AMDGPU_BOOT_CONFIG_SH" runlist-configured 2>/dev/null; then
+        confirm_action \
+            "Enable amdgpu.sched_policy=2? This disables the incompatible KFD HWS runlist workaround and requires a reboot." \
+            sudo bash "$AMDGPU_BOOT_CONFIG_SH" install
     elif bash "$AMDGPU_BOOT_CONFIG_SH" present 2>/dev/null; then
         die "Scheduler policy state is incomplete. Review '$AMDGPU_BOOT_CONFIG_SH status' before changing it."
     else
@@ -252,6 +283,26 @@ toggle_scheduler_policy() {
         confirm_action \
             "Enable amdgpu.sched_policy=2 for the installed RADV async-compute patch? Reboot required." \
             sudo bash "$AMDGPU_BOOT_CONFIG_SH" install
+    fi
+}
+
+toggle_kfd_runlist() {
+    require_normal_user
+    require_script "$AMDGPU_BOOT_CONFIG_SH"
+    if bash "$AMDGPU_BOOT_CONFIG_SH" runlist-configured 2>/dev/null; then
+        confirm_action \
+            "Disable the experimental KFD HWS runlist TLB-flush workaround? A reboot is required." \
+            sudo bash "$AMDGPU_BOOT_CONFIG_SH" runlist-remove
+    elif bash "$AMDGPU_BOOT_CONFIG_SH" configured 2>/dev/null; then
+        die "The workaround requires KFD hardware scheduling. Disable amdgpu.sched_policy=2 and reboot before enabling it."
+    elif bash "$AMDGPU_BOOT_CONFIG_SH" present 2>/dev/null; then
+        die "AMDGPU boot-option state is incomplete. Review '$AMDGPU_BOOT_CONFIG_SH status' before changing it."
+    else
+        kfd_runlist_supported \
+            || die "The selected AMDGPU module lacks this workaround. Rebuild and reboot into the current toolkit module first."
+        confirm_action \
+            "Enable the experimental BC-250 KFD HWS runlist TLB-flush workaround? Use only for stale ROCm/KFD mappings. A reboot is required." \
+            sudo bash "$AMDGPU_BOOT_CONFIG_SH" runlist-install
     fi
 }
 
@@ -537,6 +588,7 @@ cmd_drivers_menu() {
             "AMDGPU kernel fixes|${CY}[build]${C0}|Install the required kernel module first. sched_policy=2 stays off until the RADV patch is installed. Reboot afterward."
             "Clean AMDGPU build tree|${CY}[cleanup]${C0}|Reset patched source and generated build output while keeping cached downloads and dependencies."
             "AMDGPU scheduler policy (advanced)|$(scheduler_policy_badge)|Normally managed by RADV setup. Enabling is blocked until the patched RADV runtime is installed."
+            "KFD HWS runlist TLB flush (experimental)|$(kfd_runlist_badge)|Opt-in ROCm workaround for stale mappings. Requires HWS and cannot coexist with sched_policy=2."
             "Mesa / RADV async-compute patch (optional)|${CG}[menu]${C0}|Enables GFX1013 async compute. Requires the patched AMDGPU module; builds in about 3-5 minutes."
             "AIC8800 WiFi / Bluetooth|${CY}[installer]${C0}|Install only when the system uses the AIC8800 wireless adapter."
         )
@@ -545,8 +597,9 @@ cmd_drivers_menu() {
             0) run_menu_action amdgpu ;;
             1) run_menu_action amdgpu-clean ;;
             2) run_menu_action scheduler-policy ;;
-            3) run_menu_child radv ;;
-            4) run_menu_action wifi ;;
+            3) run_menu_action kfd-runlist ;;
+            4) run_menu_child radv ;;
+            5) run_menu_action wifi ;;
         esac
     done
 }
@@ -728,7 +781,7 @@ cmd_menu() {
 
 cmd_help() {
     cat << EOF
-Usage: $0 [menu|setup|status|inventory-json|action OPERATION_ID|drivers|unlocks|storage-updates|interfaces|power|ram|swap|compute|cpu-unlock|cec|audio-output|hdmi-ac3-enable|hdmi-ac3-revert|storage|persistence|wifi|amdgpu|amdgpu-clean|scheduler-policy|radv|decky|desktop|trainer|manage|help]
+Usage: $0 [menu|setup|status|inventory-json|action OPERATION_ID|drivers|unlocks|storage-updates|interfaces|power|ram|swap|compute|cpu-unlock|cec|audio-output|hdmi-ac3-enable|hdmi-ac3-revert|storage|persistence|wifi|amdgpu|amdgpu-clean|scheduler-policy|kfd-runlist|radv|decky|desktop|trainer|manage|help]
 
 Run without arguments in a terminal to open the unified toolkit menu.
 Run the toolkit as the logged-in Deck user, not with sudo; child tools request
@@ -758,6 +811,7 @@ Commands:
   amdgpu                 Confirm and build the AMDGPU kernel fixes
   amdgpu-clean           Confirm and clean the AMDGPU kernel build tree
   scheduler-policy       Advanced: toggle policy only after RADV is installed
+  kfd-runlist            Experimental: toggle the KFD HWS TLB-flush workaround
   radv                   Open the global Mesa / RADV async-compute patch
   decky                  Confirm and run the Decky plugin installer
   desktop                Confirm and run the Plasma desktop-control installer
@@ -817,6 +871,7 @@ case "$command_name" in
     amdgpu|audio) (($# == 0)) || die "Usage: $0 amdgpu"; install_audio_fix ;;
     amdgpu-clean) (($# == 0)) || die "Usage: $0 amdgpu-clean"; clean_audio_fix ;;
     scheduler-policy) (($# == 0)) || die "Usage: $0 scheduler-policy"; toggle_scheduler_policy ;;
+    kfd-runlist) (($# == 0)) || die "Usage: $0 kfd-runlist"; toggle_kfd_runlist ;;
     radv|mesh) (($# == 0)) || die "Usage: $0 radv"; require_normal_user; run_script "$MESH_SHADER_SH" menu ;;
     decky) (($# == 0)) || die "Usage: $0 decky"; install_decky ;;
     desktop) (($# == 0)) || die "Usage: $0 desktop"; install_desktop ;;

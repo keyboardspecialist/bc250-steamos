@@ -117,7 +117,7 @@ EOF
 [[ "$RESOLVED" == *"/updates/"* ]] || { echo "still losing — aborting before initramfs"; rm -f "$DST"; depmod "$REL"; exit 1; }
 fi
 
-BC250_FORCE_GRUB_REGEN=1 "$BOOT_CONFIG" remove
+BC250_FORCE_GRUB_REGEN=1 "$BOOT_CONFIG" policy-remove
 mkinitcpio -p "$PRESET"
 INSTALL_OK=1
 echo "OK - display, GPU telemetry, and GFX1013 kernel corrections installed."

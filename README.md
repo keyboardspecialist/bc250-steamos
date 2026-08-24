@@ -578,6 +578,12 @@ Builds are matched to the running kernel and checked for vermagic and ABI compat
 before installation. If Valve omitted the matching headers, the toolkit can
 generate the required symbols with a complete exact-source kernel build.
 
+The module also carries a disabled-by-default KFD HWS runlist TLB-flush
+workaround for stale ROCm mappings. Enable it only from **Drivers > KFD HWS
+runlist TLB flush**. It requires hardware scheduling and is mutually exclusive
+with the RADV workflow's `amdgpu.sched_policy=2`; enabling RADV policy replaces
+the workaround rather than combining both boot options.
+
 Rollback:
 
 ```bash

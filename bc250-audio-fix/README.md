@@ -32,7 +32,8 @@ Both versions also apply the Cyan Skillfish telemetry patches. They preserve
 the firmware's published metrics-table transfer size, query and validate the
 GFX clock through the SMU, expose the 300-2230 MHz SCLK range, sample GPU
 activity from GC status, guard partial TTM cleanup, and apply the three-part
-GFX1013 PASID/GFXOFF compute-queue repair.
+GFX1013 PASID/GFXOFF compute-queue repair. They also carry an experimental KFD
+HWS runlist TLB-flush workaround, disabled by default.
 The build selects the display patch from the running kernel and produces
 `amdgpu.ko.zst` for that exact release.
 
@@ -73,11 +74,16 @@ override.
 | `0002-gfx1013-compute-gfxoff-guard.patch` | Manage GFXOFF across the BC-250 compute lifecycle |
 | `0003-gfx1013-scoped-pasid-type0.patch` | Scope type-0 invalidation to the GFX1013 PASID path |
 | `bc250-gfx1013-attestation.patch` | Expose the loaded repair commit as a read-only module parameter |
+| `bc250-kfd-flush-by-runlist-6.16.patch` / `6.18.patch` | Add the opt-in BC-250 KFD HWS runlist TLB flush |
 
 The SCLK and TTM changes are adapted from the stable `linux-cachyos` patch set
 in [`MastaG/linux-cachyos-bc250`](https://github.com/MastaG/linux-cachyos-bc250/tree/main/patches/linux-cachyos).
 The stable SCLK ceiling is retained; its 350 MHz floor is widened to 300 MHz to
 match the toolkit's established governor range.
+
+The KFD runlist workaround is adapted from the stable `linux-cachyos` patch set
+in the same repository. Separate 6.16 and 6.18 variants account for the KFD TLB
+flush API change and are applied with zero fuzz.
 
 The GFX1013 series is fetched from
 [`DryhoppedIPA/bc250-gfx1013-fix`](https://github.com/DryhoppedIPA/bc250-gfx1013-fix)
@@ -132,12 +138,27 @@ and active patched module plus active policy `2` before exposing RADV. Never
 point an application at the alternate ICD while a stock kernel module is
 active; upstream reports that combination can hang the GPU.
 
+### Experimental KFD HWS TLB Flush
+
+The module includes an opt-in workaround for stale ROCm/KFD translations after
+GPU memory is unmapped. It rebuilds an already-active HWS runlist only on the
+BC-250 PCI device with GFX1013, and does nothing under MES, with no active
+runlist, or with `amdgpu.sched_policy=2` (`KFD_SCHED_POLICY_NO_HWS`). The module
+parameter defaults to off.
+
+Toggle the persistent boot option from **Drivers > KFD HWS runlist TLB flush**
+or with `../bc250-toolkit.sh kfd-runlist`. Enabling writes
+`amdgpu.bc250_flush_by_runlist=1` and requires a reboot. The toolkit refuses to
+enable it while policy `2` is configured. RADV setup can replace the workaround
+with policy `2`; the two options are never emitted together.
+
 ## Commands
 
 | Command | Action |
 |---|---|
 | `./patch-driver.sh` | Fetch, build, validate, and install |
 | `./patch-driver.sh status` | Report module overrides and scheduler-policy state |
+| `../bc250-toolkit.sh kfd-runlist` | Toggle the experimental persistent KFD HWS runlist workaround |
 | `./patch-driver.sh uninstall` | Noninteractively restore stock modules for all installed kernels |
 | `./fetch-sources.sh` | Fetch the matching kernel source, symbols, and dependencies |
 | `./ensure-build-prereqs.sh` | Restore a missing SteamOS host build toolchain |
