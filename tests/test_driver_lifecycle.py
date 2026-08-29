@@ -18,6 +18,10 @@ AUDIO_PREREQS = ROOT / "bc250-audio-fix/ensure-build-prereqs.sh"
 HDMI_AC3 = ROOT / "hdmi-ac3/hdmi-ac3.sh"
 METRICS_PATCH = ROOT / "bc250-audio-fix/bc250-cyan-skillfish-gpu-telemetry.patch"
 GFXCLK_PATCH = ROOT / "bc250-audio-fix/bc250-cyan-skillfish-gfxclk.patch"
+METRICS_72_PATCH = (
+    ROOT / "bc250-audio-fix/bc250-cyan-skillfish-gpu-telemetry-7.2.patch"
+)
+GFXCLK_72_PATCH = ROOT / "bc250-audio-fix/bc250-cyan-skillfish-gfxclk-7.2.patch"
 SCLK_PATCH = ROOT / "bc250-audio-fix/bc250-cyan-skillfish-sclk-range.patch"
 TTM_PATCH = ROOT / "bc250-audio-fix/bc250-amdgpu-ttm-null-page-guard.patch"
 KFD_RUNLIST_616_PATCH = (
@@ -414,6 +418,12 @@ class DriverLifecycleTests(unittest.TestCase):
         self.assertIn("AUDIO_PATCH=$HERE/0002-bc250-audio.patch", builder)
         self.assertNotIn("bc250-dp-audio-clock-6.18.patch", builder)
         self.assertIn("superseded blanket DPREF", builder)
+        kernel_72 = builder[builder.index("    7.2.*)") :]
+        kernel_72 = kernel_72[: kernel_72.index("        ;;")]
+        self.assertIn("CLOCK_PATCH=", kernel_72)
+        self.assertIn("AUDIO_PATCH=", kernel_72)
+        self.assertNotIn("0002-bc250-audio.patch", kernel_72)
+        self.assertNotIn("bc250-dp-audio-clock", kernel_72)
 
     def test_amdgpu_build_integrates_cyan_skillfish_metrics_patches(self):
         builder = (ROOT / "bc250-audio-fix/build.sh").read_text(encoding="utf-8")
@@ -421,6 +431,8 @@ class DriverLifecycleTests(unittest.TestCase):
         rollback = AUDIO_ROLLBACK.read_text(encoding="utf-8")
         patch = METRICS_PATCH.read_text(encoding="utf-8")
         gfxclk_patch = GFXCLK_PATCH.read_text(encoding="utf-8")
+        metrics_72_patch = METRICS_72_PATCH.read_text(encoding="utf-8")
+        gfxclk_72_patch = GFXCLK_72_PATCH.read_text(encoding="utf-8")
         sclk_patch = SCLK_PATCH.read_text(encoding="utf-8")
         ttm_patch = TTM_PATCH.read_text(encoding="utf-8")
         gfx1013_attestation_patch = GFX1013_ATTESTATION_PATCH.read_text(
@@ -428,6 +440,8 @@ class DriverLifecycleTests(unittest.TestCase):
         )
         self.assertIn("bc250-cyan-skillfish-gpu-telemetry.patch", builder)
         self.assertIn("bc250-cyan-skillfish-gfxclk.patch", builder)
+        self.assertIn(METRICS_72_PATCH.name, builder)
+        self.assertIn(GFXCLK_72_PATCH.name, builder)
         self.assertIn("bc250-cyan-skillfish-sclk-range.patch", builder)
         self.assertIn("bc250-amdgpu-ttm-null-page-guard.patch", builder)
         self.assertLess(
@@ -440,12 +454,14 @@ class DriverLifecycleTests(unittest.TestCase):
         self.assertIn("GRBM_STATUS__GUI_ACTIVE_MASK", patch)
         self.assertIn("AMDGPU_PP_SENSOR_GPU_LOAD", patch)
         self.assertIn("average_gfx_activity", patch)
+        self.assertIn("static const struct smu_feature_bits", metrics_72_patch)
         self.assertIn("PPSMC_MSG_GetGfxFrequency", gfxclk_patch)
         self.assertIn("SMU_MSG_GetGfxclkFrequency", gfxclk_patch)
         self.assertIn("cyan_skillfish_get_gfxclk_frequency", gfxclk_patch)
         self.assertIn("return -ERANGE", gfxclk_patch)
         self.assertIn("gpu_metrics->current_gfxclk = gfxclk", gfxclk_patch)
         self.assertNotIn("smu_table->gpu_metrics_table", gfxclk_patch)
+        self.assertIn("static const struct smu_feature_bits", gfxclk_72_patch)
         self.assertIn("CYAN_SKILLFISH_SCLK_MIN\t\t\t300", sclk_patch)
         self.assertIn("CYAN_SKILLFISH_SCLK_MAX\t\t\t2230", sclk_patch)
         self.assertIn("if (ttm->pages[i])", ttm_patch)

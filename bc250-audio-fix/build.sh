@@ -238,22 +238,37 @@ if [ "$PREPARE_ONLY" = 1 ]; then
     exit 0
 fi
 
-step "apply display/audio clock patches (runbook step 7)"
-# SteamOS 3.8.x needs the DCN 2.01 clock-manager selection backport. The
-# selection is already upstream in 6.18. Both versions need the stable-tagged
-# Cyan Skillfish DP-audio quirk from upstream commit ff209cd04845.
+step "select kernel patch variants (runbook step 7)"
+# SteamOS 3.8.x needs the DCN 2.01 clock-manager selection backport. Kernel
+# 6.18 needs only the stable-tagged Cyan Skillfish DP-audio quirk. Valve's 7.2
+# tree needs neither audio fix, but retains the 6.18 KFD API and needs metrics
+# patches with context adjusted for its refactored feature table.
 case "$BASE" in
     6.16.*)
         CLOCK_PATCH=$HERE/bc250-dp-audio-clock-6.16.patch
+        AUDIO_PATCH=$HERE/0002-bc250-audio.patch
+        METRICS_PATCH=$HERE/bc250-cyan-skillfish-gpu-telemetry.patch
+        GFXCLK_PATCH=$HERE/bc250-cyan-skillfish-gfxclk.patch
         KFD_RUNLIST_PATCH=$HERE/bc250-kfd-flush-by-runlist-6.16.patch
         ;;
     6.18.*)
         CLOCK_PATCH=
+        AUDIO_PATCH=$HERE/0002-bc250-audio.patch
+        METRICS_PATCH=$HERE/bc250-cyan-skillfish-gpu-telemetry.patch
+        GFXCLK_PATCH=$HERE/bc250-cyan-skillfish-gfxclk.patch
         KFD_RUNLIST_PATCH=$HERE/bc250-kfd-flush-by-runlist-6.18.patch
         ;;
-    *)      die "no display/audio patch variant for kernel $BASE — check which fixes are already upstream, then add a case above" ;;
+    7.2.*)
+        CLOCK_PATCH=
+        AUDIO_PATCH=
+        METRICS_PATCH=$HERE/bc250-cyan-skillfish-gpu-telemetry-7.2.patch
+        GFXCLK_PATCH=$HERE/bc250-cyan-skillfish-gfxclk-7.2.patch
+        KFD_RUNLIST_PATCH=$HERE/bc250-kfd-flush-by-runlist-6.18.patch
+        ;;
+    *)      die "no AMDGPU patch variant for kernel $BASE — check which fixes are already upstream, then add a case above" ;;
 esac
 
+step "apply display/audio clock patches (runbook step 7)"
 DCN201_CLK_MGR=drivers/gpu/drm/amd/display/dc/clk_mgr/dcn201/dcn201_clk_mgr.c
 if [ "$(grep -c 'clk_mgr->dprefclk_ss_percentage = 0;' "$DCN201_CLK_MGR")" -gt 1 ] \
    || [ "$(grep -c 'clk_mgr->ss_on_dprefclk = false;' "$DCN201_CLK_MGR")" -gt 1 ]; then
@@ -272,19 +287,20 @@ if [ -n "$CLOCK_PATCH" ]; then
     fi
 fi
 
-AUDIO_PATCH=$HERE/0002-bc250-audio.patch
-if patch -p1 -R --dry-run -s -f < "$AUDIO_PATCH" >/dev/null 2>&1; then
-    echo "upstream DP-audio patch already applied"
-elif patch -p1 --dry-run -s -f < "$AUDIO_PATCH" >/dev/null 2>&1; then
-    patch -p1 -s < "$AUDIO_PATCH"
-    echo "upstream DP-audio patch applied"
+if [ -n "$AUDIO_PATCH" ]; then
+    if patch -p1 -R --dry-run -s -f < "$AUDIO_PATCH" >/dev/null 2>&1; then
+        echo "upstream DP-audio patch already applied"
+    elif patch -p1 --dry-run -s -f < "$AUDIO_PATCH" >/dev/null 2>&1; then
+        patch -p1 -s < "$AUDIO_PATCH"
+        echo "upstream DP-audio patch applied"
+    else
+        die_tree_drift "upstream DP-audio patch neither applies nor reverses cleanly — tree has drifted"
+    fi
 else
-    die_tree_drift "upstream DP-audio patch neither applies nor reverses cleanly — tree has drifted"
+    echo "kernel $BASE needs no display/audio clock patches"
 fi
 
 step "apply Cyan Skillfish GPU metrics patches"
-METRICS_PATCH=$HERE/bc250-cyan-skillfish-gpu-telemetry.patch
-GFXCLK_PATCH=$HERE/bc250-cyan-skillfish-gfxclk.patch
 
 METRICS_SOURCE=drivers/gpu/drm/amd/pm/swsmu/smu11/cyan_skillfish_ppt.c
 
@@ -298,6 +314,11 @@ case "$BASE" in
         TELEMETRY_SOURCE_SHA=014893afe640644c17bdab24737a35207a18666ae20bbfa7aa42188948b49c6b
         GFXCLK_SOURCE_SHA=d03f716c621b76533761c09eaffa9911c696c30c1604d61072152e02d8d14ba5
         SCLK_SOURCE_SHA=3b99663fc90a031e30bca0cf76ce869885f058d3acb6089ff68dad07114d3a97
+        ;;
+    7.2.*)
+        TELEMETRY_SOURCE_SHA=75ed9922d4f7358f19ea685e85ab1840a7cfa60d2c0fa57008f40bda3a5cc186
+        GFXCLK_SOURCE_SHA=6d9acefc8ce3cd29d358618bc791449ce76eddac1b6cd0dad309bb7a2977120f
+        SCLK_SOURCE_SHA=717b7821864eb5907d0f55f605164f1eabf61b6b1a00e53ea9c08546c5be7efe
         ;;
 esac
 

@@ -660,7 +660,7 @@ cmd_core_system_menu() {
     while true; do
         local items=(
             "Persistent storage & boot recovery|$(component_badge "$STORAGE_SH")|Installed automatically when needed; open for status, repair, or manual management."
-            "AMDGPU kernel fixes|$(amdgpu_badge)|Install display/audio clocks, telemetry, and the kernel half of GFX1013 async compute. Reboot afterward."
+            "AMDGPU kernel fixes|$(amdgpu_badge)|Install kernel-specific telemetry and GFX1013 async-compute fixes, plus display/audio corrections where required. Reboot afterward."
             "AMDGPU scheduler policy|$(scheduler_policy_badge)|Normally enabled by RADV setup after both async-compute halves are installed."
             "Power foundation & tuning|$(power_foundation_badge)|Set up ACPI and the GPU governor, then access GPU and CPU tuning."
             "RAM / VRAM split|$(component_badge "$RAM_SPLIT_SH")|Balance the persistent CMOS minimum and dynamic Linux TTM limit."

@@ -91,7 +91,7 @@ constexpr OperationDefinition Operations[] = {
     {"aic-remove", "Remove AIC8800 drivers", "aic", "REMOVE",
      "Unload where possible and remove toolkit-installed modules and firmware.", false, true},
     {"audio-build", "Build AMDGPU kernel fixes", "audio", "BUILD + INSTALL",
-     "Install the display/audio, telemetry, and GFX1013 kernel fixes without enabling sched_policy=2. Reboot before RADV setup.", false, false},
+     "Install kernel-specific telemetry and GFX1013 fixes, plus display/audio corrections where required, without enabling sched_policy=2. Reboot before RADV setup.", false, false},
     {"audio-remove", "Remove AMDGPU kernel fixes", "audio", "REMOVE",
      "Restore stock AMDGPU module overrides and preserve build caches.", false, true},
     {"mesh-setup", "Build Mesa / RADV async-compute patch", "mesh", "BUILD + INSTALL",

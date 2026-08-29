@@ -1,7 +1,8 @@
 # AMDGPU corrections
 
-Corrects DisplayPort video/audio timing, Cyan Skillfish GPU telemetry, and the
-GFX1013 compute-queue lifecycle through one patched `amdgpu` module. GPU
+Corrects Cyan Skillfish GPU telemetry and the GFX1013 compute-queue lifecycle
+through one patched `amdgpu` module. On older supported kernels it also
+corrects DisplayPort video/audio timing. GPU
 activity comes from GC status sampling and GFX clock comes from a validated
 direct SMU query while retaining the firmware's published `SmuMetrics_t`
 layout. The GFX1013 async-compute repair also requires patched Mesa RADV and
@@ -27,14 +28,15 @@ sudo reboot
 |---|---|---|
 | 3.8.x | `linux-neptune-616` | [`bc250-dp-audio-clock-6.16.patch`](bc250-dp-audio-clock-6.16.patch) and [`0002-bc250-audio.patch`](0002-bc250-audio.patch) |
 | 3.9.x | `linux-neptune-618` | [`0002-bc250-audio.patch`](0002-bc250-audio.patch) |
+| Valve 7.2 integration | `7.2` | No DisplayPort audio patch required |
 
-Both versions also apply the Cyan Skillfish telemetry patches. They preserve
+All supported versions apply the Cyan Skillfish telemetry patches. They preserve
 the firmware's published metrics-table transfer size, query and validate the
 GFX clock through the SMU, expose the 300-2230 MHz SCLK range, sample GPU
 activity from GC status, guard partial TTM cleanup, and apply the three-part
 GFX1013 PASID/GFXOFF compute-queue repair. They also carry an experimental KFD
 HWS runlist TLB-flush workaround, disabled by default.
-The build selects the display patch from the running kernel and produces
+The build selects the kernel-specific patch set and produces
 `amdgpu.ko.zst` for that exact release.
 
 ### DisplayPort Audio
@@ -66,15 +68,15 @@ override.
 
 | Patch | Operation |
 |---|---|
-| `bc250-cyan-skillfish-gpu-telemetry.patch` | Apply bounded GC activity sampling while retaining `SmuMetrics_t` |
-| `bc250-cyan-skillfish-gfxclk.patch` | Apply range-checked direct SMU GFX-clock reporting |
+| `bc250-cyan-skillfish-gpu-telemetry.patch` / `-7.2.patch` | Apply bounded GC activity sampling while retaining `SmuMetrics_t` |
+| `bc250-cyan-skillfish-gfxclk.patch` / `-7.2.patch` | Apply range-checked direct SMU GFX-clock reporting |
 | `bc250-cyan-skillfish-sclk-range.patch` | Widen the kernel SCLK interface to 300-2230 MHz |
 | `bc250-amdgpu-ttm-null-page-guard.patch` | Safely clean up partially populated TTM page vectors |
 | `0001-gfx1013-mmio-pasid-route.patch` | Route GFX1013 PASID invalidation through MMIO |
 | `0002-gfx1013-compute-gfxoff-guard.patch` | Manage GFXOFF across the BC-250 compute lifecycle |
 | `0003-gfx1013-scoped-pasid-type0.patch` | Scope type-0 invalidation to the GFX1013 PASID path |
 | `bc250-gfx1013-attestation.patch` | Expose the loaded repair commit as a read-only module parameter |
-| `bc250-kfd-flush-by-runlist-6.16.patch` / `6.18.patch` | Add the opt-in BC-250 KFD HWS runlist TLB flush |
+| `bc250-kfd-flush-by-runlist-6.16.patch` / `6.18.patch` | Add the opt-in BC-250 KFD HWS runlist TLB flush; 7.2 retains the 6.18 patch API |
 
 The SCLK and TTM changes are adapted from the stable `linux-cachyos` patch set
 in [`MastaG/linux-cachyos-bc250`](https://github.com/MastaG/linux-cachyos-bc250/tree/main/patches/linux-cachyos).
@@ -83,7 +85,8 @@ match the toolkit's established governor range.
 
 The KFD runlist workaround is adapted from the stable `linux-cachyos` patch set
 in the same repository. Separate 6.16 and 6.18 variants account for the KFD TLB
-flush API change and are applied with zero fuzz.
+flush API change; Valve 7.2 retains the 6.18 API. They are applied with zero
+fuzz.
 
 The GFX1013 series is fetched from
 [`DryhoppedIPA/bc250-gfx1013-fix`](https://github.com/DryhoppedIPA/bc250-gfx1013-fix)
@@ -243,6 +246,6 @@ The complete fallback remains mandatory for the AMDGPU override. AIC8800 may ins
 | `build-env.sh` | Local build environment |
 | `bc250-dp-audio-clock-6.16.patch` | SteamOS 3.8.x DCN 2.01 clock-manager selection backport |
 | `0002-bc250-audio.patch` | Stable-tagged upstream Cyan Skillfish DP-audio quirk |
-| `bc250-cyan-skillfish-gpu-telemetry.patch` | Runtime GPU activity export using the published metrics layout |
-| `bc250-cyan-skillfish-gfxclk.patch` | Runtime GFX clock export using a direct SMU query |
+| `bc250-cyan-skillfish-gpu-telemetry.patch` / `-7.2.patch` | Runtime GPU activity export using the published metrics layout |
+| `bc250-cyan-skillfish-gfxclk.patch` / `-7.2.patch` | Runtime GFX clock export using a direct SMU query |
 | `bc250-gfx1013-attestation.patch` | Read-only loaded-module identity for safe global RADV activation |

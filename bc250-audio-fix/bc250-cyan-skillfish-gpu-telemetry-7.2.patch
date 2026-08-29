@@ -1,0 +1,68 @@
+diff --git a/drivers/gpu/drm/amd/pm/swsmu/smu11/cyan_skillfish_ppt.c b/drivers/gpu/drm/amd/pm/swsmu/smu11/cyan_skillfish_ppt.c
+index b145b9b..87fb4e4 100644
+--- a/drivers/gpu/drm/amd/pm/swsmu/smu11/cyan_skillfish_ppt.c
++++ b/drivers/gpu/drm/amd/pm/swsmu/smu11/cyan_skillfish_ppt.c
+@@ -22,6 +22,7 @@
+  */
+ 
+ #define SWSMU_CODE_LAYER_L2
++#include <linux/delay.h>
+ 
+ #include "amdgpu.h"
+ #include "amdgpu_smu.h"
+@@ -31,6 +32,8 @@
+ #include "smu_v11_8_ppsmc.h"
+ #include "smu_v11_8_pmfw.h"
+ #include "smu_cmn.h"
++#include "gc/gc_10_1_0_offset.h"
++#include "gc/gc_10_1_0_sh_mask.h"
+ #include "soc15_common.h"
+ 
+ /*
+@@ -60,6 +63,25 @@ static struct gfx_user_settings {
+ 
+ static uint32_t cyan_skillfish_sclk_default;
+ 
++static uint16_t cyan_skillfish_get_gpu_activity(struct smu_context *smu)
++{
++	struct amdgpu_device *adev = smu->adev;
++	unsigned int busy = 0;
++	int i;
++
++	/* The firmware table has no GFX activity field. Sample GUI_ACTIVE over
++	 * a short window so gpu_metrics does not expose the 0xffff sentinel.
++	 */
++	for (i = 0; i < 32; i++) {
++		busy += !!(RREG32_SOC15(GC, 0, mmGRBM_STATUS) &
++			  GRBM_STATUS__GUI_ACTIVE_MASK);
++		if (i != 31)
++			udelay(50);
++	}
++
++	return DIV_ROUND_CLOSEST(busy * 10000, 32);
++}
++
+ static const struct smu_feature_bits cyan_skillfish_dpm_features = {
+ 	.bits = {
+ 		SMU_FEATURE_BIT_INIT(FEATURE_FCLK_DPM_BIT),
+@@ -249,6 +271,11 @@ static int cyan_skillfish_read_sensor(struct smu_context *smu,
+ 						   (uint32_t *)data);
+ 		*size = 4;
+ 		break;
++	case AMDGPU_PP_SENSOR_GPU_LOAD:
++		*(uint32_t *)data =
++			cyan_skillfish_get_gpu_activity(smu) / 100;
++		*size = 4;
++		break;
+ 	default:
+ 		ret = -EOPNOTSUPP;
+ 		break;
+@@ -398,7 +425,8 @@ static ssize_t cyan_skillfish_get_gpu_metrics(struct smu_context *smu,
+ 
+ 	smu_cmn_init_soft_gpu_metrics(gpu_metrics, 2, 2);
+ 
++	gpu_metrics->average_gfx_activity = cyan_skillfish_get_gpu_activity(smu);
+ 	gpu_metrics->temperature_gfx = metrics.Current.GfxTemperature;
+ 	gpu_metrics->temperature_soc = metrics.Current.SocTemperature;
+ 
+ 	gpu_metrics->average_socket_power = metrics.Current.CurrentSocketPower;

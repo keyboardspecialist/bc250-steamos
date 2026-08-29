@@ -544,8 +544,9 @@ remain preserved.
 SteamOS ships an ALSA AC-3 profile for Valve hardware, but the BC-250's DMI
 identity does not activate it. The toolkit can select that profile for the AMD
 HDMI card and encode six-channel PCM to Dolby Digital with ALSA's `a52` plugin.
-Install the AMDGPU audio correction and reboot first, then open **Display &
-Connectivity > HDMI audio** and choose **Enable HDMI AC-3 5.1**.
+On 6.16 and 6.18, install the AMDGPU audio correction and reboot first. Valve
+7.2 does not need the legacy audio patches. Then open **Display & Connectivity
+> HDMI audio** and choose **Enable HDMI AC-3 5.1**.
 
 The setup requires an AC-3-capable receiver or soundbar. It installs a
 toolkit-owned udev rule, adds a user WirePlumber fragment, selects the encoded
@@ -570,10 +571,10 @@ cd bc250-audio-fix
 ./patch-driver.sh
 ```
 
-The patches restore the DisplayPort pixel/audio reference clock, preserve the
-Cyan Skillfish firmware metrics layout, query GFX frequency directly from the
-SMU, add GPU utilization reporting, and repair the GFX1013 compute-queue
-lifecycle.
+The patches preserve the Cyan Skillfish firmware metrics layout, query GFX
+frequency directly from the SMU, add GPU utilization reporting, and repair the
+GFX1013 compute-queue lifecycle. On 6.16 and 6.18 they also apply the required
+DisplayPort audio corrections; Valve 7.2 needs neither legacy audio patch.
 Builds are matched to the running kernel and checked for vermagic and ABI compatibility
 before installation. If Valve omitted the matching headers, the toolkit can
 generate the required symbols with a complete exact-source kernel build.
