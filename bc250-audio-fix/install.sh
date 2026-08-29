@@ -12,6 +12,7 @@ MARKER=/usr/lib/modules/$REL/updates/.bc250-audio-fix
 METRICS_MARKER=/usr/lib/modules/$REL/updates/.bc250-metrics-fix
 GFX1013_MARKER=/usr/lib/modules/$REL/updates/.bc250-gfx1013-fix
 BOOT_CONFIG=$HERE/boot-config.sh
+MKINITCPIO=$HERE/mkinitcpio-compat.sh
 
 [ -f "$SRC" ] || { echo "missing $SRC — the module is not shipped in the repo; build it against your running kernel first: ./fetch-sources.sh && ./build.sh"; exit 1; }
 [ -f "$ATTESTATION" ] && [ ! -L "$ATTESTATION" ] \
@@ -78,7 +79,7 @@ cleanup() {
             rm -f "$PRIORITY_FILE"
         fi
         depmod "$REL" || true
-        mkinitcpio -p "$PRESET" >/dev/null 2>&1 || true
+        "$MKINITCPIO" "$REL" -p "$PRESET" >/dev/null 2>&1 || true
     fi
     rm -rf "$TMPD"
     if [ "$ROOTFS_WAS_READONLY" = 1 ]; then steamos-readonly enable || true; fi
@@ -118,7 +119,7 @@ EOF
 fi
 
 BC250_FORCE_GRUB_REGEN=1 "$BOOT_CONFIG" policy-remove
-mkinitcpio -p "$PRESET"
+"$MKINITCPIO" "$REL" -p "$PRESET"
 INSTALL_OK=1
 echo "OK - display, GPU telemetry, and GFX1013 kernel corrections installed."
 echo "Any older toolkit-managed scheduler policy is now disabled for the next boot."

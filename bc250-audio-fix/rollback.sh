@@ -10,6 +10,7 @@ PRIORITY_FILE=/usr/lib/depmod.d/10-bc250-audio-fix.conf
 LEGACY_PRIORITY_FILE=/usr/lib/depmod.d/10-updates.conf
 HERE=$(cd "$(dirname "$0")" && pwd)
 BOOT_CONFIG=$HERE/boot-config.sh
+MKINITCPIO=$HERE/mkinitcpio-compat.sh
 ROOTFS_WAS_READONLY=0
 PRIORITY_REMOVED=0
 TARGETS=()
@@ -244,7 +245,7 @@ for index in "${!PRESENT[@]}"; do
     echo "$rel: amdgpu now resolves to $resolved"
     [[ "$resolved" != */updates/* ]] \
         || { echo "ERROR: override still selected for '$rel'" >&2; exit 1; }
-    mkinitcpio -p "$preset"
+    "$MKINITCPIO" "$rel" -p "$preset"
     rm -f "/usr/lib/modules/$rel/updates/.bc250-audio-fix" \
         "/usr/lib/modules/$rel/updates/.bc250-metrics-fix" \
         "/usr/lib/modules/$rel/updates/.bc250-gfx1013-fix"

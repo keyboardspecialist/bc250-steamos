@@ -15,6 +15,7 @@ AUDIO_ROLLBACK = ROOT / "bc250-audio-fix/rollback.sh"
 AUDIO_BOOT_CONFIG = ROOT / "bc250-audio-fix/boot-config.sh"
 AUDIO_CLEAN = ROOT / "bc250-audio-fix/clean.sh"
 AUDIO_PREREQS = ROOT / "bc250-audio-fix/ensure-build-prereqs.sh"
+AUDIO_MKINITCPIO = ROOT / "bc250-audio-fix/mkinitcpio-compat.sh"
 HDMI_AC3 = ROOT / "hdmi-ac3/hdmi-ac3.sh"
 METRICS_PATCH = ROOT / "bc250-audio-fix/bc250-cyan-skillfish-gpu-telemetry.patch"
 GFXCLK_PATCH = ROOT / "bc250-audio-fix/bc250-cyan-skillfish-gfxclk.patch"
@@ -362,6 +363,7 @@ class DriverLifecycleTests(unittest.TestCase):
                 str(AUDIO_CLEAN),
                 str(AUDIO_ROLLBACK),
                 str(AUDIO_PREREQS),
+                str(AUDIO_MKINITCPIO),
                 str(HDMI_AC3),
             ],
             check=True,
@@ -604,12 +606,65 @@ class DriverLifecycleTests(unittest.TestCase):
         self.assertIn('BC250_FORCE_GRUB_REGEN=1 "$BOOT_CONFIG" policy-remove', direct_installer)
         self.assertLess(
             direct_installer.index('"$BOOT_CONFIG" policy-remove'),
-            direct_installer.index('mkinitcpio -p "$PRESET"', direct_installer.index('"$BOOT_CONFIG" policy-remove')),
+            direct_installer.index(
+                '"$MKINITCPIO" "$REL" -p "$PRESET"',
+                direct_installer.index('"$BOOT_CONFIG" policy-remove'),
+            ),
         )
         self.assertIn('as_root bash "$BOOT_CONFIG" install', mesh)
         self.assertIn('"$BOOT_CONFIG" remove', rollback)
         self.assertIn("BC250_SKIP_GRUB_REGEN=1", cleanup)
         self.assertIn("amdgpu.sched_policy=2", mesh)
+
+    def test_mkinitcpio_ignores_only_stale_blake2b_module_name(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            install_dir = root / "install"
+            bindir = root / "bin"
+            install_dir.mkdir()
+            bindir.mkdir()
+            hook = install_dir / "steam-deck"
+            hook.write_text(
+                "#!/bin/bash\nbuild() {\n    blake2b_generic\n}\n",
+                encoding="utf-8",
+            )
+            hook.chmod(0o755)
+            (bindir / "modinfo").write_text(
+                "#!/bin/bash\n"
+                '[ "${@: -1}" = blake2b ] && { echo "(builtin)"; exit 0; }\n'
+                "exit 1\n",
+                encoding="utf-8",
+            )
+            (bindir / "mkinitcpio").write_text(
+                "#!/bin/bash\n"
+                'resolved=$(PATH="$MKINITCPIO_INSTALL" command -v steam-deck)\n'
+                'grep -Fq "blake2b_generic?" "$resolved"\n'
+                'printf "%s\\n" "$resolved" > "$CALL_LOG"\n',
+                encoding="utf-8",
+            )
+            (bindir / "modinfo").chmod(0o755)
+            (bindir / "mkinitcpio").chmod(0o755)
+            call_log = root / "call-log"
+            env = os.environ.copy()
+            env.update(
+                {
+                    "PATH": f"{bindir}:{env['PATH']}",
+                    "MKINITCPIO_INSTALL": str(install_dir),
+                    "CALL_LOG": str(call_log),
+                }
+            )
+
+            result = subprocess.run(
+                ["bash", str(AUDIO_MKINITCPIO), "7.2-test", "-p", "test"],
+                check=True,
+                capture_output=True,
+                text=True,
+                env=env,
+            )
+
+            self.assertIn("stale SteamOS blake2b_generic request", result.stdout)
+            self.assertNotEqual(Path(call_log.read_text().strip()), hook)
+            self.assertIn("blake2b_generic\n", hook.read_text(encoding="utf-8"))
 
 
 if __name__ == "__main__":

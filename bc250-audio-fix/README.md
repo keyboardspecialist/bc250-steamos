@@ -239,6 +239,7 @@ The complete fallback remains mandatory for the AMDGPU override. AIC8800 may ins
 | `bc250-libbpf-c23-const.patch` | GCC 15/C23 const-correctness backport for the kernel's libbpf host tool |
 | `check-module.sh` | Vermagic and ABI validation |
 | `install.sh` | Module override installation and initramfs generation |
+| `mkinitcpio-compat.sh` | Initramfs generation with SteamOS 7.2 BLAKE2 hook compatibility |
 | `boot-config.sh` | Persistent `amdgpu.sched_policy=2` GRUB configuration |
 | `rollback.sh` | Stock-module restoration |
 | `cleanup-other-slot.sh` | Alternate-slot restoration |
