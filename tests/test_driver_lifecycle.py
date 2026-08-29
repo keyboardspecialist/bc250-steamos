@@ -330,6 +330,10 @@ class DriverLifecycleTests(unittest.TestCase):
         )
         self.assertNotIn("base-devel git eject usb_modeswitch", installer)
         self.assertIn("MODESWITCH_MESSAGE2", installer)
+        self.assertIn('modprobe aic_load_fw', installer)
+        first_switch = installer.index('if msc_block=$(find_aic_msc_block_device)')
+        self.assertLess(installer.index('modprobe aic_load_fw'), first_switch)
+        self.assertLess(installer.index('modprobe aic8800_fdrv'), first_switch)
         self.assertTrue((AIC_DRIVER / "aic_zlp_quirk/aic_zlp_quirk.c").is_file())
 
     def test_aic_boot_defers_firmware_probe_until_persistent_storage(self):

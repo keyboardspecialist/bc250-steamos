@@ -615,6 +615,8 @@ relock_rootfs
 # Source-only preparation can omit Module.symvers, so make the runtime WiFi
 # dependency explicit instead of relying solely on generated module metadata.
 modprobe cfg80211
+modprobe aic_load_fw
+modprobe aic8800_fdrv
 
 if msc_block=$(find_aic_msc_block_device); then
     echo "Ejecting AIC mass-storage mode device $msc_block..."
