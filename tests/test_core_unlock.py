@@ -242,11 +242,19 @@ class CoreUnlockTests(unittest.TestCase):
         source = EFI_SOURCE.read_text(encoding="utf-8")
         main = source[source.index("EFI_STATUS efi_main") :]
 
+        self.assertIn("0x13e01022U", source)
         self.assertIn("0x13fe1002U", source)
         self.assertIn("0x000000ffU", source)
         self.assertIn("0x0115A870U", source)
         self.assertIn("0x98U", source)
-        self.assertLess(main.index("pci_read32(0)"), main.index("smn_read(MASK_REG)"))
+        self.assertLess(
+            main.index("pci_read32(ARIEL_ROOT_BDF, 0)"),
+            main.index("smn_read(MASK_REG)"),
+        )
+        self.assertLess(
+            main.index("pci_read32(BC250_GPU_BDF, 0)"),
+            main.index("smn_read(MASK_REG)"),
+        )
         self.assertIn("GetVariable", main)
         self.assertIn("SetVariable", main)
         self.assertIn("clear_guard", main)

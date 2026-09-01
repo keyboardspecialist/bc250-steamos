@@ -51,8 +51,9 @@ or EFI binary.
 
 The hardened application adds the following protections:
 
-- Verifies the complete PCI configuration ID `0x13fe1002` before any SMN/SMU
-  access, skips an already-complete `0x000000ff` mask, and verifies the result.
+- Verifies the Ariel root complex at `00:00.0` (`1022:13e0`) and the BC-250 GPU
+  at `01:00.0` (`1002:13fe`) before any SMN/SMU access, skips an
+  already-complete `0x000000ff` mask, and verifies the result.
 - Retains the proven queue 3 message `0x98` and SMN address `0x0115A870`, with
   bounded mailbox waits and high-bit-encoded EFI error returns.
 - Persists a one-attempt UEFI guard before the SMU write. Any locked mask with

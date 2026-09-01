@@ -3,7 +3,7 @@
 Local patches for [bc250-collective/bc250_smu_oc](https://github.com/bc250-collective/bc250_smu_oc)
 (CPU overclock/undervolt via SMU). Consumed by `bc250-power.sh cpu-oc`,
 which fetches the upstream repo as a tarball **pinned to the commit in
-`OC_PIN`**, overlays the two `.py` files here on top, and stages the result to
+`OC_PIN`**, overlays the three `.py` files here on top, and stages the result to
 `~/.local/share/bc250-fixes/bc250-steamos/smu-oc/`. No local clone is kept;
 `cpu-oc update`
 re-fetches.
@@ -28,6 +28,13 @@ updates. When `stress` is absent, spawn one Python busy-loop process per CPU
 instead; `stress` is still preferred when present. (`cpu-oc detect` also
 tries a pacman install of `stress` first — this fallback covers the cases
 where that fails or the package was wiped since.) Marker: `_burn`.
+
+## bc250_detect.py - atomic config writes (0003)
+
+Detection can hard-reset the machine while it is updating `overclock.conf`.
+Write and sync a temporary file in the same directory, then atomically replace
+the previous complete result so a reset cannot leave a truncated or NUL-padded
+profile. Marker: `os.replace(temporary, path)`.
 
 ## Bumping the pinned upstream commit
 

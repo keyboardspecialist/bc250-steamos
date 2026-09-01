@@ -14,6 +14,9 @@
 
 #define PCI_CONFIG_ADDRESS 0x0cf8
 #define PCI_CONFIG_DATA 0x0cfc
+#define ARIEL_ROOT_BDF 0x00000000U
+#define BC250_GPU_BDF 0x00010000U
+#define ARIEL_ROOT_PCI_ID 0x13e01022U
 #define BC250_PCI_ID 0x13fe1002U
 #define MASK_REG 0x0115A870U
 #define UNLOCKED_MASK 0x000000ffU
@@ -60,8 +63,8 @@ static inline UINT32 in32(UINT16 port) {
     return value;
 }
 
-static UINT32 pci_read32(UINT32 offset) {
-    out32(PCI_CONFIG_ADDRESS, 0x80000000U | (offset & 0xfcU));
+static UINT32 pci_read32(UINT32 bdf, UINT32 offset) {
+    out32(PCI_CONFIG_ADDRESS, 0x80000000U | bdf | (offset & 0xfcU));
     return in32(PCI_CONFIG_DATA);
 }
 
@@ -143,8 +146,12 @@ EFI_STATUS efi_main(EFI_HANDLE image_handle, EFI_SYSTEM_TABLE *system_table) {
     (void)image_handle;
 
     print(system_table, L"BC-250 core unlock: checking hardware and mask\r\n");
-    if (pci_read32(0) != BC250_PCI_ID) {
-        print(system_table, L"BC-250 core unlock: PCI ID is not 1002:13FE; SMU access refused\r\n");
+    if (pci_read32(ARIEL_ROOT_BDF, 0) != ARIEL_ROOT_PCI_ID) {
+        print(system_table, L"BC-250 core unlock: 00:00.0 is not the 1022:13E0 Ariel root complex; SMU access refused\r\n");
+        return EFI_ERROR_STATUS(EFI_UNSUPPORTED);
+    }
+    if (pci_read32(BC250_GPU_BDF, 0) != BC250_PCI_ID) {
+        print(system_table, L"BC-250 core unlock: 01:00.0 is not the 1002:13FE GPU; SMU access refused\r\n");
         return EFI_ERROR_STATUS(EFI_UNSUPPORTED);
     }
 

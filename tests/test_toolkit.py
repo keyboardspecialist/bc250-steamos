@@ -304,6 +304,24 @@ class ToolkitTests(unittest.TestCase):
             install_plugin.index("command -v pnpm"),
         )
 
+    def test_decky_root_helper_uses_explicit_smu_patch_allowlist(self):
+        installer = (ROOT / "decky-plugin/install.sh").read_text(encoding="utf-8")
+
+        for expected in (
+            "0001-transaction-level-flock.patch",
+            "0002-steamos-stress-fallback.patch",
+            "0003-atomic-config-write.patch",
+            "README.md",
+            "bc250_detect.py",
+            "stress_helper.py",
+            "transport.py",
+        ):
+            self.assertIn(f'"$SRC_DIR/../smu-oc-patches/{expected}"', installer)
+        self.assertIn(
+            'sudo install -m 0644 "${SMU_PATCH_SOURCES[@]}"', installer
+        )
+        self.assertNotIn('smu-oc-patches/*', installer)
+
     def make_action_environment(self, root):
         toolkit = root / TOOLKIT.name
         shutil.copy2(TOOLKIT, toolkit)

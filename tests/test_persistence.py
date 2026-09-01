@@ -528,6 +528,40 @@ grep -Fxq "daemon-reload" "$SYSTEMCTL_LOG"
         installed = apply_section.index('conf="$OC_CONF"')
         self.assertLess(staged, installed)
 
+    def test_cpu_oc_configs_are_recovered_validated_and_copied_atomically(self):
+        source = (ROOT / "bc250-power.sh").read_text(encoding="utf-8")
+        self.assertIn('clean = data.rstrip(b"\\0")', source)
+        self.assertIn('oc_prepare_config "$conf"', source)
+        self.assertIn('oc_atomic_copy "$OC_STAGE_CONF" "$OC_CONF"', source)
+        self.assertNotIn('cp -f "$OC_STAGE_CONF" "$OC_CONF"', source)
+
+        detector = (ROOT / "smu-oc-patches/bc250_detect.py").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn("tempfile.mkstemp(", detector)
+        self.assertIn("os.fsync(stream.fileno())", detector)
+        self.assertIn("os.replace(temporary, path)", detector)
+
+        prepare_start = source.index("import configparser", source.index("oc_prepare_config()"))
+        prepare_end = source.index("\nPY\n}", prepare_start)
+        prepare_script = source[prepare_start:prepare_end]
+        with tempfile.TemporaryDirectory() as directory:
+            profile = Path(directory) / "overclock.conf"
+            expected = (
+                b"[overclock]\nfrequency = 3800\nscale = -32\n"
+                b"max_temperature = 90\n\n"
+            )
+            profile.write_bytes(expected + b"\0" * 61)
+            result = subprocess.run(
+                [sys.executable, "-", str(profile)],
+                input=prepare_script,
+                text=True,
+                capture_output=True,
+            )
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual(profile.read_bytes(), expected)
+            self.assertIn("Recovered interrupted CPU OC config write", result.stderr)
+
     def test_decky_cpu_actions_do_not_migrate_legacy_wifi_from_minimal_payload(self):
         storage = (ROOT / "bc250-storage.sh").read_text(encoding="utf-8")
         backend = (ROOT / "backend/bc250_control/backend.py").read_text(

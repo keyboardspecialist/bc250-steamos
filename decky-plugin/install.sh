@@ -31,6 +31,15 @@ CU_MANAGER_SOURCE=""
 UMR_SOURCE=""
 UMR_DATABASE_SOURCE=""
 UMR_STAGE=""
+SMU_PATCH_SOURCES=(
+    "$SRC_DIR/../smu-oc-patches/0001-transaction-level-flock.patch"
+    "$SRC_DIR/../smu-oc-patches/0002-steamos-stress-fallback.patch"
+    "$SRC_DIR/../smu-oc-patches/0003-atomic-config-write.patch"
+    "$SRC_DIR/../smu-oc-patches/README.md"
+    "$SRC_DIR/../smu-oc-patches/bc250_detect.py"
+    "$SRC_DIR/../smu-oc-patches/stress_helper.py"
+    "$SRC_DIR/../smu-oc-patches/transport.py"
+)
 export PNPM_HOME="${PNPM_HOME:-$HOME/.local/share/pnpm}"
 export PATH="$PNPM_HOME/bin:$PATH"
 
@@ -193,7 +202,8 @@ for required in "$SRC_DIR/../bc250-power.sh" \
     "$SRC_DIR/../bc250-storage.sh" \
     "$SRC_DIR/../bc250-update-persistence.sh" \
     "$SRC_DIR/../acpi-tables/SSDT-CST.dsl" \
-    "$SRC_DIR/../acpi-tables/SSDT-PST.dsl"; do
+    "$SRC_DIR/../acpi-tables/SSDT-PST.dsl" \
+    "${SMU_PATCH_SOURCES[@]}"; do
     [[ -f "$required" && ! -L "$required" ]] \
         || die "required root-helper source is missing or unsafe: $required"
 done
@@ -208,7 +218,7 @@ sudo install -m 0644 "$SRC_DIR/../acpi-tables/SSDT-CST.dsl" \
     "$ROOT_HELPER_DIR/acpi-tables/SSDT-CST.dsl"
 sudo install -m 0644 "$SRC_DIR/../acpi-tables/SSDT-PST.dsl" \
     "$ROOT_HELPER_DIR/acpi-tables/SSDT-PST.dsl"
-sudo install -m 0644 "$SRC_DIR"/../smu-oc-patches/* "$ROOT_HELPER_DIR/smu-oc-patches/"
+sudo install -m 0644 "${SMU_PATCH_SOURCES[@]}" "$ROOT_HELPER_DIR/smu-oc-patches/"
 if sudo systemctl is-enabled bc250-acpi-heal.service >/dev/null 2>&1; then
     log "Refreshing universal ACPI tables (sudo; reboot required)"
     sudo bash "$ROOT_HELPER_DIR/bc250-power.sh" acpi

@@ -47,6 +47,7 @@ CPU_HELPER_REQUIRED_PATHS = (
     CPU_HELPER_PATH,
     CPU_HELPER_PATH.parent / "bc250-storage.sh",
     CPU_HELPER_PATH.parent / "bc250-update-persistence.sh",
+    CPU_HELPER_PATH.parent / "smu-oc-patches/bc250_detect.py",
     CPU_HELPER_PATH.parent / "smu-oc-patches/stress_helper.py",
     CPU_HELPER_PATH.parent / "smu-oc-patches/transport.py",
     CPU_HELPER_PATH.parent / ".decky-helper-manifest",

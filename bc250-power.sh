@@ -3800,7 +3800,9 @@ menu_toggle_cpu_mitigations() {
 
 fetch_oc_sources() {
     migrate_legacy_data
-    [[ -f "$OC_PATCH_DIR/transport.py" && -f "$OC_PATCH_DIR/stress_helper.py" ]] \
+    [[ -f "$OC_PATCH_DIR/transport.py" \
+        && -f "$OC_PATCH_DIR/stress_helper.py" \
+        && -f "$OC_PATCH_DIR/bc250_detect.py" ]] \
         || die "Patch overlays not found at $OC_PATCH_DIR (should ship next to this script)."
     local work
     work=$(mktemp -d /tmp/bc250-smu-oc.XXXXXX)
@@ -3808,7 +3810,8 @@ fetch_oc_sources() {
     log "Fetching bc250_smu_oc @ ${OC_PIN:0:7} (pinned)..."
     curl -fsSL "$OC_TARBALL" | tar -xz -C "$work" --strip-components=1 \
         || die "Fetch failed (network?): $OC_TARBALL"
-    log "Overlaying SteamOS patches (transaction flock, no-'stress' fallback)..."
+    log "Overlaying SteamOS patches (transaction flock, stress fallback, atomic config)..."
+    install -m 644 "$OC_PATCH_DIR/bc250_detect.py" "$work/bc250_detect.py"
     install -m 644 "$OC_PATCH_DIR/transport.py"     "$work/bc250_smu/transport.py"
     install -m 644 "$OC_PATCH_DIR/stress_helper.py" "$work/stress_helper.py"
     mkdir -p "$OC_DIR/bc250_smu"
@@ -3822,13 +3825,22 @@ fetch_oc_sources() {
 }
 
 install_oc_files() {
+    [[ -f "$OC_PATCH_DIR/transport.py" \
+        && -f "$OC_PATCH_DIR/stress_helper.py" \
+        && -f "$OC_PATCH_DIR/bc250_detect.py" ]] \
+        || die "Patch overlays not found at $OC_PATCH_DIR (should ship next to this script)."
     if [[ ! -f "$OC_DIR/bc250_apply.py" || "${1:-}" == force ]]; then
         fetch_oc_sources
+    elif ! grep -q 'os.replace(temporary, path)' "$OC_DIR/bc250_detect.py"; then
+        log "Installing atomic CPU OC config writer..."
+        install -m 644 "$OC_PATCH_DIR/bc250_detect.py" "$OC_DIR/bc250_detect.py"
     fi
     grep -q 'lock across the whole pair' "$OC_DIR/bc250_smu/transport.py" \
         || warn "transport.py missing the transaction-flock patch -- SMU races with the governor possible; run '$0 cpu-oc update'."
     grep -q '_burn' "$OC_DIR/stress_helper.py" \
         || warn "stress_helper.py missing the no-'stress' fallback -- 'cpu-oc detect' needs the stress binary; run '$0 cpu-oc update'."
+    grep -q 'os.replace(temporary, path)' "$OC_DIR/bc250_detect.py" \
+        || warn "bc250_detect.py writes configs in place -- an interrupted detect can corrupt the profile; run '$0 cpu-oc update'."
 }
 
 # detect prefers the real `stress` tool; pacman packages are wiped by SteamOS
@@ -3885,12 +3897,86 @@ NEVER above 1325 mV -- exceeding it has bricked boards."
     log "Stability-test now (games / OCCT), watch: grep MHz /proc/cpuinfo"
 }
 
+oc_prepare_config() {
+    local conf="$1"
+    python3 - "$conf" <<'PY'
+import configparser
+import os
+import stat
+import sys
+import tempfile
+from pathlib import Path
+
+path = Path(sys.argv[1])
+data = path.read_bytes()
+clean = data.rstrip(b"\0")
+if b"\0" in clean:
+    raise SystemExit(f"CPU OC config contains embedded NUL bytes: {path}")
+
+parser = configparser.ConfigParser()
+try:
+    parser.read_string(clean.decode("utf-8"), source=str(path))
+    frequency = parser.getint("overclock", "frequency")
+    scale = parser.getint("overclock", "scale")
+    temperature = parser.getint("overclock", "max_temperature")
+except (UnicodeError, configparser.Error, ValueError) as error:
+    raise SystemExit(f"Invalid CPU OC config {path}: {error}") from error
+
+if not 3500 <= frequency <= 4500:
+    raise SystemExit(f"Invalid CPU OC frequency in {path}: {frequency}")
+if not -50 <= scale <= 0:
+    raise SystemExit(f"Invalid CPU OC scale in {path}: {scale}")
+if not 0 <= temperature <= 100:
+    raise SystemExit(f"Invalid CPU OC temperature in {path}: {temperature}")
+
+if clean != data:
+    metadata = path.stat()
+    descriptor, temporary = tempfile.mkstemp(
+        prefix=f".{path.name}.", dir=path.parent
+    )
+    try:
+        with os.fdopen(descriptor, "wb") as stream:
+            stream.write(clean)
+            stream.flush()
+            os.fsync(stream.fileno())
+            os.fchmod(stream.fileno(), stat.S_IMODE(metadata.st_mode))
+            os.fchown(stream.fileno(), metadata.st_uid, metadata.st_gid)
+        os.replace(temporary, path)
+        directory = os.open(path.parent, os.O_RDONLY | os.O_DIRECTORY)
+        try:
+            os.fsync(directory)
+        finally:
+            os.close(directory)
+    finally:
+        try:
+            os.unlink(temporary)
+        except FileNotFoundError:
+            pass
+    print(f"Recovered interrupted CPU OC config write: {path}", file=sys.stderr)
+PY
+}
+
+oc_atomic_copy() {
+    local source="$1" target="$2" directory temporary
+    [[ -f "$source" && ! -L "$source" ]] || die "Unsafe CPU OC config: $source"
+    [[ ! -L "$target" && ( ! -e "$target" || -f "$target" ) ]] \
+        || die "Refusing to replace unsafe CPU OC config: $target"
+    directory=$(dirname "$target")
+    temporary=$(mktemp "$directory/.bc250-smu-oc.XXXXXX")
+    install -o root -g root -m 0644 "$source" "$temporary" \
+        || { rm -f "$temporary"; return 1; }
+    sync -d "$temporary"
+    mv -f "$temporary" "$target"
+    sync -f "$directory"
+}
+
 oc_apply() {
     require_root
     install_oc_files
     local conf="$OC_STAGE_CONF"
     [[ -f "$conf" ]] || conf="$OC_CONF"
     [[ -f "$conf" ]] || die "No overclock config -- run '$0 cpu-oc detect' first."
+    oc_prepare_config "$conf" || die "CPU OC config is damaged -- run '$0 cpu-oc detect' again."
     pause_governor
     python3 "$OC_DIR/bc250_apply.py" --apply "$conf"
     resume_governor
@@ -3903,7 +3989,9 @@ oc_enable() {
     [[ -f "$OC_STAGE_CONF" || -f "$OC_CONF" ]] \
         || die "No overclock config -- run '$0 cpu-oc detect' first."
     if [[ -f "$OC_STAGE_CONF" ]]; then
-        cp -f "$OC_STAGE_CONF" "$OC_CONF"
+        oc_prepare_config "$OC_STAGE_CONF" \
+            || die "CPU OC config is damaged -- run '$0 cpu-oc detect' again."
+        oc_atomic_copy "$OC_STAGE_CONF" "$OC_CONF"
         log "Config -> $OC_CONF"
     fi
     cat > "$OC_UNIT" << EOF

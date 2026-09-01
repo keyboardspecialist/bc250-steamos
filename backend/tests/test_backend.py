@@ -2069,12 +2069,16 @@ class DeckyRuntimeTests(unittest.TestCase):
                 / "acpi-tables/SSDT-PST.dsl",
                 Path("smu-oc-patches/stress_helper.py"): repository
                 / "smu-oc-patches/stress_helper.py",
+                Path("smu-oc-patches/bc250_detect.py"): repository
+                / "smu-oc-patches/bc250_detect.py",
                 Path("smu-oc-patches/transport.py"): repository
                 / "smu-oc-patches/transport.py",
                 Path("smu-oc-patches/0001-transaction-level-flock.patch"): repository
                 / "smu-oc-patches/0001-transaction-level-flock.patch",
                 Path("smu-oc-patches/0002-steamos-stress-fallback.patch"): repository
                 / "smu-oc-patches/0002-steamos-stress-fallback.patch",
+                Path("smu-oc-patches/0003-atomic-config-write.patch"): repository
+                / "smu-oc-patches/0003-atomic-config-write.patch",
                 Path("smu-oc-patches/README.md"): repository
                 / "smu-oc-patches/README.md",
                 Path("core-unlock/bc250-unlock-cores.py"): repository
