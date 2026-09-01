@@ -88,6 +88,14 @@ ColumnLayout {
             value: root.unlock.topologyState ? String(root.unlock.topologyState).replace(/-/g, " ") : "Unavailable"
             health: root.unlock.topologyState === "unlocked" ? 1 : root.unlock.topologyState === "locked" ? 0 : -1
         }
+        Repeater {
+            model: root.unlock.ccxGroups || []
+            Components.StatusRow {
+                required property var modelData
+                label: "CCX " + modelData.ccxId
+                value: "Cores " + (modelData.cores || []).map(function(core) { return core.coreId; }).join(", ")
+            }
+        }
         Components.StatusRow {
             label: "Persistent method"
             value: root.unlockModeLabel()

@@ -1102,7 +1102,7 @@ class ToolkitBackend:
         result["present"] = True
         result["active"] = entry_match[1] == "*"
         identity_match = re.fullmatch(
-            r"BC250 Core Unlock HD\(([1-9][0-9]*),GPT,"
+            r"BC250 Core Unlock\s+HD\(([1-9][0-9]*),GPT,"
             r"([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-"
             r"[0-9a-fA-F]{4}-[0-9a-fA-F]{12}),[^)]*\)"
             r"(?:(?:/\\?)?File\(\\EFI\\bc250\\bc250-core-unlock\.efi\)"
@@ -1112,7 +1112,6 @@ class ToolkitBackend:
         )
         result["matching"] = bool(
             identity_match is not None
-            and entry_match[2].startswith("BC250 Core Unlock HD(")
             and identity_match[1] == part
             and identity_match[2].lower() == partuuid.lower()
         )
@@ -1125,7 +1124,7 @@ class ToolkitBackend:
     @staticmethod
     def _cpu_unlock_matching_boot_numbers(output: str) -> list[str]:
         pattern = re.compile(
-            r"^Boot([0-9a-fA-F]{4})\*?\s+BC250 Core Unlock "
+            r"^Boot([0-9a-fA-F]{4})\*?\s+BC250 Core Unlock\s+"
             r"HD\([^)]*\)(?:(?:/\\?)?File\(\\EFI\\bc250\\bc250-core-unlock\.efi\)"
             r"|/\\EFI\\bc250\\bc250-core-unlock\.efi)\s*$",
             re.MULTILINE | re.IGNORECASE,

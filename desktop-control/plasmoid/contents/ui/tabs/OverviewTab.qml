@@ -8,6 +8,7 @@ ColumnLayout {
     id: root
     required property var backend
     readonly property var snapshot: backend.snapshot
+    readonly property var unlock: backend.cpuUnlockStatus || ({})
     spacing: Kirigami.Units.largeSpacing
 
     function samples(key) {
@@ -76,9 +77,12 @@ ColumnLayout {
             health: root.snapshot.gpu.dbusReady ? 1 : -1
         }
         Components.StatusRow {
-            label: "CEC"
-            value: root.snapshot.cec.devicePresent ? root.snapshot.cec.service.active : "Not connected"
-            health: root.snapshot.cec.devicePresent && root.snapshot.cec.service.active === "active" ? 1 : -1
+            label: "CPU core topology"
+            value: root.unlock.topologyState === undefined || root.unlock.topologyState === "unavailable"
+                ? "Unavailable"
+                : root.unlock.physicalCores + " cores / " + root.unlock.logicalThreads
+                    + " threads (" + root.unlock.topologyState + ")"
+            health: root.unlock.topologyState === "unlocked" ? 1 : -1
         }
     }
 

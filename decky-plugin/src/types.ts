@@ -121,12 +121,25 @@ export interface CpuUnlockActionStatus {
   message?: string;
 }
 
+export interface CpuCore {
+  packageId: number;
+  coreId: number;
+  logicalCpus: number[];
+  ccxId: number | null;
+}
+
 export interface CpuUnlockStatus {
   schemaVersion: 1;
   devicePresent: boolean;
   physicalCores: number;
   logicalThreads: number;
   topologyState: "locked" | "unlocked" | "unexpected" | "unavailable";
+  cores: CpuCore[];
+  ccxGroups: Array<{
+    ccxId: number;
+    cores: CpuCore[];
+  }>;
+  ccxAvailable: boolean;
   helperInstalled: boolean;
   licenseInstalled: boolean;
   unitInstalled: boolean;

@@ -79,6 +79,13 @@ export function CpuTab({ snapshot, busy, runMutation }: TabProps) {
           value={unlock.topologyState.split("-").join(" ")}
           good={unlock.topologyState === "unlocked"}
         />
+        {unlock.ccxGroups.map((group) => (
+          <StatusRow
+            key={group.ccxId}
+            label={`CCX ${group.ccxId}`}
+            value={`Cores ${group.cores.map((core) => core.coreId).join(", ")}`}
+          />
+        ))}
         <StatusRow
           label="Persistent method"
           value={unlock.mode.split("-").join(" ")}

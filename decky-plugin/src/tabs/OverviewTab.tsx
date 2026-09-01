@@ -168,6 +168,7 @@ export function OverviewSummary({
   const latest = snapshotSample(snapshot);
   const gpuGovernorReady = snapshot.gpu.dbusReady;
   const cpuProfileEnabled = snapshot.cpu.service.enabled === "enabled";
+  const topology = snapshot.cpuUnlock;
 
   return (
     <>
@@ -204,9 +205,13 @@ export function OverviewSummary({
           good={gpuGovernorReady}
         />
         <StatusRow
-          label="CEC"
-          value={snapshot.cec.devicePresent ? snapshot.cec.service.active : "Not connected"}
-          good={snapshot.cec.devicePresent && snapshot.cec.service.active === "active"}
+          label="CPU core topology"
+          value={
+            topology.topologyState === "unavailable"
+              ? "Unavailable"
+              : `${topology.physicalCores} cores / ${topology.logicalThreads} threads (${topology.topologyState})`
+          }
+          good={topology.topologyState === "unlocked"}
         />
       </PanelSection>
 

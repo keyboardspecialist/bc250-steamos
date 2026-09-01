@@ -1392,6 +1392,18 @@ class BackendMutationTests(unittest.IsolatedAsyncioTestCase):
                 self.assertTrue(status["installed"])
                 self.assertTrue(status["bootEntry"]["effective"])
 
+    async def test_cpu_unlock_efi_status_accepts_efibootmgr_tab_separator(self):
+        backend = object.__new__(ToolkitBackend)
+        output = self._efi_boot_output().replace("Core Unlock HD(", "Core Unlock\tHD(")
+        with tempfile.TemporaryDirectory() as directory:
+            paths = self._write_efi_artifacts(Path(directory))
+            status = await self._efi_status(backend, paths, output=output)
+
+        self.assertTrue(status["installed"])
+        self.assertFalse(status["partial"])
+        self.assertTrue(status["bootEntry"]["matching"])
+        self.assertEqual(status["matchingEntryCount"], 1)
+
     async def test_cpu_unlock_efi_status_rejects_malformed_state(self):
         backend = object.__new__(ToolkitBackend)
         for name in ("duplicate", "unknown", "missing"):
