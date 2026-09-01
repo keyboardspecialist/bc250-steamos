@@ -1,5 +1,6 @@
 import json
 import os
+import re
 import shutil
 import subprocess
 import tempfile
@@ -66,7 +67,7 @@ class ToolkitTests(unittest.TestCase):
 
         for label in (
             "Start here - Guided setup",
-            "System status",
+            "Complete system status",
             "Core system",
             "Performance tuning",
             "Hardware unlocks",
@@ -84,7 +85,7 @@ class ToolkitTests(unittest.TestCase):
             main_menu,
         )
         self.assertGreater(
-            main_menu.index('"System status|'),
+            main_menu.index('"Complete system status|'),
             main_menu.index('"Maintenance & recovery|'),
         )
         self.assertIn("7) run_menu_action status", main_menu)
@@ -434,7 +435,21 @@ class ToolkitTests(unittest.TestCase):
         )
         for relative in scripts:
             script = root / relative
-            script.write_text("#!/usr/bin/env bash\nexit 0\n", encoding="utf-8")
+            if relative == "bc250-power.sh":
+                content = (
+                    "#!/usr/bin/env bash\n"
+                    "if [[ \"$*\" == \"cpu-unlock status\" ]]; then\n"
+                    "  printf '%s\\n' '  automatic unlock: disabled'\n"
+                    "  printf '%s\\n' 'CPU topology: 6 cores / 12 threads (locked)'\n"
+                    "  printf '%s\\n' 'unlock attempt/reboot guard: clear'\n"
+                    "else\n"
+                    "  printf '%s\\n' '  max MHz: config=1500 initial=1500 current=1500'\n"
+                    "  printf '%s\\n' '  governor: schedutil'\n"
+                    "fi\n"
+                )
+            else:
+                content = "#!/usr/bin/env bash\nexit 0\n"
+            script.write_text(content, encoding="utf-8")
         audio = root / "bc250-audio-fix/patch-driver.sh"
         audio.parent.mkdir(parents=True)
         audio.write_text(
@@ -452,7 +467,7 @@ class ToolkitTests(unittest.TestCase):
         cu_status.write_text(
             "#!/usr/bin/env bash\n"
             "[[ ${BC250_TEST_ELEVATED:-0} == 1 ]] || exit 2\n"
-            "printf '%s\\n' 'CU register status: elevated'\n",
+            "printf '%s\\n' '38/40'\n",
             encoding="utf-8",
         )
         env = os.environ.copy()
@@ -485,14 +500,52 @@ class ToolkitTests(unittest.TestCase):
                     env=env,
                 )
                 self.assertEqual(result.returncode, expected)
-                self.assertIn(status, result.stdout)
-                self.assertIn("CU register status: elevated", result.stdout)
-                self.assertEqual("System status: incomplete" in result.stdout, incomplete)
+                self.assertIn("BC-250 complete system status", result.stdout)
+                self.assertIn("CPU core unlock", result.stdout)
+                self.assertIn("6 cores / 12 threads (locked)", result.stdout)
+                self.assertIn("GPU compute units", result.stdout)
+                self.assertIn("[38/40]", result.stdout)
+                expected_badge = "[incomplete]" if incomplete else "[not installed]"
+                self.assertIn(expected_badge, result.stdout)
+                self.assertEqual("OVERALL  [attention required]" in result.stdout, incomplete)
                 if incomplete:
-                    self.assertIn(
-                        "System status: incomplete (AMDGPU kernel fixes).",
-                        result.stdout,
-                    )
+                    self.assertIn("AMDGPU kernel fixes", result.stdout)
+                else:
+                    self.assertIn("OVERALL  [healthy]", result.stdout)
+
+                plain = re.sub(r"\x1b\[[0-9;]*m", "", result.stdout)
+                rows = [line for line in plain.splitlines() if line.startswith("  ")]
+                self.assertLessEqual(len(plain.splitlines()), 24)
+                self.assertTrue(all(re.match(r"^  .{20} \[", line) for line in rows))
+
+    def test_status_reports_unlocked_cpu_topology_and_efi_mode(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            toolkit, env = self.make_status_environment(
+                root, "[bc250-amdgpu] state: not-installed", 1
+            )
+            power = root / "bc250-power.sh"
+            content = power.read_text(encoding="utf-8")
+            content = content.replace(
+                "automatic unlock: disabled", "automatic unlock: EFI pre-boot method"
+            ).replace(
+                "6 cores / 12 threads (locked)",
+                "8 cores / 16 threads (unlocked)",
+            )
+            power.write_text(content, encoding="utf-8")
+
+            result = subprocess.run(
+                ["bash", str(toolkit), "status"],
+                capture_output=True,
+                text=True,
+                env=env,
+            )
+
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            self.assertIn("CPU core unlock", result.stdout)
+            self.assertIn("[unlocked]", result.stdout)
+            self.assertIn("8 cores / 16 threads (unlocked)", result.stdout)
+            self.assertIn("EFI pre-boot method", result.stdout)
 
     def test_interactive_status_reports_health_instead_of_action_failure(self):
         source = TOOLKIT.read_text(encoding="utf-8")
@@ -502,7 +555,13 @@ class ToolkitTests(unittest.TestCase):
         ]
 
         self.assertIn("sudo -v", status)
-        self.assertIn('sudo bash "$CU_STATUS_SH"', status)
+        self.assertIn(
+            'status_script_capture cu_output cu_rc root "$CU_STATUS_SH" -q', status
+        )
+        self.assertIn(
+            'status_script_capture cpu_output cpu_rc root "$POWER_SH" cpu-unlock status',
+            status,
+        )
         self.assertIn("system status is incomplete", runner)
         self.assertIn("if [[ ${1:-} == status ]]", runner)
 

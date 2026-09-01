@@ -366,89 +366,245 @@ show_inventory_json() {
     run_script "$MAINTENANCE_SH" status-json
 }
 
-status_section() {
-    local title="$1" script="$2" rc=0
+status_capture() {
+    local output_name="$1" result_name="$2" output result=0
     shift 2
-    printf '\n%s\n' "${CB}${CC}-- ${title} --${C0}"
+    output=$("$@" 2>&1) || result=$?
+    printf -v "$output_name" '%s' "$output"
+    printf -v "$result_name" '%s' "$result"
+}
+
+status_script_capture() {
+    local output_name="$1" result_name="$2" privilege="$3" script="$4"
+    shift 4
     if [[ ! -f "$script" || -L "$script" ]]; then
-        log "Component is missing or unsafe: $script"
-        return 1
+        printf -v "$output_name" '%s' "Component is missing or unsafe: $script"
+        printf -v "$result_name" '%s' 126
+    elif [[ "$privilege" == root ]]; then
+        status_capture "$output_name" "$result_name" sudo bash "$script" "$@"
+    else
+        status_capture "$output_name" "$result_name" bash "$script" "$@"
     fi
-    bash "$script" "$@" || rc=$?
-    if [[ $rc -ne 0 ]]; then
-        printf '%s\n' "${CR}${title} status failed (exit $rc).${C0}"
-        return "$rc"
-    fi
+}
+
+status_value() {
+    local output="$1" key="$2" line value
+    while IFS= read -r line; do
+        if [[ "$line" == *"$key"* ]]; then
+            value=${line#*"$key"}
+            value=${value#"${value%%[![:space:]]*}"}
+            value=${value%"${value##*[![:space:]]}"}
+            printf '%s' "$value"
+            return 0
+        fi
+    done <<< "$output"
+    return 1
+}
+
+status_heading() {
+    printf '\n%s%s%s\n' "${CB}${CC}" "$1" "$C0"
+}
+
+status_row() {
+    local label="$1" state="$2" tone="$3" detail="$4" color
+    case "$tone" in
+        good) color="$CG" ;;
+        warn) color="$CY" ;;
+        bad) color="$CR" ;;
+        *) color="$CD" ;;
+    esac
+    printf '  %-20s %s%-16s%s %s\n' "$label" "$color" "[$state]" "$C0" "$detail"
 }
 
 show_status() {
     require_normal_user
-    local failed=0 amdgpu_rc=0 amdgpu_status="" radv_rc=0 swap_rc=0 cu_rc=0 failed_list=""
+    local failed=0 failed_list="" state detail secondary
+    local storage_output="" storage_rc=0 power_output="" power_rc=0
+    local ram_output="" ram_rc=0 swap_output="" swap_rc=0
+    local persistence_output="" persistence_rc=0 cpu_output="" cpu_rc=0
+    local amdgpu_output="" amdgpu_rc=0 radv_output="" radv_rc=0
+    local cu_output="" cu_rc=0 cec_output="" cec_rc=0
+    local enabled active installed_count pending_count
     local failed_components=()
     sudo -v
-    status_section "Persistent storage" "$STORAGE_SH" status \
-        || { failed=1; failed_components+=("Persistent storage"); }
-    status_section "Power management" "$POWER_SH" status \
-        || { failed=1; failed_components+=("Power management"); }
-    status_section "RAM / VRAM split" "$RAM_SPLIT_SH" status \
-        || { failed=1; failed_components+=("RAM / VRAM split"); }
-    printf '\n%s\n' "${CB}${CC}-- Compressed swap --${C0}"
-    if [[ -f "$SWAP_SH" && ! -L "$SWAP_SH" ]]; then
-        sudo bash "$SWAP_SH" verify || swap_rc=$?
-        if [[ $swap_rc -gt 1 ]]; then
-            failed=1
-            failed_components+=("Compressed swap")
-        fi
+
+    status_script_capture storage_output storage_rc user "$STORAGE_SH" status
+    status_script_capture power_output power_rc user "$POWER_SH" status
+    status_script_capture ram_output ram_rc user "$RAM_SPLIT_SH" status
+    status_script_capture swap_output swap_rc root "$SWAP_SH" verify
+    status_script_capture persistence_output persistence_rc user "$PERSISTENCE_SH" status
+    status_script_capture cpu_output cpu_rc root "$POWER_SH" cpu-unlock status
+    status_script_capture amdgpu_output amdgpu_rc user "$AUDIO_FIX_SH" status
+    status_script_capture radv_output radv_rc user "$MESH_SHADER_SH" status
+    status_script_capture cu_output cu_rc root "$CU_STATUS_SH" -q
+    status_script_capture cec_output cec_rc user "$CEC_SH" status
+
+    printf '%s\n' "${CB}${CC}BC-250 complete system status ${CD}[${TOOLKIT_VERSION}]${C0}"
+
+    status_heading "CORE SYSTEM"
+    state=$(status_value "$storage_output" "storage: " || true)
+    secondary=$(status_value "$storage_output" "backing data: " || true)
+    if [[ $storage_rc -eq 0 ]]; then
+        status_row "Persistent storage" "${state:-ready}" good \
+            "${secondary:+backing data $secondary}"
     else
-        log "Component is missing or unsafe: $SWAP_SH"
-        failed=1
-        failed_components+=("Compressed swap")
+        status_row "Persistent storage" "failed" bad "${state:-status unavailable}"
+        failed=1; failed_components+=("Persistent storage")
     fi
-    status_section "CEC" "$CEC_SH" status \
-        || { failed=1; failed_components+=("CEC"); }
-    status_section "SteamOS update persistence" "$PERSISTENCE_SH" status \
-        || { failed=1; failed_components+=("SteamOS update persistence"); }
-    printf '\n%s\n' "${CB}${CC}-- AMDGPU kernel fixes --${C0}"
-    if [[ -f "$AUDIO_FIX_SH" && ! -L "$AUDIO_FIX_SH" ]]; then
-        amdgpu_status=$(bash "$AUDIO_FIX_SH" status) || amdgpu_rc=$?
-        printf '%s\n' "$amdgpu_status"
-        if [[ $amdgpu_rc -ne 0 ]] \
-            && ! grep -qxF '[bc250-amdgpu] state: not-installed' <<< "$amdgpu_status"; then
-            failed=1
-            failed_components+=("AMDGPU kernel fixes")
+
+    state=$(status_value "$ram_output" "CMOS minimum VRAM: " || true)
+    secondary=$(status_value "$ram_output" "TTM configured: " || true)
+    if [[ $ram_rc -eq 0 ]]; then
+        state=${state%% (*}
+        if [[ "$secondary" == *"("* ]]; then
+            secondary=${secondary#*(}
+            secondary=${secondary%)}
         fi
+        status_row "RAM / VRAM" "configured" good "VRAM ${state:-ready}; TTM ${secondary:-ready}"
     else
-        log "Component is missing or unsafe: $AUDIO_FIX_SH"
-        failed=1
-        failed_components+=("AMDGPU kernel fixes")
+        status_row "RAM / VRAM" "incomplete" bad "${state:-status unavailable}"
+        failed=1; failed_components+=("RAM / VRAM split")
     fi
-    printf '\n%s\n' "${CB}${CC}-- Mesa / RADV async-compute patch --${C0}"
-    if [[ -f "$MESH_SHADER_SH" && ! -L "$MESH_SHADER_SH" ]]; then
-        bash "$MESH_SHADER_SH" status || radv_rc=$?
-        if [[ $radv_rc -gt 1 ]]; then
-            failed=1
-            failed_components+=("Mesa / RADV async-compute patch")
-        fi
+
+    state=$(status_value "$swap_output" "configured: " || true)
+    secondary=$(status_value "$swap_output" "runtime: " || true)
+    if [[ $swap_rc -eq 0 ]]; then
+        status_row "Compressed swap" "${state:-ready}" good "runtime ${secondary:-active}"
+    elif [[ $swap_rc -eq 1 && "${state:-none}" == none ]]; then
+        status_row "Compressed swap" "disabled" dim "optional; runtime ${secondary:-inactive}"
     else
-        log "Component is missing or unsafe: $MESH_SHADER_SH"
-        failed=1
-        failed_components+=("Mesa / RADV async-compute patch")
+        status_row "Compressed swap" "incomplete" bad "configured ${state:-unknown}; runtime ${secondary:-unknown}"
+        failed=1; failed_components+=("Compressed swap")
     fi
-    printf '\n%s\n' "${CB}${CC}-- GPU compute units --${C0}"
-    if [[ -f "$CU_STATUS_SH" && ! -L "$CU_STATUS_SH" ]]; then
-        sudo bash "$CU_STATUS_SH" || cu_rc=$?
-        if [[ $cu_rc -ne 0 ]]; then
-            failed=1
-            failed_components+=("GPU compute units")
-        fi
+
+    installed_count=$(grep -c 'keep list: installed' <<< "$persistence_output" || true)
+    pending_count=$(grep -Ec 'keep list: (stale|foreign)' <<< "$persistence_output" || true)
+    if [[ $persistence_rc -ne 0 ]]; then
+        status_row "Update persistence" "failed" bad "status unavailable"
+        failed=1; failed_components+=("SteamOS update persistence")
+    elif [[ $pending_count -gt 0 ]]; then
+        status_row "Update persistence" "attention" warn "$installed_count protected; $pending_count stale or foreign"
+        failed=1; failed_components+=("SteamOS update persistence")
+    elif [[ $installed_count -gt 0 ]]; then
+        status_row "Update persistence" "protected" good "$installed_count managed component lists"
     else
-        log "Component is missing or unsafe: $CU_STATUS_SH"
-        failed=1
-        failed_components+=("GPU compute units")
+        status_row "Update persistence" "not configured" dim "no managed component lists"
     fi
+
+    status_heading "CPU AND POWER"
+    enabled=$(systemctl is-enabled cyan-skillfish-governor-smu.service 2>/dev/null || true)
+    active=$(systemctl is-active cyan-skillfish-governor-smu.service 2>/dev/null || true)
+    detail=$(status_value "$power_output" "max MHz: " || true)
+    if [[ "$enabled" == enabled && "$active" == active ]]; then
+        status_row "GPU governor" "active" good "${detail:-enabled at boot}"
+    elif [[ -n "$enabled$active" && "$enabled$active" != not-foundinactive ]]; then
+        status_row "GPU governor" "partial" warn "${enabled:--} / ${active:--}; ${detail:-no clock data}"
+    else
+        status_row "GPU governor" "disabled" dim "not installed"
+    fi
+
+    enabled=$(systemctl is-active bc250-acpi-heal.service 2>/dev/null || true)
+    active=$(systemctl is-active bc250-cpufreq.service 2>/dev/null || true)
+    state=$(status_value "$power_output" "governor: " || true)
+    secondary=$(status_value "$power_output" "current:  " || true)
+    if [[ "$enabled" == active && "$active" == active ]]; then
+        status_row "CPU ACPI / freq" "active" good "${state:-cpufreq ready}${secondary:+; $secondary}"
+    else
+        status_row "CPU ACPI / freq" "incomplete" warn "ACPI $enabled; cpufreq $active"
+    fi
+
+    enabled=$(systemctl is-enabled bc250-smu-oc.service 2>/dev/null || true)
+    active=$(systemctl is-active bc250-smu-oc.service 2>/dev/null || true)
+    if [[ "$enabled" == enabled && "$active" == active ]]; then
+        status_row "CPU overclock" "active" good "enabled at boot"
+    elif [[ "$enabled" == enabled || "$active" == active ]]; then
+        status_row "CPU overclock" "partial" warn "${enabled:--} / ${active:--}"
+    else
+        status_row "CPU overclock" "disabled" dim "stock tuning"
+    fi
+
+    state=$(status_value "$power_output" "Tctl:" || true)
+    detail=$(status_value "$power_output" "edge:" || true)
+    secondary=$(status_value "$power_output" "PPT:" || true)
+    if [[ -n "$state$detail$secondary" ]]; then
+        status_row "Thermals" "live" good "CPU ${state:--}; GPU ${detail:--}; PPT ${secondary:--}"
+    else
+        status_row "Thermals" "unavailable" dim "sensor data not exposed"
+    fi
+
+    state=$(status_value "$cpu_output" "automatic unlock: " || true)
+    detail=$(status_value "$cpu_output" "CPU topology: " || true)
+    secondary=$(status_value "$cpu_output" "unlock attempt/reboot guard: " || true)
+    if [[ $cpu_rc -ne 0 || -z "$detail" ]]; then
+        status_row "CPU core unlock" "unavailable" bad "${detail:-status probe failed}"
+        failed=1; failed_components+=("CPU core unlock")
+    elif [[ "$detail" == *"(unlocked)"* ]]; then
+        status_row "CPU core unlock" "unlocked" good "$detail; ${state:-mode unknown}${secondary:+; guard $secondary}"
+    elif [[ "$detail" == *"(locked)"* && "${state:-disabled}" == disabled ]]; then
+        status_row "CPU core unlock" "stock" dim "$detail; automatic unlock disabled"
+    elif [[ "$detail" == *"(locked)"* ]]; then
+        status_row "CPU core unlock" "reboot needed" warn "$detail; ${state:-mode unknown}${secondary:+; guard $secondary}"
+    else
+        status_row "CPU core unlock" "unexpected" bad "$detail; ${state:-mode unknown}"
+        failed=1; failed_components+=("CPU core unlock")
+    fi
+
+    if [[ $power_rc -ne 0 ]]; then
+        failed=1; failed_components+=("Power management")
+    fi
+
+    status_heading "GRAPHICS"
+    state=$(status_value "$amdgpu_output" "state: " || true)
+    detail=$(status_value "$amdgpu_output" "scheduler policy: " || true)
+    case "$state" in
+        installed) status_row "AMDGPU fixes" "installed" good "${detail:-module active}" ;;
+        not-installed) status_row "AMDGPU fixes" "not installed" dim "stock kernel module" ;;
+        *)
+            status_row "AMDGPU fixes" "${state:-incomplete}" bad "${detail:-module status invalid}"
+            failed=1; failed_components+=("AMDGPU kernel fixes") ;;
+    esac
+
+    state=$(status_value "$radv_output" "runtime: " || true)
+    detail=$(status_value "$radv_output" "FSR4: " || true)
+    if [[ $radv_rc -eq 0 && "$state" == installed* ]]; then
+        status_row "Mesa / RADV" "installed" good "$state${detail:+; FSR4 $detail}"
+    elif [[ $radv_rc -le 1 && ( -z "$state" || "$state" == "not installed"* ) ]]; then
+        status_row "Mesa / RADV" "not installed" dim "optional async-compute runtime"
+    else
+        status_row "Mesa / RADV" "incomplete" bad "${state:-status unavailable}"
+        failed=1; failed_components+=("Mesa / RADV async-compute patch")
+    fi
+
+    if [[ $cu_rc -ne 0 ]]; then
+        status_row "GPU compute units" "unavailable" bad "${cu_output:-register read failed}"
+        failed=1; failed_components+=("GPU compute units")
+    elif [[ "$cu_output" == 40/40 ]]; then
+        status_row "GPU compute units" "40 / 40" good "all compute units routed"
+    else
+        status_row "GPU compute units" "${cu_output:-unknown}" warn "current hardware route"
+    fi
+
+    status_heading "DISPLAY"
+    state=$(status_value "$cec_output" "cecd.service: " || true)
+    detail=$(status_value "$cec_output" "power status: " || true)
+    secondary=$(status_value "$cec_output" "active source: " || true)
+    if [[ $cec_rc -ne 0 ]]; then
+        status_row "HDMI-CEC" "unavailable" bad "status probe failed"
+        failed=1; failed_components+=("CEC")
+    elif [[ "$state" == *active* ]]; then
+        secondary=${secondary%% *}
+        status_row "HDMI-CEC" "active" good "TV ${detail:-unknown}; source ${secondary:-unknown}"
+    elif [[ "$cec_output" == *"/dev/cec0: present"* ]]; then
+        status_row "HDMI-CEC" "available" warn "daemon ${state:-inactive}"
+    else
+        status_row "HDMI-CEC" "not available" dim "no active CEC adapter"
+    fi
+
     if [[ $failed -ne 0 ]]; then
         printf -v failed_list '%s, ' "${failed_components[@]}"
-        printf '\n%s\n' "${CR}${CB}System status: incomplete (${failed_list%, }).${C0}"
+        printf '\n%s\n' "${CR}${CB}OVERALL  [attention required]${C0} ${failed_list%, }"
+    else
+        printf '\n%s\n' "${CG}${CB}OVERALL  [healthy]${C0} All configured components passed their checks."
     fi
     return "$failed"
 }
@@ -735,7 +891,7 @@ cmd_maintenance_menu() {
     require_normal_user
     while true; do
         local items=(
-            "System status|${CD}[read only]${C0}|Show system integration, graphics-driver, and GPU compute-unit health."
+            "Complete system status|${CD}[read only]${C0}|Show a compact health dashboard for storage, power, CPU core unlock, graphics, and display integration."
             "SteamOS update recovery|${CG}[menu]${C0}|Inspect protection or restore supported settings from the newest update snapshot."
             "Clean AMDGPU build tree|${CY}[cleanup]${C0}|Reset patched source and build output while retaining downloads and dependencies."
             "Manage installed components|${CG}[menu]${C0}|Review removal plans, uninstall components, or permanently purge preserved data."
@@ -763,7 +919,7 @@ cmd_menu() {
             "Display & connectivity|${CG}[menu]${C0}|Configure HDMI audio, HDMI-CEC, or hardware-specific AIC8800 wireless support."
             "Control interfaces|${CG}[menu]${C0}|Install Decky, Plasma, or the standalone BC250 Trainer."
             "Maintenance & recovery|${CG}[menu]${C0}|Verify, repair, clean build state, remove components, or purge preserved data."
-            "System status|${CD}[read only]${C0}|Show system integration, graphics-driver, and GPU compute-unit status."
+            "Complete system status|${CD}[read only]${C0}|Show a compact health dashboard for storage, power, CPU core unlock, graphics, and display integration."
         )
         menu_select "BC-250 SteamOS toolkit ${CD}[${TOOLKIT_VERSION}]${C0}" "${items[@]}" || { echo; break; }
         case $MENU_CHOICE in
