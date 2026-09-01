@@ -15,6 +15,7 @@ ROOT_HELPER_DIR = Path("/var/lib/bc250-control/helper")
 INSTALL_MARKER = Path(".decky-helper-manifest")
 PAYLOAD_FILES: Tuple[Tuple[Path, int], ...] = (
     (Path("bc250-storage.sh"), 0o755),
+    (Path("bc250-ram-split.sh"), 0o755),
     (Path("bc250-update-persistence.sh"), 0o755),
     (Path("hdmi-ac3/hdmi-ac3.sh"), 0o755),
     (Path("acpi-tables/SSDT-CST.dsl"), 0o644),

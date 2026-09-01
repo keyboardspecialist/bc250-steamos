@@ -16,6 +16,8 @@ Item {
         { label: "GPU", icon: "video-display" },
         { label: "CU", icon: "cpu" },
         { label: "CPU", icon: "speedometer" },
+        { label: "Memory", icon: "memory" },
+        { label: "Audio", icon: "audio-card" },
         { label: "CEC", icon: "video-television" }
     ]
 
@@ -207,7 +209,9 @@ Item {
                             sourceComponent: root.currentTab === 0 ? overviewComponent
                                 : root.currentTab === 1 ? gpuComponent
                                 : root.currentTab === 2 ? cuComponent
-                                : root.currentTab === 3 ? cpuComponent : cecComponent
+                                : root.currentTab === 3 ? cpuComponent
+                                : root.currentTab === 4 ? ramComponent
+                                : root.currentTab === 5 ? audioComponent : cecComponent
                         }
 
                         QQC2.Button {
@@ -227,5 +231,7 @@ Item {
     Component { id: gpuComponent; Tabs.GpuTab { backend: root.backend } }
     Component { id: cuComponent; Tabs.CuTab { backend: root.backend } }
     Component { id: cpuComponent; Tabs.CpuTab { backend: root.backend } }
+    Component { id: ramComponent; Tabs.RamTab { backend: root.backend } }
+    Component { id: audioComponent; Tabs.AudioTab { backend: root.backend } }
     Component { id: cecComponent; Tabs.CecTab { backend: root.backend } }
 }

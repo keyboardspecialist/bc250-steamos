@@ -95,6 +95,8 @@ def copy_host_runtime(temporary: Path) -> None:
             REPOSITORY / "core-unlock" / name,
             temporary / "core-unlock" / name,
         )
+    for name in ("acpi-tables", "hdmi-ac3", "smu-oc-patches"):
+        copy_tree(REPOSITORY / name, temporary / name)
     for name in ("shared-service-install.sh", "bc250-desktop-control-repair"):
         copy_file(DESKTOP_SOURCE / name, temporary / "desktop-control" / name)
     copy_tree(DESKTOP_SOURCE / "templates", temporary / "desktop-control/templates")

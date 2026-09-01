@@ -27,6 +27,7 @@ class Bc250Bridge final : public QObject
     Q_PROPERTY(QVariantMap telemetry READ telemetry NOTIFY telemetryChanged)
     Q_PROPERTY(QVariantList telemetryHistory READ telemetryHistory NOTIFY telemetryChanged)
     Q_PROPERTY(QVariantMap cpuUnlockStatus READ cpuUnlockStatus NOTIFY cpuUnlockStatusChanged)
+    Q_PROPERTY(QVariantMap meshStatus READ meshStatus NOTIFY meshStatusChanged)
     Q_PROPERTY(QString error READ error NOTIFY errorChanged)
     Q_PROPERTY(QString notice READ notice NOTIFY noticeChanged)
 
@@ -48,6 +49,7 @@ public:
     QVariantMap telemetry() const { return m_telemetry; }
     QVariantList telemetryHistory() const { return m_telemetryHistory; }
     QVariantMap cpuUnlockStatus() const { return m_cpuUnlockStatus; }
+    QVariantMap meshStatus() const { return m_meshStatus; }
     QString error() const { return m_error; }
     QString notice() const { return m_notice; }
 
@@ -67,6 +69,7 @@ public:
     Q_INVOKABLE void setUmaSize(int umaMiB);
     Q_INVOKABLE void setTtmPages(int pages);
     Q_INVOKABLE void removeTtmOverride();
+    Q_INVOKABLE void setHdmiSurround(bool enabled);
     Q_INVOKABLE void cancelOperation();
     Q_INVOKABLE void clearMessage();
 
@@ -84,12 +87,13 @@ signals:
     void snapshotChanged();
     void telemetryChanged();
     void cpuUnlockStatusChanged();
+    void meshStatusChanged();
     void errorChanged();
     void noticeChanged();
     void operationFinished(bool success, const QString &message);
 
 private:
-    enum class JsonRequest { Snapshot, Telemetry, CpuUnlock, Operation };
+    enum class JsonRequest { Snapshot, Telemetry, CpuUnlock, Mesh, Operation };
 
     void setServiceAvailable(bool available);
     void requestJson(JsonRequest request, const QString &method, const QVariantList &arguments = {});
@@ -127,6 +131,7 @@ private:
     bool m_snapshotAgain = false;
     bool m_telemetryPending = false;
     bool m_cpuUnlockPending = false;
+    bool m_meshPending = false;
     bool m_operationPending = false;
     bool m_operationCancellable = false;
     int m_operationPollFailures = 0;
@@ -137,6 +142,7 @@ private:
     QVariantMap m_telemetry;
     QVariantList m_telemetryHistory;
     QVariantMap m_cpuUnlockStatus;
+    QVariantMap m_meshStatus;
     QString m_error;
     QString m_notice;
 };

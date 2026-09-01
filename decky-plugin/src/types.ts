@@ -114,6 +114,67 @@ export interface CpuStatus {
   };
 }
 
+export interface CpuUnlockActionStatus {
+  available: boolean;
+  blockers: string[];
+  hint?: string;
+  message?: string;
+}
+
+export interface CpuUnlockStatus {
+  schemaVersion: 1;
+  devicePresent: boolean;
+  physicalCores: number;
+  logicalThreads: number;
+  topologyState: "locked" | "unlocked" | "unexpected" | "unavailable";
+  helperInstalled: boolean;
+  licenseInstalled: boolean;
+  unitInstalled: boolean;
+  helperBundleAvailable: boolean;
+  service: ServiceState;
+  updatePersistence: boolean;
+  guard: {
+    state: "clear" | "manual" | "automatic" | "unavailable";
+    active: boolean;
+    currentBoot: boolean;
+  };
+  mode: "none" | "temporary" | "linux-replay" | "efi" | "conflict" | "partial";
+  linuxReplay: {
+    installed: boolean;
+    enabled: boolean;
+    service: ServiceState;
+    updatePersistence: boolean;
+  };
+  efi: {
+    installed: boolean;
+    partial: boolean;
+    bootEntry: {
+      present: boolean;
+      active: boolean;
+      matching: boolean;
+      firstInBootOrder: boolean;
+      effective: boolean;
+      queryAvailable: boolean;
+    };
+  };
+  actions: Record<"test" | "enable" | "efi-enable" | "off", CpuUnlockActionStatus>;
+  message?: string;
+}
+
+export interface RamStatus {
+  schemaVersion: 1;
+  available: boolean;
+  toolState: "verified" | "invalid" | "not-installed";
+  toolVersion: string | null;
+  umaLastRequestedMiB: number | null;
+  ttmState: "configured" | "foreign" | "default";
+  ttmConfiguredPages: number | null;
+  ttmBootPages: number | null;
+  ttmLivePages: number | null;
+  rebootRequired: boolean;
+  protected: boolean;
+}
+
 export interface CecStatus {
   devicePresent: boolean;
   service: ServiceState;
@@ -158,6 +219,9 @@ export interface MeshStatus {
   schedulerActive: boolean;
   globalEnabled: boolean;
   restartRequired: boolean;
+  fsr4State: "ready" | "not-installed" | "invalid";
+  fsr4IcdPath: string;
+  fsr4RunnerPath: string;
   error: string | null;
   games: MeshGame[];
 }
@@ -169,6 +233,7 @@ export interface Snapshot {
     powerAvailable: boolean;
     cpuControlAvailable: boolean;
     cecAvailable: boolean;
+    ramControlAvailable: boolean;
     audioAvailable: boolean;
     path: string;
   };
@@ -176,6 +241,8 @@ export interface Snapshot {
   power: PowerStatus;
   gpu: GpuStatus;
   cpu: CpuStatus;
+  cpuUnlock: CpuUnlockStatus;
+  ram: RamStatus;
   cec: CecStatus;
   audio: HdmiAudioStatus;
 }

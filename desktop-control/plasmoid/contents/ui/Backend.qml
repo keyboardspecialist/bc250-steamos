@@ -10,6 +10,8 @@ QtObject {
     readonly property string serviceInterface: "io.github.keyboardspecialist.BC250Control1"
 
     property var snapshot: null
+    property var cpuUnlockStatus: null
+    property var meshStatus: null
     property var telemetryHistory: []
     property string error: ""
     property string notice: ""
@@ -56,6 +58,8 @@ QtObject {
     property var _queue: []
     property var _current: null
     property bool _snapshotQueued: false
+    property bool _cpuUnlockQueued: false
+    property bool _meshQueued: false
     property bool _telemetryQueued: false
     property bool _operationQueued: false
     property int _operationPollFailures: 0
@@ -78,15 +82,15 @@ QtObject {
     }
 
     function _command(method, signature, argumentsList) {
-        method = Utils.allowed(method, ["GetSnapshot", "GetTelemetry", "GetOperation",
+        method = Utils.allowed(method, ["GetSnapshot", "GetTelemetry", "GetCpuUnlockStatus", "GetMeshStatus", "GetOperation",
             "SetCuWgp", "SetGpuFrequency", "SetLoadTarget", "SetCustomLoadTarget",
-            "SetRamp", "CpuOcAction", "SetCpuMitigations", "CecAction", "SetCecToggle", "SetCecName",
-            "CancelOperation"]);
+            "SetRamp", "CpuOcAction", "CpuUnlockAction", "SetCpuMitigations", "CecAction", "SetCecToggle", "SetCecName",
+            "SetUmaSize", "SetTtmPages", "RemoveTtmOverride", "SetHdmiSurround", "CancelOperation"]);
         signature = Utils.allowed(signature, ["", "b", "s", "u", "yy", "suu", "yyyb", "suuu", "sb"]);
         var interactive = ["SetCuWgp", "SetGpuFrequency", "SetLoadTarget",
-            "SetCustomLoadTarget", "SetRamp", "CpuOcAction", "SetCpuMitigations"].indexOf(method) >= 0;
+            "SetCustomLoadTarget", "SetRamp", "CpuOcAction", "CpuUnlockAction", "SetCpuMitigations"].indexOf(method) >= 0;
         var command = "/usr/bin/busctl --system --json=short --timeout="
-            + (interactive ? "130" : "15") + " call " + service + " "
+            + (interactive ? "130" : method === "GetMeshStatus" || method === "GetCpuUnlockStatus" ? "35" : "15") + " call " + service + " "
             + objectPath + " " + serviceInterface + " " + method;
         if (signature)
             command += " " + signature;
@@ -112,6 +116,14 @@ QtObject {
             return;
         _snapshotQueued = true;
         _enqueue("snapshot", _command("GetSnapshot", "", []), {});
+        if (!_cpuUnlockQueued && !(_current && _current.type === "cpu-unlock")) {
+            _cpuUnlockQueued = true;
+            _enqueue("cpu-unlock", _command("GetCpuUnlockStatus", "", []), {});
+        }
+        if (!_meshQueued && !(_current && _current.type === "mesh")) {
+            _meshQueued = true;
+            _enqueue("mesh", _command("GetMeshStatus", "", []), {});
+        }
     }
 
     function sampleTelemetry() {
@@ -142,7 +154,7 @@ QtObject {
     function setGpuFrequency(mode, minimum, maximum) {
         var safeMode = Utils.allowed(mode, ["adaptive", "range", "pin", "max"]);
         _startMutation("SetGpuFrequency", "suu", [safeMode,
-            Utils.integer(minimum, 0, 2150), Utils.integer(maximum, 300, 2150)],
+            Utils.integer(minimum, 0, 2230), Utils.integer(maximum, 300, 2230)],
             "Applying GPU frequency mode");
     }
 
@@ -168,9 +180,33 @@ QtObject {
             Utils.integer(temperature, 50, 100)], "Running CPU " + safeAction);
     }
 
+    function cpuUnlockAction(action) {
+        var safeAction = Utils.allowed(action, ["test", "enable", "efi-enable", "off"]);
+        _startMutation("CpuUnlockAction", "s", [safeAction], "Running CPU core-unlock " + safeAction);
+    }
+
     function setCpuMitigations(enabled) {
         _startMutation("SetCpuMitigations", "b", [Utils.booleanToken(enabled)],
             (enabled ? "Enabling" : "Disabling") + " CPU mitigations");
+    }
+
+    function setUmaSize(umaMiB) {
+        _startMutation("SetUmaSize", "u", [Utils.integer(umaMiB, 256, 12288)],
+            "Writing CMOS minimum VRAM");
+    }
+
+    function setTtmPages(pages) {
+        _startMutation("SetTtmPages", "u", [Utils.integer(pages, 65536, 3145728)],
+            "Updating TTM boot limit");
+    }
+
+    function removeTtmOverride() {
+        _startMutation("RemoveTtmOverride", "", [], "Removing TTM boot limit");
+    }
+
+    function setHdmiSurround(enabled) {
+        _startMutation("SetHdmiSurround", "b", [Utils.booleanToken(enabled)],
+            (enabled ? "Enabling" : "Disabling") + " HDMI surround");
     }
 
     function cecAction(action) {
@@ -245,6 +281,10 @@ QtObject {
         executable.disconnectSource(sourceName);
         if (request.type === "snapshot")
             _snapshotQueued = false;
+        else if (request.type === "cpu-unlock")
+            _cpuUnlockQueued = false;
+        else if (request.type === "mesh")
+            _meshQueued = false;
         else if (request.type === "telemetry")
             _telemetryQueued = false;
         else if (request.type === "operation")
@@ -272,6 +312,10 @@ QtObject {
                 snapshot = Utils.busValue(data.stdout);
                 error = "";
                 loading = false;
+            } else if (request.type === "cpu-unlock") {
+                cpuUnlockStatus = Utils.busValue(data.stdout);
+            } else if (request.type === "mesh") {
+                meshStatus = Utils.busValue(data.stdout);
             } else if (request.type === "telemetry") {
                 var sample = Utils.busValue(data.stdout);
                 var history = telemetryHistory.slice(0);

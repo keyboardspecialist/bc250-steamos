@@ -1,6 +1,6 @@
 import { PanelSection, SliderField, ToggleField } from "@decky/ui";
 import { useEffect, useState } from "react";
-import { cpuOcAction, setCpuMitigations } from "../api";
+import { cpuOcAction, cpuUnlockAction, setCpuMitigations } from "../api";
 import { ActionButton, EmptyState, StatusRow } from "../components/Common";
 import type { TabProps } from "./shared";
 
@@ -26,6 +26,31 @@ export function CpuTab({ snapshot, busy, runMutation }: TabProps) {
     rebootRequired: false,
     protected: false,
   };
+  const unlock = snapshot.cpuUnlock;
+  const automaticRebootPending =
+    unlock.guard.state === "automatic" && unlock.guard.currentBoot;
+  const unlockControlsDisabled = busy || automaticRebootPending;
+
+  const unlockReason = (name: "test" | "enable" | "efi-enable" | "off") => {
+    const actionState = unlock.actions[name];
+    if (actionState.blockers.length > 0) {
+      return `Blocked: ${actionState.blockers
+        .map((blocker) => blocker.split("-").join(" "))
+        .join(", ")}.`;
+    }
+    return actionState.hint || actionState.message;
+  };
+
+  const runUnlock = (
+    name: "test" | "enable" | "efi-enable" | "off",
+    label: string,
+    title: string,
+    description: string,
+  ) => runMutation(label, () => cpuUnlockAction(name), {
+    title,
+    description,
+    destructive: true,
+  });
 
   useEffect(() => {
     if (!detectedValues) return;
@@ -38,6 +63,84 @@ export function CpuTab({ snapshot, busy, runMutation }: TabProps) {
 
   return (
     <>
+      <PanelSection title="CPU Topology and Core Unlock">
+        <StatusRow
+          label="Physical cores"
+          value={unlock.physicalCores}
+          good={unlock.physicalCores >= 8}
+        />
+        <StatusRow
+          label="Logical threads"
+          value={unlock.logicalThreads}
+          good={unlock.logicalThreads >= 16}
+        />
+        <StatusRow
+          label="Topology"
+          value={unlock.topologyState.split("-").join(" ")}
+          good={unlock.topologyState === "unlocked"}
+        />
+        <StatusRow
+          label="Persistent method"
+          value={unlock.mode.split("-").join(" ")}
+          good={unlock.mode === "linux-replay" || unlock.mode === "efi"}
+        />
+        <StatusRow
+          label="Linux replay service"
+          value={`${unlock.linuxReplay.service.enabled} / ${unlock.linuxReplay.service.active}`}
+        />
+        {(unlock.mode === "conflict" || unlock.mode === "partial" || automaticRebootPending) && (
+          <EmptyState>
+            {automaticRebootPending
+              ? "An automatic core-unlock reboot is pending; controls are temporarily disabled."
+              : unlock.message || "Core-unlock installation is conflicting or incomplete. Disable it to recover verified toolkit-owned state."}
+          </EmptyState>
+        )}
+        <ActionButton
+          label="Run one-time unlock test"
+          description={unlockReason("test")}
+          disabled={unlockControlsDisabled || !unlock.actions.test.available}
+          onClick={() => runUnlock(
+            "test",
+            "CPU core-unlock test started",
+            "Test disabled CPU cores?",
+            "Disabled cores may be defective. Linux discovers added cores only after a warm reboot. Instability or data loss is possible.",
+          )}
+        />
+        <ActionButton
+          label="Enable standard Linux method"
+          description={unlockReason("enable")}
+          disabled={unlockControlsDisabled || !unlock.actions.enable.available}
+          onClick={() => runUnlock(
+            "enable",
+            "Standard CPU core unlock enabled",
+            "Enable standard Linux core unlock?",
+            "Only persist cores after stability testing. Each cold power-on boots Linux once to apply the mask, then warm-reboots into Linux.",
+          )}
+        />
+        <ActionButton
+          label="Enable EFI preboot method"
+          description={unlockReason("efi-enable")}
+          disabled={unlockControlsDisabled || !unlock.actions["efi-enable"].available}
+          onClick={() => runUnlock(
+            "efi-enable",
+            "EFI CPU core unlock enabled",
+            "Enable experimental EFI core unlock?",
+            "This installs an unsigned EFI image and changes firmware boot order. Secure Boot is unsupported and firmware recovery may be required.",
+          )}
+        />
+        <ActionButton
+          label="Disable core unlock"
+          description={unlockReason("off")}
+          disabled={unlockControlsDisabled || !unlock.actions.off.available}
+          onClick={() => runUnlock(
+            "off",
+            "CPU core unlock disabled",
+            "Disable CPU core unlock?",
+            "Persistent unlock state will be removed. Fully power off to restore the factory core mask for the next boot.",
+          )}
+        />
+      </PanelSection>
+
       <PanelSection title="CPU Overclock">
         <StatusRow
           label="Boot service"

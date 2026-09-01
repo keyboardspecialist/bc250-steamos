@@ -9,6 +9,7 @@ ColumnLayout {
     spacing: 8
     readonly property var snap: backend.snapshot || ({})
     readonly property var gpu: snap.gpu || ({})
+    readonly property var mesh: backend.meshStatus || ({})
     readonly property bool enabledControls: Boolean(gpu.controllable) && !backend.busy
     property string mode: gpu.mode || "adaptive"
     property int minimum: gpu.minimum ?? 300
@@ -20,6 +21,13 @@ ColumnLayout {
         || ((root.minimum === 0 || root.minimum >= 300) && root.minimum <= root.maximum)
 
     C.ConfirmDialog { id: confirm }
+    C.SectionHeader { text: "Mesa / RADV and compute queues" }
+    C.StatusRow { label: "Patched AMDGPU"; value: root.mesh.kernelReady ? "Installed and active" : "Not ready"; health: root.mesh.kernelReady ? 1 : -1 }
+    C.StatusRow { label: "Scheduler policy"; value: root.mesh.schedulerActive ? "Active" : root.mesh.schedulerConfigured ? "Reboot required" : "Disabled"; health: root.mesh.schedulerActive ? 1 : root.mesh.schedulerConfigured ? 0 : -1 }
+    C.StatusRow { label: "RADV runtime"; value: root.mesh.runtimeState || "Unavailable"; health: root.mesh.runtimeState === "ready" ? 1 : -1 }
+    C.StatusRow { label: "Global activation"; value: root.mesh.globalEnabled ? "Enabled" : "Disabled"; health: root.mesh.globalEnabled ? 1 : 0 }
+    C.StatusRow { label: "Private FSR4 profile"; value: root.mesh.fsr4State || "Unavailable"; health: root.mesh.fsr4State === "ready" ? 1 : root.mesh.fsr4State === "invalid" ? -1 : 0 }
+    Text { visible: Boolean(root.mesh.error) || root.mesh.runtimeState === "invalid" || root.mesh.fsr4State === "invalid"; text: root.mesh.error || "A Mesa / RADV runtime failed integrity validation. Repair it from the toolkit."; color: "#ff6aa2"; font.family: "monospace"; font.pixelSize: 9; wrapMode: Text.Wrap; Layout.fillWidth: true }
     C.SectionHeader { text: "Frequency control" }
     C.StatusRow { label: "Live / saved mode"; value: (root.gpu.mode || "--") + " / " + (root.gpu.requestedMode || "--"); health: root.gpu.dbusReady ? 1 : -1 }
     C.StatusRow { label: "Live range"; value: (root.gpu.liveMinimum ?? "--") + " - " + (root.gpu.liveMaximum ?? "--") + " MHz" }
@@ -35,14 +43,14 @@ ColumnLayout {
     RowLayout {
         Layout.fillWidth: true
         C.NeonSpinBox {
-            from: 0; to: 2150; stepSize: 50; value: root.minimum; editable: true
+            from: 0; to: 2230; stepSize: 50; value: root.minimum; editable: true
             enabled: root.enabledControls && (root.mode === "adaptive" || root.mode === "range")
             Layout.fillWidth: true; onValueModified: root.minimum = value
             textFromValue: function(value) { return "MIN " + value + " MHz" }
             valueFromText: function(text) { return parseInt(text) || 0 }
         }
         C.NeonSpinBox {
-            from: 300; to: 2150; stepSize: 50; value: root.maximum; editable: true
+            from: 300; to: 2230; stepSize: 50; value: root.maximum; editable: true
             enabled: root.enabledControls && root.mode !== "max"
             Layout.fillWidth: true; onValueModified: root.maximum = value
             textFromValue: function(value) { return "MAX " + value + " MHz" }

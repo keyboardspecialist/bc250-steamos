@@ -1,5 +1,6 @@
 import QtQuick 2.15
 import QtQuick.Layouts 1.15
+import QtQuick.Controls 2.15
 import "../components" as C
 
 ColumnLayout {
@@ -14,6 +15,9 @@ ColumnLayout {
     readonly property var unlockGuard: unlock.guard || ({})
     readonly property bool automaticRebootPending: unlockGuard.state === "automatic" && unlockGuard.currentBoot === true
     readonly property var telemetry: backend.telemetry || ({})
+    readonly property var audio: snap.audio || ({})
+
+    C.ConfirmDialog { id: confirm }
 
     GridLayout {
         columns: 4
@@ -40,6 +44,31 @@ ColumnLayout {
         visible: root.automaticRebootPending
         text: "Conflicting controls are blocked while the guarded reboot is pending."
         color: "#ff6aa2"; font.family: "monospace"; font.pixelSize: 10
+        wrapMode: Text.Wrap; Layout.fillWidth: true
+    }
+
+    C.SectionHeader { text: "HDMI audio" }
+    C.StatusRow { label: "Surround state"; value: root.audio.state || "Unavailable"; health: root.audio.active ? 1 : root.audio.state === "incomplete" ? -1 : 0 }
+    C.StatusRow { label: "Active profile"; value: root.audio.activeProfile || "Unknown" }
+    Switch {
+        text: "DOLBY DIGITAL 5.1 OVER HDMI"
+        checked: root.audio.enabled === true
+        enabled: root.audio.controllable === true && !backend.busy
+        onClicked: {
+            var nextEnabled = checked
+            checked = Qt.binding(function() { return root.audio.enabled === true })
+            confirm.ask(nextEnabled ? "Enable HDMI surround?" : "Disable HDMI surround?",
+                nextEnabled
+                    ? "WirePlumber will restart and select real-time AC-3 5.1 output. An AC-3-capable receiver is required."
+                    : "Managed HDMI surround files will be removed and the stereo profile restored.",
+                false, function() { root.backend.setHdmiSurround(nextEnabled) })
+        }
+    }
+    Text {
+        visible: !root.audio.available || root.audio.state === "incomplete"
+        text: !root.audio.available ? "Reinstall the frontend to add the trusted HDMI audio helper."
+            : "Managed HDMI audio files are incomplete or foreign. Repair or revert them from the toolkit."
+        color: "#ff6aa2"; font.family: "monospace"; font.pixelSize: 9
         wrapMode: Text.Wrap; Layout.fillWidth: true
     }
 }

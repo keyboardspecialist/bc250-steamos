@@ -32,11 +32,14 @@ class BackendParsingTests(unittest.TestCase):
     def test_cpu_helper_availability_requires_the_complete_runtime_set(self):
         with patch.object(ToolkitBackend, "_trusted_root_file", return_value=True):
             self.assertTrue(ToolkitBackend._cpu_helper_available())
-        missing = backend_module.CPU_HELPER_REQUIRED_PATHS[-1]
+        missing = {
+            backend_module.CPU_HELPER_REQUIRED_PATHS[-1],
+            backend_module.DESKTOP_CPU_HELPER_REQUIRED_PATHS[-1],
+        }
         with patch.object(
             ToolkitBackend,
             "_trusted_root_file",
-            side_effect=lambda path: path != missing,
+            side_effect=lambda path: path not in missing,
         ):
             self.assertFalse(ToolkitBackend._cpu_helper_available())
 
@@ -44,11 +47,15 @@ class BackendParsingTests(unittest.TestCase):
         backend = object.__new__(ToolkitBackend)
         with patch.object(ToolkitBackend, "_trusted_root_file", return_value=True):
             self.assertTrue(backend._hdmi_audio_helper_available())
-        missing = backend_module.HDMI_AUDIO_REQUIRED_PATHS[1]
+        missing = {
+            backend_module.HDMI_AUDIO_REQUIRED_PATHS[1],
+            backend_module.DESKTOP_HELPER_PATH.parent
+            / "bc250-update-persistence.sh",
+        }
         with patch.object(
             ToolkitBackend,
             "_trusted_root_file",
-            side_effect=lambda path: path != missing,
+            side_effect=lambda path: path not in missing,
         ):
             self.assertFalse(backend._hdmi_audio_helper_available())
 
@@ -680,7 +687,9 @@ class BackendMutationTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_hdmi_root_phase_uses_fixed_trusted_environment(self):
         backend = object.__new__(ToolkitBackend)
-        backend._hdmi_audio_helper_available = MagicMock(return_value=True)
+        backend._hdmi_audio_helper_path = MagicMock(
+            return_value=backend_module.HDMI_AUDIO_HELPER_PATH
+        )
         backend._exec = AsyncMock(return_value=(0, "", ""))
 
         await backend._hdmi_audio_root_exec("install-system")
@@ -784,6 +793,7 @@ class BackendMutationTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_mesh_status_validates_and_normalizes_tool_output(self):
         backend = object.__new__(ToolkitBackend)
+        backend.user_home = Path("/home/deck")
         prepare_mutation_backend(backend)
         backend._user_script_available = MagicMock(return_value=True)
         backend._user_tool = AsyncMock(
@@ -799,6 +809,9 @@ class BackendMutationTests(unittest.IsolatedAsyncioTestCase):
                     "schedulerActive": True,
                     "globalEnabled": True,
                     "restartRequired": False,
+                    "fsr4State": "ready",
+                    "fsr4IcdPath": "/home/deck/.local/share/bc250-mesh-shader/fsr4/radeon_fsr4_icd.x86_64.json",
+                    "fsr4RunnerPath": "/home/deck/.local/share/bc250-mesh-shader/fsr4/bc250-fsr4-run",
                     "error": None,
                     "games": [
                         {
@@ -818,6 +831,8 @@ class BackendMutationTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(status["schedulerActive"])
         self.assertTrue(status["globalEnabled"])
         self.assertFalse(status["restartRequired"])
+        self.assertEqual(status["fsr4State"], "ready")
+        self.assertTrue(status["fsr4RunnerPath"].endswith("/bc250-fsr4-run"))
         self.assertEqual(status["games"][0]["executable"], "bc250-steam-1462040")
         backend._user_tool.assert_awaited_once_with(
             "bc250-mesh-shader.sh", "status-json", timeout=30
@@ -1036,9 +1051,9 @@ class BackendMutationTests(unittest.IsolatedAsyncioTestCase):
         backend._cpu_topology = MagicMock(return_value={"physicalCores": 6})
         backend._exec = AsyncMock(return_value=(0, "ignored human output", ""))
         bundle = Path("/trusted/helper-bundle")
+        backend._cpu_unlock_payload_path = MagicMock(return_value=bundle)
 
-        with patch.object(backend_module, "CPU_UNLOCK_PAYLOAD_PATH", bundle):
-            result = await backend.cpu_unlock_action("test")
+        result = await backend.cpu_unlock_action("test")
 
         self.assertEqual(result, {"action": "test", "nextStep": "warm-reboot"})
         self.assertEqual(
@@ -1074,6 +1089,9 @@ class BackendMutationTests(unittest.IsolatedAsyncioTestCase):
             prepare_mutation_backend(backend)
             backend._cpu_unlock_payload_available = MagicMock(return_value=True)
             backend._cpu_unlock_off_payload_available = MagicMock(return_value=True)
+            backend._cpu_unlock_payload_path = MagicMock(
+                return_value=backend_module.CPU_UNLOCK_PAYLOAD_PATH
+            )
             backend._cpu_topology = MagicMock(return_value={"physicalCores": cores})
             backend._exec = AsyncMock(return_value=(0, "anything", ""))
             result = await backend.cpu_unlock_action(action)
@@ -1084,6 +1102,9 @@ class BackendMutationTests(unittest.IsolatedAsyncioTestCase):
         prepare_mutation_backend(backend)
         backend._cpu_unlock_payload_available = MagicMock(return_value=False)
         backend._cpu_unlock_off_payload_available = MagicMock(return_value=True)
+        backend._cpu_unlock_payload_path = MagicMock(
+            return_value=backend_module.CPU_UNLOCK_PAYLOAD_PATH
+        )
         backend._cpu_topology = MagicMock(side_effect=RuntimeError("unavailable"))
         backend._exec = AsyncMock(return_value=(0, "", ""))
 
@@ -1096,6 +1117,9 @@ class BackendMutationTests(unittest.IsolatedAsyncioTestCase):
         backend = object.__new__(ToolkitBackend)
         prepare_mutation_backend(backend)
         backend._cpu_unlock_payload_available = MagicMock(return_value=True)
+        backend._cpu_unlock_payload_path = MagicMock(
+            return_value=backend_module.CPU_UNLOCK_PAYLOAD_PATH
+        )
         backend._cpu_topology = MagicMock(return_value={"physicalCores": 8})
         backend._exec = AsyncMock(return_value=(0, "", ""))
 
@@ -1113,7 +1137,13 @@ class BackendMutationTests(unittest.IsolatedAsyncioTestCase):
                 Path("core-unlock/EFI-HEADERS-LICENSE"),
             }.issubset(backend_module.CPU_UNLOCK_PAYLOAD_FILES)
         )
-        trusted = MagicMock(side_effect=lambda path: path != bundle / "core-unlock/LICENSE")
+        decky = backend_module.CPU_HELPER_PATH.parent
+        trusted = MagicMock(
+            side_effect=lambda path: path not in {
+                bundle / "core-unlock/LICENSE",
+                decky / "core-unlock/LICENSE",
+            }
+        )
         with patch.object(backend_module, "CPU_UNLOCK_PAYLOAD_PATH", bundle), patch.object(
             ToolkitBackend, "_trusted_root_directory", return_value=True
         ), patch.object(ToolkitBackend, "_trusted_root_file", trusted):

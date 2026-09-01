@@ -26,6 +26,7 @@ INTROSPECTION_XML = """<node>
     <method name="GetSnapshot"><arg name="json" type="s" direction="out"/></method>
     <method name="GetTelemetry"><arg name="json" type="s" direction="out"/></method>
     <method name="GetCpuUnlockStatus"><arg name="json" type="s" direction="out"/></method>
+    <method name="GetMeshStatus"><arg name="json" type="s" direction="out"/></method>
     <method name="SetCuWgp"><arg name="se" type="y" direction="in"/><arg name="sh" type="y" direction="in"/><arg name="wgp" type="y" direction="in"/><arg name="enabled" type="b" direction="in"/><arg name="operation_id" type="s" direction="out"/></method>
     <method name="SetGpuFrequency"><arg name="mode" type="s" direction="in"/><arg name="minimum" type="u" direction="in"/><arg name="maximum" type="u" direction="in"/><arg name="operation_id" type="s" direction="out"/></method>
     <method name="SetLoadTarget"><arg name="preset" type="s" direction="in"/><arg name="operation_id" type="s" direction="out"/></method>
@@ -37,6 +38,7 @@ INTROSPECTION_XML = """<node>
     <method name="SetUmaSize"><arg name="uma_mib" type="u" direction="in"/><arg name="operation_id" type="s" direction="out"/></method>
     <method name="SetTtmPages"><arg name="pages" type="u" direction="in"/><arg name="operation_id" type="s" direction="out"/></method>
     <method name="RemoveTtmOverride"><arg name="operation_id" type="s" direction="out"/></method>
+    <method name="SetHdmiSurround"><arg name="enabled" type="b" direction="in"/><arg name="operation_id" type="s" direction="out"/></method>
     <method name="CecAction"><arg name="action" type="s" direction="in"/><arg name="operation_id" type="s" direction="out"/></method>
     <method name="SetCecToggle"><arg name="key" type="s" direction="in"/><arg name="enabled" type="b" direction="in"/><arg name="operation_id" type="s" direction="out"/></method>
     <method name="SetCecName"><arg name="name" type="s" direction="in"/><arg name="operation_id" type="s" direction="out"/></method>
@@ -154,6 +156,7 @@ class DbusAdapter:
         "GetSnapshot": ("", "s", "get_snapshot"),
         "GetTelemetry": ("", "s", "get_telemetry"),
         "GetCpuUnlockStatus": ("", "s", "get_cpu_unlock_status"),
+        "GetMeshStatus": ("", "s", "get_mesh_status"),
         "SetCuWgp": ("yyyb", "s", "set_cu_wgp"),
         "SetGpuFrequency": ("suu", "s", "set_gpu_frequency"),
         "SetLoadTarget": ("s", "s", "set_load_target"),
@@ -165,6 +168,7 @@ class DbusAdapter:
         "SetUmaSize": ("u", "s", "set_uma_size"),
         "SetTtmPages": ("u", "s", "set_ttm_pages"),
         "RemoveTtmOverride": ("", "s", "remove_ttm_override"),
+        "SetHdmiSurround": ("b", "s", "set_hdmi_surround"),
         "CecAction": ("s", "s", "cec_action"),
         "SetCecToggle": ("sb", "s", "set_cec_toggle"),
         "SetCecName": ("s", "s", "set_cec_name"),

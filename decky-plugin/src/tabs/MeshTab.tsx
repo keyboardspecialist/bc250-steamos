@@ -61,6 +61,8 @@ export function MeshTab() {
         <StatusRow label="Global activation" value={status.globalEnabled ? "Enabled" : "Disabled"} good={status.globalEnabled} />
         <StatusRow label="Mesa" value={status.mesaVersion ?? "Not installed"} />
         <StatusRow label="Alternate ICD" value={status.icdPath || "Unavailable"} good={status.runtimeState === "ready"} />
+        <StatusRow label="Private FSR4 profile" value={status.fsr4State} good={status.fsr4State === "ready"} />
+        <StatusRow label="FSR4 runner" value={status.fsr4RunnerPath} good={status.fsr4State === "ready"} />
       </PanelSection>
 
       {error && <EmptyState>{error}</EmptyState>}
@@ -68,6 +70,7 @@ export function MeshTab() {
       {!status.kernelReady && <EmptyState>Install the AMDGPU kernel fixes and reboot before installing the Mesa / RADV async-compute patch.</EmptyState>}
       {status.runtimeState === "not-installed" && <EmptyState>The Mesa / RADV patch enables GFX1013 async compute. Install it from Drivers after the patched AMDGPU module is active; the build usually takes 3-5 minutes.</EmptyState>}
       {status.runtimeState === "invalid" && <EmptyState>The alternate runtime failed validation or requires migration. Run setup again from the toolkit menu.</EmptyState>}
+      {status.fsr4State === "invalid" && <EmptyState>The private FSR4 runtime failed integrity validation. Reinstall or remove it from the toolkit.</EmptyState>}
       {status.globalEnabled && <EmptyState>The patched RADV ICD is active across this user session.</EmptyState>}
       {status.restartRequired && !status.schedulerActive && <EmptyState>Reboot to activate amdgpu.sched_policy=2 and patched RADV together.</EmptyState>}
       {status.restartRequired && status.schedulerActive && <EmptyState>The global driver is configured but this graphical session has not inherited it. Sign out and back in.</EmptyState>}

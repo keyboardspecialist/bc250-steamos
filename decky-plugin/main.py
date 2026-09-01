@@ -20,7 +20,9 @@ class Plugin:
         decky.logger.info("BC-250 Control backend started")
 
     async def get_snapshot(self):
-        return await self.backend.get_snapshot()
+        snapshot = await self.backend.get_snapshot()
+        snapshot["cpuUnlock"] = await self.backend.get_cpu_unlock_status()
+        return snapshot
 
     async def get_telemetry(self):
         return await self.backend.get_telemetry()
@@ -52,6 +54,18 @@ class Plugin:
 
     async def set_cpu_mitigations(self, enabled: bool):
         return await self.backend.set_cpu_mitigations(enabled)
+
+    async def cpu_unlock_action(self, action: str):
+        return await self.backend.cpu_unlock_action(action)
+
+    async def set_uma_size(self, uma_mib: int):
+        return await self.backend.set_uma_size(uma_mib)
+
+    async def set_ttm_pages(self, pages: int):
+        return await self.backend.set_ttm_pages(pages)
+
+    async def remove_ttm_override(self):
+        return await self.backend.remove_ttm_override()
 
     async def cec_action(self, action: str):
         return await self.backend.cec_action(action)

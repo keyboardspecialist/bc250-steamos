@@ -26,6 +26,12 @@ export const cpuOcAction = callable<
 export const setCpuMitigations = callable<[enabled: boolean], void>(
   "set_cpu_mitigations",
 );
+export const cpuUnlockAction = callable<[action: string], void>(
+  "cpu_unlock_action",
+);
+export const setUmaSize = callable<[umaMiB: number], void>("set_uma_size");
+export const setTtmPages = callable<[pages: number], void>("set_ttm_pages");
+export const removeTtmOverride = callable<[], void>("remove_ttm_override");
 export const cecAction = callable<[action: string], void>("cec_action");
 export const setCecToggle = callable<
   [key: string, enabled: boolean],

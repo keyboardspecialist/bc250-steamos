@@ -147,6 +147,31 @@ private slots:
         QCOMPARE(ram.value(QStringLiteral("ttmConfiguredPages")).toInt(), 3014656);
         QVERIFY(!ram.value(QStringLiteral("rebootRequired")).toBool());
     }
+
+    void mockMeshAndAudioSchemasMatchService()
+    {
+        Bc250Bridge bridge(true);
+        const QVariantMap mesh = bridge.meshStatus();
+        QCOMPARE(mesh.value(QStringLiteral("runtimeState")).toString(), QStringLiteral("ready"));
+        QCOMPARE(mesh.value(QStringLiteral("fsr4State")).toString(), QStringLiteral("ready"));
+        QVERIFY(mesh.value(QStringLiteral("schedulerActive")).toBool());
+
+        const QVariantMap audio = bridge.snapshot().value(QStringLiteral("audio")).toMap();
+        QVERIFY(audio.value(QStringLiteral("available")).toBool());
+        QVERIFY(audio.value(QStringLiteral("active")).toBool());
+        QCOMPARE(audio.value(QStringLiteral("activeProfile")).toString(),
+                 QStringLiteral("output:hdmi-ac3-surround"));
+    }
+
+    void acceptsHdmiSurroundToggle()
+    {
+        Bc250Bridge bridge(true);
+        bridge.setHdmiSurround(false);
+        QVERIFY2(bridge.error().isEmpty(), qPrintable(bridge.error()));
+        QVERIFY(bridge.busy());
+        QVERIFY(bridge.busyLabel().contains(QStringLiteral("Disabling HDMI surround")));
+        QVERIFY(!bridge.operationCancellable());
+    }
 };
 
 QTEST_GUILESS_MAIN(Bc250BridgeTest)

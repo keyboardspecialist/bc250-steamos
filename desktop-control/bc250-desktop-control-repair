@@ -103,6 +103,10 @@ repair() {
     require_root
     [[ -d "$PAYLOAD_DIR" && ! -L "$PAYLOAD_DIR" ]] \
         || die "Desktop payload is missing or unsafe: $PAYLOAD_DIR"
+    [[ "$(stat -Lc '%u' "$PAYLOAD_DIR")" == 0 ]] \
+        || die "Desktop payload is not owned by root: $PAYLOAD_DIR"
+    chown root:root "$PAYLOAD_DIR"
+    chmod 0755 "$PAYLOAD_DIR"
     atomic_copy "$TEMPLATE_DIR/bc250-control.service" "$SERVICE_UNIT" 0644
     atomic_copy "$TEMPLATE_DIR/bc250-desktop-control-repair.service" "$REPAIR_UNIT" 0644
     atomic_copy "$TEMPLATE_DIR/io.github.keyboardspecialist.BC250Control1.conf" "$DBUS_POLICY" 0644

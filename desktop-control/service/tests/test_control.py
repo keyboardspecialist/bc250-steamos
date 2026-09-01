@@ -45,6 +45,9 @@ class FakeBackend:
     async def get_snapshot(self):
         return {"user": self.user, "ok": True}
 
+    async def get_mesh_status(self):
+        return {"runtimeState": "ready", "fsr4State": "not-installed"}
+
     async def get_telemetry(self):
         return {"cpuClock": 3200}
 
@@ -99,6 +102,9 @@ class FakeBackend:
     async def remove_ttm_override(self, *args):
         await self._mutation("remove_ttm_override", *args)
 
+    async def set_hdmi_surround(self, *args):
+        await self._mutation("set_hdmi_surround", *args)
+
     async def cec_action(self, *args):
         await self._mutation("cec_action", *args)
 
@@ -142,6 +148,10 @@ class ControlServiceTests(unittest.IsolatedAsyncioTestCase):
         unlock = await self.service.get_cpu_unlock_status(":1.1")
         self.assertEqual(
             unlock, '{"schemaVersion":1,"topologyState":"locked"}'
+        )
+        mesh = await self.service.get_mesh_status(":1.1")
+        self.assertEqual(
+            mesh, '{"runtimeState":"ready","fsr4State":"not-installed"}'
         )
         self.assertEqual(self.authorizer.calls, [])
 
@@ -225,6 +235,16 @@ class ControlServiceTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.authorizer.calls, [(":1.1", 1000, "audit:1000", "ram")])
         self.assertEqual(self.backends[0].calls, [("set_uma_size", (512,))])
 
+    async def test_hdmi_surround_is_authorized_and_non_cancellable(self):
+        operation_id = await self.service.set_hdmi_surround(":1.1", True)
+        operation = await self.wait_for_status(":1.1", operation_id, "succeeded")
+        self.assertFalse(operation["cancellable"])
+        self.assertEqual(operation["method"], "SetHdmiSurround")
+        self.assertEqual(
+            self.authorizer.calls, [(":1.1", 1000, "audit:1000", "audio")]
+        )
+        self.assertEqual(self.backends[0].calls, [("set_hdmi_surround", (True,))])
+
     async def test_operations_are_private_to_uid_but_survive_sender_change(self):
         operation_id = await self.service.cec_action(":1.1", "mute")
         await self.wait_for_status(":9.9", operation_id, "succeeded")
@@ -244,6 +264,8 @@ class ControlServiceTests(unittest.IsolatedAsyncioTestCase):
             await self.service.cpu_oc_action(":1.1", "detect", True, 1200, 90)
         with self.assertRaises(InvalidArguments):
             await self.service.set_cpu_mitigations(":1.1", 0)
+        with self.assertRaises(InvalidArguments):
+            await self.service.set_hdmi_surround(":1.1", 1)
         for action in ("", "uninstall", "test; reboot", 1):
             with self.subTest(action=action), self.assertRaises(InvalidArguments):
                 await self.service.cpu_unlock_action(":1.1", action)

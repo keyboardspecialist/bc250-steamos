@@ -126,6 +126,13 @@ class AdapterHandlerTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn('<method name="GetCpuUnlockStatus">', INTROSPECTION_XML)
         self.assertIn('<method name="CpuUnlockAction">', INTROSPECTION_XML)
 
+    def test_mesh_status_dbus_signature_is_declared(self):
+        self.assertEqual(
+            DbusAdapter._METHODS["GetMeshStatus"],
+            ("", "s", "get_mesh_status"),
+        )
+        self.assertIn('<method name="GetMeshStatus">', INTROSPECTION_XML)
+
     def test_ram_dbus_signatures_are_declared(self):
         self.assertEqual(DbusAdapter._METHODS["SetUmaSize"], ("u", "s", "set_uma_size"))
         self.assertEqual(DbusAdapter._METHODS["SetTtmPages"], ("u", "s", "set_ttm_pages"))
@@ -143,6 +150,13 @@ class AdapterHandlerTests(unittest.IsolatedAsyncioTestCase):
             ("b", "s", "set_cpu_mitigations"),
         )
         self.assertIn('<method name="SetCpuMitigations">', INTROSPECTION_XML)
+
+    def test_hdmi_surround_dbus_signature_is_declared(self):
+        self.assertEqual(
+            DbusAdapter._METHODS["SetHdmiSurround"],
+            ("b", "s", "set_hdmi_surround"),
+        )
+        self.assertIn('<method name="SetHdmiSurround">', INTROSPECTION_XML)
 
     async def test_rejects_calls_above_dispatch_limit(self):
         adapter = DbusAdapter(HandlerBus(), FakeControl(), dispatch_limit=0)

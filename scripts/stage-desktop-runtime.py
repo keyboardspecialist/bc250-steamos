@@ -103,6 +103,8 @@ def stage(output: Path, epoch: int) -> None:
                 REPOSITORY / "core-unlock" / name,
                 temporary / "core-unlock" / name,
             )
+        for name in ("acpi-tables", "hdmi-ac3", "smu-oc-patches"):
+            copy_tree(REPOSITORY / name, temporary / name)
 
         for name in (
             "LICENSE",

@@ -68,6 +68,8 @@ Read methods return a single D-Bus string (`s`) containing JSON:
 | --- | --- | --- |
 | `GetSnapshot` | none | The complete `Snapshot` object described below |
 | `GetTelemetry` | none | `{cpuClock,gpuClock,cpuTemp,gpuTemp}`, nullable numbers |
+| `GetCpuUnlockStatus` | none | CPU topology, active unlock mode, integrity state, action blockers |
+| `GetMeshStatus` | none | Patched-kernel, scheduler, RADV, global activation, and FSR4 state |
 | `GetOperation` | `s operationId` | `{operationId,method,status,...,error?}` |
 
 Mutation methods return a single string containing an operation ID matching
@@ -85,9 +87,12 @@ returns `b` to support cancelling long-running work.
 | `SetCustomLoadTarget` | `yy` | lower and upper percent |
 | `SetRamp` | `u` | climb milliseconds |
 | `CpuOcAction` | `suuu` | action, MHz, mV, temperature Celsius |
+| `CpuUnlockAction` | `s` | `test`, `enable`, `efi-enable`, or `off` |
+| `SetCpuMitigations` | `b` | configured kernel mitigation state |
 | `SetUmaSize` | `u` | CMOS minimum VRAM in aligned MiB |
 | `SetTtmPages` | `u` | dynamic TTM limit in 4 KiB pages |
 | `RemoveTtmOverride` | none | remove the toolkit-owned TTM GRUB drop-in |
+| `SetHdmiSurround` | `b` | managed Dolby Digital 5.1 HDMI output state |
 | `CecAction` | `s` | allowlisted CEC action |
 | `SetCecToggle` | `sb` | allowlisted setting, enabled |
 | `SetCecName` | `s` | printable 1-14 UTF-8 byte name |
@@ -98,7 +103,7 @@ The CPU actions are `detect`, `apply`, `enable`, and `off`. GPU modes are
 CEC toggle keys are `wake-tv`, `suspend-tv`, `allow-standby`, and `uinput`.
 
 The snapshot schema is the same typed object consumed by the Decky interface:
-top-level `toolkit`, `cu`, `power`, `gpu`, `cpu`, `cec`, and `ram` objects. In
+top-level `toolkit`, `cu`, `power`, `gpu`, `cpu`, `cec`, `ram`, and `audio` objects. CPU core-unlock and Mesa/RADV/FSR4 state use their dedicated reads. In
 particular, the UI expects service states as `{enabled,active}`, CU `rows` and
 `savedMasks`, GPU live/requested ranges and tuning values, CPU
 `installed`/`staged` profiles, CEC state and behavior booleans, and power

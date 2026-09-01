@@ -141,6 +141,8 @@ void Bc250Bridge::refresh()
     requestJson(JsonRequest::Snapshot, QStringLiteral("GetSnapshot"));
     if (!m_cpuUnlockPending)
         requestJson(JsonRequest::CpuUnlock, QStringLiteral("GetCpuUnlockStatus"));
+    if (!m_meshPending)
+        requestJson(JsonRequest::Mesh, QStringLiteral("GetMeshStatus"));
 }
 
 void Bc250Bridge::sampleTelemetry()
@@ -173,6 +175,7 @@ void Bc250Bridge::requestJson(JsonRequest request, const QString &method, const 
     case JsonRequest::Snapshot: m_snapshotPending = true; break;
     case JsonRequest::Telemetry: m_telemetryPending = true; break;
     case JsonRequest::CpuUnlock: m_cpuUnlockPending = true; break;
+    case JsonRequest::Mesh: m_meshPending = true; break;
     case JsonRequest::Operation: m_operationPending = true; break;
     }
     auto *watcher = new QDBusPendingCallWatcher(m_interface->asyncCallWithArgumentList(method, arguments), this);
@@ -188,6 +191,7 @@ void Bc250Bridge::handleJsonReply(JsonRequest request, QDBusPendingCallWatcher *
     case JsonRequest::Snapshot: m_snapshotPending = false; break;
     case JsonRequest::Telemetry: m_telemetryPending = false; break;
     case JsonRequest::CpuUnlock: m_cpuUnlockPending = false; break;
+    case JsonRequest::Mesh: m_meshPending = false; break;
     case JsonRequest::Operation: m_operationPending = false; break;
     }
 
@@ -207,6 +211,15 @@ void Bc250Bridge::handleJsonReply(JsonRequest request, QDBusPendingCallWatcher *
                 {QStringLiteral("message"), QStringLiteral("The installed service does not provide CPU core unlock yet.")}
             };
             emit cpuUnlockStatusChanged();
+        } else if (request == JsonRequest::Mesh
+                   && reply.error().name().contains(QStringLiteral("UnknownMethod"))) {
+            m_meshStatus = {
+                {QStringLiteral("scriptAvailable"), false},
+                {QStringLiteral("runtimeState"), QStringLiteral("not-installed")},
+                {QStringLiteral("fsr4State"), QStringLiteral("not-installed")},
+                {QStringLiteral("error"), QStringLiteral("The installed service does not provide Mesa / RADV status yet.")}
+            };
+            emit meshStatusChanged();
         } else if (request != JsonRequest::Telemetry) {
             setError(message);
         }
@@ -233,6 +246,9 @@ void Bc250Bridge::handleJsonReply(JsonRequest request, QDBusPendingCallWatcher *
         } else if (request == JsonRequest::CpuUnlock) {
             m_cpuUnlockStatus = value;
             emit cpuUnlockStatusChanged();
+        } else if (request == JsonRequest::Mesh) {
+            m_meshStatus = value;
+            emit meshStatusChanged();
         } else {
             m_operationPollFailures = 0;
             setError({});
@@ -314,11 +330,11 @@ void Bc250Bridge::setGpuFrequency(const QString &mode, int minimum, int maximum)
                      QStringLiteral("max")}.contains(mode)) {
         reject(QStringLiteral("Unknown GPU frequency mode.")); return;
     }
-    if (mode == QStringLiteral("pin") && (maximum < 300 || maximum > 2150)) {
-        reject(QStringLiteral("Pinned frequency must be 300-2150 MHz.")); return;
+    if (mode == QStringLiteral("pin") && (maximum < 300 || maximum > 2230)) {
+        reject(QStringLiteral("Pinned frequency must be 300-2230 MHz.")); return;
     }
-    if (mode == QStringLiteral("range") && ((minimum != 0 && minimum < 300) || minimum > 2150 || maximum < 300
-        || maximum > 2150 || (minimum != 0 && minimum > maximum))) {
+    if (mode == QStringLiteral("range") && ((minimum != 0 && minimum < 300) || minimum > 2230 || maximum < 300
+        || maximum > 2230 || (minimum != 0 && minimum > maximum))) {
         reject(QStringLiteral("GPU frequency range is invalid.")); return;
     }
     if (!ensureReady()) return;
@@ -419,6 +435,14 @@ void Bc250Bridge::removeTtmOverride()
     if (!ensureReady()) return;
     startMutation(QStringLiteral("RemoveTtmOverride"), {},
                   QStringLiteral("Removing TTM boot limit"), false);
+}
+
+void Bc250Bridge::setHdmiSurround(bool enabled)
+{
+    if (!ensureReady()) return;
+    startMutation(QStringLiteral("SetHdmiSurround"), {enabled},
+                  enabled ? QStringLiteral("Enabling HDMI surround")
+                          : QStringLiteral("Disabling HDMI surround"), false);
 }
 
 void Bc250Bridge::startMutation(const QString &method, const QVariantList &arguments,
@@ -608,19 +632,32 @@ void Bc250Bridge::makeMockSnapshot()
 {
     static const QByteArray json = R"json({
       "schemaVersion":1,
-      "toolkit":{"available":true,"privileged":true,"powerAvailable":true,"cpuControlAvailable":true,"ramControlAvailable":true,"path":"/mock/bc250-steamos","version":"mock-1"},
+      "toolkit":{"available":true,"privileged":true,"powerAvailable":true,"cpuControlAvailable":true,"ramControlAvailable":true,"audioAvailable":true,"path":"/mock/bc250-steamos","version":"mock-1"},
       "cu":{"available":true,"controllable":true,"liveReason":"","total":24,"maximum":40,"factoryMapAvailable":true,"factoryTotal":24,"savedMasks":[7,7,7,7],"protected":true,"service":{"enabled":"enabled","active":"active"},"rows":[
         {"se":0,"sh":0,"wgps":[true,true,true,false,false],"factoryWgps":[true,true,true,false,false],"cus":6},
         {"se":0,"sh":1,"wgps":[true,true,true,false,false],"factoryWgps":[true,true,true,false,false],"cus":6},
         {"se":1,"sh":0,"wgps":[true,true,true,false,false],"factoryWgps":[true,true,true,false,false],"cus":6},
         {"se":1,"sh":1,"wgps":[true,true,true,false,false],"factoryWgps":[true,true,true,false,false],"cus":6}]},
       "power":{"acpiActive":true,"cStates":3,"cpuGovernor":"schedutil","cpuCurrentMhz":3650,"governor":{"enabled":"enabled","active":"active"},"frequencyRestore":{"enabled":"enabled","active":"exited"},"temperatures":[{"device":"amdgpu","label":"edge","celsius":57}]},
-      "gpu":{"available":true,"controllable":true,"dbusReady":true,"mode":"adaptive","requestedMode":"adaptive","minimum":300,"maximum":1500,"liveMinimum":300,"liveMaximum":1500,"activeMhz":1120,"allowedMinimum":300,"allowedMaximum":2150,"climbMs":500,"loadUpper":0.80,"loadLower":0.65,"configuredMax":1500,"persistent":true,"replayApplied":true,"governorService":{"enabled":"enabled","active":"active"},"safePoints":[{"frequency":300,"voltage":700},{"frequency":1500,"voltage":975}]},
+      "gpu":{"available":true,"controllable":true,"dbusReady":true,"mode":"adaptive","requestedMode":"adaptive","minimum":300,"maximum":1500,"liveMinimum":300,"liveMaximum":1500,"activeMhz":1120,"allowedMinimum":300,"allowedMaximum":2230,"climbMs":500,"loadUpper":0.80,"loadLower":0.65,"configuredMax":1500,"persistent":true,"replayApplied":true,"governorService":{"enabled":"enabled","active":"active"},"safePoints":[{"frequency":300,"voltage":700},{"frequency":1500,"voltage":975}]},
       "cpu":{"service":{"enabled":"enabled","active":"active"},"installed":{"values":{"frequency":"4000","voltage":"1275"},"detected":"4000 MHz @ 1275 mV"},"staged":null,"toolAvailable":true,"mitigations":{"schemaVersion":1,"available":true,"state":"enabled","configuredEnabled":true,"bootEnabled":true,"rebootRequired":false,"protected":true}},
-      "ram":{"schemaVersion":1,"available":true,"toolState":"verified","toolVersion":"v0.1","umaLastRequestedMiB":512,"ttmState":"configured","ttmConfiguredPages":3014656,"ttmBootPages":3014656,"ttmLivePages":3014656,"rebootRequired":false,"protected":true}
+      "ram":{"schemaVersion":1,"available":true,"toolState":"verified","toolVersion":"v0.1","umaLastRequestedMiB":512,"ttmState":"configured","ttmConfiguredPages":3014656,"ttmBootPages":3014656,"ttmLivePages":3014656,"rebootRequired":false,"protected":true},
+      "audio":{"available":true,"controllable":true,"state":"active","enabled":true,"active":true,"udevState":"installed","wireplumberState":"installed","persistenceState":"installed","activeProfile":"output:hdmi-ac3-surround"}
     })json";
     QString parseError;
     m_snapshot = parseJsonObject(json, &parseError);
+    m_meshStatus = {
+        {QStringLiteral("scriptAvailable"), true},
+        {QStringLiteral("runtimeState"), QStringLiteral("ready")},
+        {QStringLiteral("mesaVersion"), QStringLiteral("mesa-26.2.0")},
+        {QStringLiteral("kernelReady"), true},
+        {QStringLiteral("schedulerConfigured"), true},
+        {QStringLiteral("schedulerActive"), true},
+        {QStringLiteral("globalEnabled"), true},
+        {QStringLiteral("restartRequired"), false},
+        {QStringLiteral("fsr4State"), QStringLiteral("ready")},
+        {QStringLiteral("fsr4RunnerPath"), QStringLiteral("/home/deck/.local/share/bc250-mesh-shader/fsr4/bc250-fsr4-run")}
+    };
     const auto mockCore = [](int core, int ccx) {
         return QVariantMap{{QStringLiteral("packageId"), 0}, {QStringLiteral("coreId"), core},
                            {QStringLiteral("logicalCpus"), QVariantList{core, core + 8}},
@@ -688,6 +725,7 @@ void Bc250Bridge::makeMockSnapshot()
     };
     emit snapshotChanged();
     emit cpuUnlockStatusChanged();
+    emit meshStatusChanged();
 }
 
 void Bc250Bridge::startMockMutation(const QString &label, bool cancellable)

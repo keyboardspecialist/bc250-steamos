@@ -79,6 +79,7 @@ def stage(output: Path, epoch: int) -> None:
         copy_file(PLUGIN_SOURCE / "dist/index.js", temporary / "dist/index.js")
         for name in (
             "bc250-power.sh",
+            "bc250-ram-split.sh",
             "bc250-storage.sh",
             "bc250-update-persistence.sh",
             "topology.sh",

@@ -58,13 +58,17 @@ shared_validate_sources() {
         "$SHARED_REPO_DIR/core-unlock/bc250-unlock-cores-efi.c" \
         "$SHARED_REPO_DIR/core-unlock/EFI-LICENSE" \
         "$SHARED_REPO_DIR/core-unlock/EFI-HEADERS-LICENSE" \
-        "$SHARED_REPO_DIR/core-unlock/LICENSE"; do
+        "$SHARED_REPO_DIR/core-unlock/LICENSE" \
+        "$SHARED_REPO_DIR/acpi-tables" \
+        "$SHARED_REPO_DIR/hdmi-ac3/hdmi-ac3.sh" \
+        "$SHARED_REPO_DIR/smu-oc-patches"; do
         [[ -e "$path" && ! -L "$path" ]] \
             || shared_die "Required shared-service source is missing or unsafe: $path"
     done
     if find "$SHARED_SOURCE_DIR/service/bc250_control_service" \
         "$SHARED_SOURCE_DIR/vendor" "$SHARED_REPO_DIR/backend/bc250_control" \
         "$SHARED_REPO_DIR/backend/vendor" "$SHARED_SOURCE_DIR/templates" \
+        "$SHARED_REPO_DIR/acpi-tables" "$SHARED_REPO_DIR/smu-oc-patches" \
         -type l -print -quit | grep -q .; then
         shared_die "Refusing to stage service trees containing symlinks."
     fi
@@ -82,9 +86,10 @@ shared_stage_payload() {
     [[ -d /var/lib/bc250-control && ! -L /var/lib/bc250-control ]] \
         || shared_die "Privileged storage is unsafe."
     SHARED_STAGE=$(mktemp -d /var/lib/bc250-control/.desktop-stage.XXXXXX)
+    chmod 0755 "$SHARED_STAGE"
     install -d -o root -g root -m 0755 \
         "$SHARED_STAGE/py_modules" "$SHARED_STAGE/templates" \
-        "$SHARED_STAGE/core-unlock"
+        "$SHARED_STAGE/core-unlock" "$SHARED_STAGE/hdmi-ac3"
     install -o root -g root -m 0755 \
         "$SHARED_SOURCE_DIR/service/bc250-control-service" \
         "$SHARED_STAGE/bc250-control-service"
@@ -122,6 +127,10 @@ shared_stage_payload() {
         "$SHARED_STAGE/bc250-update-persistence.sh"
     install -o root -g root -m 0755 \
         "$SHARED_REPO_DIR/topology.sh" "$SHARED_STAGE/topology.sh"
+    shared_copy_tree "$SHARED_REPO_DIR/acpi-tables" "$SHARED_STAGE/acpi-tables"
+    shared_copy_tree "$SHARED_REPO_DIR/smu-oc-patches" "$SHARED_STAGE/smu-oc-patches"
+    install -o root -g root -m 0755 \
+        "$SHARED_REPO_DIR/hdmi-ac3/hdmi-ac3.sh" "$SHARED_STAGE/hdmi-ac3/hdmi-ac3.sh"
     install -o root -g root -m 0755 \
         "$SHARED_REPO_DIR/core-unlock/bc250-unlock-cores.py" \
         "$SHARED_STAGE/core-unlock/bc250-unlock-cores.py"
@@ -145,6 +154,10 @@ shared_stage_payload() {
         && -x "$SHARED_STAGE/bc250-ram-split.sh" \
         && -x "$SHARED_STAGE/bc250-storage.sh" \
         && -x "$SHARED_STAGE/bc250-update-persistence.sh" \
+        && -x "$SHARED_STAGE/hdmi-ac3/hdmi-ac3.sh" \
+        && -f "$SHARED_STAGE/smu-oc-patches/bc250_detect.py" \
+        && -f "$SHARED_STAGE/smu-oc-patches/stress_helper.py" \
+        && -f "$SHARED_STAGE/smu-oc-patches/transport.py" \
         && -x "$SHARED_STAGE/core-unlock/bc250-unlock-cores.py" \
         && -f "$SHARED_STAGE/core-unlock/bc250-unlock-cores-efi.c" \
         && -f "$SHARED_STAGE/core-unlock/EFI-LICENSE" \

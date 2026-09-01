@@ -5,7 +5,7 @@ from typing import Dict, Set, Tuple
 from .errors import AccessDenied
 
 
-PRIVILEGED_CATEGORIES = {"cu", "gpu", "cpu", "ram"}
+PRIVILEGED_CATEGORIES = {"cu", "gpu", "cpu", "ram", "audio"}
 UNPRIVILEGED_CATEGORIES = {"read", "cec"}
 
 

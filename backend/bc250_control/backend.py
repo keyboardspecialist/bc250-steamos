@@ -35,6 +35,7 @@ SYSTEMCTL = "/usr/bin/systemctl"
 GPU_CONFIG_PATH = Path("/etc/cyan-skillfish-governor-smu/config.toml")
 GPU_STATE_PATH = Path("/var/lib/bc250-control/governor/freq-state")
 CPU_HELPER_PATH = Path("/var/lib/bc250-control/helper/bc250-power.sh")
+DESKTOP_HELPER_PATH = Path("/var/lib/bc250-control/desktop/bc250-power.sh")
 HDMI_AUDIO_HELPER_PATH = Path(
     "/var/lib/bc250-control/helper/hdmi-ac3/hdmi-ac3.sh"
 )
@@ -52,7 +53,16 @@ CPU_HELPER_REQUIRED_PATHS = (
     CPU_HELPER_PATH.parent / "smu-oc-patches/transport.py",
     CPU_HELPER_PATH.parent / ".decky-helper-manifest",
 )
+DESKTOP_CPU_HELPER_REQUIRED_PATHS = (
+    DESKTOP_HELPER_PATH,
+    DESKTOP_HELPER_PATH.parent / "bc250-storage.sh",
+    DESKTOP_HELPER_PATH.parent / "bc250-update-persistence.sh",
+    DESKTOP_HELPER_PATH.parent / "smu-oc-patches/bc250_detect.py",
+    DESKTOP_HELPER_PATH.parent / "smu-oc-patches/stress_helper.py",
+    DESKTOP_HELPER_PATH.parent / "smu-oc-patches/transport.py",
+)
 RAM_HELPER_PATH = Path("/var/lib/bc250-control/desktop/bc250-ram-split.sh")
+DECKY_RAM_HELPER_PATH = Path("/var/lib/bc250-control/helper/bc250-ram-split.sh")
 CPU_STATE_DIR = Path("/var/lib/bc250-control/smu-oc")
 CPU_UNLOCK_PAYLOAD_PATH = Path("/var/lib/bc250-control/desktop")
 CPU_UNLOCK_HELPER_PATH = Path(
@@ -420,13 +430,24 @@ class ToolkitBackend:
         return cls._trusted_root_path(path, stat.S_IFDIR)
 
     @classmethod
+    def _cpu_helper_path(cls) -> Optional[Path]:
+        for helper, required in (
+            (DESKTOP_HELPER_PATH, DESKTOP_CPU_HELPER_REQUIRED_PATHS),
+            (CPU_HELPER_PATH, CPU_HELPER_REQUIRED_PATHS),
+        ):
+            if all(cls._trusted_root_file(path) for path in required):
+                return helper
+        return None
+
+    @classmethod
     def _cpu_helper_available(cls) -> bool:
-        return all(cls._trusted_root_file(path) for path in CPU_HELPER_REQUIRED_PATHS)
+        return cls._cpu_helper_path() is not None
 
     async def _cpu_tool(self, *args: str, timeout: float = 30) -> str:
-        if not self._cpu_helper_available():
+        helper = self._cpu_helper_path()
+        if helper is None:
             raise CommandError(
-                "CPU tuning helper is missing or unsafe; reinstall the plugin."
+                "CPU tuning helper is missing or unsafe; reinstall the frontend."
             )
         env = {
             "PATH": "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
@@ -439,12 +460,20 @@ class ToolkitBackend:
             "BC250_STORAGE_SKIP_LEGACY_AIC": "1",
         }
         _, out, _ = await self._exec(
-            [BASH, str(CPU_HELPER_PATH), *args], timeout=timeout, env=env
+            [BASH, str(helper), *args], timeout=timeout, env=env
         )
         return out
 
+    @classmethod
+    def _ram_helper_path(cls) -> Optional[Path]:
+        for path in (RAM_HELPER_PATH, DECKY_RAM_HELPER_PATH):
+            if cls._trusted_root_file(path):
+                return path
+        return None
+
     async def _ram_tool(self, *args: str, timeout: float = 30) -> str:
-        if not self._trusted_root_file(RAM_HELPER_PATH):
+        helper = self._ram_helper_path()
+        if helper is None:
             raise CommandError(
                 "RAM configuration helper is missing or unsafe; reinstall the frontend."
             )
@@ -455,32 +484,47 @@ class ToolkitBackend:
             "LOGNAME": "root",
         }
         _, out, _ = await self._exec(
-            [BASH, str(RAM_HELPER_PATH), *args], timeout=timeout, env=env
+            [BASH, str(helper), *args], timeout=timeout, env=env
         )
         return out
 
-    def _hdmi_audio_helper_available(self) -> bool:
-        return all(
-            self._trusted_root_file(path) for path in HDMI_AUDIO_REQUIRED_PATHS
+    @classmethod
+    def _hdmi_audio_helper_path(cls) -> Optional[Path]:
+        desktop_helper = DESKTOP_HELPER_PATH.parent / "hdmi-ac3/hdmi-ac3.sh"
+        desktop_required = (
+            desktop_helper,
+            DESKTOP_HELPER_PATH.parent / "bc250-update-persistence.sh",
         )
+        for helper, required in (
+            (desktop_helper, desktop_required),
+            (HDMI_AUDIO_HELPER_PATH, HDMI_AUDIO_REQUIRED_PATHS),
+        ):
+            if all(cls._trusted_root_file(path) for path in required):
+                return helper
+        return None
+
+    def _hdmi_audio_helper_available(self) -> bool:
+        return self._hdmi_audio_helper_path() is not None
 
     async def _hdmi_audio_user_exec(
         self, command: str, *, check: bool = True
     ) -> tuple[int, str, str]:
-        if not self._hdmi_audio_helper_available():
+        helper = self._hdmi_audio_helper_path()
+        if helper is None:
             raise CommandError(
-                "HDMI audio helper is missing or unsafe; reinstall the plugin."
+                "HDMI audio helper is missing or unsafe; reinstall the frontend."
             )
         return await self._user_exec(
-            [BASH, str(HDMI_AUDIO_HELPER_PATH), command],
+            [BASH, str(helper), command],
             timeout=120,
             check=check,
         )
 
     async def _hdmi_audio_root_exec(self, command: str) -> None:
-        if not self._hdmi_audio_helper_available():
+        helper = self._hdmi_audio_helper_path()
+        if helper is None:
             raise CommandError(
-                "HDMI audio helper is missing or unsafe; reinstall the plugin."
+                "HDMI audio helper is missing or unsafe; reinstall the frontend."
             )
         env = {
             "PATH": "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
@@ -488,12 +532,12 @@ class ToolkitBackend:
             "USER": "root",
             "LOGNAME": "root",
             "PERSISTENCE_SH": str(
-                HDMI_AUDIO_HELPER_PATH.parent.parent
+                helper.parent.parent
                 / "bc250-update-persistence.sh"
             ),
         }
         await self._exec(
-            [BASH, str(HDMI_AUDIO_HELPER_PATH), command],
+            [BASH, str(helper), command],
             timeout=120,
             env=env,
         )
@@ -800,16 +844,20 @@ class ToolkitBackend:
             "currentBoot": current_boot,
         }
 
+    def _cpu_unlock_payload_path(self, *, off_only: bool = False) -> Optional[Path]:
+        for payload in (CPU_UNLOCK_PAYLOAD_PATH, CPU_HELPER_PATH.parent):
+            if not self._trusted_root_directory(payload):
+                continue
+            required = (Path("bc250-power.sh"),) if off_only else CPU_UNLOCK_PAYLOAD_FILES
+            if all(self._trusted_root_file(payload / relative) for relative in required):
+                return payload
+        return None
+
     def _cpu_unlock_payload_available(self) -> bool:
-        return self._trusted_root_directory(CPU_UNLOCK_PAYLOAD_PATH) and all(
-            self._trusted_root_file(CPU_UNLOCK_PAYLOAD_PATH / relative)
-            for relative in CPU_UNLOCK_PAYLOAD_FILES
-        )
+        return self._cpu_unlock_payload_path() is not None
 
     def _cpu_unlock_off_payload_available(self) -> bool:
-        return self._trusted_root_directory(
-            CPU_UNLOCK_PAYLOAD_PATH
-        ) and self._trusted_root_file(CPU_UNLOCK_PAYLOAD_PATH / "bc250-power.sh")
+        return self._cpu_unlock_payload_path(off_only=True) is not None
 
     def _cpu_unlock_persistent(self) -> bool:
         if not self._trusted_root_file(CPU_UNLOCK_PERSISTENCE_PATH):
@@ -2261,7 +2309,7 @@ class ToolkitBackend:
             "rebootRequired": False,
             "protected": False,
         }
-        if not self._trusted_root_file(RAM_HELPER_PATH):
+        if self._ram_helper_path() is None:
             return unavailable
         output = await self._ram_tool("status-json", timeout=10)
         try:
@@ -2437,6 +2485,15 @@ class ToolkitBackend:
                 "schedulerActive": False,
                 "globalEnabled": False,
                 "restartRequired": False,
+                "fsr4State": "not-installed",
+                "fsr4IcdPath": str(
+                    self.user_home
+                    / ".local/share/bc250-mesh-shader/fsr4/radeon_fsr4_icd.x86_64.json"
+                ),
+                "fsr4RunnerPath": str(
+                    self.user_home
+                    / ".local/share/bc250-mesh-shader/fsr4/bc250-fsr4-run"
+                ),
                 "error": None,
                 "games": [],
             }
@@ -2477,6 +2534,14 @@ class ToolkitBackend:
         scheduler_active = status.get("schedulerActive", False)
         global_enabled = status.get("globalEnabled", False)
         restart_required = status.get("restartRequired", False)
+        fsr4_state = status.get("fsr4State", "not-installed")
+        fsr4_root = self.user_home / ".local/share/bc250-mesh-shader/fsr4"
+        fsr4_icd_path = status.get(
+            "fsr4IcdPath", str(fsr4_root / "radeon_fsr4_icd.x86_64.json")
+        )
+        fsr4_runner_path = status.get(
+            "fsr4RunnerPath", str(fsr4_root / "bc250-fsr4-run")
+        )
         status_error = status.get("error")
         if mesa_version is not None and not isinstance(mesa_version, str):
             raise CommandError("Mesa / RADV status returned an invalid Mesa version.")
@@ -2497,6 +2562,16 @@ class ToolkitBackend:
             raise CommandError("Mesa / RADV status returned invalid global state.")
         if type(restart_required) is not bool:
             raise CommandError("Mesa / RADV status returned invalid restart state.")
+        if fsr4_state not in {"ready", "not-installed", "invalid"}:
+            raise CommandError("Mesa / RADV status returned invalid FSR4 state.")
+        for path in (fsr4_icd_path, fsr4_runner_path):
+            if (
+                not isinstance(path, str)
+                or not path.startswith("/")
+                or len(path) > 4096
+                or not path.isprintable()
+            ):
+                raise CommandError("Mesa / RADV status returned an invalid FSR4 path.")
         if status_error is not None and not isinstance(status_error, str):
             raise CommandError("Mesa / RADV status returned an invalid error message.")
         return {
@@ -2510,6 +2585,9 @@ class ToolkitBackend:
             "schedulerActive": scheduler_active,
             "globalEnabled": global_enabled,
             "restartRequired": restart_required,
+            "fsr4State": fsr4_state,
+            "fsr4IcdPath": fsr4_icd_path,
+            "fsr4RunnerPath": fsr4_runner_path,
             "error": status_error,
             "games": normalized_games,
         }
@@ -2922,12 +3000,8 @@ class ToolkitBackend:
             raise CommandError("Unknown CPU core-unlock action.")
 
         async def action() -> dict[str, Any]:
-            payload_available = (
-                self._cpu_unlock_off_payload_available()
-                if action_name == "off"
-                else self._cpu_unlock_payload_available()
-            )
-            if not payload_available:
+            payload = self._cpu_unlock_payload_path(off_only=action_name == "off")
+            if payload is None:
                 raise CommandError(
                     "CPU core-unlock helper bundle is missing or unsafe; reinstall the service."
                 )
@@ -2948,7 +3022,7 @@ class ToolkitBackend:
             await self._exec(
                 [
                     BASH,
-                    str(CPU_UNLOCK_PAYLOAD_PATH / "bc250-power.sh"),
+                    str(payload / "bc250-power.sh"),
                     "cpu-unlock",
                     action_name,
                 ],

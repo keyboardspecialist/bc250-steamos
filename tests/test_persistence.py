@@ -749,6 +749,16 @@ grep -Fxq "daemon-reload" "$SYSTEMCTL_LOG"
             )
             self.assertEqual(Path(os.readlink(str(link))), Path("../test.service"))
 
+    def test_shared_service_payload_is_user_traversable(self):
+        source = SHARED_INSTALL.read_text(encoding="utf-8")
+        self.assertIn(
+            'SHARED_STAGE=$(mktemp -d /var/lib/bc250-control/.desktop-stage.XXXXXX)\n'
+            '    chmod 0755 "$SHARED_STAGE"',
+            source,
+        )
+        repair = DESKTOP_REPAIR.read_text(encoding="utf-8")
+        self.assertIn('chmod 0755 "$PAYLOAD_DIR"', repair)
+
     def test_all_shell_entrypoints_parse(self):
         scripts = [
             "bc250-toolkit.sh",

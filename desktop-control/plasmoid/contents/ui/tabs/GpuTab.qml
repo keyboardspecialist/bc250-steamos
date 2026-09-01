@@ -9,6 +9,7 @@ ColumnLayout {
     required property var backend
     readonly property var snapshot: backend.snapshot
     readonly property var gpu: snapshot.gpu
+    readonly property var mesh: backend.meshStatus || ({})
     property string mode: gpu.mode
     property int minimum: gpu.minimum || 0
     property int maximum: gpu.maximum || gpu.configuredMax || 1500
@@ -69,6 +70,26 @@ ColumnLayout {
     }
 
     Components.Section {
+        title: "Mesa / RADV and Compute Queues"
+        Components.StatusRow { label: "Patched AMDGPU"; value: root.mesh.kernelReady ? "Installed and active" : "Not ready"; health: root.mesh.kernelReady ? 1 : -1 }
+        Components.StatusRow {
+            label: "Scheduler policy"
+            value: root.mesh.schedulerActive ? "Active" : root.mesh.schedulerConfigured ? "Reboot required" : "Disabled"
+            health: root.mesh.schedulerActive ? 1 : root.mesh.schedulerConfigured ? 0 : -1
+        }
+        Components.StatusRow { label: "RADV runtime"; value: root.mesh.runtimeState || "Unavailable"; health: root.mesh.runtimeState === "ready" ? 1 : -1 }
+        Components.StatusRow { label: "Global activation"; value: root.mesh.globalEnabled ? "Enabled" : "Disabled"; health: root.mesh.globalEnabled ? 1 : 0 }
+        Components.StatusRow { label: "Private FSR4 profile"; value: root.mesh.fsr4State || "Unavailable"; health: root.mesh.fsr4State === "ready" ? 1 : root.mesh.fsr4State === "invalid" ? -1 : 0 }
+        Components.StatusRow { label: "FSR4 runner"; value: root.mesh.fsr4RunnerPath || "Unavailable" }
+        Kirigami.InlineMessage {
+            Layout.fillWidth: true
+            visible: Boolean(root.mesh.error) || root.mesh.runtimeState === "invalid" || root.mesh.fsr4State === "invalid"
+            type: Kirigami.MessageType.Warning
+            text: root.mesh.error || "A Mesa / RADV runtime failed integrity validation. Repair it from the toolkit."
+        }
+    }
+
+    Components.Section {
         title: "Frequency"
         QQC2.ComboBox {
             id: modeBox
@@ -80,7 +101,7 @@ ColumnLayout {
         }
         QQC2.Label { text: "Minimum clock"; visible: root.mode === "adaptive" || root.mode === "range" }
         QQC2.SpinBox {
-            from: 0; to: Math.min(root.gpu.allowedMaximum || 2150, 2150); stepSize: 50
+            from: 0; to: Math.min(root.gpu.allowedMaximum || 2230, 2230); stepSize: 50
             value: root.minimum; editable: true; enabled: root.controllable
             visible: root.mode === "adaptive" || root.mode === "range"
             Layout.fillWidth: true
@@ -90,7 +111,7 @@ ColumnLayout {
         }
         QQC2.Label { text: root.mode === "pin" ? "Pinned clock" : "Maximum clock"; visible: root.mode !== "max" }
         QQC2.SpinBox {
-            from: root.frequencyMinimum; to: Math.min(root.gpu.allowedMaximum || 2150, 2150); stepSize: 50
+            from: root.frequencyMinimum; to: Math.min(root.gpu.allowedMaximum || 2230, 2230); stepSize: 50
             value: root.maximum; editable: true; enabled: root.controllable
             visible: root.mode !== "max"; Layout.fillWidth: true
             textFromValue: (value) => value + " MHz"

@@ -31,6 +31,7 @@ import { CpuTab } from "./tabs/CpuTab";
 import { CuTab } from "./tabs/CuTab";
 import { GpuTab } from "./tabs/GpuTab";
 import { MeshTab } from "./tabs/MeshTab";
+import { RamTab } from "./tabs/RamTab";
 import {
   OverviewTab,
   OverviewSummary,
@@ -292,13 +293,21 @@ function FullControl() {
     },
     {
       id: "cpu",
-      label: "CPU OC",
+      label: "CPU",
       icon: <FaCog />,
       healthy:
         snapshot.toolkit.privileged &&
         snapshot.toolkit.cpuControlAvailable &&
         serviceActive(snapshot.cpu.service.active),
       content: <CpuTab {...tabProps} />,
+    },
+    {
+      id: "ram",
+      label: "Memory",
+      icon: <FaMemory />,
+      healthy: snapshot.toolkit.privileged && snapshot.ram.available
+        && snapshot.ram.toolState === "verified" && snapshot.ram.ttmState !== "foreign",
+      content: <RamTab {...tabProps} />,
     },
     {
       id: "audio",

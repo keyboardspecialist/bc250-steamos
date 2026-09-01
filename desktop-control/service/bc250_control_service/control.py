@@ -76,6 +76,10 @@ class ControlService:
         caller = await self._caller(sender)
         return _compact_json(await self._backend(caller).get_cpu_unlock_status())
 
+    async def get_mesh_status(self, sender: str) -> str:
+        caller = await self._caller(sender)
+        return _compact_json(await self._backend(caller).get_mesh_status())
+
     async def get_operation(self, sender: str, operation_id: str) -> str:
         caller = await self._caller(sender)
         return _compact_json(self._operations.get(operation_id, caller.uid))
@@ -272,6 +276,17 @@ class ControlService:
             "ram",
             "RemoveTtmOverride",
             lambda backend: backend.remove_ttm_override(),
+            cancellable=False,
+        )
+
+    async def set_hdmi_surround(self, sender: str, enabled: bool) -> str:
+        if type(enabled) is not bool:
+            raise InvalidArguments("HDMI surround state must be a boolean.")
+        return await self._submit(
+            sender,
+            "audio",
+            "SetHdmiSurround",
+            lambda backend: backend.set_hdmi_surround(enabled),
             cancellable=False,
         )
 
