@@ -1936,7 +1936,7 @@ cmd_menu() {
         fi
         local items=(
             "Status overview|${runtime_state}|Verify the patched AMDGPU module, scheduler policy, RADV runtime, and global activation."
-            "Build / install RADV async-compute patch|${runtime_state}|Optional but highly recommended after Step 1 AMDGPU fixes. Enables GFX1013 async compute; usually takes 3-5 minutes. A verified profile is reused."
+            "Build / install RADV async-compute patch|${runtime_state}|Optional but highly recommended after AMDGPU kernel fixes. Enables GFX1013 async compute; usually takes 3-5 minutes. A verified profile is reused."
             "Build experimental FSR4 profile|${fsr4_state}|Installs async RADV if needed, then incrementally builds a private per-game FSR4 driver from the same Mesa tree."
             "Older per-game setup cleanup|${legacy_state}|Migration only: remove old MESA_DRICONF_EXECUTABLE_OVERRIDE and VK_ICD_FILENAMES Steam launch options, then clear their records."
             "Uninstall Mesa / RADV runtime|${runtime_state}|Remove the alternate driver, ICD, and user environment generator; preserve build caches."

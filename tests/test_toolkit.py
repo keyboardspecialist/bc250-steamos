@@ -149,20 +149,37 @@ class ToolkitTests(unittest.TestCase):
             source.index("cmd_guided_setup_menu() {") : source.index("cmd_drivers_menu() {")
         ]
         for label in (
-            "Step 1 - AMDGPU kernel fixes",
-            "Step 2 - Power foundation",
-            "Step 3 - Memory balance",
-            "Optional GPU CU unlock",
-            "Optional CPU core unlock",
+            "GPU compute-unit unlock",
+            "CPU core unlock",
+            "AMDGPU kernel fixes",
+            "Power foundation",
+            "Memory balance",
+            "Performance tuning",
             "Finish - Verify system",
         ):
             self.assertIn(label, guided_menu)
         self.assertIn("load-test", guided_menu.lower())
         self.assertIn("reboot", guided_menu.lower())
+        self.assertIn("choose by goal", guided_menu)
+        self.assertNotIn("Step 1", guided_menu)
+        self.assertNotIn("Step 2", guided_menu)
+        self.assertNotIn("Step 3", guided_menu)
         self.assertNotIn("Persistent foundation", guided_menu)
         self.assertNotIn("run_menu_child storage", guided_menu)
-        self.assertIn("5) run_menu_child compute", guided_menu)
-        self.assertIn("6) run_menu_child cpu-unlock", guided_menu)
+        self.assertLess(
+            guided_menu.index("GPU compute-unit unlock"),
+            guided_menu.index("Performance tuning"),
+        )
+        self.assertLess(
+            guided_menu.index("CPU core unlock"),
+            guided_menu.index("Performance tuning"),
+        )
+        self.assertIn("1) run_menu_child compute", guided_menu)
+        self.assertIn("2) run_menu_child cpu-unlock", guided_menu)
+        self.assertIn("3) run_menu_action amdgpu", guided_menu)
+        self.assertIn("4) run_menu_child power", guided_menu)
+        self.assertIn("5) run_menu_child ram", guided_menu)
+        self.assertIn("6) cmd_performance_menu", guided_menu)
         self.assertIn("9) run_menu_action status", guided_menu)
         self.assertIn("cmd_guided_setup_menu", main_menu)
 

@@ -684,23 +684,23 @@ run_menu_action() {
 show_guided_setup_overview() {
     echo
     printf '%s\n' "${CB}${CC}BC-250 guided setup${C0}"
-    printf '%s\n' "Complete the foundation in order. Return after each required reboot."
-    printf '%s\n' "Power setup deliberately stops before enabling the GPU governor at boot; load-test it first."
+    printf '%s\n' "Start with the hardware unlock you care about, then complete its supporting setup."
+    printf '%s\n' "Each unlock has its own test and recovery path; performance tuning comes afterward."
     echo
-    printf '  %-24s %s\n' "1. AMDGPU kernel fixes" "$(amdgpu_badge)"
-    printf '  %-24s %s\n' "2. Power foundation" "$(power_foundation_badge)"
-    printf '  %-24s %s\n' "3. RAM / VRAM helper" "$(component_badge "$RAM_SPLIT_SH")"
-    printf '  %-24s %s\n' "Optional compressed swap" "$(component_badge "$SWAP_SH")"
-    printf '  %-24s %s\n' "Optional Mesa / RADV" "$(radv_badge)"
-    printf '  %-24s %s\n' "Optional GPU CU unlock" "$(component_badge "$COMPUTE_SH")"
-    printf '  %-24s %s\n' "Optional CPU core unlock" "${CD}[guided test]${C0}"
-    printf '  %-24s %s\n' "Optional HDMI-CEC" "$(component_badge "$CEC_SH")"
+    printf '  %-24s %s\n' "GPU CU unlock" "$(component_badge "$COMPUTE_SH")"
+    printf '  %-24s %s\n' "CPU core unlock" "${CD}[guided test]${C0}"
+    printf '  %-24s %s\n' "AMDGPU kernel fixes" "$(amdgpu_badge)"
+    printf '  %-24s %s\n' "Power foundation" "$(power_foundation_badge)"
+    printf '  %-24s %s\n' "RAM / VRAM helper" "$(component_badge "$RAM_SPLIT_SH")"
+    printf '  %-24s %s\n' "Performance tuning" "$(radv_badge)"
+    printf '  %-24s %s\n' "Compressed swap" "$(component_badge "$SWAP_SH")"
+    printf '  %-24s %s\n' "HDMI / CEC" "$(component_badge "$CEC_SH")"
     echo
     printf '  %-24s %s\n' "Automatic infrastructure" "$(component_badge "$STORAGE_SH")"
     printf '%s\n' "  Persistent storage is installed automatically by components that need it."
     echo
     printf '%s\n' "${CY}Checkpoints:${C0} Reboot after AMDGPU, install RADV, then reboot again to enable async compute safely."
-    printf '%s\n' "CMOS, CPU-core, and GPU-CU changes are advanced and stay outside the foundation path."
+    printf '%s\n' "Power setup still requires an ACPI reboot and a load test before enabling the GPU governor at boot."
     pause_key
 }
 
@@ -709,26 +709,26 @@ cmd_guided_setup_menu() {
     require_normal_user
     while true; do
         local items=(
-            "Setup overview|${CD}[read only]${C0}|Show the recommended order, current component state, and restart checkpoints."
-            "Step 1 - AMDGPU kernel fixes|$(amdgpu_badge)|Build and install the required kernel module, but leave sched_policy=2 off. Reboot before RADV setup."
-            "Step 2 - Power foundation|$(power_foundation_badge)|Install ACPI, reboot, then load-test the GPU governor before enabling it at boot."
-            "Step 3 - Memory balance|$(component_badge "$RAM_SPLIT_SH")|Install the helper, then choose CMOS minimum VRAM and the dynamic TTM limit."
-            "Optional performance|$(radv_badge)|Build the Mesa RADV patch that enables GFX1013 async compute, or tune GPU and CPU behavior. RADV takes about 3-5 minutes."
-            "Optional GPU CU unlock|$(component_badge "$COMPUTE_SH")|Inspect the harvest map, test live routing, stress-test it, then choose whether to persist it."
-            "Optional CPU core unlock|${CD}[guided test]${C0}|Test eight cores once, then choose one automatic unlock method: standard Linux or EFI pre-boot."
-            "Optional devices||Configure HDMI audio or CEC, or install AIC8800 support only when matching hardware is present."
+            "Setup overview|${CD}[read only]${C0}|Show the goal-first order, current component state, and restart checkpoints."
+            "GPU compute-unit unlock|$(component_badge "$COMPUTE_SH")|Inspect the harvest map, test live routing, stress-test it, then choose whether to persist it."
+            "CPU core unlock|${CD}[guided test]${C0}|Test eight cores once, then choose one automatic unlock method: standard Linux or EFI pre-boot. Install AMDGPU fixes afterward for corrected eight-core telemetry."
+            "AMDGPU kernel fixes|$(amdgpu_badge)|Build the corrected kernel module, but leave sched_policy=2 off. Reboot before RADV setup."
+            "Power foundation|$(power_foundation_badge)|Install ACPI, reboot, then load-test the GPU governor before enabling it at boot."
+            "Memory balance|$(component_badge "$RAM_SPLIT_SH")|Install the helper, then choose CMOS minimum VRAM and the dynamic TTM limit."
+            "Performance tuning|$(radv_badge)|Build the Mesa RADV async-compute patch or tune GPU and CPU behavior after unlock testing. RADV takes about 3-5 minutes."
+            "Devices & connectivity||Configure HDMI audio or CEC, or install AIC8800 support only when matching hardware is present."
             "Choose control interface||Install Decky for Gaming Mode, Plasma for desktop, or the standalone Trainer."
             "Finish - Verify system|${CD}[read only]${C0}|Run the complete status report after required reboot and sign-out checkpoints."
         )
-        menu_select "BC-250 guided setup  ${CD}(safe order)${C0}" "${items[@]}" || { echo; break; }
+        menu_select "BC-250 guided setup  ${CD}(choose by goal)${C0}" "${items[@]}" || { echo; break; }
         case $MENU_CHOICE in
             0) show_guided_setup_overview ;;
-            1) run_menu_action amdgpu ;;
-            2) run_menu_child power ;;
-            3) run_menu_child ram ;;
-            4) cmd_performance_menu ;;
-            5) run_menu_child compute ;;
-            6) run_menu_child cpu-unlock ;;
+            1) run_menu_child compute ;;
+            2) run_menu_child cpu-unlock ;;
+            3) run_menu_action amdgpu ;;
+            4) run_menu_child power ;;
+            5) run_menu_child ram ;;
+            6) cmd_performance_menu ;;
             7) cmd_devices_menu ;;
             8) cmd_interfaces_menu ;;
             9) run_menu_action status ;;
@@ -912,7 +912,7 @@ cmd_menu() {
     start_sudo_session
     while true; do
         local items=(
-            "Start here - Guided setup|${CG}[recommended]${C0}|Follow the safe dependency order with reboot, load-test, and sign-out checkpoints."
+            "Start here - Guided setup|${CG}[recommended]${C0}|Choose a hardware-unlock goal first, then follow its support, reboot, load-test, and tuning checkpoints."
             "Core system|${CG}[menu]${C0}|Configure storage, AMDGPU, power foundations, memory balance, and update protection."
             "Performance tuning|${CG}[menu]${C0}|Configure Mesa / RADV and optional GPU or CPU tuning after setup is stable."
             "Hardware unlocks|${CG}[menu]${C0}|Test GPU compute units or CPU cores with explicit stability and recovery steps."
