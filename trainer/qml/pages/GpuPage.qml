@@ -16,6 +16,7 @@ ColumnLayout {
     property int maximum: gpu.maximum ?? 1500
     property int loadMinimum: Math.round((gpu.loadLower ?? 0.65) * 100)
     property int loadMaximum: Math.round((gpu.loadUpper ?? 0.80) * 100)
+    property int temperatureTarget: gpu.temperatureTarget ?? 85
     property int ramp: gpu.climbMs ?? 500
     readonly property bool frequencyValid: root.mode !== "range"
         || ((root.minimum === 0 || root.minimum >= 300) && root.minimum <= root.maximum)
@@ -79,6 +80,14 @@ ColumnLayout {
         Slider { from: 1; to: 98; stepSize: 1; value: root.loadMinimum; enabled: root.enabledControls; Layout.fillWidth: true; onMoved: root.loadMinimum = Math.round(value) }
         Slider { from: 2; to: 99; stepSize: 1; value: root.loadMaximum; enabled: root.enabledControls; Layout.fillWidth: true; onMoved: root.loadMaximum = Math.round(value) }
         C.NeonButton { text: "SET"; enabled: root.enabledControls && root.loadMinimum < root.loadMaximum; onClicked: root.backend.setCustomLoadTarget(root.loadMinimum, root.loadMaximum) }
+    }
+
+    C.SectionHeader { text: "Thermal target" }
+    RowLayout {
+        Layout.fillWidth: true
+        Text { text: root.temperatureTarget + " C / recover " + (root.temperatureTarget - 10) + " C"; color: "#22e7f2"; font.family: "monospace"; font.pixelSize: 10 }
+        Slider { from: 50; to: 100; stepSize: 1; value: root.temperatureTarget; enabled: root.enabledControls; Layout.fillWidth: true; onMoved: root.temperatureTarget = Math.round(value) }
+        C.NeonButton { text: "SET TEMP"; enabled: root.enabledControls; onClicked: root.backend.setTemperatureTarget(root.temperatureTarget) }
     }
 
     C.SectionHeader { text: "Ramp and voltage curve" }

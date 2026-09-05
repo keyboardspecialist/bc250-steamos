@@ -90,6 +90,10 @@ constexpr OperationDefinition Operations[] = {
      "Build and install the matching WiFi and Bluetooth kernel modules.", false, false},
     {"aic-remove", "Remove AIC8800 drivers", "aic", "REMOVE",
      "Unload where possible and remove toolkit-installed modules and firmware.", false, true},
+    {"fan-install", "Build NCT6687 fan driver", "fan", "BUILD + INSTALL",
+     "Install pinned hwmon fan tachometer and PWM support for compatible Nuvoton controllers.", false, false},
+    {"fan-remove", "Remove NCT6687 fan driver", "fan", "REMOVE",
+     "Restore firmware fan control and remove the toolkit module and boot recovery.", false, true},
     {"audio-build", "Build AMDGPU kernel fixes", "audio", "BUILD + INSTALL",
      "Install kernel-specific telemetry and GFX1013 fixes, plus display/audio corrections where required, without enabling sched_policy=2. Reboot before RADV setup.", false, false},
     {"audio-remove", "Remove AMDGPU kernel fixes", "audio", "REMOVE",
@@ -1016,7 +1020,8 @@ QVariantMap ToolkitController::mockInventory() const
                               QStringLiteral("power"), QStringLiteral("ram"),
                               QStringLiteral("swap"),
                               QStringLiteral("compute"), QStringLiteral("mesh"),
-                             QStringLiteral("audio"), QStringLiteral("aic"),
+                             QStringLiteral("audio"), QStringLiteral("fan"),
+                             QStringLiteral("aic"),
                              QStringLiteral("storage")};
     QVariantList components;
     for (const QString &id : ids) {

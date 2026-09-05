@@ -882,6 +882,34 @@ class BackendMutationTests(unittest.IsolatedAsyncioTestCase):
             "SetLoadTarget", "dd", "0.35", "0.70"
         )
 
+    async def test_temperature_target_updates_config_and_live_thresholds(self):
+        backend = object.__new__(ToolkitBackend)
+        prepare_mutation_backend(backend)
+        backend._update_gpu_config = AsyncMock()
+        backend._gpu_call = AsyncMock()
+
+        await backend.set_temperature_target(80)
+
+        self.assertEqual(
+            backend._update_gpu_config.await_args.args[0],
+            {
+                "temperature": {
+                    "throttling": "80",
+                    "throttling_recovery": "70",
+                }
+            },
+        )
+        callback = backend._update_gpu_config.await_args.kwargs["live_callback"]
+        await callback()
+        backend._gpu_call.assert_awaited_once_with(
+            "SetTemperatureThresholds", "uu", "80", "70"
+        )
+
+    async def test_temperature_target_rejects_unsafe_value(self):
+        backend = object.__new__(ToolkitBackend)
+        with self.assertRaisesRegex(CommandError, "50-100"):
+            await backend.set_temperature_target(101)
+
     async def test_cu_rpc_rejects_boolean_coordinate(self):
         backend = object.__new__(ToolkitBackend)
         with self.assertRaisesRegex(CommandError, "whole numbers"):

@@ -33,6 +33,7 @@ private slots:
             QStringLiteral("cec-repair"), QStringLiteral("cec-remove"),
             QStringLiteral("persistence-install"), QStringLiteral("persistence-remove"),
             QStringLiteral("aic-install"), QStringLiteral("aic-remove"),
+            QStringLiteral("fan-install"), QStringLiteral("fan-remove"),
             QStringLiteral("audio-build"), QStringLiteral("audio-remove"),
             QStringLiteral("mesh-setup"), QStringLiteral("mesh-remove"),
             QStringLiteral("decky-install"), QStringLiteral("decky-remove"),

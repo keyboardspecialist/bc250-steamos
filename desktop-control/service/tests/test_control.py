@@ -80,6 +80,9 @@ class FakeBackend:
     async def set_custom_load_target(self, *args):
         await self._mutation("set_custom_load_target", *args)
 
+    async def set_temperature_target(self, *args):
+        await self._mutation("set_temperature_target", *args)
+
     async def set_ramp(self, *args):
         await self._mutation("set_ramp", *args)
 
@@ -179,6 +182,20 @@ class ControlServiceTests(unittest.IsolatedAsyncioTestCase):
         await self.wait_for_status(":1.1", first, "succeeded")
         await self.wait_for_status(":1.2", second, "succeeded")
         self.assertEqual(FakeBackend.maximum_active, 1)
+
+    async def test_gpu_temperature_target_is_validated_and_authorized(self):
+        with self.assertRaisesRegex(InvalidArguments, "50-100"):
+            await self.service.set_temperature_target(":1.1", 101)
+
+        operation_id = await self.service.set_temperature_target(":1.1", 80)
+        operation = await self.wait_for_status(":1.1", operation_id, "succeeded")
+        self.assertEqual(operation["method"], "SetTemperatureTarget")
+        self.assertEqual(
+            self.backends[0].calls, [("set_temperature_target", (80,))]
+        )
+        self.assertEqual(
+            self.authorizer.calls, [(":1.1", 1000, "audit:1000", "gpu")]
+        )
 
     async def test_cpu_job_survives_request_completion_and_can_be_cancelled(self):
         operation_id = await self.service.cpu_oc_action(

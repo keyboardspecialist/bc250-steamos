@@ -76,6 +76,35 @@ class HdmiAc3Tests(unittest.TestCase):
             self.assertIn("WirePlumber config: foreign", result.stdout)
             self.assertIn("state: incomplete", result.stdout)
 
+    def test_previous_device_id_configuration_can_be_migrated(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            udev, wireplumber, _ = self.render_managed_files(root)
+            udev.write_text(
+                udev.read_text(encoding="utf-8").replace("0x13ff", "0x1640"),
+                encoding="utf-8",
+            )
+            wireplumber.write_text(
+                wireplumber.read_text(encoding="utf-8").replace(
+                    "0x13ff", "0x1640"
+                ),
+                encoding="utf-8",
+            )
+            subprocess.run(
+                [
+                    "bash",
+                    "-c",
+                    'script=$1; udev=$2; wp=$3; set -- help; source "$script" >/dev/null; '
+                    'preflight_managed_file "$udev" udev_rule_content; '
+                    'preflight_managed_file "$wp" wireplumber_content',
+                    "_",
+                    str(SCRIPT),
+                    str(udev),
+                    str(wireplumber),
+                ],
+                check=True,
+            )
+
     def test_live_ac3_profile_without_managed_files_is_incomplete(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -112,7 +141,9 @@ class HdmiAc3Tests(unittest.TestCase):
         self.assertIn("session.suspend-timeout-seconds = 3600", source)
         self.assertIn("api.alsa.start-delay = 1536", source)
         self.assertIn('ATTRS{vendor}=="0x1002"', source)
-        self.assertIn('ATTRS{device}=="0x1640"', source)
+        self.assertIn('ATTRS{device}=="0x13ff"', source)
+        self.assertIn('device.product.id = "0x13ff"', source)
+        self.assertIn("legacy_managed_file_matches", source)
         self.assertIn("preflight_managed_file", source)
         self.assertIn("output:hdmi-stereo", source)
         self.assertIn('bash "$PERSISTENCE_SH" install ac3', source)
@@ -203,6 +234,7 @@ class HdmiAc3Tests(unittest.TestCase):
                     "-c",
                     'script=$1; set -- help; source "$script" >/dev/null; '
                     'require_root() { :; }; '
+                    'steamos-readonly() { [[ "$1" == status ]] && echo disabled; }; '
                     'udevadm() { [[ "$1" != control ]]; }; '
                     "install_system_config",
                     "_",

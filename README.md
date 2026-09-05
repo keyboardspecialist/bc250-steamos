@@ -29,6 +29,7 @@ Open the unified toolkit menu as the logged-in Deck user:
 | GPU compute-unit unlock | `sudo ./bc250-40cu.sh` |
 | CEC | `./bc250-cec.sh setup` |
 | HDMI Dolby Digital 5.1 (optional) | **Display & Connectivity > HDMI audio** or `./hdmi-ac3/hdmi-ac3.sh install` |
+| NCT6687 fan-control driver (optional) | `./bc250-toolkit.sh fan-driver` |
 | AIC8800 | `sudo bash ./aic8800/steamdeck-setup.sh` |
 | Decky plugin | `bash ./decky-plugin/install.sh` |
 | Plasma desktop control | `bash ./desktop-control/install.sh install` |
@@ -59,6 +60,7 @@ sudo ./bc250-storage.sh install
 | ACPI and CPU frequency | `sudo ./bc250-power.sh acpi` |
 | GPU compute-unit unlock | `sudo ./bc250-40cu.sh persist` |
 | CEC shutdown integration | `./bc250-cec.sh shutdown-standby install` |
+| NCT6687 fan-control driver | `sudo bash ./nct6687d/steamdeck-setup.sh install` |
 | AIC8800 | `sudo bash ./aic8800/steamdeck-setup.sh` |
 | Plasma desktop control | `bash ./desktop-control/install.sh install` |
 | BC250 Trainer | `./bc250-toolkit.sh trainer` |
@@ -87,6 +89,7 @@ sudo ./bc250-power.sh status
 | [`bc250-audio-fix/`](#amdgpu-driver) | DisplayPort clock, GPU telemetry, and GFX1013 compute repair |
 | [`hdmi-ac3/`](#hdmi-ac-3-surround-encoding-optional) | Real-time Dolby Digital 5.1 encoding over HDMI/DisplayPort |
 | [`bc250-mesh-shader.sh`](#mesa--radv-async-compute-patch-optional-recommended) | Optional, recommended Mesa / RADV async-compute driver enabled globally for the user session |
+| [`nct6687d/`](#nct6687d-fan-control-driver) | Optional NCT6683/6686/6687 hwmon fan tachometer and PWM driver |
 | [`aic8800/`](#wifi-and-bluetooth) | AIC8800 USB WiFi and Bluetooth driver |
 
 The unified launcher and individual component scripts remain independently usable. Use the child scripts directly for command-line automation.
@@ -107,7 +110,7 @@ Each child requests administrator access only when needed.
 | `./bc250-toolkit.sh status` | Show the read-only component status overview |
 | `./bc250-toolkit.sh inventory-json` | Emit versioned lifecycle state for the native Trainer dashboard |
 | `./bc250-toolkit.sh action OPERATION_ID` | Run one fixed dashboard action without opening a TUI |
-| `./bc250-toolkit.sh drivers` | Open AMDGPU, Mesa / RADV, and AIC8800 driver setup |
+| `./bc250-toolkit.sh drivers` | Open AMDGPU, Mesa / RADV, NCT6687, and AIC8800 driver setup |
 | `./bc250-toolkit.sh unlocks` | Open GPU compute-unit and CPU core unlock setup |
 | `./bc250-toolkit.sh power` | Open a component menu directly |
 | `./bc250-toolkit.sh ram` | Open RAM / VRAM split settings |
@@ -115,6 +118,7 @@ Each child requests administrator access only when needed.
 | `./bc250-toolkit.sh amdgpu` | Build the AMDGPU kernel fixes |
 | `./bc250-toolkit.sh radv` | Open the global Mesa / RADV async-compute menu |
 | `./bc250-toolkit.sh audio-output` | Open HDMI AC-3 enable and stereo-revert options |
+| `./bc250-toolkit.sh fan-driver` | Build and install optional NCT6687 hwmon fan/PWM support |
 | `./bc250-toolkit.sh trainer` | Download, verify, and install the latest native BC250 Trainer release |
 | `./bc250-toolkit.sh manage` | Review and remove installed components |
 | `./bc250-toolkit.sh help` | List launcher commands and components |
@@ -165,7 +169,9 @@ Component uninstall restores stock behavior and removes services, drivers, and
 desktop integrations in dependency-safe order. Saved tuning profiles, CEC
 preferences, source/build caches, and persistent backing data are preserved by
 default. RAM firmware reset uses a CMOS clear. ACPI, TTM, compute routing,
-AMDGPU, and loaded AIC8800 rollback may require a reboot. After every
+AMDGPU, and loaded AIC8800 rollback may require a reboot. The NCT6687
+uninstaller refuses to continue unless it can unload the driver and restore
+firmware fan control. After every
 component is removed, permanently delete retained data with
 `./bc250-maintenance.sh purge`. Active toolkit disk swap uses a two-stage
 uninstall: reboot once to deactivate it, then rerun removal.
@@ -319,11 +325,16 @@ sudo ./bc250-power.sh load-target eager
 sudo ./bc250-power.sh load-target set 70 55
 sudo ./bc250-power.sh load-target reset
 
+sudo ./bc250-power.sh temperature set 80
+sudo ./bc250-power.sh temperature reset
+
 sudo ./bc250-power.sh ramp set 500
 sudo ./bc250-power.sh ramp reset
 ```
 
-Frequency, voltage, load-target, and ramp settings persist across boots. The
+Frequency, voltage, load-target, thermal-target, and ramp settings persist
+across boots. The thermal control uses a recovery threshold 10 C below the
+selected throttle target and applies it live when the governor is running. The
 default voltage curve spans 300-2230 MHz; points use a 700-1050 mV range and
 must have increasing frequencies with nondecreasing voltages. Curve updates
 are atomic and restore the prior config/runtime if governor reload or saved
@@ -740,6 +751,36 @@ installation fails. If first-run FSR4 compilation fails after the async profile
 was installed successfully, that valid prerequisite remains installed. Retry
 FSR4 setup; invalid intermediate build state falls back to a clean base build.
 
+## NCT6687D Fan-Control Driver
+
+Install the optional enhanced hwmon driver on systems with a compatible
+NCT6683, NCT6686D, or NCT6687-family Super-I/O controller:
+
+```bash
+./bc250-toolkit.sh fan-driver
+```
+
+The installer fetches
+[`Fred78290/nct6687d`](https://github.com/Fred78290/nct6687d) at pinned commit
+[`a49a8ab`](https://github.com/Fred78290/nct6687d/commit/a49a8abdfb6221772ecc836b3109e0cc338203cf),
+verifies fixed hashes for the source and GPL license, builds as the logged-in
+user, and installs only a `vermagic`-checked `nct6687.ko`. A root-owned source
+snapshot and per-kernel module are retained for SteamOS update recovery. The
+boot helper loads only a hash-verified module already staged for the running
+kernel; it never downloads build input or runs Kbuild as root.
+
+Successful probing creates an `nct6683`, `nct6686`, or `nct6687` hwmon device
+with fan tachometers and writable `pwmN` / `pwmN_enable` controls. Writing `2`
+to `pwmN_enable` restores firmware automatic mode. PWM zero can stop supported
+fans, so userspace fan control must enforce temperature safeguards and restore
+automatic mode before exiting.
+
+The optional `--force-unknown` installer flag permits only unknown `0xdxxx`
+chip IDs. It is deliberately not enabled by the toolkit action: using the wrong
+register map can write unknown controller bits and leave firmware fan control
+in an unsafe state. See [`nct6687d/README.md`](nct6687d/README.md) for status,
+uninstall, hwmon discovery, and force-mode details.
+
 ## AIC8800 Class WiFi and Bluetooth Driver
 
 Install the AIC8800 USB modules and firmware configuration:
@@ -766,6 +807,7 @@ by SCSI eject, while `1111:1111` adapters use the required two-message sequence.
 | HDMI AC-3 encoding | The udev profile selector is retained; the WirePlumber fragment lives in the user's home directory |
 | Patched AMDGPU module | Run `bc250-audio-fix/patch-driver.sh` after each kernel update to rebuild the kernel-specific module; the rebuild disables any retained scheduler policy until RADV setup is rerun |
 | Mesa / RADV async-compute patch | Rerun `bc250-mesh-shader.sh setup` after a SteamOS update to restore the root-owned driver, safety-gated environment generator, and scheduler policy |
+| NCT6687 fan-control module | The boot helper restores only a verified module already staged for the running kernel; rerun setup interactively after a kernel change |
 | AIC8800 modules | The boot helper reuses staged modules or published headers; rerun setup if it requests interactive source preparation |
 
 Current installers preserve their configuration across normal atomic updates.
@@ -813,6 +855,7 @@ Run `./bc250-update-persistence.sh` to open the interactive menu with current pr
 | `sudo ./bc250-update-persistence.sh install swap` | Protect the selected compressed-swap profile |
 | `sudo ./bc250-update-persistence.sh install cec` | Protect CEC system integration |
 | `sudo ./bc250-update-persistence.sh install aic` | Protect AIC8800 system integration |
+| `sudo ./bc250-update-persistence.sh install fan` | Protect NCT6687 fan-driver integration |
 | `sudo ./bc250-update-persistence.sh install all` | Protect every component |
 | `./bc250-update-persistence.sh status` | Show protection and recovery status |
 
@@ -851,6 +894,7 @@ Run the normal component setup commands afterward to regenerate services for the
 | BC-250 FSR4 experiment | [Repository](https://github.com/dmorazasanchez/bc250-fsr4) · [integrated commit](https://github.com/dmorazasanchez/bc250-fsr4/commit/741ff3e369026f34820c41a846cf5e55d08e2a61) | Integrity-checked upstream V3 patch fetched for the optional private FSR4 RADV profile |
 | BC-250 HDMI AC-3 encoding | [Implementation guide and scripts](https://github.com/rpf16rj/bc250-steamos-real-toolkit/tree/main/extras/hdmi-ac3-encoding) | ALSA `a52` routing and WirePlumber profile behavior adapted by `hdmi-ac3/hdmi-ac3.sh` |
 | Valve kernel mirror | [Repository](https://github.com/Evlav/linux-integration) | `bc250-audio-fix/fetch-sources.sh` |
-| SteamOS package mirror | [Package index](https://steamdeck-packages.steamos.cloud/archlinux-mirror/) | Audio-driver and AIC8800 build scripts; stable channels are discovered automatically |
+| SteamOS package mirror | [Package index](https://steamdeck-packages.steamos.cloud/archlinux-mirror/) | Audio, AIC8800, and NCT6687 build scripts; stable channels are discovered automatically |
 | SteamOS atomic-update keep list | [Defaults](https://github.com/evlaV/steamos-customizations/blob/master/atomic-update/rauc/atomic-update-keep.conf.in) · [Drop-in example](https://github.com/evlaV/steamos-customizations/blob/master/atomic-update/rauc/example-additional-keep-list.conf.in) | `bc250-update-persistence.sh` |
 | AIC8800 | [Repository](https://github.com/shenmintao/aic8800d80) · [integrated commit](https://github.com/shenmintao/aic8800d80/commit/e93a7d2b6b9634acefc2aae2891e787fb48fdb01) | `aic8800/steamdeck-setup.sh` |
+| NCT6687D | [Repository](https://github.com/Fred78290/nct6687d) · [integrated commit](https://github.com/Fred78290/nct6687d/commit/a49a8abdfb6221772ecc836b3109e0cc338203cf) | `nct6687d/steamdeck-setup.sh` |

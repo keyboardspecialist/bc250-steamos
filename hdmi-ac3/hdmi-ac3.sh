@@ -32,7 +32,7 @@ udev_rule_content() {
     cat << 'EOF'
 # BC-250 HDMI AC-3 profile selection managed by hdmi-ac3/hdmi-ac3.sh.
 # Match the BC-250 Radeon HDMI audio function; card indices can change between boots.
-SUBSYSTEM=="sound", KERNEL=="card*", ATTRS{vendor}=="0x1002", ATTRS{device}=="0x1640", ENV{ACP_PROFILE_SET}="hdmi-ac3.conf"
+SUBSYSTEM=="sound", KERNEL=="card*", ATTRS{vendor}=="0x1002", ATTRS{device}=="0x13ff", ENV{ACP_PROFILE_SET}="hdmi-ac3.conf"
 EOF
 }
 
@@ -46,7 +46,7 @@ monitor.alsa.rules = [
         device.name = "~alsa_card.pci-.*"
         device.nick = "~HD-Audio Generic"
         device.vendor.id = "0x1002"
-        device.product.id = "0x1640"
+        device.product.id = "0x13ff"
       }
     ]
     actions = {
@@ -85,10 +85,19 @@ managed_file_matches() {
     cmp -s "$target" <("$writer")
 }
 
+legacy_managed_file_matches() {
+    local target="$1" writer="$2"
+    [[ "$writer" == udev_rule_content || "$writer" == wireplumber_content ]] \
+        || return 1
+    [[ -f "$target" && ! -L "$target" ]] || return 1
+    cmp -s "$target" <("$writer" | sed 's/0x13ff/0x1640/g')
+}
+
 preflight_managed_file() {
     local target="$1" writer="$2"
     [[ ! -e "$target" && ! -L "$target" ]] && return 0
     managed_file_matches "$target" "$writer" \
+        || legacy_managed_file_matches "$target" "$writer" \
         || die "Refusing to replace or remove unrecognized file: $target"
 }
 

@@ -42,6 +42,9 @@ class Plugin:
     async def set_custom_load_target(self, minimum: int, maximum: int):
         return await self.backend.set_custom_load_target(minimum, maximum)
 
+    async def set_temperature_target(self, target: int):
+        return await self.backend.set_temperature_target(target)
+
     async def set_ramp(self, climb_ms: int):
         return await self.backend.set_ramp(climb_ms)
 

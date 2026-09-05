@@ -5,6 +5,7 @@ import {
   setGpuFrequency,
   setLoadTarget,
   setRamp,
+  setTemperatureTarget,
 } from "../api";
 import { ActionButton, EmptyState, StatusRow } from "../components/Common";
 import type { GpuMode } from "../types";
@@ -30,6 +31,9 @@ export function GpuTab({ snapshot, busy, runMutation }: TabProps) {
   const [loadMaximum, setLoadMaximum] = useState(
     Math.round((gpu.loadUpper ?? 0.80) * 100),
   );
+  const [temperatureTarget, setTemperatureTargetValue] = useState(
+    gpu.temperatureTarget ?? 85,
+  );
   const frequencyDisabled = busy || !gpu.controllable;
   const frequencyMaximum = Math.min(gpu.allowedMaximum || 2230, 2230);
   const frequencyMinimum = Math.max(gpu.allowedMinimum || 300, 300);
@@ -44,6 +48,7 @@ export function GpuTab({ snapshot, busy, runMutation }: TabProps) {
     setRampMs(gpu.climbMs || 500);
     setLoadMinimum(Math.round((gpu.loadLower ?? 0.65) * 100));
     setLoadMaximum(Math.round((gpu.loadUpper ?? 0.80) * 100));
+    setTemperatureTargetValue(gpu.temperatureTarget ?? 85);
   }, [
     gpu.mode,
     gpu.minimum,
@@ -52,6 +57,7 @@ export function GpuTab({ snapshot, busy, runMutation }: TabProps) {
     gpu.climbMs,
     gpu.loadLower,
     gpu.loadUpper,
+    gpu.temperatureTarget,
   ]);
 
   if (!gpu.available) {
@@ -245,6 +251,30 @@ export function GpuTab({ snapshot, busy, runMutation }: TabProps) {
             runMutation(
               "Custom load target applied",
               () => setCustomLoadTarget(loadMinimum, loadMaximum),
+            )
+          }
+        />
+      </PanelSection>
+
+      <PanelSection title="Thermal Target">
+        <SliderField
+          label="Throttle temperature"
+          description={`Recovery is set to ${temperatureTarget - 10} C to prevent rapid cycling.`}
+          value={temperatureTarget}
+          min={50}
+          max={100}
+          step={1}
+          valueSuffix=" C"
+          editableValue
+          disabled={busy || !gpu.controllable}
+          onChange={setTemperatureTargetValue}
+        />
+        <ActionButton
+          label="Apply thermal target"
+          disabled={busy || !gpu.controllable}
+          onClick={() =>
+            runMutation("GPU thermal target updated", () =>
+              setTemperatureTarget(temperatureTarget),
             )
           }
         />

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # bc250-power.sh
 #
-# Complete power-management setup for the BC-250 on SteamOS 3.8.x:
+# Complete power-management setup for the BC-250 on SteamOS 3.x:
 #
 #   ACPI fix (bc250-collective + mendesrr, guarded universal tables):
 #     SSDT-CST -> CPU C-states (C1/C2/C3 idle sleep)
@@ -2131,6 +2131,84 @@ cmd_load_target() {
         eager)    lt_set "$LT_EAGER_UPPER" "$LT_EAGER_LOWER" ;;
         reset)    lt_set "$LT_DEF_UPPER" "$LT_DEF_LOWER" ;;
         *) die "Usage: $0 load-target {show | set <upper> <lower> | eager | reset}" ;;
+    esac
+}
+
+# ======================== GPU temperature control ========================
+GPU_TEMP_DEFAULT=85
+GPU_TEMP_MIN=50
+GPU_TEMP_MAX=100
+GPU_TEMP_HYSTERESIS=10
+
+temperature_config_get() {
+    local throttling recovery
+    throttling=$(toml_get temperature throttling)
+    recovery=$(toml_get temperature throttling_recovery)
+    [[ -n "$throttling" ]] || throttling=$GPU_TEMP_DEFAULT
+    [[ -n "$recovery" ]] || recovery=$(( throttling - GPU_TEMP_HYSTERESIS ))
+    printf '%s %s\n' "$throttling" "$recovery"
+}
+
+temperature_live_get() {
+    local throttling recovery
+    throttling=$(busctl --system get-property "$BUS_NAME" "$BUS_PATH" "$BUS_IFACE" \
+        TemperatureThrottling 2>/dev/null | awk '{print $2}') || true
+    recovery=$(busctl --system get-property "$BUS_NAME" "$BUS_PATH" "$BUS_IFACE" \
+        TemperatureRecovery 2>/dev/null | awk '{print $2}') || true
+    [[ -n "$throttling" && -n "$recovery" ]] && printf '%s %s\n' "$throttling" "$recovery"
+    return 0
+}
+
+temperature_show() {
+    [[ -f "$GOV_CONF" ]] || die "No governor config at $GOV_CONF -- run '$0 governor' first."
+    local configured live
+    configured=$(temperature_config_get)
+    live=$(temperature_live_get)
+    echo -e "${CB}=== GPU thermal target ===${C0}"
+    echo "  config (applies at boot): throttle ${configured% *} C, recover ${configured#* } C"
+    if [[ -n "$live" ]]; then
+        echo "  live (governor, running): throttle ${live% *} C, recover ${live#* } C"
+    else
+        echo "  live: governor not running (or D-Bus down)"
+    fi
+}
+
+temperature_set() {
+    require_root
+    local target="${1:-}" recovery
+    [[ $# -eq 1 && "$target" =~ ^[0-9]+$ ]] \
+        || die "Usage: $0 temperature set <targetC>   ($GPU_TEMP_MIN-$GPU_TEMP_MAX C)"
+    (( target >= GPU_TEMP_MIN && target <= GPU_TEMP_MAX )) \
+        || die "GPU thermal target must be $GPU_TEMP_MIN-$GPU_TEMP_MAX C."
+    [[ -f "$GOV_CONF" ]] || die "No governor config -- run '$0 governor' first."
+    recovery=$(( target - GPU_TEMP_HYSTERESIS ))
+    gpu_control_lock || return $?
+    cp "$GOV_CONF" "$GOV_CONF.tmp"
+    toml_set temperature throttling "$target" "$GOV_CONF.tmp"
+    toml_set temperature throttling_recovery "$recovery" "$GOV_CONF.tmp"
+    mv "$GOV_CONF.tmp" "$GOV_CONF"
+    log "GPU thermal target saved: throttle at $target C, recover below $recovery C."
+    if systemctl is-active "$GOV_SVC" >/dev/null 2>&1; then
+        if gov_dbus SetTemperatureThresholds uu "$target" "$recovery" >/dev/null 2>&1; then
+            log "Applied live -- no restart needed."
+        else
+            warn "D-Bus call failed -- restarting the governor to load the new target."
+            restart_governor_reapply
+        fi
+    else
+        warn "Governor not running -- target takes effect when it starts."
+    fi
+    gpu_control_unlock
+}
+
+cmd_temperature() {
+    local sub="${1:-show}"
+    shift || true
+    case "$sub" in
+        ""|show) temperature_show ;;
+        set)     temperature_set "$@" ;;
+        reset)   temperature_set "$GPU_TEMP_DEFAULT" ;;
+        *) die "Usage: $0 temperature {show | set <targetC> | reset}" ;;
     esac
 }
 
@@ -4339,13 +4417,16 @@ menu_gpu_tuning() {
         local items=(
             "Frequency & voltage|$(badge_freq)|Set adaptive caps, ranges, pinned clocks, or advanced voltage-curve changes."
             "Load targets|$(badge_load_target)|Choose when the governor clocks up and down."
+            "Thermal target||Set the GPU throttle temperature and automatic 10 C recovery hysteresis."
             "Ramp behavior|$(badge_ramp)|Choose how quickly and granularly GPU clocks move."
         )
         menu_select "GPU performance tuning  ${CD}(governor required)${C0}" "${items[@]}" || return 0
         case $MENU_CHOICE in
             0) menu_freq ;;
             1) menu_load_target ;;
-            2) menu_ramp ;;
+            2) ask "GPU throttle target C ($GPU_TEMP_MIN-$GPU_TEMP_MAX)" "$GPU_TEMP_DEFAULT"
+               run_action temperature_set "$REPLY" ;;
+            3) menu_ramp ;;
         esac
     done
 }
@@ -4605,6 +4686,13 @@ EVERYDAY COMMANDS
               Steam launch options (see STEAM LAUNCH OPTION below), which
               leaves global idle behavior untouched.
 
+  temperature GPU thermal-throttle target. The recovery threshold is kept
+              10 C lower to prevent rapid throttle cycling. Values persist
+              in config.toml and apply live over D-Bus when available:
+    temperature             show configured and live thresholds
+    temperature set 80      throttle at 80 C, recover below 70 C
+    temperature reset       restore the tuned 85/75 C defaults
+
   ramp        GPU ramp behavior: how fast AND how granular clocks move.
               'set' takes ONE number -- idle-to-max climb time in ms --
               and derives the rest for smoothness: climb speed = range/T;
@@ -4675,6 +4763,7 @@ case "${1:-}" in
     freq)         shift; cmd_freq "$@" ;;
     gpu-volt)     shift; cmd_gpu_volt "$@" ;;
     load-target)  shift; cmd_load_target "$@" ;;
+    temperature) shift; cmd_temperature "$@" ;;
     ramp)         shift; cmd_ramp "$@" ;;
     cpu-oc)       shift; cmd_cpu_oc "$@" ;;
     cpu-unlock)   shift; cmd_cpu_unlock "$@" ;;
@@ -4686,7 +4775,7 @@ case "${1:-}" in
     all)          cmd_acpi; cmd_governor ;;
     menu)         cmd_menu ;;
     help|-h|--help) cmd_help ;;
-    *) echo "Usage: $0 {acpi|governor|helpers|freq|gpu-volt|load-target|ramp|cpu-oc|cpu-unlock|cpu-mitigations|enable|installed|uninstall|status|all|menu|help}"
+    *) echo "Usage: $0 {acpi|governor|helpers|freq|gpu-volt|load-target|temperature|ramp|cpu-oc|cpu-unlock|cpu-mitigations|enable|installed|uninstall|status|all|menu|help}"
        echo "  (no arguments on a terminal opens the guided menu)"
        echo "  freq                 show performance-mode state"
        echo "  freq 1800            pin GPU at 1800 MHz (perf mode)"

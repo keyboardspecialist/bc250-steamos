@@ -10,6 +10,10 @@ AIC_INSTALLER = ROOT / "aic8800/steamdeck-setup.sh"
 AIC_HELPER = ROOT / "aic8800/aic8800-ensure-modules.sh"
 AIC_SERVICE = ROOT / "aic8800/aic8800-modules.service"
 AIC_DRIVER = ROOT / "aic8800/src/USB/driver_fw/drivers/aic8800"
+FAN_INSTALLER = ROOT / "nct6687d/steamdeck-setup.sh"
+FAN_FETCHER = ROOT / "nct6687d/fetch-source.sh"
+FAN_HELPER = ROOT / "nct6687d/nct6687-ensure-module.sh"
+FAN_SERVICE = ROOT / "nct6687d/nct6687-modules.service"
 AUDIO_INSTALLER = ROOT / "bc250-audio-fix/patch-driver.sh"
 AUDIO_ROLLBACK = ROOT / "bc250-audio-fix/rollback.sh"
 AUDIO_BOOT_CONFIG = ROOT / "bc250-audio-fix/boot-config.sh"
@@ -42,6 +46,7 @@ class DriverLifecycleTests(unittest.TestCase):
     def test_status_entrypoints_are_read_only_and_do_not_require_sudo(self):
         for script, prefix in (
             (AIC_INSTALLER, "[aic8800]"),
+            (FAN_INSTALLER, "[nct6687]"),
             (AUDIO_INSTALLER, "[bc250-amdgpu]"),
         ):
             result = subprocess.run(
@@ -354,12 +359,76 @@ class DriverLifecycleTests(unittest.TestCase):
         self.assertIn("BUILD_ZLP_KO", helper)
         self.assertIn("zlp_target_present", helper)
 
+    def test_nct6687_source_and_build_are_pinned_and_verified(self):
+        fetcher = FAN_FETCHER.read_text(encoding="utf-8")
+        installer = FAN_INSTALLER.read_text(encoding="utf-8")
+        helper = FAN_HELPER.read_text(encoding="utf-8")
+
+        for source_hash in (
+            "ab83ace080e46646a9c807e31177a460902b11661bbbde31ed883261eccf3b45",
+            "9bd825e95b6804328efbd6a4b587babdcc7acd289407dac3f353109d16f42def",
+            "895b5df0011ffa11bdf8bcfef2f002992aa4949d2703cd4281cecdb44917820a",
+            "8177f97513213526df2cf6184d8ff986c675afb514d4e68a404010521b880643",
+        ):
+            self.assertIn(source_hash, fetcher)
+        self.assertIn("a49a8abdfb6221772ecc836b3109e0cc338203cf", fetcher)
+        self.assertIn('modinfo -F vermagic "$1"', installer)
+        self.assertIn('modinfo -F license "$BUILT_KO"', installer)
+        self.assertIn('M="$SOURCE_CACHE"', installer)
+        self.assertNotIn('make -C "$SOURCE_CACHE" install', installer)
+        self.assertIn("sha256sum -c --quiet source.sha256", helper)
+
+    def test_nct6687_lifecycle_is_boot_recoverable_and_force_is_opt_in(self):
+        installer = FAN_INSTALLER.read_text(encoding="utf-8")
+        helper = FAN_HELPER.read_text(encoding="utf-8")
+        service = FAN_SERVICE.read_text(encoding="utf-8")
+
+        self.assertIn("--force-unknown", installer)
+        self.assertIn("FORCE_UNKNOWN=0", installer)
+        self.assertIn('options nct6687 force=%s', installer)
+        self.assertIn("Refusing to remove an unrecognized module", installer)
+        self.assertIn("Installed module integrity check failed", installer)
+        self.assertIn("Could not unload nct6687", installer)
+        self.assertIn("restore_automatic_fan_control", installer)
+        self.assertIn("Firmware automatic mode was not confirmed", installer)
+        self.assertIn("pwmN_enable=2", installer)
+        self.assertIn("installed_module_valid", helper)
+        self.assertIn('insmod "$STAGED_KO" "$MODULE_OPTIONS"', helper)
+        self.assertNotIn("pacman", helper)
+        self.assertNotIn("make -C", helper)
+        self.assertNotIn("network-online.target", service)
+        self.assertIn("blacklist nct6683", installer)
+        self.assertIn("pacman-key --verify", installer)
+        self.assertIn("Pinned source changed during the build", installer)
+        self.assertIn("regenerate it from the package whose signature just passed", installer)
+        self.assertIn("NEW_STAGE_PROBED", installer)
+        self.assertIn("PREVIOUS_NCT6687_KO", installer)
+        self.assertIn("/sys/module/nct6687", installer)
+        self.assertIn("NCT6683/6686/6687 hwmon", helper)
+        self.assertIn("Requires=bc250-persistence-recovery.service", service)
+        self.assertIn("RequiresMountsFor=/var/lib/bc250-control", service)
+        self.assertLess(
+            installer.index('insmod "$STAGED_KO"'),
+            installer.index('mv "$stage_dir_tmp" "$STAGE_DIR"'),
+        )
+        self.assertLess(
+            installer.index("Installed module integrity check failed"),
+            installer.index("systemctl disable --now nct6687-modules.service"),
+        )
+        self.assertLess(
+            helper.index("staged_module_valid"),
+            helper.index("modprobe -r nct6683"),
+        )
+
     def test_lifecycle_scripts_parse(self):
         subprocess.run(
             [
                 "bash",
                 "-n",
                 str(AIC_INSTALLER),
+                str(FAN_INSTALLER),
+                str(FAN_FETCHER),
+                str(FAN_HELPER),
                 str(AUDIO_INSTALLER),
                 str(ROOT / "bc250-audio-fix/install.sh"),
                 str(AUDIO_BOOT_CONFIG),

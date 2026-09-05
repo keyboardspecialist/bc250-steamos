@@ -252,6 +252,29 @@ class PersistenceUnitTests(unittest.TestCase):
             self.assertIn("/etc/udev/rules.d/91-bc250-hdmi-ac3.rules", payload)
             self.assertIn("bc250-persistence-recovery.service", payload)
 
+    def test_fan_keep_list_contains_module_recovery_integration(self):
+        with tempfile.TemporaryDirectory() as directory:
+            keep = Path(directory)
+            subprocess.run(
+                [
+                    "bash",
+                    "-c",
+                    'script=$1; keep=$2; set -- help; source "$script" >/dev/null; '
+                    'require_root() { :; }; install_storage() { :; }; KEEP_DIR=$keep; '
+                    'LEGACY_KEEP_FILE="$keep/bc250-steamos.conf"; install_keep_list fan',
+                    "_",
+                    str(PERSISTENCE),
+                    str(keep),
+                ],
+                check=True,
+                capture_output=True,
+                text=True,
+            )
+            payload = (keep / "bc250-fan.conf").read_text(encoding="utf-8")
+            self.assertIn("/etc/modprobe.d/bc250-nct6687.conf", payload)
+            self.assertIn("nct6687-modules.service", payload)
+            self.assertIn("bc250-persistence-recovery.service", payload)
+
     def test_swap_keep_list_contains_generator_and_disk_units(self):
         with tempfile.TemporaryDirectory() as directory:
             keep = Path(directory)
@@ -705,7 +728,7 @@ grep -Fxq "daemon-reload" "$SYSTEMCTL_LOG"
         )
         storage = STORAGE.read_text(encoding="utf-8")
         for expected in (
-            "COMPONENTS=(compute power ram swap cec ac3 aic desktop amdgpu)",
+            "COMPONENTS=(compute power ram swap cec ac3 aic fan desktop amdgpu)",
             "/etc/systemd/system/bc250-control.service",
             "/etc/systemd/system/bc250-desktop-control-repair.service",
             "/etc/dbus-1/system.d/io.github.keyboardspecialist.BC250Control1.conf",
@@ -720,6 +743,7 @@ grep -Fxq "daemon-reload" "$SYSTEMCTL_LOG"
         )
         self.assertIn("bc250-control.service", storage)
         self.assertIn("bc250-desktop-control-repair.service", storage)
+        self.assertIn("nct6687-modules.service", storage)
 
     def test_storage_without_terminal_prints_help(self):
         result = subprocess.run(
@@ -771,6 +795,9 @@ grep -Fxq "daemon-reload" "$SYSTEMCTL_LOG"
             "bc250-cec.sh",
             "aic8800/steamdeck-setup.sh",
             "aic8800/aic8800-ensure-modules.sh",
+            "nct6687d/steamdeck-setup.sh",
+            "nct6687d/fetch-source.sh",
+            "nct6687d/nct6687-ensure-module.sh",
             "fetch-steamos-package.sh",
             "bc250-audio-fix/fetch-sources.sh",
             "bc250-audio-fix/build.sh",

@@ -39,6 +39,7 @@ class ToolkitTests(unittest.TestCase):
             "storage",
             "persistence",
             "wifi",
+            "fan-driver",
             "amdgpu",
             "amdgpu-clean",
             "scheduler-policy",
@@ -114,6 +115,10 @@ class ToolkitTests(unittest.TestCase):
         )
         self.assertLess(
             drivers_menu.index("Mesa / RADV async-compute patch"),
+            drivers_menu.index("NCT6687 fan-control driver"),
+        )
+        self.assertLess(
+            drivers_menu.index("NCT6687 fan-control driver"),
             drivers_menu.index("AIC8800 WiFi / Bluetooth"),
         )
         self.assertIn("0) run_menu_action amdgpu", drivers_menu)
@@ -366,6 +371,7 @@ class ToolkitTests(unittest.TestCase):
             "bc250-mesh-shader.sh",
             "bc250-maintenance.sh",
             "aic8800/steamdeck-setup.sh",
+            "nct6687d/steamdeck-setup.sh",
             "bc250-audio-fix/patch-driver.sh",
             "bc250-audio-fix/clean.sh",
             "hdmi-ac3/hdmi-ac3.sh",
@@ -403,6 +409,7 @@ class ToolkitTests(unittest.TestCase):
             "bc250-storage.sh": ("installed", 0),
             "bc250-mesh-shader.sh": ("status", 0),
             "aic8800/steamdeck-setup.sh": ("status", 0),
+            "nct6687d/steamdeck-setup.sh": ("status", 0),
             "bc250-audio-fix/patch-driver.sh": ("status", 0),
             "hdmi-ac3/hdmi-ac3.sh": ("status", 0),
             "decky-plugin/install.sh": ("status", 1),
@@ -480,6 +487,12 @@ class ToolkitTests(unittest.TestCase):
             "#!/usr/bin/env bash\nprintf '%s\\n' 'runtime: not installed'\nexit 1\n",
             encoding="utf-8",
         )
+        fan = root / "nct6687d/steamdeck-setup.sh"
+        fan.parent.mkdir(parents=True, exist_ok=True)
+        fan.write_text(
+            "#!/usr/bin/env bash\nprintf '%s\\n' '[nct6687] state: not-installed'\nexit 1\n",
+            encoding="utf-8",
+        )
         cu_status = root / "bc250-cu-status.sh"
         cu_status.write_text(
             "#!/usr/bin/env bash\n"
@@ -532,7 +545,7 @@ class ToolkitTests(unittest.TestCase):
 
                 plain = re.sub(r"\x1b\[[0-9;]*m", "", result.stdout)
                 rows = [line for line in plain.splitlines() if line.startswith("  ")]
-                self.assertLessEqual(len(plain.splitlines()), 24)
+                self.assertLessEqual(len(plain.splitlines()), 25)
                 self.assertTrue(all(re.match(r"^  .{20} \[", line) for line in rows))
 
     def test_status_reports_unlocked_cpu_topology_and_efi_mode(self):
@@ -672,6 +685,7 @@ class ToolkitTests(unittest.TestCase):
                     "all",
                 ),
                 "aic-install": ("sudo", "aic8800/steamdeck-setup.sh", "install"),
+                "fan-install": ("sudo", "nct6687d/steamdeck-setup.sh", "install"),
                 "audio-build": ("direct", "bc250-audio-fix/patch-driver.sh"),
                 "mesh-setup": ("direct", "bc250-mesh-shader.sh", "setup"),
                 "decky-install": ("direct", "decky-plugin/install.sh", "install"),
@@ -691,6 +705,7 @@ class ToolkitTests(unittest.TestCase):
                 "compute",
                 "cec",
                 "aic",
+                "fan",
                 "audio",
                 "mesh",
                 "decky",
@@ -767,6 +782,7 @@ class ToolkitTests(unittest.TestCase):
                     "compute",
                     "mesh",
                     "audio",
+                    "fan",
                     "aic",
                     "storage",
                 ],

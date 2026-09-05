@@ -168,6 +168,11 @@ QtObject {
             Utils.integer(maximum, 1, 99)], "Applying custom GPU load target");
     }
 
+    function setTemperatureTarget(target) {
+        _startMutation("SetTemperatureTarget", "y", [Utils.integer(target, 50, 100)],
+            "Applying GPU thermal target");
+    }
+
     function setRamp(milliseconds) {
         _startMutation("SetRamp", "u", [Utils.integer(milliseconds, 200, 5000)],
             "Applying GPU ramp time");

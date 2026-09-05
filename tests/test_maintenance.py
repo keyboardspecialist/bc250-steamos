@@ -33,6 +33,7 @@ class MaintenanceTests(unittest.TestCase):
             "HDMI_AC3_SH": "ac3",
             "STORAGE_SH": "storage",
             "AIC_SH": "aic",
+            "FAN_SH": "fan",
             "AUDIO_SH": "audio",
             "MESH_SH": "mesh",
             "DECKY_SH": "decky",
@@ -111,7 +112,7 @@ class MaintenanceTests(unittest.TestCase):
                 text=True,
                 env=env,
             )
-            self.assertEqual(status.stdout.count("installed"), 13)
+            self.assertEqual(status.stdout.count("installed"), 14)
             self.assertIn("Saved tuning profiles", plan.stdout)
             self.assertFalse(call_log.exists())
 
@@ -144,6 +145,8 @@ class MaintenanceTests(unittest.TestCase):
                     "persistence:remove compute",
                     "mesh:uninstall",
                     "audio:uninstall",
+                    "fan:uninstall",
+                    "persistence:remove fan",
                     "aic:uninstall",
                     "persistence:remove aic",
                     "persistence:remove all",

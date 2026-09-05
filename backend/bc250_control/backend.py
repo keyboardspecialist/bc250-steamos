@@ -1749,11 +1749,18 @@ class ToolkitBackend:
         frequency_range = config.get("frequency-range", {})
         if not isinstance(frequency_range, dict):
             frequency_range = {}
+        temperature = config.get("temperature", {})
+        if not isinstance(temperature, dict):
+            temperature = {}
         return {
             "safePoints": points,
             "configuredMax": self._number(frequency_range.get("max")),
             "loadUpper": self._number(load.get("upper")),
             "loadLower": self._number(load.get("lower")),
+            "temperatureTarget": self._number(temperature.get("throttling")),
+            "temperatureRecovery": self._number(
+                temperature.get("throttling_recovery")
+            ),
             "adjustMicros": self._number(intervals.get("adjust")),
             "rampNormal": self._number(rates.get("normal")),
             "downEvents": self._number(timing.get("down-events")),
@@ -2804,6 +2811,29 @@ class ToolkitBackend:
 
             await self._update_gpu_config(
                 {"load-target": {"upper": f"{upper:.2f}", "lower": f"{lower:.2f}"}},
+                live_callback=apply_live,
+            )
+
+        return await self._mutate(action)
+
+    async def set_temperature_target(self, target: int) -> None:
+        if type(target) is not int or not 50 <= target <= 100:
+            raise CommandError("GPU thermal target must be a whole number from 50-100 C.")
+        recovery = target - 10
+
+        async def action() -> None:
+            async def apply_live() -> None:
+                await self._gpu_call(
+                    "SetTemperatureThresholds", "uu", str(target), str(recovery)
+                )
+
+            await self._update_gpu_config(
+                {
+                    "temperature": {
+                        "throttling": str(target),
+                        "throttling_recovery": str(recovery),
+                    }
+                },
                 live_callback=apply_live,
             )
 

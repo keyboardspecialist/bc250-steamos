@@ -10,7 +10,7 @@ CEC quick controls. Select
 
 - CU routing status, saved-table fallback, and guarded live WGP controls
 - Full system, ACPI, governor, and temperature health
-- GPU frequency, load target, and ramp behavior
+- GPU frequency, load target, thermal target, and ramp behavior
 - CPU overclock detection, apply, boot replay, and stock restore controls
 - HDMI-CEC controls
 - HDMI Dolby Digital 5.1 / stereo output toggle

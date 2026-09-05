@@ -363,6 +363,16 @@ void Bc250Bridge::setCustomLoadTarget(int minimum, int maximum)
         QStringLiteral("Applying custom GPU load target"));
 }
 
+void Bc250Bridge::setTemperatureTarget(int target)
+{
+    if (target < 50 || target > 100) {
+        reject(QStringLiteral("GPU thermal target must be 50-100 C.")); return;
+    }
+    if (!ensureReady()) return;
+    startMutation(QStringLiteral("SetTemperatureTarget"),
+        {QVariant::fromValue<uchar>(target)}, QStringLiteral("Applying GPU thermal target"));
+}
+
 void Bc250Bridge::setRamp(int milliseconds)
 {
     if (milliseconds < 200 || milliseconds > 5000) {
@@ -639,7 +649,7 @@ void Bc250Bridge::makeMockSnapshot()
         {"se":1,"sh":0,"wgps":[true,true,true,false,false],"factoryWgps":[true,true,true,false,false],"cus":6},
         {"se":1,"sh":1,"wgps":[true,true,true,false,false],"factoryWgps":[true,true,true,false,false],"cus":6}]},
       "power":{"acpiActive":true,"cStates":3,"cpuGovernor":"schedutil","cpuCurrentMhz":3650,"governor":{"enabled":"enabled","active":"active"},"frequencyRestore":{"enabled":"enabled","active":"exited"},"temperatures":[{"device":"amdgpu","label":"edge","celsius":57}]},
-      "gpu":{"available":true,"controllable":true,"dbusReady":true,"mode":"adaptive","requestedMode":"adaptive","minimum":300,"maximum":1500,"liveMinimum":300,"liveMaximum":1500,"activeMhz":1120,"allowedMinimum":300,"allowedMaximum":2230,"climbMs":500,"loadUpper":0.80,"loadLower":0.65,"configuredMax":1500,"persistent":true,"replayApplied":true,"governorService":{"enabled":"enabled","active":"active"},"safePoints":[{"frequency":300,"voltage":700},{"frequency":1500,"voltage":975}]},
+      "gpu":{"available":true,"controllable":true,"dbusReady":true,"mode":"adaptive","requestedMode":"adaptive","minimum":300,"maximum":1500,"liveMinimum":300,"liveMaximum":1500,"activeMhz":1120,"allowedMinimum":300,"allowedMaximum":2230,"climbMs":500,"loadUpper":0.80,"loadLower":0.65,"temperatureTarget":85,"temperatureRecovery":75,"configuredMax":1500,"persistent":true,"replayApplied":true,"governorService":{"enabled":"enabled","active":"active"},"safePoints":[{"frequency":300,"voltage":700},{"frequency":1500,"voltage":975}]},
       "cpu":{"service":{"enabled":"enabled","active":"active"},"installed":{"values":{"frequency":"4000","voltage":"1275"},"detected":"4000 MHz @ 1275 mV"},"staged":null,"toolAvailable":true,"mitigations":{"schemaVersion":1,"available":true,"state":"enabled","configuredEnabled":true,"bootEnabled":true,"rebootRequired":false,"protected":true}},
       "ram":{"schemaVersion":1,"available":true,"toolState":"verified","toolVersion":"v0.1","umaLastRequestedMiB":512,"ttmState":"configured","ttmConfiguredPages":3014656,"ttmBootPages":3014656,"ttmLivePages":3014656,"rebootRequired":false,"protected":true},
       "audio":{"available":true,"controllable":true,"state":"active","enabled":true,"active":true,"udevState":"installed","wireplumberState":"installed","persistenceState":"installed","activeProfile":"output:hdmi-ac3-surround"}

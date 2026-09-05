@@ -66,6 +66,11 @@ private slots:
         QVERIFY(!bridge.busy());
 
         bridge.clearMessage();
+        bridge.setTemperatureTarget(101);
+        QVERIFY(bridge.error().contains(QStringLiteral("50-100")));
+        QVERIFY(!bridge.busy());
+
+        bridge.clearMessage();
         bridge.setUmaSize(2048);
         QVERIFY(bridge.error().contains(QStringLiteral("not 2048")));
         QVERIFY(!bridge.busy());

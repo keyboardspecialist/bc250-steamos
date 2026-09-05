@@ -7,7 +7,7 @@ KEEP_DIR=/etc/atomic-update.conf.d
 LEGACY_KEEP_FILE="$KEEP_DIR/bc250-steamos.conf"
 PREVIOUS_ETC=/etc/previous
 BACKUP_DIR=/var/lib/steamos-atomupd/etc_backup
-COMPONENTS=(compute power ram swap cec ac3 aic desktop amdgpu)
+COMPONENTS=(compute power ram swap cec ac3 aic fan desktop amdgpu)
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 STORAGE_SH="$SCRIPT_DIR/bc250-storage.sh"
 STORAGE_UNIT='/etc/systemd/system/var-lib-bc250\x2dcontrol.mount'
@@ -52,13 +52,16 @@ legacy_keep_file_owned() {
             /etc/bc250-*|/etc/cyan-skillfish-governor-smu/**|\
             /etc/dbus-1/system.d/com.cyan.SkillFishGovernor.conf|\
             /etc/modprobe.d/aic8800.conf|\
+            /etc/modprobe.d/bc250-nct6687.conf|\
             /etc/udev/rules.d/40-aic8800-modeswitch.rules|\
             /etc/usb_modeswitch.d/[0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F]:[0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F]|\
             /etc/aic8800-*|/etc/systemd/system/bc250-*|\
             /etc/systemd/system/aic8800-*|\
+            /etc/systemd/system/nct6687-*|\
             /etc/systemd/system/cyan-skillfish-governor-smu.service|\
             /etc/systemd/system/multi-user.target.wants/bc250-*|\
             /etc/systemd/system/multi-user.target.wants/aic8800-*|\
+            /etc/systemd/system/multi-user.target.wants/nct6687-*|\
             /etc/systemd/system/multi-user.target.wants/cyan-skillfish-governor-smu.service|\
             /etc/systemd/system-sleep/bc250-*) ;;
             *) return 1 ;;
@@ -80,7 +83,7 @@ print_storage_paths() {
 write_keep_file() {
     local component="$1" target="$KEEP_DIR/bc250-$1.conf" tmp modeswitch_id
     case "$component" in
-        compute|power|ram|swap|cec|ac3|aic|desktop|amdgpu) ;;
+        compute|power|ram|swap|cec|ac3|aic|fan|desktop|amdgpu) ;;
         *) die "Unknown component: $component" ;;
     esac
     if [[ -e "$target" || -L "$target" ]]; then
@@ -178,6 +181,15 @@ EOF
 EOF
                 print_storage_paths
                 ;;
+            fan)
+                cat << EOF
+/etc/modprobe.d/bc250-nct6687.conf
+/etc/systemd/system/nct6687-modules.service
+/etc/systemd/system/nct6687-modules.service.d/10-bc250-storage.conf
+/etc/systemd/system/multi-user.target.wants/nct6687-modules.service
+EOF
+                print_storage_paths
+                ;;
             desktop)
                 cat << EOF
 /etc/dbus-1/system.d/io.github.keyboardspecialist.BC250Control1.conf
@@ -218,6 +230,7 @@ component_has_state() {
         cec)     [[ -e "$ROOT_DATA_DIR/helper/bc250-cec-poweroff-standby" || -e /etc/systemd/system-sleep/bc250-cec-amp.sh ]] ;;
         ac3)     [[ -e /etc/udev/rules.d/91-bc250-hdmi-ac3.rules ]] ;;
         aic)     [[ -e "$ROOT_DATA_DIR/aic8800/source" || -e /etc/systemd/system/aic8800-modules.service ]] ;;
+        fan)     [[ -e "$ROOT_DATA_DIR/nct6687d/source" || -e /etc/systemd/system/nct6687-modules.service ]] ;;
         desktop) [[ -e "$ROOT_DATA_DIR/desktop" || -e /etc/systemd/system/bc250-control.service ]] ;;
         amdgpu)  [[ -e /etc/default/grub.d/bc250-amdgpu.cfg ]] ;;
         *)       return 1 ;;
@@ -247,7 +260,7 @@ install_keep_list() {
                 write_keep_file "$component"
             done
             ;;
-        compute|power|ram|swap|cec|ac3|aic|desktop|amdgpu) write_keep_file "$requested" ;;
+        compute|power|ram|swap|cec|ac3|aic|fan|desktop|amdgpu) write_keep_file "$requested" ;;
         *) die "Unknown component: $requested" ;;
     esac
 }
@@ -258,7 +271,7 @@ remove_keep_list() {
     local -a selected=()
     case "$requested" in
         all) selected=("${COMPONENTS[@]}") ;;
-        compute|power|ram|swap|cec|ac3|aic|desktop|amdgpu) selected=("$requested") ;;
+        compute|power|ram|swap|cec|ac3|aic|fan|desktop|amdgpu) selected=("$requested") ;;
         *) die "Unknown component: $requested" ;;
     esac
 
@@ -538,6 +551,7 @@ cmd_menu() {
             "Protect compressed swap|$(keep_badge swap)|Preserve the selected zram or zswap-backed disk profile."
             "Protect CEC|$(keep_badge cec)|Preserve CEC poweroff and sleep integration."
             "Protect AIC8800|$(keep_badge aic)|Preserve AIC8800 service and device configuration."
+            "Protect fan driver|$(keep_badge fan)|Preserve NCT6687 fan-driver configuration and boot recovery."
             "Protect desktop control|$(keep_badge desktop)|Preserve the desktop service and repair integration after updates."
             "Protect patched AMDGPU|$(keep_badge amdgpu)|Preserve the selected scheduler or KFD runlist boot option."
             "Protect all components||Install every component keep list."
@@ -554,25 +568,26 @@ cmd_menu() {
             3) run_menu_action install swap ;;
             4) run_menu_action install cec ;;
             5) run_menu_action install aic ;;
-            6) run_menu_action install desktop ;;
-            7) run_menu_action install amdgpu ;;
-            8) run_menu_action install all ;;
-            9) run_menu_action recover compute ;;
-            10) run_menu_action recover power ;;
-            11) run_menu_action recover all ;;
-            12) show_menu_status ;;
+            6) run_menu_action install fan ;;
+            7) run_menu_action install desktop ;;
+            8) run_menu_action install amdgpu ;;
+            9) run_menu_action install all ;;
+            10) run_menu_action recover compute ;;
+            11) run_menu_action recover power ;;
+            12) run_menu_action recover all ;;
+            13) show_menu_status ;;
         esac
     done
 }
 
 cmd_help() {
     cat << EOF
-Usage: $0 {install|remove} [compute|power|ram|swap|cec|ac3|aic|desktop|amdgpu|all]
+Usage: $0 {install|remove} [compute|power|ram|swap|cec|ac3|aic|fan|desktop|amdgpu|all]
        $0 recover [compute|power|all] [--force]
        $0 {status|menu|help}
 
   remove COMPONENT     Remove only this helper's matching component keep list.
-                       COMPONENT is compute, power, ram, swap, cec, ac3, aic,
+                       COMPONENT is compute, power, ram, swap, cec, ac3, aic, fan,
                        desktop, amdgpu, or all.
 
 Run with no arguments in a terminal to open the interactive menu.
@@ -589,7 +604,7 @@ case "$1" in
     remove)
         shift
         [[ $# -eq 1 ]] \
-            || die "Usage: $0 remove {compute|power|ram|swap|cec|ac3|aic|desktop|amdgpu|all}"
+            || die "Usage: $0 remove {compute|power|ram|swap|cec|ac3|aic|fan|desktop|amdgpu|all}"
         remove_keep_list "$1"
         ;;
     recover) shift; recover_settings "${1:-all}" "${2:-}" ;;

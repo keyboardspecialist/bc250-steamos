@@ -171,6 +171,19 @@ class ControlService:
             lambda backend: backend.set_custom_load_target(minimum, maximum),
         )
 
+    async def set_temperature_target(self, sender: str, target: int) -> str:
+        _whole(target, "GPU thermal target must be a whole number from 50-100 C.")
+        if not 50 <= target <= 100:
+            raise InvalidArguments(
+                "GPU thermal target must be a whole number from 50-100 C."
+            )
+        return await self._submit(
+            sender,
+            "gpu",
+            "SetTemperatureTarget",
+            lambda backend: backend.set_temperature_target(target),
+        )
+
     async def set_ramp(self, sender: str, climb_ms: int) -> str:
         _whole(climb_ms, "Ramp time must be a whole number from 200-5000 ms.")
         if not 200 <= climb_ms <= 5000:

@@ -1,0 +1,16 @@
+# BC-250 toolkit managed NCT6687 module recovery service.
+[Unit]
+Description=NCT6687D fan control: restore and load the verified kernel module
+Requires=bc250-persistence-recovery.service
+After=bc250-persistence-recovery.service local-fs.target
+RequiresMountsFor=/var/lib/bc250-control
+ConditionPathExists=/var/lib/bc250-control/nct6687d/source/Kbuild
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+TimeoutStartSec=2min
+ExecStart=/var/lib/bc250-control/helper/nct6687-ensure-module
+
+[Install]
+WantedBy=multi-user.target

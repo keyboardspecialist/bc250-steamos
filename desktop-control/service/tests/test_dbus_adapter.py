@@ -151,6 +151,13 @@ class AdapterHandlerTests(unittest.IsolatedAsyncioTestCase):
         )
         self.assertIn('<method name="SetCpuMitigations">', INTROSPECTION_XML)
 
+    def test_gpu_temperature_dbus_signature_is_declared(self):
+        self.assertEqual(
+            DbusAdapter._METHODS["SetTemperatureTarget"],
+            ("y", "s", "set_temperature_target"),
+        )
+        self.assertIn('<method name="SetTemperatureTarget">', INTROSPECTION_XML)
+
     def test_hdmi_surround_dbus_signature_is_declared(self):
         self.assertEqual(
             DbusAdapter._METHODS["SetHdmiSurround"],

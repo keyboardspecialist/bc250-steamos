@@ -257,6 +257,49 @@ run_action failing_action >/dev/null
             )
             self.assertEqual(result.returncode, 0, result.stderr)
 
+    def test_gpu_temperature_target_updates_config_and_live_thresholds(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            config = root / "config.toml"
+            config.write_text(
+                "[temperature]\nthrottling = 85\nthrottling_recovery = 75\n",
+                encoding="utf-8",
+            )
+            calls = root / "calls"
+            result = subprocess.run(
+                [
+                    "bash",
+                    "-c",
+                    r'''
+script=$1; base=$2
+set -- help
+source "$script" >/dev/null
+require_root() { :; }
+GOV_CONF="$base/config.toml"
+GPU_CONTROL_LOCK="$base/lock/backend.lock"
+systemctl() { [[ "$1" == is-active ]]; }
+gov_dbus() { printf '%s\n' "$*" > "$base/calls"; }
+temperature_set 80 >/dev/null
+''',
+                    "_",
+                    str(POWER),
+                    directory,
+                ],
+                capture_output=True,
+                text=True,
+                env=script_env(directory),
+            )
+            self.assertEqual(result.returncode, 0, result.stderr)
+            parsed = tomllib.loads(config.read_text(encoding="utf-8"))
+            self.assertEqual(
+                parsed["temperature"],
+                {"throttling": 80, "throttling_recovery": 70},
+            )
+            self.assertEqual(
+                calls.read_text(encoding="ascii"),
+                "SetTemperatureThresholds uu 80 70\n",
+            )
+
     def test_voltage_curve_structural_edits_preserve_later_toml_sections(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

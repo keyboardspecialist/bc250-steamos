@@ -64,7 +64,7 @@ does not bundle or update the complete toolkit source tree.
 - Native Toolkit task dashboard for component inventory, setup, driver builds, repairs, and per-component removal
 - Live bounded console output with secure `sudo` prompting and protected process cancellation
 - Adaptive, ranged, pinned, and maximum GPU clock modes
-- GPU load target and ramp controls with service-equivalent client bounds
+- GPU load target, thermal target, and ramp controls with service-equivalent client bounds
 - RAM/VRAM split controls for CMOS UMA minimums and dynamic TTM limits
 - Live WGP routing with an advanced interlock and per-write confirmation
 - Mutually exclusive CPU core-unlock controls for the standard Linux boot method and the experimental EFI pre-boot alternative

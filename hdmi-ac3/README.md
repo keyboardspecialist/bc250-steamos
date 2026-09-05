@@ -36,3 +36,7 @@ The documented ALSA `a52` routing, WirePlumber profile selection, one-hour
 suspend timeout, and 1536-sample start delay are adapted here with dynamic card
 detection, toolkit-owned filenames, lifecycle checks, and SteamOS update
 retention.
+
+The managed udev and WirePlumber rules match AMD product ID `0x13ff`, the
+Cyan Skillfish HDMI/DisplayPort audio function. `0x1640` belongs to a different
+AMD audio controller and does not activate the BC-250 profile.

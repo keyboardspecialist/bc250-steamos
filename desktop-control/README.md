@@ -7,7 +7,7 @@ Plasma 6 system-tray and windowed hardware controls for the BC-250 SteamOS toolk
 | Area | Controls and status |
 | --- | --- |
 | Overview | CPU and GPU clocks, temperature history, CU availability, service health, and boot persistence |
-| GPU | Adaptive frequency ranges, pinned clocks, load targets, voltage curves, and ramp timing |
+| GPU | Adaptive frequency ranges, pinned clocks, load targets, thermal target, voltage curves, and ramp timing |
 | Compute units | Shader-row and WGP routing, factory-route indicators, live application, and saved masks |
 | CPU | Active profile, bounded stability detection, immediate application, boot enablement, and stock settings |
 | CEC | TV and receiver power, active source, volume, behavior toggles, and broadcast name |

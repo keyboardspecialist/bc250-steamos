@@ -15,6 +15,7 @@ ColumnLayout {
     property int maximum: gpu.maximum || gpu.configuredMax || 1500
     property int loadMinimum: Math.round((gpu.loadLower === null ? 0.65 : gpu.loadLower) * 100)
     property int loadMaximum: Math.round((gpu.loadUpper === null ? 0.80 : gpu.loadUpper) * 100)
+    property int temperatureTarget: gpu.temperatureTarget || 85
     property int rampMs: gpu.climbMs || 500
     readonly property int frequencyMinimum: Math.max(root.gpu.allowedMinimum || 300, 300)
     readonly property bool frequencyValid: root.mode !== "range"
@@ -33,6 +34,7 @@ ColumnLayout {
         maximum = gpu.maximum || gpu.configuredMax || 1500;
         loadMinimum = Math.round((gpu.loadLower === null ? 0.65 : gpu.loadLower) * 100);
         loadMaximum = Math.round((gpu.loadUpper === null ? 0.80 : gpu.loadUpper) * 100);
+        temperatureTarget = gpu.temperatureTarget || 85;
         rampMs = gpu.climbMs || 500;
     }
 
@@ -171,6 +173,19 @@ ColumnLayout {
             disabledReason: root.loadMinimum >= root.loadMaximum
                 ? "Minimum load must be lower than maximum load." : root.disabledReason
             onClicked: root.backend.setCustomLoadTarget(root.loadMinimum, root.loadMaximum)
+        }
+    }
+
+    Components.Section {
+        title: "Thermal Target"
+        QQC2.Label { text: "Throttle at " + root.temperatureTarget + " C; recover below " + (root.temperatureTarget - 10) + " C" }
+        QQC2.Slider {
+            from: 50; to: 100; stepSize: 1; value: root.temperatureTarget; enabled: root.controllable
+            Layout.fillWidth: true; onMoved: root.temperatureTarget = Math.round(value)
+        }
+        Components.ActionButton {
+            text: "Apply thermal target"; enabled: root.controllable; disabledReason: root.disabledReason
+            onClicked: root.backend.setTemperatureTarget(root.temperatureTarget)
         }
     }
 

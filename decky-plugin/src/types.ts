@@ -88,6 +88,8 @@ export interface GpuStatus {
   configuredMax: number | null;
   loadUpper: number | null;
   loadLower: number | null;
+  temperatureTarget: number | null;
+  temperatureRecovery: number | null;
   adjustMicros: number | null;
   rampNormal: number | null;
   downEvents: number | null;

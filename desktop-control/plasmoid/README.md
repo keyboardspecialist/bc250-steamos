@@ -85,6 +85,7 @@ returns `b` to support cancelling long-running work.
 | `SetGpuFrequency` | `suu` | allowlisted mode, minimum MHz, maximum MHz |
 | `SetLoadTarget` | `s` | `eager` or `reset` |
 | `SetCustomLoadTarget` | `yy` | lower and upper percent |
+| `SetTemperatureTarget` | `y` | GPU throttle temperature Celsius |
 | `SetRamp` | `u` | climb milliseconds |
 | `CpuOcAction` | `suuu` | action, MHz, mV, temperature Celsius |
 | `CpuUnlockAction` | `s` | `test`, `enable`, `efi-enable`, or `off` |

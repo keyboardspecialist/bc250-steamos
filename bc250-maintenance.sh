@@ -12,6 +12,7 @@ CEC_SH="${CEC_SH:-$SCRIPT_DIR/bc250-cec.sh}"
 STORAGE_SH="${STORAGE_SH:-$SCRIPT_DIR/bc250-storage.sh}"
 PERSISTENCE_SH="${PERSISTENCE_SH:-$SCRIPT_DIR/bc250-update-persistence.sh}"
 AIC_SH="${AIC_SH:-$SCRIPT_DIR/aic8800/steamdeck-setup.sh}"
+FAN_SH="${FAN_SH:-$SCRIPT_DIR/nct6687d/steamdeck-setup.sh}"
 AUDIO_SH="${AUDIO_SH:-$SCRIPT_DIR/bc250-audio-fix/patch-driver.sh}"
 AUDIO_CLEAN_SH="${AUDIO_CLEAN_SH:-$SCRIPT_DIR/bc250-audio-fix/clean.sh}"
 HDMI_AC3_SH="${HDMI_AC3_SH:-$SCRIPT_DIR/hdmi-ac3/hdmi-ac3.sh}"
@@ -22,8 +23,8 @@ TRAINER_SH="${TRAINER_SH:-$SCRIPT_DIR/trainer/install.sh}"
 TRAINER_FLATPAK_SH="${TRAINER_FLATPAK_SH:-$SCRIPT_DIR/trainer/install-flatpak.sh}"
 SERVICE_CLIENT_DIR="${BC250_SERVICE_CLIENT_DIR:-/var/lib/bc250-control/service-clients}"
 
-COMPONENTS=(trainer desktop decky cec ac3 power ram swap compute mesh audio aic)
-UNINSTALL_ORDER=(trainer desktop decky cec ac3 power ram swap compute mesh audio aic)
+COMPONENTS=(trainer desktop decky cec ac3 power ram swap compute mesh audio fan aic)
+UNINSTALL_ORDER=(trainer desktop decky cec ac3 power ram swap compute mesh audio fan aic)
 MESH_STATE_DIR="${BC250_MESH_STATE_DIR:-$HOME/.local/share/bc250-mesh-shader}"
 MESH_LOCK_FILE="${BC250_MESH_LOCK_FILE:-$HOME/.cache/bc250-mesh-shader.lock}"
 MESH_GENERATOR="${BC250_GFX1013_GENERATOR:-/usr/lib/systemd/user-environment-generators/60-bc250-gfx1013}"
@@ -54,6 +55,7 @@ component_label() {
         mesh) echo "Mesa / RADV async-compute patch" ;;
         audio) echo "AMDGPU kernel fixes" ;;
         aic) echo "AIC8800 WiFi / Bluetooth" ;;
+        fan) echo "NCT6687 fan-control driver" ;;
         storage) echo "Persistent infrastructure" ;;
         *) die "Unknown component: $1" ;;
     esac
@@ -73,6 +75,7 @@ component_script() {
         mesh) echo "$MESH_SH" ;;
         audio) echo "$AUDIO_SH" ;;
         aic) echo "$AIC_SH" ;;
+        fan) echo "$FAN_SH" ;;
         storage) echo "$STORAGE_SH" ;;
         *) die "Unknown component: $1" ;;
     esac
@@ -91,7 +94,7 @@ component_probe() {
             require_script "$TRAINER_FLATPAK_SH"
             bash "$TRAINER_FLATPAK_SH" status >/dev/null 2>&1
             ;;
-        desktop|decky|mesh|audio|aic|ac3) bash "$script" status >/dev/null 2>&1 ;;
+        desktop|decky|mesh|audio|aic|fan|ac3) bash "$script" status >/dev/null 2>&1 ;;
         storage) bash "$script" installed >/dev/null 2>&1 ;;
     esac
 }
@@ -189,6 +192,16 @@ component_has_artifacts() {
                 || -L /etc/systemd/system/multi-user.target.wants/aic8800-modules.service ]] \
                 || compgen -G '/usr/lib/modules/*/updates/aic8800/*.ko' >/dev/null
             ;;
+        fan)
+            [[ -e /etc/systemd/system/nct6687-modules.service \
+                || -e /etc/modprobe.d/bc250-nct6687.conf \
+                || -e /etc/atomic-update.conf.d/bc250-fan.conf \
+                || -e /var/lib/bc250-control/nct6687d/module-options \
+                || -e /var/lib/bc250-control/nct6687d/modules \
+                || -e /var/lib/bc250-control/helper/nct6687-ensure-module \
+                || -L /etc/systemd/system/multi-user.target.wants/nct6687-modules.service ]] \
+                || compgen -G '/usr/lib/modules/*/updates/bc250-nct6687/nct6687.ko' >/dev/null
+            ;;
         storage)
             [[ -e /var/lib/bc250-control \
                 || -e '/etc/systemd/system/var-lib-bc250\x2dcontrol.mount' \
@@ -281,6 +294,7 @@ plan_component() {
         mesh) echo "  Remove the alternate RADV ICD and global user environment generator; preserve build caches." ;;
         audio) echo "  Restore stock AMDGPU modules for every patched kernel; preserve source and build caches." ;;
         aic) echo "  Disable module repair, unload drivers when possible, and remove installed modules, firmware, and device rules." ;;
+        fan) echo "  Restore firmware fan control, unload NCT6687, and remove its module and boot repair integration." ;;
         storage) echo "  Remove the bind mount and recovery infrastructure; preserve the backing directory." ;;
     esac
 }
@@ -306,7 +320,7 @@ show_plan() {
 remove_persistence_for() {
     local component="$1" persistence=""
     case "$component" in
-        cec|power|ram|swap|compute|aic) persistence="$component" ;;
+        cec|power|ram|swap|compute|aic|fan) persistence="$component" ;;
         *) return 0 ;;
     esac
     require_script "$PERSISTENCE_SH"
@@ -352,7 +366,7 @@ run_component_uninstall() {
                 || bash "$script" uninstall || rc=$?
             ;;
         desktop|decky|cec|mesh|audio|ac3) bash "$script" uninstall || rc=$? ;;
-        power|ram|swap|compute|aic|storage) sudo bash "$script" uninstall || rc=$? ;;
+        power|ram|swap|compute|aic|fan|storage) sudo bash "$script" uninstall || rc=$? ;;
         *) die "Unknown component: $component" ;;
     esac
     [[ $rc -eq 0 ]] || return "$rc"
@@ -557,7 +571,7 @@ cmd_help() {
     cat << EOF
 Usage: $0 {menu|status|status-json|plan [COMPONENT|all]|uninstall COMPONENT|all [--yes]|purge [--yes]|help}
 
-Components: trainer, desktop, decky, cec, ac3, power, ram, compute, mesh, audio, aic, storage
+Components: trainer, desktop, decky, cec, ac3, power, ram, compute, mesh, audio, fan, aic, storage
 
   status                 Show lifecycle state for every component.
   status-json            Emit versioned JSON lifecycle state for automation.

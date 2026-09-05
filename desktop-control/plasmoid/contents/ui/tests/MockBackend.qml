@@ -71,7 +71,8 @@ QtObject {
             climbMs: 500, governorService: { enabled: "enabled", active: "active" },
             frequencyRestore: { enabled: "enabled", active: "exited" }, persistent: true,
             replayApplied: true, safePoints: [{ frequency: 300, voltage: 700 }, { frequency: 1500, voltage: 975 }],
-            configuredMax: 1500, loadUpper: 0.80, loadLower: 0.65, adjustMicros: 5000,
+            configuredMax: 1500, loadUpper: 0.80, loadLower: 0.65,
+            temperatureTarget: 85, temperatureRecovery: 75, adjustMicros: 5000,
             rampNormal: 10, downEvents: 3
         },
         cpu: {
@@ -114,6 +115,7 @@ QtObject {
     function setCuWgp() { start("Updating CU routing"); }
     function setGpuFrequency() { start("Applying GPU frequency mode"); }
     function setLoadTarget() { start("Applying GPU load target"); }
+    function setTemperatureTarget() { start("Applying GPU thermal target"); }
     function setCustomLoadTarget() { start("Applying custom load target"); }
     function setRamp() { start("Applying GPU ramp time"); }
     function cpuOcAction() { start("Running CPU operation"); }

@@ -13,6 +13,7 @@ STORAGE_SH="$SCRIPT_DIR/bc250-storage.sh"
 PERSISTENCE_SH="$SCRIPT_DIR/bc250-update-persistence.sh"
 CU_STATUS_SH="$SCRIPT_DIR/bc250-cu-status.sh"
 AIC_SETUP_SH="$SCRIPT_DIR/aic8800/steamdeck-setup.sh"
+FAN_SETUP_SH="$SCRIPT_DIR/nct6687d/steamdeck-setup.sh"
 AUDIO_FIX_SH="$SCRIPT_DIR/bc250-audio-fix/patch-driver.sh"
 AUDIO_CLEAN_SH="$SCRIPT_DIR/bc250-audio-fix/clean.sh"
 AMDGPU_BOOT_CONFIG_SH="$SCRIPT_DIR/bc250-audio-fix/boot-config.sh"
@@ -114,6 +115,14 @@ install_wifi() {
     confirm_action \
         "Build and install the AIC8800 WiFi and Bluetooth drivers?" \
         sudo bash "$AIC_SETUP_SH"
+}
+
+install_fan_driver() {
+    require_normal_user
+    require_script "$FAN_SETUP_SH"
+    confirm_action \
+        "Build and install the NCT6687 fan-control driver?" \
+        sudo bash "$FAN_SETUP_SH" install
 }
 
 install_audio_fix() {
@@ -248,6 +257,20 @@ hdmi_ac3_badge() {
     esac
 }
 
+fan_driver_badge() {
+    local status=""
+    if [[ ! -f "$FAN_SETUP_SH" || -L "$FAN_SETUP_SH" ]]; then
+        printf '%s' "${CR}[unavailable]${C0}"
+        return
+    fi
+    status=$(bash "$FAN_SETUP_SH" status 2>/dev/null || true)
+    case "$status" in
+        *"state: installed"*) printf '%s' "${CG}[installed]${C0}" ;;
+        *"state: incomplete"*) printf '%s' "${CY}[incomplete]${C0}" ;;
+        *) printf '%s' "${CD}[not installed]${C0}" ;;
+    esac
+}
+
 radv_badge() {
     local status=""
     if [[ ! -f "$MESH_SHADER_SH" || -L "$MESH_SHADER_SH" ]]; then
@@ -348,12 +371,13 @@ run_machine_action() {
         cec-repair) run_script "$CEC_SH" repair ;;
         persistence-install) run_sudo_script "$PERSISTENCE_SH" install all ;;
         aic-install) run_sudo_script "$AIC_SETUP_SH" install ;;
+        fan-install) run_sudo_script "$FAN_SETUP_SH" install ;;
         audio-build) run_script "$AUDIO_FIX_SH" ;;
         mesh-setup) run_script "$MESH_SHADER_SH" setup ;;
         decky-install) run_script "$DECKY_INSTALL_SH" install ;;
         desktop-install) run_script "$DESKTOP_INSTALL_SH" install ;;
         persistence-remove) run_sudo_script "$PERSISTENCE_SH" remove all ;;
-        storage-remove|power-remove|ram-remove|swap-remove|compute-remove|cec-remove|aic-remove|audio-remove|mesh-remove|decky-remove|desktop-remove)
+        storage-remove|power-remove|ram-remove|swap-remove|compute-remove|cec-remove|aic-remove|fan-remove|audio-remove|mesh-remove|decky-remove|desktop-remove)
             require_script "$MAINTENANCE_SH"
             bash "$MAINTENANCE_SH" uninstall "${operation%-remove}" --yes
             ;;
@@ -424,6 +448,7 @@ show_status() {
     local persistence_output="" persistence_rc=0 cpu_output="" cpu_rc=0
     local amdgpu_output="" amdgpu_rc=0 radv_output="" radv_rc=0
     local cu_output="" cu_rc=0 cec_output="" cec_rc=0
+    local fan_output="" fan_rc=0
     local enabled active installed_count pending_count
     local failed_components=()
     sudo -v
@@ -438,6 +463,7 @@ show_status() {
     status_script_capture radv_output radv_rc user "$MESH_SHADER_SH" status
     status_script_capture cu_output cu_rc root "$CU_STATUS_SH" -q
     status_script_capture cec_output cec_rc user "$CEC_SH" status
+    status_script_capture fan_output fan_rc user "$FAN_SETUP_SH" status
 
     printf '%s\n' "${CB}${CC}BC-250 complete system status ${CD}[${TOOLKIT_VERSION}]${C0}"
 
@@ -552,6 +578,17 @@ show_status() {
     if [[ $power_rc -ne 0 ]]; then
         failed=1; failed_components+=("Power management")
     fi
+
+    state=$(status_value "$fan_output" "state: " || true)
+    detail=$(status_value "$fan_output" "hwmon: " || true)
+    secondary=$(status_value "$fan_output" "load option: " || true)
+    case "$state" in
+        installed) status_row "Fan controller" "installed" good "hwmon ${detail:--}; ${secondary:-force=0}" ;;
+        not-installed) status_row "Fan controller" "not installed" dim "optional NCT6687 driver" ;;
+        *)
+            status_row "Fan controller" "${state:-incomplete}" bad "${detail:+hwmon $detail; }${secondary:-status unavailable}"
+            failed=1; failed_components+=("NCT6687 fan-control driver") ;;
+    esac
 
     status_heading "GRAPHICS"
     state=$(status_value "$amdgpu_output" "state: " || true)
@@ -716,7 +753,7 @@ cmd_guided_setup_menu() {
             "Power foundation|$(power_foundation_badge)|Install ACPI, reboot, then load-test the GPU governor before enabling it at boot."
             "Memory balance|$(component_badge "$RAM_SPLIT_SH")|Install the helper, then choose CMOS minimum VRAM and the dynamic TTM limit."
             "Performance tuning|$(radv_badge)|Build the Mesa RADV async-compute patch or tune GPU and CPU behavior after unlock testing. RADV takes about 3-5 minutes."
-            "Devices & connectivity||Configure HDMI audio or CEC, or install AIC8800 support only when matching hardware is present."
+            "Devices & connectivity||Configure HDMI audio, CEC, NCT6687 fan control, or hardware-specific AIC8800 support."
             "Choose control interface||Install Decky for Gaming Mode, Plasma for desktop, or the standalone Trainer."
             "Finish - Verify system|${CD}[read only]${C0}|Run the complete status report after required reboot and sign-out checkpoints."
         )
@@ -746,6 +783,7 @@ cmd_drivers_menu() {
             "AMDGPU scheduler policy (advanced)|$(scheduler_policy_badge)|Normally managed by RADV setup. Enabling is blocked until the patched RADV runtime is installed."
             "KFD HWS runlist TLB flush (experimental)|$(kfd_runlist_badge)|Opt-in ROCm workaround for stale mappings. Requires HWS and cannot coexist with sched_policy=2."
             "Mesa / RADV async-compute patch (optional)|${CG}[menu]${C0}|Enables GFX1013 async compute. Requires the patched AMDGPU module; builds in about 3-5 minutes."
+            "NCT6687 fan-control driver|$(fan_driver_badge)|Expose supported fan tachometers and PWM controls through Linux hwmon."
             "AIC8800 WiFi / Bluetooth|${CY}[installer]${C0}|Install only when the system uses the AIC8800 wireless adapter."
         )
         menu_select "BC-250 drivers" "${items[@]}" || { echo; break; }
@@ -755,7 +793,8 @@ cmd_drivers_menu() {
             2) run_menu_action scheduler-policy ;;
             3) run_menu_action kfd-runlist ;;
             4) run_menu_child radv ;;
-            5) run_menu_action wifi ;;
+            5) run_menu_action fan-driver ;;
+            6) run_menu_action wifi ;;
         esac
     done
 }
@@ -859,13 +898,15 @@ cmd_devices_menu() {
         local items=(
             "HDMI audio|${CG}[menu]${C0}|Enable Dolby Digital 5.1 encoding or revert to the default HDMI stereo profile."
             "CEC / HDMI control|$(component_badge "$CEC_SH")|Set up TV and receiver behavior, then access everyday HDMI controls."
+            "NCT6687 fan-control driver|$(fan_driver_badge)|Install hwmon fan and PWM support on systems with a compatible Nuvoton controller."
             "AIC8800 WiFi / Bluetooth|${CY}[hardware specific]${C0}|Install only when the system uses the AIC8800 wireless adapter."
         )
         menu_select "BC-250 display & connectivity" "${items[@]}" || { echo; break; }
         case $MENU_CHOICE in
             0) cmd_audio_menu ;;
             1) run_menu_child cec ;;
-            2) run_menu_action wifi ;;
+            2) run_menu_action fan-driver ;;
+            3) run_menu_action wifi ;;
         esac
     done
 }
@@ -916,7 +957,7 @@ cmd_menu() {
             "Core system|${CG}[menu]${C0}|Configure storage, AMDGPU, power foundations, memory balance, and update protection."
             "Performance tuning|${CG}[menu]${C0}|Configure Mesa / RADV and optional GPU or CPU tuning after setup is stable."
             "Hardware unlocks|${CG}[menu]${C0}|Test GPU compute units or CPU cores with explicit stability and recovery steps."
-            "Display & connectivity|${CG}[menu]${C0}|Configure HDMI audio, HDMI-CEC, or hardware-specific AIC8800 wireless support."
+            "Display & connectivity|${CG}[menu]${C0}|Configure HDMI audio, HDMI-CEC, NCT6687 fan control, or hardware-specific AIC8800 support."
             "Control interfaces|${CG}[menu]${C0}|Install Decky, Plasma, or the standalone BC250 Trainer."
             "Maintenance & recovery|${CG}[menu]${C0}|Verify, repair, clean build state, remove components, or purge preserved data."
             "Complete system status|${CD}[read only]${C0}|Show a compact health dashboard for storage, power, CPU core unlock, graphics, and display integration."
@@ -937,7 +978,7 @@ cmd_menu() {
 
 cmd_help() {
     cat << EOF
-Usage: $0 [menu|setup|status|inventory-json|action OPERATION_ID|drivers|unlocks|storage-updates|interfaces|power|ram|swap|compute|cpu-unlock|cec|audio-output|hdmi-ac3-enable|hdmi-ac3-revert|storage|persistence|wifi|amdgpu|amdgpu-clean|scheduler-policy|kfd-runlist|radv|decky|desktop|trainer|manage|help]
+Usage: $0 [menu|setup|status|inventory-json|action OPERATION_ID|drivers|unlocks|storage-updates|interfaces|power|ram|swap|compute|cpu-unlock|cec|audio-output|hdmi-ac3-enable|hdmi-ac3-revert|storage|persistence|wifi|fan-driver|amdgpu|amdgpu-clean|scheduler-policy|kfd-runlist|radv|decky|desktop|trainer|manage|help]
 
 Run without arguments in a terminal to open the unified toolkit menu.
 Run the toolkit as the logged-in Deck user, not with sudo; child tools request
@@ -964,6 +1005,7 @@ Commands:
   storage                Open the Persistent Storage menu
   persistence            Open the SteamOS Update Persistence menu
   wifi                   Confirm and run the AIC8800 installer
+  fan-driver             Confirm and install NCT6687 hwmon fan/PWM support
   amdgpu                 Confirm and build the AMDGPU kernel fixes
   amdgpu-clean           Confirm and clean the AMDGPU kernel build tree
   scheduler-policy       Advanced: toggle policy only after RADV is installed
@@ -980,13 +1022,15 @@ Action operation IDs:
   storage-install        power-install          ram-install
   swap-zram-install      swap-zswap-install     compute-build
   cec-setup              persistence-install
-  aic-install            audio-build            mesh-setup
+  aic-install            fan-install             audio-build
+  mesh-setup
   decky-install          desktop-install
   storage-repair         cec-repair
   storage-remove         power-remove           ram-remove
   swap-remove
   compute-remove         cec-remove             persistence-remove
-  aic-remove             audio-remove           mesh-remove
+  aic-remove             fan-remove             audio-remove
+  mesh-remove
   decky-remove           desktop-remove
 EOF
 }
@@ -1024,6 +1068,7 @@ case "$command_name" in
     storage) (($# == 0)) || die "Usage: $0 storage"; run_script "$STORAGE_SH" menu ;;
     persistence) (($# == 0)) || die "Usage: $0 persistence"; run_script "$PERSISTENCE_SH" menu ;;
     wifi) (($# == 0)) || die "Usage: $0 wifi"; install_wifi ;;
+    fan-driver) (($# == 0)) || die "Usage: $0 fan-driver"; install_fan_driver ;;
     amdgpu|audio) (($# == 0)) || die "Usage: $0 amdgpu"; install_audio_fix ;;
     amdgpu-clean) (($# == 0)) || die "Usage: $0 amdgpu-clean"; clean_audio_fix ;;
     scheduler-policy) (($# == 0)) || die "Usage: $0 scheduler-policy"; toggle_scheduler_policy ;;

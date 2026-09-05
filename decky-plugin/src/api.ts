@@ -18,6 +18,9 @@ export const setCustomLoadTarget = callable<
   [minimum: number, maximum: number],
   void
 >("set_custom_load_target");
+export const setTemperatureTarget = callable<[target: number], void>(
+  "set_temperature_target",
+);
 export const setRamp = callable<[climbMs: number], void>("set_ramp");
 export const cpuOcAction = callable<
   [action: string, frequency: number, voltage: number, temperature: number],

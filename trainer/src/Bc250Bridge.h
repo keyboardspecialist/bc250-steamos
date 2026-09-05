@@ -62,6 +62,7 @@ public:
     Q_INVOKABLE void setGpuFrequency(const QString &mode, int minimum, int maximum);
     Q_INVOKABLE void setLoadTarget(const QString &preset);
     Q_INVOKABLE void setCustomLoadTarget(int minimum, int maximum);
+    Q_INVOKABLE void setTemperatureTarget(int target);
     Q_INVOKABLE void setRamp(int milliseconds);
     Q_INVOKABLE void cpuOcAction(const QString &action, int frequency, int voltage, int temperature);
     Q_INVOKABLE void setCpuMitigations(bool enabled);

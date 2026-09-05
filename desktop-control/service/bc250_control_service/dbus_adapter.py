@@ -31,6 +31,7 @@ INTROSPECTION_XML = """<node>
     <method name="SetGpuFrequency"><arg name="mode" type="s" direction="in"/><arg name="minimum" type="u" direction="in"/><arg name="maximum" type="u" direction="in"/><arg name="operation_id" type="s" direction="out"/></method>
     <method name="SetLoadTarget"><arg name="preset" type="s" direction="in"/><arg name="operation_id" type="s" direction="out"/></method>
     <method name="SetCustomLoadTarget"><arg name="minimum" type="y" direction="in"/><arg name="maximum" type="y" direction="in"/><arg name="operation_id" type="s" direction="out"/></method>
+    <method name="SetTemperatureTarget"><arg name="target" type="y" direction="in"/><arg name="operation_id" type="s" direction="out"/></method>
     <method name="SetRamp"><arg name="climb_ms" type="u" direction="in"/><arg name="operation_id" type="s" direction="out"/></method>
     <method name="CpuOcAction"><arg name="action" type="s" direction="in"/><arg name="frequency" type="u" direction="in"/><arg name="voltage" type="u" direction="in"/><arg name="temperature" type="u" direction="in"/><arg name="operation_id" type="s" direction="out"/></method>
     <method name="SetCpuMitigations"><arg name="enabled" type="b" direction="in"/><arg name="operation_id" type="s" direction="out"/></method>
@@ -161,6 +162,7 @@ class DbusAdapter:
         "SetGpuFrequency": ("suu", "s", "set_gpu_frequency"),
         "SetLoadTarget": ("s", "s", "set_load_target"),
         "SetCustomLoadTarget": ("yy", "s", "set_custom_load_target"),
+        "SetTemperatureTarget": ("y", "s", "set_temperature_target"),
         "SetRamp": ("u", "s", "set_ramp"),
         "CpuOcAction": ("suuu", "s", "cpu_oc_action"),
         "SetCpuMitigations": ("b", "s", "set_cpu_mitigations"),
