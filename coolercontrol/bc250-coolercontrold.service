@@ -1,0 +1,20 @@
+# BC-250 toolkit managed CoolerControl service.
+[Unit]
+Description=CoolerControl daemon for BC-250
+After=network.target nct6687-modules.service
+
+[Service]
+Type=notify
+Environment=CC_LOG=INFO
+Environment=CC_CONFIG_DIR=/var/lib/bc250-control/coolercontrol/config
+Environment=CC_DATA_DIR=/var/lib/bc250-control/coolercontrol/data
+Environment=CC_PLUGINS_DIR=/var/lib/bc250-control/coolercontrol/data/plugins
+ExecStart=/var/lib/bc250-control/coolercontrol/runtime/CoolerControlD-x86_64.AppImage
+Restart=always
+RestartSec=1
+TimeoutStopSec=10
+TimeoutStartSec=300
+WatchdogSec=30
+
+[Install]
+WantedBy=multi-user.target
