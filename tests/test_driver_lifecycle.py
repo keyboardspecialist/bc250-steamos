@@ -374,6 +374,8 @@ class DriverLifecycleTests(unittest.TestCase):
         self.assertIn("a49a8abdfb6221772ecc836b3109e0cc338203cf", fetcher)
         self.assertIn('modinfo -F vermagic "$1"', installer)
         self.assertIn('modinfo -F license "$BUILT_KO"', installer)
+        self.assertIn('[[ "$selected" -ef "$module" ]]', installer)
+        self.assertIn('[[ "$selected" -ef "$INSTALLED_KO" ]]', helper)
         self.assertIn('M="$SOURCE_CACHE"', installer)
         self.assertNotIn('make -C "$SOURCE_CACHE" install', installer)
         self.assertIn("sha256sum -c --quiet source.sha256", helper)
@@ -401,9 +403,21 @@ class DriverLifecycleTests(unittest.TestCase):
         self.assertIn("pacman-key --verify", installer)
         self.assertIn("Pinned source changed during the build", installer)
         self.assertIn("regenerate it from the package whose signature just passed", installer)
+        self.assertIn(
+            'IFS= read -r prepared_release < "$KDIR/include/config/kernel.release"',
+            installer,
+        )
+        self.assertNotIn('$(<"$KDIR/include/config/kernel.release" 2>/dev/null', installer)
         self.assertIn("NEW_STAGE_PROBED", installer)
         self.assertIn("PREVIOUS_NCT6687_KO", installer)
         self.assertIn("/sys/module/nct6687", installer)
+        probe_cleanup = installer[
+            installer.index('if ! insmod "$STAGED_KO"') :
+            installer.index("NEW_STAGE_PROBED=1")
+        ]
+        self.assertIn("rmmod nct6687", probe_cleanup)
+        self.assertNotIn("modprobe -r nct6687", probe_cleanup)
+        self.assertIn("rmmod nct6687", helper)
         self.assertIn("NCT6683/6686/6687 hwmon", helper)
         self.assertIn("Requires=bc250-persistence-recovery.service", service)
         self.assertIn("RequiresMountsFor=/var/lib/bc250-control", service)

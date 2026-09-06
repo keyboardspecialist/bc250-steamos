@@ -47,3 +47,6 @@ logged-in user before a new root-owned module is staged.
 While installed, the generated modprobe file blacklists the stock `nct6683`
 module so it cannot reserve the same controller before the enhanced `nct6687`
 driver. Uninstall removes that blacklist and restores the stock module policy.
+
+After this driver is active, the toolkit's **CoolerControl** interface can use
+the onboard controller for fan profiles, curves, and monitoring.

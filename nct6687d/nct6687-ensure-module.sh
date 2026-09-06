@@ -62,7 +62,7 @@ read_options() {
 }
 
 installed_module_valid() {
-    local expected actual
+    local expected actual selected
     [[ -f "$INSTALLED_KO" && ! -L "$INSTALLED_KO" \
         && -f "$INSTALLED_MARKER" && ! -L "$INSTALLED_MARKER" ]] || return 1
     secure_root_file "$INSTALLED_KO"
@@ -72,8 +72,10 @@ installed_module_valid() {
     expected=$(sed -n 's/^sha256=//p' "$INSTALLED_MARKER")
     [[ "$expected" =~ ^[0-9a-f]{64}$ ]] || return 1
     actual=$(sha256sum "$INSTALLED_KO" | cut -d' ' -f1)
-    [[ "$actual" == "$expected" && "$(ko_kver "$INSTALLED_KO")" == "$KVER" \
-        && "$(modinfo -k "$KVER" -n nct6687 2>/dev/null)" == "$INSTALLED_KO" ]]
+    [[ "$actual" == "$expected" && "$(ko_kver "$INSTALLED_KO")" == "$KVER" ]] \
+        || return 1
+    selected=$(modinfo -k "$KVER" -n nct6687 2>/dev/null) || return 1
+    [[ "$selected" -ef "$INSTALLED_KO" ]]
 }
 
 staged_module_valid() {
@@ -141,7 +143,7 @@ fi
 
 hwmon_name=$(find_owned_hwmon) \
     || {
-        modprobe -r nct6687 2>/dev/null || true
+        rmmod nct6687 2>/dev/null || true
         [[ $stock_loaded -eq 0 ]] || modprobe nct6683 2>/dev/null || true
         die "Module loaded but did not register its own NCT6683/6686/6687 hwmon device."
     }

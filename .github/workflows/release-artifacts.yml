@@ -123,7 +123,7 @@ jobs:
           printf '%s\n' "$GITHUB_REF_NAME" > "$package_dir/VERSION"
           cp README.md bc250-*.sh fetch-steamos-package.sh "$package_dir/"
           git archive --format=tar HEAD \
-            acpi-tables decky-plugin desktop-control core-unlock backend hdmi-ac3 scripts topology.sh \
+            acpi-tables decky-plugin desktop-control coolercontrol core-unlock backend hdmi-ac3 scripts topology.sh \
             bc250-mesa-patches \
             | tar -xf - -C "$package_dir"
           install -m 0755 \

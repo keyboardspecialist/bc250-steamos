@@ -21,10 +21,11 @@ DECKY_SH="${DECKY_SH:-$SCRIPT_DIR/decky-plugin/install.sh}"
 DESKTOP_SH="${DESKTOP_SH:-$SCRIPT_DIR/desktop-control/install.sh}"
 TRAINER_SH="${TRAINER_SH:-$SCRIPT_DIR/trainer/install.sh}"
 TRAINER_FLATPAK_SH="${TRAINER_FLATPAK_SH:-$SCRIPT_DIR/trainer/install-flatpak.sh}"
+COOLERCONTROL_SH="${COOLERCONTROL_SH:-$SCRIPT_DIR/coolercontrol/install.sh}"
 SERVICE_CLIENT_DIR="${BC250_SERVICE_CLIENT_DIR:-/var/lib/bc250-control/service-clients}"
 
-COMPONENTS=(trainer desktop decky cec ac3 power ram swap compute mesh audio fan aic)
-UNINSTALL_ORDER=(trainer desktop decky cec ac3 power ram swap compute mesh audio fan aic)
+COMPONENTS=(trainer desktop decky coolercontrol cec ac3 power ram swap compute mesh audio fan aic)
+UNINSTALL_ORDER=(trainer desktop decky coolercontrol cec ac3 power ram swap compute mesh audio fan aic)
 MESH_STATE_DIR="${BC250_MESH_STATE_DIR:-$HOME/.local/share/bc250-mesh-shader}"
 MESH_LOCK_FILE="${BC250_MESH_LOCK_FILE:-$HOME/.cache/bc250-mesh-shader.lock}"
 MESH_GENERATOR="${BC250_GFX1013_GENERATOR:-/usr/lib/systemd/user-environment-generators/60-bc250-gfx1013}"
@@ -46,6 +47,7 @@ component_label() {
         trainer) echo "BC250 Trainer" ;;
         desktop) echo "Plasma desktop control" ;;
         decky) echo "Decky plugin" ;;
+        coolercontrol) echo "CoolerControl" ;;
         cec) echo "CEC integration" ;;
         ac3) echo "HDMI AC-3 surround encoding" ;;
         power) echo "Power management / CPU core unlock" ;;
@@ -66,6 +68,7 @@ component_script() {
         trainer) echo "$TRAINER_SH" ;;
         desktop) echo "$DESKTOP_SH" ;;
         decky) echo "$DECKY_SH" ;;
+        coolercontrol) echo "$COOLERCONTROL_SH" ;;
         cec) echo "$CEC_SH" ;;
         ac3) echo "$HDMI_AC3_SH" ;;
         power) echo "$POWER_SH" ;;
@@ -94,7 +97,7 @@ component_probe() {
             require_script "$TRAINER_FLATPAK_SH"
             bash "$TRAINER_FLATPAK_SH" status >/dev/null 2>&1
             ;;
-        desktop|decky|mesh|audio|aic|fan|ac3) bash "$script" status >/dev/null 2>&1 ;;
+        desktop|decky|coolercontrol|mesh|audio|aic|fan|ac3) bash "$script" status >/dev/null 2>&1 ;;
         storage) bash "$script" installed >/dev/null 2>&1 ;;
     esac
 }
@@ -129,6 +132,13 @@ component_has_artifacts() {
                         || -L /etc/systemd/system/multi-user.target.wants/bc250-desktop-control-repair.service ) ) ]]
             ;;
         decky) [[ -e "$HOME/homebrew/plugins/BC-250 Control" ]] ;;
+        coolercontrol)
+            [[ -e "$HOME/.local/share/applications/org.coolercontrol.CoolerControl.bc250.desktop" \
+                || -e /var/lib/bc250-control/coolercontrol/runtime \
+                || -e /etc/systemd/system/bc250-coolercontrold.service \
+                || -e /etc/atomic-update.conf.d/bc250-coolercontrol.conf \
+                || -L /etc/systemd/system/multi-user.target.wants/bc250-coolercontrold.service ]]
+            ;;
         cec)
             [[ -e "$HOME/.config/systemd/user/bc250-cec-boot-wake.service" \
                 || -e /etc/systemd/system/bc250-cec-poweroff-standby.service \
@@ -285,6 +295,7 @@ plan_component() {
         trainer) echo "  Remove only the BC250 Trainer user files and its UID-scoped service registration." ;;
         desktop) echo "  Remove the Plasma applet and its registration; remove the shared service only if no frontend remains." ;;
         decky) echo "  Remove the Decky plugin and restart plugin_loader; shared hardware helpers remain." ;;
+        coolercontrol) echo "  Stop CoolerControl, restore firmware fan control, and remove its daemon and launcher; preserve profiles." ;;
         cec) echo "  Remove CEC boot, shutdown, and sleep integrations; preserve CEC preferences." ;;
         ac3) echo "  Remove the AC-3 udev and WirePlumber rules and restore the default HDMI stereo profile." ;;
         power) echo "  Restore stock CPU state, disable tuning and CPU core-unlock persistence, and remove the ACPI override on next boot." ;;
@@ -320,7 +331,7 @@ show_plan() {
 remove_persistence_for() {
     local component="$1" persistence=""
     case "$component" in
-        cec|power|ram|swap|compute|aic|fan) persistence="$component" ;;
+        cec|power|ram|swap|compute|aic|fan|coolercontrol) persistence="$component" ;;
         *) return 0 ;;
     esac
     require_script "$PERSISTENCE_SH"
@@ -365,7 +376,7 @@ run_component_uninstall() {
             [[ $native -eq 1 || $flatpak_trainer -eq 1 || $legacy_trainer -eq 1 ]] \
                 || bash "$script" uninstall || rc=$?
             ;;
-        desktop|decky|cec|mesh|audio|ac3) bash "$script" uninstall || rc=$? ;;
+        desktop|decky|coolercontrol|cec|mesh|audio|ac3) bash "$script" uninstall || rc=$? ;;
         power|ram|swap|compute|aic|fan|storage) sudo bash "$script" uninstall || rc=$? ;;
         *) die "Unknown component: $component" ;;
     esac
@@ -571,7 +582,7 @@ cmd_help() {
     cat << EOF
 Usage: $0 {menu|status|status-json|plan [COMPONENT|all]|uninstall COMPONENT|all [--yes]|purge [--yes]|help}
 
-Components: trainer, desktop, decky, cec, ac3, power, ram, compute, mesh, audio, fan, aic, storage
+Components: trainer, desktop, decky, coolercontrol, cec, ac3, power, ram, compute, mesh, audio, fan, aic, storage
 
   status                 Show lifecycle state for every component.
   status-json            Emit versioned JSON lifecycle state for automation.

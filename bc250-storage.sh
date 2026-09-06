@@ -29,6 +29,7 @@ ROOT_BACKED_SERVICES=(
     bc250-cec-poweroff-standby.service
     aic8800-modules.service
     nct6687-modules.service
+    bc250-coolercontrold.service
     bc250-control.service
     bc250-desktop-control-repair.service
 )
@@ -517,7 +518,7 @@ list_dependencies() {
             printf 'service:%s\n' "$unit"
         fi
     done
-    for component in compute power ram swap cec aic fan desktop; do
+    for component in compute power ram swap cec aic fan coolercontrol desktop; do
         if [[ -e "$ATOMIC_KEEP_DIR/bc250-$component.conf" \
             || -L "$ATOMIC_KEEP_DIR/bc250-$component.conf" ]]; then
             printf 'persistence:%s\n' "$component"

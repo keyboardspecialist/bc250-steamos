@@ -11,7 +11,7 @@ AC-3 frame before playback starts. It requires PipeWire, WirePlumber,
 
 ## Usage
 
-Use **Display & Connectivity > HDMI audio** in `bc250-toolkit.sh`, or run:
+Use **Device drivers & connectivity > HDMI audio** in `bc250-toolkit.sh`, or run:
 
 ```bash
 ./hdmi-ac3/hdmi-ac3.sh install

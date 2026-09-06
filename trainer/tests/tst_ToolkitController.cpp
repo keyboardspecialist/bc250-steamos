@@ -37,7 +37,9 @@ private slots:
             QStringLiteral("audio-build"), QStringLiteral("audio-remove"),
             QStringLiteral("mesh-setup"), QStringLiteral("mesh-remove"),
             QStringLiteral("decky-install"), QStringLiteral("decky-remove"),
-            QStringLiteral("desktop-install"), QStringLiteral("desktop-remove")};
+            QStringLiteral("desktop-install"), QStringLiteral("desktop-remove"),
+            QStringLiteral("coolercontrol-install"),
+            QStringLiteral("coolercontrol-remove")};
         for (const QString &id : expectedIds)
             QCOMPARE(ToolkitController::operationMetadata(id).value(QStringLiteral("id")), id);
 
@@ -52,6 +54,11 @@ private slots:
                      .value(QStringLiteral("component")).toString(),
                  QStringLiteral("swap"));
         QVERIFY(ToolkitController::operationMetadata(QStringLiteral("swap-remove"))
+                    .value(QStringLiteral("destructive")).toBool());
+        QCOMPARE(ToolkitController::operationMetadata(QStringLiteral("coolercontrol-install"))
+                     .value(QStringLiteral("component")).toString(),
+                 QStringLiteral("coolercontrol"));
+        QVERIFY(ToolkitController::operationMetadata(QStringLiteral("coolercontrol-remove"))
                     .value(QStringLiteral("destructive")).toBool());
         QVERIFY(ToolkitController::operationMetadata(QStringLiteral("../bc250-toolkit.sh")).isEmpty());
         QVERIFY(ToolkitController::operationMetadata(QStringLiteral("power-install extra")).isEmpty());

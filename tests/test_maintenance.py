@@ -39,6 +39,7 @@ class MaintenanceTests(unittest.TestCase):
             "DECKY_SH": "decky",
             "DESKTOP_SH": "desktop",
             "TRAINER_SH": "trainer",
+            "COOLERCONTROL_SH": "coolercontrol",
         }
         for variable, name in scripts.items():
             script = directory / f"{name}.sh"
@@ -112,7 +113,7 @@ class MaintenanceTests(unittest.TestCase):
                 text=True,
                 env=env,
             )
-            self.assertEqual(status.stdout.count("installed"), 14)
+            self.assertEqual(status.stdout.count("installed"), 15)
             self.assertIn("Saved tuning profiles", plan.stdout)
             self.assertFalse(call_log.exists())
 
@@ -132,6 +133,8 @@ class MaintenanceTests(unittest.TestCase):
                     "trainer:uninstall",
                     "desktop:uninstall",
                     "decky:uninstall",
+                    "coolercontrol:uninstall",
+                    "persistence:remove coolercontrol",
                     "cec:uninstall",
                     "persistence:remove cec",
                     "ac3:uninstall",

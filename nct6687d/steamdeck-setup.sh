@@ -67,7 +67,7 @@ runtime_artifact_present() {
 }
 
 module_copy_valid() {
-    local module=$1 marker=$2 kind=${3:-installed} expected actual metadata owner mode
+    local module=$1 marker=$2 kind=${3:-installed} expected actual metadata owner mode selected
     [[ -f "$module" && ! -L "$module" ]] || return 1
     metadata=$(stat -Lc '%u %a' "$module") || return 1
     read -r owner mode <<< "$metadata"
@@ -85,7 +85,8 @@ module_copy_valid() {
     fi
     [[ "$(ko_kver "$module")" == "$KREL" ]] || return 1
     if [[ "$kind" == installed ]]; then
-        [[ "$(modinfo -k "$KREL" -n nct6687 2>/dev/null)" == "$module" ]]
+        selected=$(modinfo -k "$KREL" -n nct6687 2>/dev/null) || return 1
+        [[ "$selected" -ef "$module" ]]
     fi
 }
 
@@ -454,7 +455,7 @@ verify_header_package() {
 }
 
 prepare_headers() {
-    local pkgbase flavor pkgver package status
+    local pkgbase flavor pkgver package status prepared_release=
     if [[ -d /lib/modules/$KREL/build ]]; then
         KDIR=/lib/modules/$KREL/build
         return
@@ -487,8 +488,10 @@ prepare_headers() {
     else
         die "Could not reliably retrieve matching kernel headers."
     fi
-    [[ -d "$KDIR" \
-        && "$(<"$KDIR/include/config/kernel.release" 2>/dev/null || true)" == "$KREL" ]] \
+    if [[ -r "$KDIR/include/config/kernel.release" ]]; then
+        IFS= read -r prepared_release < "$KDIR/include/config/kernel.release"
+    fi
+    [[ -d "$KDIR" && "$prepared_release" == "$KREL" ]] \
         || die "Prepared headers do not match $KREL."
 }
 
@@ -615,7 +618,7 @@ if [[ -d /sys/module/nct6687 ]]; then
         PREVIOUS_NCT6687_KO=$runtime_rollback_dir/nct6687.ko
     fi
     restore_automatic_fan_control optional
-    modprobe -r nct6687 \
+    rmmod nct6687 \
         || die "Could not unload the existing nct6687 module; stop fan-control software first."
 fi
 if [[ -d /sys/module/nct6683 ]]; then
@@ -630,13 +633,13 @@ if ! insmod "$STAGED_KO" "force=$FORCE_UNKNOWN"; then
     die "The staged NCT6687 module did not load; the prior module was restored when possible."
 fi
 if ! hwmon_name=$(find_nct6687_hwmon); then
-    modprobe -r nct6687 2>/dev/null || true
+    rmmod nct6687 2>/dev/null || true
     if [[ $PREVIOUS_NCT6687 -eq 1 ]]; then modprobe nct6687 || true; fi
     if [[ $PREVIOUS_NCT6683 -eq 1 ]]; then modprobe nct6683 || true; fi
     die "The staged module did not register its own NCT6683/6686/6687 hwmon device."
 fi
 restore_automatic_fan_control
-modprobe -r nct6687 \
+rmmod nct6687 \
     || die "The staged module could not be unloaded after its safety probe."
 NEW_STAGE_PROBED=1
 
@@ -664,7 +667,8 @@ atomic_install "$config_tmp" "$MODPROBE_CONFIG" 0644
 atomic_install "$service_tmp" "$SERVICE_UNIT" 0644
 rm -f "$config_tmp" "$service_tmp" "$marker_tmp"
 depmod "$KREL"
-[[ "$(modinfo -k "$KREL" -n nct6687 2>/dev/null)" == "$MODULE_KO" ]] \
+selected_module=$(modinfo -k "$KREL" -n nct6687 2>/dev/null) || selected_module=
+[[ -n "$selected_module" && "$selected_module" -ef "$MODULE_KO" ]] \
     || die "depmod did not select the toolkit-installed nct6687 module."
 systemctl daemon-reload
 systemctl enable nct6687-modules.service >/dev/null

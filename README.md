@@ -28,8 +28,8 @@ Open the unified toolkit menu as the logged-in Deck user:
 | Compressed swap (optional) | `sudo ./bc250-swap.sh`, then choose zram or zswap-backed disk swap |
 | GPU compute-unit unlock | `sudo ./bc250-40cu.sh` |
 | CEC | `./bc250-cec.sh setup` |
-| HDMI Dolby Digital 5.1 (optional) | **Display & Connectivity > HDMI audio** or `./hdmi-ac3/hdmi-ac3.sh install` |
-| NCT6687 fan-control driver (optional) | `./bc250-toolkit.sh fan-driver` |
+| HDMI Dolby Digital 5.1 (optional) | **Device drivers & connectivity > HDMI audio** or `./hdmi-ac3/hdmi-ac3.sh install` |
+| NCT6687 fan-control driver | `./bc250-toolkit.sh fan-driver` |
 | AIC8800 | `sudo bash ./aic8800/steamdeck-setup.sh` |
 | Decky plugin | `bash ./decky-plugin/install.sh` |
 | Plasma desktop control | `bash ./desktop-control/install.sh install` |
@@ -118,7 +118,8 @@ Each child requests administrator access only when needed.
 | `./bc250-toolkit.sh amdgpu` | Build the AMDGPU kernel fixes |
 | `./bc250-toolkit.sh radv` | Open the global Mesa / RADV async-compute menu |
 | `./bc250-toolkit.sh audio-output` | Open HDMI AC-3 enable and stereo-revert options |
-| `./bc250-toolkit.sh fan-driver` | Build and install optional NCT6687 hwmon fan/PWM support |
+| `./bc250-toolkit.sh fan-driver` | Build and install NCT6687 hwmon fan/PWM support for the onboard controller |
+| `./bc250-toolkit.sh coolercontrol` | Install CoolerControl for fan profiles, curves, and monitoring |
 | `./bc250-toolkit.sh trainer` | Download, verify, and install the latest native BC250 Trainer release |
 | `./bc250-toolkit.sh manage` | Review and remove installed components |
 | `./bc250-toolkit.sh help` | List launcher commands and components |
@@ -509,6 +510,21 @@ It runs independently from Decky and requests polkit authorization only for
 privileged hardware changes. Installation and troubleshooting instructions are
 in [`desktop-control/README.md`](desktop-control/README.md).
 
+## CoolerControl
+
+[`coolercontrol/`](coolercontrol/) installs the pinned official CoolerControl
+daemon AppImage and a desktop launcher for its local Web UI. Install the NCT6687
+driver first, then select **CoolerControl** under **Control interfaces** or run:
+
+```bash
+./bc250-toolkit.sh coolercontrol
+```
+
+The daemon and its configuration live in update-proof BC-250 storage. The
+installer verifies the upstream SHA-256, enables the managed service, and opens
+the interface at <http://localhost:11987>. Uninstall restores firmware automatic
+fan mode and preserves CoolerControl profiles for later reuse.
+
 ## BC250 Trainer
 
 [`trainer/`](trainer/) provides a standalone native Qt 6 frontend for status,
@@ -556,7 +572,7 @@ SteamOS ships an ALSA AC-3 profile for Valve hardware, but the BC-250's DMI
 identity does not activate it. The toolkit can select that profile for the AMD
 HDMI card and encode six-channel PCM to Dolby Digital with ALSA's `a52` plugin.
 On 6.16 and 6.18, install the AMDGPU audio correction and reboot first. Valve
-7.2 does not need the legacy audio patches. Then open **Display & Connectivity
+7.2 does not need the legacy audio patches. Then open **Device drivers & connectivity
 > HDMI audio** and choose **Enable HDMI AC-3 5.1**.
 
 The setup requires an AC-3-capable receiver or soundbar. It installs a

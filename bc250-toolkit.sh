@@ -22,6 +22,7 @@ MESH_SHADER_SH="$SCRIPT_DIR/bc250-mesh-shader.sh"
 DECKY_INSTALL_SH="$SCRIPT_DIR/decky-plugin/install.sh"
 DESKTOP_INSTALL_SH="$SCRIPT_DIR/desktop-control/install.sh"
 TRAINER_RELEASE_INSTALLER="$SCRIPT_DIR/trainer/install-release.py"
+COOLERCONTROL_INSTALL_SH="$SCRIPT_DIR/coolercontrol/install.sh"
 MAINTENANCE_SH="$SCRIPT_DIR/bc250-maintenance.sh"
 TOOLKIT_VERSION="development"
 if [[ -f "$SCRIPT_DIR/VERSION" && ! -L "$SCRIPT_DIR/VERSION" ]]; then
@@ -353,6 +354,14 @@ install_trainer() {
         python3 "$TRAINER_RELEASE_INSTALLER"
 }
 
+install_coolercontrol() {
+    require_normal_user
+    require_script "$COOLERCONTROL_INSTALL_SH"
+    confirm_action \
+        "Install or upgrade CoolerControl for the onboard fan controller?" \
+        bash "$COOLERCONTROL_INSTALL_SH" install
+}
+
 run_machine_action() {
     (($# == 1)) || die "Usage: $0 action OPERATION_ID"
     require_normal_user
@@ -376,8 +385,9 @@ run_machine_action() {
         mesh-setup) run_script "$MESH_SHADER_SH" setup ;;
         decky-install) run_script "$DECKY_INSTALL_SH" install ;;
         desktop-install) run_script "$DESKTOP_INSTALL_SH" install ;;
+        coolercontrol-install) run_script "$COOLERCONTROL_INSTALL_SH" install ;;
         persistence-remove) run_sudo_script "$PERSISTENCE_SH" remove all ;;
-        storage-remove|power-remove|ram-remove|swap-remove|compute-remove|cec-remove|aic-remove|fan-remove|audio-remove|mesh-remove|decky-remove|desktop-remove)
+        storage-remove|power-remove|ram-remove|swap-remove|compute-remove|cec-remove|aic-remove|fan-remove|audio-remove|mesh-remove|decky-remove|desktop-remove|coolercontrol-remove)
             require_script "$MAINTENANCE_SH"
             bash "$MAINTENANCE_SH" uninstall "${operation%-remove}" --yes
             ;;
@@ -584,7 +594,7 @@ show_status() {
     secondary=$(status_value "$fan_output" "load option: " || true)
     case "$state" in
         installed) status_row "Fan controller" "installed" good "hwmon ${detail:--}; ${secondary:-force=0}" ;;
-        not-installed) status_row "Fan controller" "not installed" dim "optional NCT6687 driver" ;;
+        not-installed) status_row "Fan controller" "not installed" dim "onboard NCT6687 driver" ;;
         *)
             status_row "Fan controller" "${state:-incomplete}" bad "${detail:+hwmon $detail; }${secondary:-status unavailable}"
             failed=1; failed_components+=("NCT6687 fan-control driver") ;;
@@ -753,8 +763,8 @@ cmd_guided_setup_menu() {
             "Power foundation|$(power_foundation_badge)|Install ACPI, reboot, then load-test the GPU governor before enabling it at boot."
             "Memory balance|$(component_badge "$RAM_SPLIT_SH")|Install the helper, then choose CMOS minimum VRAM and the dynamic TTM limit."
             "Performance tuning|$(radv_badge)|Build the Mesa RADV async-compute patch or tune GPU and CPU behavior after unlock testing. RADV takes about 3-5 minutes."
-            "Devices & connectivity||Configure HDMI audio, CEC, NCT6687 fan control, or hardware-specific AIC8800 support."
-            "Choose control interface||Install Decky for Gaming Mode, Plasma for desktop, or the standalone Trainer."
+            "Device drivers & connectivity||Configure HDMI audio, CEC, NCT6687 fan control, or hardware-specific AIC8800 support."
+            "Choose control interface||Install Decky, Plasma, CoolerControl, or the standalone Trainer."
             "Finish - Verify system|${CD}[read only]${C0}|Run the complete status report after required reboot and sign-out checkpoints."
         )
         menu_select "BC-250 guided setup  ${CD}(choose by goal)${C0}" "${items[@]}" || { echo; break; }
@@ -783,7 +793,7 @@ cmd_drivers_menu() {
             "AMDGPU scheduler policy (advanced)|$(scheduler_policy_badge)|Normally managed by RADV setup. Enabling is blocked until the patched RADV runtime is installed."
             "KFD HWS runlist TLB flush (experimental)|$(kfd_runlist_badge)|Opt-in ROCm workaround for stale mappings. Requires HWS and cannot coexist with sched_policy=2."
             "Mesa / RADV async-compute patch (optional)|${CG}[menu]${C0}|Enables GFX1013 async compute. Requires the patched AMDGPU module; builds in about 3-5 minutes."
-            "NCT6687 fan-control driver|$(fan_driver_badge)|Expose supported fan tachometers and PWM controls through Linux hwmon."
+            "NCT6687 fan-control driver|$(fan_driver_badge)|Install Linux hwmon fan-speed and PWM support for the BC-250's onboard controller."
             "AIC8800 WiFi / Bluetooth|${CY}[installer]${C0}|Install only when the system uses the AIC8800 wireless adapter."
         )
         menu_select "BC-250 drivers" "${items[@]}" || { echo; break; }
@@ -838,13 +848,15 @@ cmd_interfaces_menu() {
         local items=(
             "Decky plugin|${CY}[installer]${C0}|Install the BC-250 controls for Gaming Mode and Quick Access."
             "Plasma desktop control|${CY}[installer]${C0}|Install the system service and Plasma system-tray control."
+            "CoolerControl|$(component_badge "$COOLERCONTROL_INSTALL_SH" status)|Control the BC-250's onboard fan controller with profiles, curves, and monitoring."
             "BC250 Trainer|${CY}[installer]${C0}|Install the standalone native Qt control application."
         )
         menu_select "BC-250 control interfaces" "${items[@]}" || { echo; break; }
         case $MENU_CHOICE in
             0) run_menu_action decky ;;
             1) run_menu_action desktop ;;
-            2) run_menu_action trainer ;;
+            2) run_menu_action coolercontrol ;;
+            3) run_menu_action trainer ;;
         esac
     done
 }
@@ -898,10 +910,10 @@ cmd_devices_menu() {
         local items=(
             "HDMI audio|${CG}[menu]${C0}|Enable Dolby Digital 5.1 encoding or revert to the default HDMI stereo profile."
             "CEC / HDMI control|$(component_badge "$CEC_SH")|Set up TV and receiver behavior, then access everyday HDMI controls."
-            "NCT6687 fan-control driver|$(fan_driver_badge)|Install hwmon fan and PWM support on systems with a compatible Nuvoton controller."
+            "NCT6687 fan-control driver|$(fan_driver_badge)|Install Linux hwmon fan-speed and PWM support for the BC-250's onboard controller."
             "AIC8800 WiFi / Bluetooth|${CY}[hardware specific]${C0}|Install only when the system uses the AIC8800 wireless adapter."
         )
-        menu_select "BC-250 display & connectivity" "${items[@]}" || { echo; break; }
+        menu_select "BC-250 device drivers & connectivity" "${items[@]}" || { echo; break; }
         case $MENU_CHOICE in
             0) cmd_audio_menu ;;
             1) run_menu_child cec ;;
@@ -957,8 +969,8 @@ cmd_menu() {
             "Core system|${CG}[menu]${C0}|Configure storage, AMDGPU, power foundations, memory balance, and update protection."
             "Performance tuning|${CG}[menu]${C0}|Configure Mesa / RADV and optional GPU or CPU tuning after setup is stable."
             "Hardware unlocks|${CG}[menu]${C0}|Test GPU compute units or CPU cores with explicit stability and recovery steps."
-            "Display & connectivity|${CG}[menu]${C0}|Configure HDMI audio, HDMI-CEC, NCT6687 fan control, or hardware-specific AIC8800 support."
-            "Control interfaces|${CG}[menu]${C0}|Install Decky, Plasma, or the standalone BC250 Trainer."
+            "Device drivers & connectivity|${CG}[menu]${C0}|Configure HDMI audio, HDMI-CEC, NCT6687 fan control, or hardware-specific AIC8800 support."
+            "Control interfaces|${CG}[menu]${C0}|Install Decky, Plasma, CoolerControl, or the standalone BC250 Trainer."
             "Maintenance & recovery|${CG}[menu]${C0}|Verify, repair, clean build state, remove components, or purge preserved data."
             "Complete system status|${CD}[read only]${C0}|Show a compact health dashboard for storage, power, CPU core unlock, graphics, and display integration."
         )
@@ -978,7 +990,7 @@ cmd_menu() {
 
 cmd_help() {
     cat << EOF
-Usage: $0 [menu|setup|status|inventory-json|action OPERATION_ID|drivers|unlocks|storage-updates|interfaces|power|ram|swap|compute|cpu-unlock|cec|audio-output|hdmi-ac3-enable|hdmi-ac3-revert|storage|persistence|wifi|fan-driver|amdgpu|amdgpu-clean|scheduler-policy|kfd-runlist|radv|decky|desktop|trainer|manage|help]
+Usage: $0 [menu|setup|status|inventory-json|action OPERATION_ID|drivers|unlocks|storage-updates|interfaces|power|ram|swap|compute|cpu-unlock|cec|audio-output|hdmi-ac3-enable|hdmi-ac3-revert|storage|persistence|wifi|fan-driver|amdgpu|amdgpu-clean|scheduler-policy|kfd-runlist|radv|decky|desktop|coolercontrol|trainer|manage|help]
 
 Run without arguments in a terminal to open the unified toolkit menu.
 Run the toolkit as the logged-in Deck user, not with sudo; child tools request
@@ -992,7 +1004,7 @@ Commands:
   drivers                Open AMDGPU, Mesa / RADV, and wireless drivers
   unlocks                Open GPU compute-unit and CPU core unlocks
   storage-updates        Open persistent storage and update protection
-  interfaces             Open Decky, Plasma, and Trainer installers
+  interfaces             Open Decky, Plasma, CoolerControl, and Trainer installers
   power                  Open the Power Management menu
   ram                    Open the RAM / VRAM Split menu
   swap                   Choose zram or zswap-backed disk swap
@@ -1013,6 +1025,7 @@ Commands:
   radv                   Open the global Mesa / RADV async-compute patch
   decky                  Confirm and run the Decky plugin installer
   desktop                Confirm and run the Plasma desktop-control installer
+  coolercontrol          Install the CoolerControl daemon and local Web UI
   trainer                Download and install the latest BC250 Trainer release
   manage                 Open installed-component maintenance and cleanup
 
@@ -1024,14 +1037,14 @@ Action operation IDs:
   cec-setup              persistence-install
   aic-install            fan-install             audio-build
   mesh-setup
-  decky-install          desktop-install
+  decky-install          desktop-install         coolercontrol-install
   storage-repair         cec-repair
   storage-remove         power-remove           ram-remove
   swap-remove
   compute-remove         cec-remove             persistence-remove
   aic-remove             fan-remove             audio-remove
   mesh-remove
-  decky-remove           desktop-remove
+  decky-remove           desktop-remove          coolercontrol-remove
 EOF
 }
 
@@ -1076,6 +1089,7 @@ case "$command_name" in
     radv|mesh) (($# == 0)) || die "Usage: $0 radv"; require_normal_user; run_script "$MESH_SHADER_SH" menu ;;
     decky) (($# == 0)) || die "Usage: $0 decky"; install_decky ;;
     desktop) (($# == 0)) || die "Usage: $0 desktop"; install_desktop ;;
+    coolercontrol) (($# == 0)) || die "Usage: $0 coolercontrol"; install_coolercontrol ;;
     trainer) (($# == 0)) || die "Usage: $0 trainer"; install_trainer ;;
     manage) (($# == 0)) || die "Usage: $0 manage"; run_script "$MAINTENANCE_SH" menu ;;
     help|-h|--help) (($# == 0)) || die "Usage: $0 help"; cmd_help ;;

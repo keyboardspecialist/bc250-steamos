@@ -48,6 +48,7 @@ class ToolkitTests(unittest.TestCase):
             "audio",
             "mesh",
             "decky",
+            "coolercontrol",
             "manage",
             "inventory-json",
             "action OPERATION_ID",
@@ -65,6 +66,9 @@ class ToolkitTests(unittest.TestCase):
         unlocks_menu = source[
             source.index("cmd_unlocks_menu() {") : source.index("cmd_storage_updates_menu() {")
         ]
+        interfaces_menu = source[
+            source.index("cmd_interfaces_menu() {") : source.index("cmd_core_system_menu() {")
+        ]
 
         for label in (
             "Start here - Guided setup",
@@ -72,7 +76,7 @@ class ToolkitTests(unittest.TestCase):
             "Core system",
             "Performance tuning",
             "Hardware unlocks",
-            "Display & connectivity",
+            "Device drivers & connectivity",
             "Control interfaces",
             "Maintenance & recovery",
         ):
@@ -144,6 +148,9 @@ class ToolkitTests(unittest.TestCase):
         self.assertIn("radv|mesh)", source)
         self.assertIn('python3 "$TRAINER_RELEASE_INSTALLER"', source)
         self.assertNotIn('bash "$TRAINER_INSTALL_SH" install', source)
+        self.assertIn('"CoolerControl|', interfaces_menu)
+        self.assertIn("2) run_menu_action coolercontrol", interfaces_menu)
+        self.assertIn("3) run_menu_action trainer", interfaces_menu)
 
         power = (ROOT / "bc250-power.sh").read_text(encoding="utf-8")
         power_menu = power[power.index("cmd_menu() {") : power.index("cmd_help() {")]
@@ -377,6 +384,7 @@ class ToolkitTests(unittest.TestCase):
             "hdmi-ac3/hdmi-ac3.sh",
             "decky-plugin/install.sh",
             "desktop-control/install.sh",
+            "coolercontrol/install.sh",
         )
         for relative in scripts:
             script = root / relative
@@ -414,6 +422,7 @@ class ToolkitTests(unittest.TestCase):
             "hdmi-ac3/hdmi-ac3.sh": ("status", 0),
             "decky-plugin/install.sh": ("status", 1),
             "desktop-control/install.sh": ("status", 0),
+            "coolercontrol/install.sh": ("status", 0),
             "trainer/install.sh": ("status", 0),
             "trainer/install-flatpak.sh": ("status", 1),
         }
@@ -690,6 +699,7 @@ class ToolkitTests(unittest.TestCase):
                 "mesh-setup": ("direct", "bc250-mesh-shader.sh", "setup"),
                 "decky-install": ("direct", "decky-plugin/install.sh", "install"),
                 "desktop-install": ("direct", "desktop-control/install.sh", "install"),
+                "coolercontrol-install": ("direct", "coolercontrol/install.sh", "install"),
                 "persistence-remove": (
                     "sudo",
                     "bc250-update-persistence.sh",
@@ -710,6 +720,7 @@ class ToolkitTests(unittest.TestCase):
                 "mesh",
                 "decky",
                 "desktop",
+                "coolercontrol",
             ):
                 mappings[f"{component}-remove"] = (
                     "direct",
@@ -774,6 +785,7 @@ class ToolkitTests(unittest.TestCase):
                     "trainer",
                     "desktop",
                     "decky",
+                    "coolercontrol",
                     "cec",
                     "ac3",
                     "power",

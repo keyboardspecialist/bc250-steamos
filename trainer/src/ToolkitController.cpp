@@ -91,7 +91,7 @@ constexpr OperationDefinition Operations[] = {
     {"aic-remove", "Remove AIC8800 drivers", "aic", "REMOVE",
      "Unload where possible and remove toolkit-installed modules and firmware.", false, true},
     {"fan-install", "Build NCT6687 fan driver", "fan", "BUILD + INSTALL",
-     "Install pinned hwmon fan tachometer and PWM support for compatible Nuvoton controllers.", false, false},
+     "Install pinned hwmon fan tachometer and PWM support for the BC-250 onboard controller.", false, false},
     {"fan-remove", "Remove NCT6687 fan driver", "fan", "REMOVE",
      "Restore firmware fan control and remove the toolkit module and boot recovery.", false, true},
     {"audio-build", "Build AMDGPU kernel fixes", "audio", "BUILD + INSTALL",
@@ -110,6 +110,10 @@ constexpr OperationDefinition Operations[] = {
      "Install or upgrade the Plasma control and shared service registration.", false, false},
     {"desktop-remove", "Remove Plasma control", "desktop", "REMOVE",
      "Remove the Plasma frontend while preserving shared service users.", false, true},
+    {"coolercontrol-install", "Install CoolerControl", "coolercontrol", "INSTALL",
+     "Install the verified daemon and local Web UI for fan profiles, curves, and monitoring.", false, false},
+    {"coolercontrol-remove", "Remove CoolerControl", "coolercontrol", "REMOVE",
+     "Stop the daemon, restore automatic fan control, and preserve saved profiles.", false, true},
 };
 
 const QByteArray PromptMarker("__BC250_TRAINER_SUDO_PROMPT_7D4A9F2E__");
@@ -1016,7 +1020,8 @@ QString ToolkitController::cleanError(const QString &error)
 QVariantMap ToolkitController::mockInventory() const
 {
     const QStringList ids = {QStringLiteral("trainer"), QStringLiteral("desktop"),
-                             QStringLiteral("decky"), QStringLiteral("cec"),
+                             QStringLiteral("decky"), QStringLiteral("coolercontrol"),
+                             QStringLiteral("cec"),
                               QStringLiteral("power"), QStringLiteral("ram"),
                               QStringLiteral("swap"),
                               QStringLiteral("compute"), QStringLiteral("mesh"),

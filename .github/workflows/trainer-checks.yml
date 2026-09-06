@@ -6,6 +6,7 @@ on:
       - "trainer/**"
       - "backend/**"
       - "desktop-control/**"
+      - "coolercontrol/**"
       - "core-unlock/**"
       - "scripts/**"
       - "tests/**"
