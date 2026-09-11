@@ -2847,7 +2847,7 @@ class ToolkitBackend:
                 except (OSError, RuntimeError):
                     continue
                 if not library.is_dir():
-                    errors.append("A configured Steam library is unavailable.")
+                    # Steam keeps removable libraries configured while they are unmounted.
                     continue
                 if not self._user_can_access(library, 5):
                     errors.append("A Steam library is not accessible to the desktop user.")

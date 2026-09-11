@@ -439,6 +439,24 @@ class Fsr4InventoryTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(discovered["state"], "available")
         self.assertTrue(discovered["discovered"])
 
+    def test_inventory_ignores_configured_unmounted_library(self):
+        self.add_game()
+        unavailable = self.root / "Unmounted Library"
+        (self.steam / "steamapps" / "libraryfolders.vdf").write_text(
+            '"libraryfolders"\n{\n'
+            f'  "0" {{ "path" "{self.steam}" }}\n'
+            f'  "1" {{ "path" "{self.library}" }}\n'
+            f'  "2" {{ "path" "{unavailable}" }}\n'
+            '}\n',
+            encoding="utf-8",
+        )
+
+        inventory = self.backend._build_fsr4_inventory(self.records())
+
+        self.assertEqual(inventory["inventoryState"], "ready")
+        self.assertEqual(len(inventory["games"]), 1)
+        self.assertEqual(inventory["errors"], [])
+
     def test_inventory_reports_multiple_targets_and_does_not_follow_symlink_dirs(self):
         game = self.add_game()
         for directory in (game / "one", game / "two"):
