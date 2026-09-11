@@ -217,6 +217,8 @@ void Bc250Bridge::handleJsonReply(JsonRequest request, QDBusPendingCallWatcher *
                 {QStringLiteral("scriptAvailable"), false},
                 {QStringLiteral("runtimeState"), QStringLiteral("not-installed")},
                 {QStringLiteral("fsr4State"), QStringLiteral("not-installed")},
+                {QStringLiteral("fsr4DllState"), QStringLiteral("not-installed")},
+                {QStringLiteral("fsr4DllInstallCount"), 0},
                 {QStringLiteral("error"), QStringLiteral("The installed service does not provide Mesa / RADV status yet.")}
             };
             emit meshStatusChanged();
@@ -666,7 +668,9 @@ void Bc250Bridge::makeMockSnapshot()
         {QStringLiteral("globalEnabled"), true},
         {QStringLiteral("restartRequired"), false},
         {QStringLiteral("fsr4State"), QStringLiteral("ready")},
-        {QStringLiteral("fsr4RunnerPath"), QStringLiteral("/home/deck/.local/share/bc250-mesh-shader/fsr4/bc250-fsr4-run")}
+        {QStringLiteral("fsr4RunnerPath"), QStringLiteral("/home/deck/.local/share/bc250-mesh-shader/fsr4/bc250-fsr4-run")},
+        {QStringLiteral("fsr4DllState"), QStringLiteral("ready")},
+        {QStringLiteral("fsr4DllInstallCount"), 1}
     };
     const auto mockCore = [](int core, int ccx) {
         return QVariantMap{{QStringLiteral("packageId"), 0}, {QStringLiteral("coreId"), core},

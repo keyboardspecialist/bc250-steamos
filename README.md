@@ -642,7 +642,7 @@ Or use the CLI:
 
 ```bash
 ./bc250-mesh-shader.sh setup
-./bc250-mesh-shader.sh setup --fsr4
+./bc250-mesh-shader.sh setup --fsr4 "/path/to/OptiScaler/amd_fidelityfx_upscaler_dx12.dll"
 ./bc250-mesh-shader.sh status
 ```
 
@@ -684,57 +684,80 @@ options. Remove those options, run `./bc250-mesh-shader.sh legacy-clear`, and
 then uninstall; unrelated `~/.drirc` content is preserved. New installations
 do not create per-game records.
 
-The upstream alpha build itself remains x86-64 only. Its compute and mesh
-changes therefore do not apply to 32-bit processes; those processes use the
-stock SteamOS RADV fallback instead.
+The upstream alpha build itself remains x86-64 only. Its async-compute change
+therefore does not apply to 32-bit processes; those processes use the stock
+SteamOS RADV fallback instead. The toolkit no longer applies the optional
+GFX1013 mesh/task and query patches: upstream disabled them after mesh/task
+workloads caused an unrecoverable GPU hang.
 
-### Experimental FSR4 Profile
+An existing environment generator or legacy V3 runner from an older toolkit
+cannot be deactivated merely by replacing these scripts. After upgrading, run
+`./bc250-mesh-shader.sh setup`, rebuild legacy V3 separately if you still need
+it, then sign out and back in before launching games. Status reports older
+patch compositions as invalid rather than reusing their Mesa build output.
 
-An additional upstream FSR4 V3 profile can be built explicitly:
+### FSR4 RC8 Game DLL
+
+The current FSR4 path uses the portable RC8 DLL from
+[`daniel-h-0/bc250-fsr4-fork`](https://github.com/daniel-h-0/bc250-fsr4-fork).
+It contains the optimized FSR 4.1.1 INT8 shaders and does not require a custom
+Mesa driver or Proton build. Close the game, provide the existing compatible
+OptiScaler or native-game DLL path, and let the toolkit preserve and replace it:
 
 ```bash
-./bc250-mesh-shader.sh setup --fsr4
+./bc250-mesh-shader.sh setup --fsr4 \
+  "/path/to/OptiScaler/amd_fidelityfx_upscaler_dx12.dll"
 ```
 
-FSR4 setup can be selected first. If the default async-compute RADV runtime is
-missing or stale, setup builds and installs it automatically. The base output
-is preserved after DryhoppedIPA patches `0001`-`0003`. Because upstream FSR4 V3
-already contains the compute-queue changes from `0001`, setup then reverses
-`0001` in the source tree and applies the exact V3 patch. Non-overlapping mesh
-and query patches `0002` and `0003` remain applied, and Ninja incrementally
-rebuilds the affected targets for the private driver. An integrity-checked
-cached base is reused only while it still matches the installed global driver.
+The installer downloads `bc250-fsr4-dll-4.0.0-rc8.tar.xz`, verifies archive
+SHA-256 `805a3df9cef931decd42d02eaffb375f95844afce2e13d78bad757a27c806da2`,
+then verifies DLL SHA-256
+`f8816fed46bce60179228a58905e16788f021fad0b68c08d1e3555564093b2b4`.
+The release instructions and notices remain in the private cache. Each target
+has a separate rollback record containing the exact original bytes. The
+toolkit refuses to overwrite symlinks, unrecorded RC8 copies, or a target that
+changed after installation.
 
-This profile is disabled by default. The private FSR4 artifact installs entirely
-under `~/.local/share/bc250-mesh-shader/fsr4` and does not replace the global
-driver or alter the systemd environment generator after any required base
-runtime bootstrap. Enable it for one Steam game with the launch option printed
-by setup:
+For OptiScaler installed through `winmm.dll`, use the upstream launch option:
 
 ```text
-$HOME/.local/share/bc250-mesh-shader/fsr4/bc250-fsr4-run %command%
+PROTON_FSR4_UPGRADE=0 PROTON_USE_OPTISCALER=0 WINEDLLOVERRIDES="winmm=n,b;amdxcffx64=" %command%
 ```
 
-The launcher rechecks the selected AMDGPU module, all module attestations,
-loaded repair revision, scheduler policy, profile hashes, and 64/32-bit ICD
-routing before starting the game. Remove only this profile with
-`./bc250-mesh-shader.sh uninstall --fsr4`.
+Set OptiScaler to the FFX backend, FSR4 INT8 model 2, and disable frame
+generation unless separately qualified. Native FidelityFX games may require a
+different destination filename; follow the upstream compatibility notes rather
+than applying one filename rule to every game. RC8 has synthetic BC-250/Linux
+qualification on ordinary Mesa and GE-Proton, but no fresh game qualification.
+Initial shader compilation can pause long enough to trigger a game's hang
+detector.
 
-The two installed artifacts remain distinct: the global driver contains
-DryhoppedIPA patches `0001`-`0003`, while the per-game driver contains upstream
-FSR4 V3 plus DryhoppedIPA patches `0002` and `0003`. Each has its own ICD and
-manifest even though setup shares one incremental build tree.
+Restore a target's exact original DLL with:
 
-When FSR4 setup was selected first, it has already installed the global
-async-compute artifact before producing the private driver. Selecting the
-async-compute setup option afterward verifies that installed artifact and its
-kernel prerequisites, restores scheduler policy if necessary, and reports it
-ready without rebuilding Mesa. If an async rebuild is genuinely required, it
-replaces only the global artifact. The private FSR4 driver, ICD, runner, and
-manifest are never removed or overwritten by async setup, and their resulting
-validation state is reported explicitly.
+```bash
+./bc250-mesh-shader.sh uninstall --fsr4 \
+  "/path/to/OptiScaler/amd_fidelityfx_upscaler_dx12.dll"
+```
 
-Setup fetches `bc250-fsr4-v3.patch` from
+### Legacy FSR4 V3 Profile
+
+The former private RADV profile remains available as an explicit fallback:
+
+```bash
+./bc250-mesh-shader.sh setup --fsr4-legacy
+```
+
+Legacy setup first builds the global async-compute driver with only
+DryhoppedIPA's required `0001` patch. Because FSR4 V3 duplicates that change,
+setup preserves the base output, reverses `0001`, applies V3 with zero fuzz,
+and incrementally rebuilds the private driver. The disabled mesh/task patches
+are not present in either output.
+
+The legacy artifact remains under `~/.local/share/bc250-mesh-shader/fsr4` and
+is never globally enabled. Setup prints its per-game runner command. Remove it
+with `./bc250-mesh-shader.sh uninstall --fsr4-legacy`.
+
+Legacy setup fetches `bc250-fsr4-v3.patch` from
 [`dmorazasanchez/bc250-fsr4`](https://github.com/dmorazasanchez/bc250-fsr4)
 at immutable commit `741ff3e369026f34820c41a846cf5e55d08e2a61` and verifies SHA-256
 `7fde37fad572b4ba4dcac6052792d10d8d3df65982b01236c63a3eff0a25d225`.
@@ -750,22 +773,22 @@ and no new spill or resident-wave regressions across its 64 captured shaders.
 The toolkit has not independently reproduced those results. Treat the profile
 as experimental: games may regress, corrupt frames, hang, or reset the GPU.
 
-The upstream series is pinned to commit
+The async-compute series is pinned to commit
 [`d3e6dc0`](https://github.com/DryhoppedIPA/bc250-gfx1013-fix/commit/d3e6dc062c34d2523db0abe5741d1f5b0dea00d9),
 tagged `v0.2.0-alpha`. DryhoppedIPA developed the scoped V33 kernel repair and
-the narrow GFX1013 compute, mesh, and task implementation through direct
-hardware testing. Setup downloads all three Mesa patches and the pristine
+the narrow GFX1013 compute implementation through direct hardware testing.
+Setup downloads only the required compute patch and the pristine
 final `mesa-26.2.0` source at commit `9f0a761`. Setup verifies the Git commit,
 the downloaded patch and libdrm SHA-256 hashes, and requires zero-fuzz
 patch application. The Mesa patches retain their upstream MIT license; the
 kernel patches are `GPL-2.0-only`.
 
-This remains alpha hardware research tested upstream on one board, not a full
+The legacy profile remains alpha hardware research tested upstream on one board, not a full
 Vulkan conformance result. The toolkit restores SteamOS read-only-root state,
 records installed hashes, and transactionally restores a prior profile if its
-installation fails. If first-run FSR4 compilation fails after the async profile
+installation fails. If the legacy FSR4 compilation fails after the async profile
 was installed successfully, that valid prerequisite remains installed. Retry
-FSR4 setup; invalid intermediate build state falls back to a clean base build.
+legacy setup; invalid intermediate build state falls back to a clean base build.
 
 ## NCT6687D Fan-Control Driver
 
@@ -907,7 +930,7 @@ Run the normal component setup commands afterward to regenerate services for the
 | BC-250 CPU Core Unlock | [Linux helper](https://github.com/rw-r-r-0644/bc250-core-unlock) · [EFI source](https://github.com/Hexxeh/bc250-efi-core-unlock) · [EFI headers](https://github.com/yoppeh/efi) | Original SMU method and the optional pre-boot implementation adapted by `bc250-power.sh` |
 | BC-250 Memory Config | [Repository](https://github.com/fanoush/bc250_memcfg) · [VRAM guide](https://elektricm.github.io/amd-bc250-docs/bios/vram/) | CMOS UMA utility fetched by `bc250-ram-split.sh` |
 | BC-250 GFX1013 Fix | [Repository](https://github.com/DryhoppedIPA/bc250-gfx1013-fix) · [integrated commit](https://github.com/DryhoppedIPA/bc250-gfx1013-fix/commit/d3e6dc062c34d2523db0abe5741d1f5b0dea00d9) | Kernel compute lifecycle repair and pinned alternate RADV build by DryhoppedIPA |
-| BC-250 FSR4 experiment | [Repository](https://github.com/dmorazasanchez/bc250-fsr4) · [integrated commit](https://github.com/dmorazasanchez/bc250-fsr4/commit/741ff3e369026f34820c41a846cf5e55d08e2a61) | Integrity-checked upstream V3 patch fetched for the optional private FSR4 RADV profile |
+| BC-250 FSR4 RC8 | [Repository](https://github.com/daniel-h-0/bc250-fsr4-fork) · [release](https://github.com/daniel-h-0/bc250-fsr4-fork/releases/tag/v4.0.0-rc8) | Integrity-checked portable FSR 4.1.1 INT8 DLL with per-target rollback; V3 retained as a legacy fallback |
 | BC-250 HDMI AC-3 encoding | [Implementation guide and scripts](https://github.com/rpf16rj/bc250-steamos-real-toolkit/tree/main/extras/hdmi-ac3-encoding) | ALSA `a52` routing and WirePlumber profile behavior adapted by `hdmi-ac3/hdmi-ac3.sh` |
 | Valve kernel mirror | [Repository](https://github.com/Evlav/linux-integration) | `bc250-audio-fix/fetch-sources.sh` |
 | SteamOS package mirror | [Package index](https://steamdeck-packages.steamos.cloud/archlinux-mirror/) | Audio, AIC8800, and NCT6687 build scripts; stable channels are discovered automatically |

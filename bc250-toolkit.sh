@@ -612,7 +612,7 @@ show_status() {
     esac
 
     state=$(status_value "$radv_output" "runtime: " || true)
-    detail=$(status_value "$radv_output" "FSR4: " || true)
+    detail=$(status_value "$radv_output" "FSR4 RC8: " || true)
     if [[ $radv_rc -eq 0 && "$state" == installed* ]]; then
         status_row "Mesa / RADV" "installed" good "$state${detail:+; FSR4 $detail}"
     elif [[ $radv_rc -le 1 && ( -z "$state" || "$state" == "not installed"* ) ]]; then

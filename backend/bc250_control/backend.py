@@ -2500,6 +2500,8 @@ class ToolkitBackend:
                     self.user_home
                     / ".local/share/bc250-mesh-shader/fsr4/bc250-fsr4-run"
                 ),
+                "fsr4DllState": "not-installed",
+                "fsr4DllInstallCount": 0,
                 "error": None,
                 "games": [],
             }
@@ -2541,6 +2543,8 @@ class ToolkitBackend:
         global_enabled = status.get("globalEnabled", False)
         restart_required = status.get("restartRequired", False)
         fsr4_state = status.get("fsr4State", "not-installed")
+        fsr4_dll_state = status.get("fsr4DllState", "not-installed")
+        fsr4_dll_install_count = status.get("fsr4DllInstallCount", 0)
         fsr4_root = self.user_home / ".local/share/bc250-mesh-shader/fsr4"
         fsr4_icd_path = status.get(
             "fsr4IcdPath", str(fsr4_root / "radeon_fsr4_icd.x86_64.json")
@@ -2570,6 +2574,10 @@ class ToolkitBackend:
             raise CommandError("Mesa / RADV status returned invalid restart state.")
         if fsr4_state not in {"ready", "not-installed", "invalid"}:
             raise CommandError("Mesa / RADV status returned invalid FSR4 state.")
+        if fsr4_dll_state not in {"ready", "not-installed", "invalid"}:
+            raise CommandError("Mesa / RADV status returned invalid FSR4 DLL state.")
+        if type(fsr4_dll_install_count) is not int or fsr4_dll_install_count < 0:
+            raise CommandError("Mesa / RADV status returned an invalid FSR4 install count.")
         for path in (fsr4_icd_path, fsr4_runner_path):
             if (
                 not isinstance(path, str)
@@ -2594,6 +2602,8 @@ class ToolkitBackend:
             "fsr4State": fsr4_state,
             "fsr4IcdPath": fsr4_icd_path,
             "fsr4RunnerPath": fsr4_runner_path,
+            "fsr4DllState": fsr4_dll_state,
+            "fsr4DllInstallCount": fsr4_dll_install_count,
             "error": status_error,
             "games": normalized_games,
         }

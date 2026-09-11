@@ -787,6 +787,9 @@ class BackendMutationTests(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(status["schedulerActive"])
         self.assertFalse(status["globalEnabled"])
         self.assertFalse(status["restartRequired"])
+        self.assertEqual(status["fsr4State"], "not-installed")
+        self.assertEqual(status["fsr4DllState"], "not-installed")
+        self.assertEqual(status["fsr4DllInstallCount"], 0)
         self.assertEqual(
             status["icdPath"], "/home/deck/radeon_driconf_icd.x86_64.json"
         )
@@ -812,6 +815,8 @@ class BackendMutationTests(unittest.IsolatedAsyncioTestCase):
                     "fsr4State": "ready",
                     "fsr4IcdPath": "/home/deck/.local/share/bc250-mesh-shader/fsr4/radeon_fsr4_icd.x86_64.json",
                     "fsr4RunnerPath": "/home/deck/.local/share/bc250-mesh-shader/fsr4/bc250-fsr4-run",
+                    "fsr4DllState": "ready",
+                    "fsr4DllInstallCount": 2,
                     "error": None,
                     "games": [
                         {
@@ -832,6 +837,8 @@ class BackendMutationTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(status["globalEnabled"])
         self.assertFalse(status["restartRequired"])
         self.assertEqual(status["fsr4State"], "ready")
+        self.assertEqual(status["fsr4DllInstallCount"], 2)
+        self.assertEqual(status["fsr4DllState"], "ready")
         self.assertTrue(status["fsr4RunnerPath"].endswith("/bc250-fsr4-run"))
         self.assertEqual(status["games"][0]["executable"], "bc250-steam-1462040")
         backend._user_tool.assert_awaited_once_with(

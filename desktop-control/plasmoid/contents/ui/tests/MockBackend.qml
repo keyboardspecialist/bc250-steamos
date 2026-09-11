@@ -32,6 +32,7 @@ QtObject {
         globalEnabled: true, restartRequired: false, fsr4State: "ready",
         fsr4IcdPath: "/home/deck/.local/share/bc250-mesh-shader/fsr4/radeon_fsr4_icd.x86_64.json",
         fsr4RunnerPath: "/home/deck/.local/share/bc250-mesh-shader/fsr4/bc250-fsr4-run",
+        fsr4DllState: "ready", fsr4DllInstallCount: 1,
         error: null, games: []
     })
     property var telemetryHistory: [

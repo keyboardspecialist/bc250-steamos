@@ -81,11 +81,12 @@ ColumnLayout {
         }
         Components.StatusRow { label: "RADV runtime"; value: root.mesh.runtimeState || "Unavailable"; health: root.mesh.runtimeState === "ready" ? 1 : -1 }
         Components.StatusRow { label: "Global activation"; value: root.mesh.globalEnabled ? "Enabled" : "Disabled"; health: root.mesh.globalEnabled ? 1 : 0 }
-        Components.StatusRow { label: "Private FSR4 profile"; value: root.mesh.fsr4State || "Unavailable"; health: root.mesh.fsr4State === "ready" ? 1 : root.mesh.fsr4State === "invalid" ? -1 : 0 }
-        Components.StatusRow { label: "FSR4 runner"; value: root.mesh.fsr4RunnerPath || "Unavailable" }
+        Components.StatusRow { label: "FSR4 RC8 game DLLs"; value: (root.mesh.fsr4DllState || "Unavailable") + " (" + (root.mesh.fsr4DllInstallCount || 0) + ")"; health: root.mesh.fsr4DllState === "ready" ? 1 : root.mesh.fsr4DllState === "invalid" ? -1 : 0 }
+        Components.StatusRow { label: "Legacy FSR4 V3 profile"; value: root.mesh.fsr4State || "Unavailable"; health: root.mesh.fsr4State === "ready" ? 1 : root.mesh.fsr4State === "invalid" ? -1 : 0 }
+        Components.StatusRow { label: "Legacy FSR4 runner"; value: root.mesh.fsr4RunnerPath || "Unavailable" }
         Kirigami.InlineMessage {
             Layout.fillWidth: true
-            visible: Boolean(root.mesh.error) || root.mesh.runtimeState === "invalid" || root.mesh.fsr4State === "invalid"
+            visible: Boolean(root.mesh.error) || root.mesh.runtimeState === "invalid" || root.mesh.fsr4State === "invalid" || root.mesh.fsr4DllState === "invalid"
             type: Kirigami.MessageType.Warning
             text: root.mesh.error || "A Mesa / RADV runtime failed integrity validation. Repair it from the toolkit."
         }

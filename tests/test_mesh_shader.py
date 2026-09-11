@@ -3,6 +3,7 @@ import json
 import os
 import struct
 import subprocess
+import tarfile
 import tempfile
 import unittest
 from pathlib import Path
@@ -10,6 +11,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 MESH = ROOT / "bc250-mesh-shader.sh"
+FSR4 = ROOT / "bc250-fsr4.sh"
 UPSTREAM_COMMIT = "d3e6dc062c34d2523db0abe5741d1f5b0dea00d9"
 
 
@@ -26,6 +28,7 @@ class MeshShaderTests(unittest.TestCase):
             "journalctl": "#!/bin/sh\necho 'GFX1013/BC-250: PASID-only CPU type-0 invalidation'\n",
             "modinfo": '#!/bin/sh\nprintf "%s\\n" "$BC250_GFX1013_MODULE"\n',
             "stat": '#!/bin/sh\n[ "$2" = %u ] && { echo 0; exit; }\n[ "$2" = %a ] && { echo 644; exit; }\nexec /usr/bin/stat "$@"\n',
+            "steamos-readonly": '#!/bin/sh\n[ "$1" != status ] || echo disabled\n',
         }.items():
             path = bindir / name
             path.write_text(source, encoding="utf-8")
@@ -163,7 +166,7 @@ class MeshShaderTests(unittest.TestCase):
         generator.chmod(0o755)
         digest = lambda path: hashlib.sha256(path.read_bytes()).hexdigest()
         (state / "install.conf").write_text(
-            f"{digest(driver)} {digest(icd)} mesa-26.2.0 {commit}\n",
+            f"{digest(driver)} {digest(icd)} mesa-26.2.0 {commit} compute-only-v2\n",
             encoding="ascii",
         )
         driver_files = f'{icd}:{env["BC250_MESH_32BIT_ICD"]}'
@@ -198,9 +201,9 @@ class MeshShaderTests(unittest.TestCase):
         )
         runner.chmod(0o755)
         digest = lambda path: hashlib.sha256(path.read_bytes()).hexdigest()
-        patch_digest = "7fde37fad572b4ba4dcac6052792d10d8d3df65982b01236c63a3eff0a25d225"
+        profile_digest = "835842eb8beccd6e0498a771c5ea4d8c9ac86ee994e4659045e9f3bf4321404d"
         (profile / "install.conf").write_text(
-            f"{digest(driver)} {digest(icd)} {digest(runner)} mesa-26.2.0 {patch_digest}\n",
+            f"{digest(driver)} {digest(icd)} {digest(runner)} mesa-26.2.0 {profile_digest}\n",
             encoding="ascii",
         )
 
@@ -270,6 +273,8 @@ class MeshShaderTests(unittest.TestCase):
             self.assertEqual(status["runtimeState"], "ready")
             self.assertEqual(status["mesaVersion"], "mesa-26.2.0")
             self.assertEqual(status["fsr4State"], "not-installed")
+            self.assertEqual(status["fsr4DllState"], "not-installed")
+            self.assertEqual(status["fsr4DllInstallCount"], 0)
             self.assertTrue(status["kernelReady"])
             self.assertTrue(status["globalEnabled"])
             self.assertFalse(status["restartRequired"])
@@ -327,7 +332,7 @@ class MeshShaderTests(unittest.TestCase):
             driver = Path(env["BC250_MESH_DRIVER"])
             digest = lambda path: hashlib.sha256(path.read_bytes()).hexdigest()
             (state / "install.conf").write_text(
-                f"{digest(driver)} {digest(icd)} mesa-26.2.0 {UPSTREAM_COMMIT}\n",
+                f"{digest(driver)} {digest(icd)} mesa-26.2.0 {UPSTREAM_COMMIT} compute-only-v2\n",
                 encoding="ascii",
             )
             generated = subprocess.run(
@@ -418,6 +423,45 @@ class MeshShaderTests(unittest.TestCase):
             env = self.environment(Path(directory))
             self.install_runtime(env, "b66203e012594204e5e3049856b28a2681112985")
             self.assertEqual(self.run_status_json(env)["runtimeState"], "invalid")
+
+    def test_previous_patch_composition_requires_upgrade_but_remains_owned(self):
+        with tempfile.TemporaryDirectory() as directory:
+            env = self.environment(Path(directory))
+            self.install_runtime(env)
+            state = Path(env["BC250_MESH_STATE_DIR"])
+            manifest = state / "install.conf"
+            manifest.write_text(
+                " ".join(manifest.read_text(encoding="ascii").split()[:4]) + "\n",
+                encoding="ascii",
+            )
+            subprocess.run(
+                [
+                    "bash",
+                    "-c",
+                    'script=$1; output=$2; set -- help; source "$script" >/dev/null; '
+                    'render_previous_generator > "$output"; chmod 755 "$output"',
+                    "_",
+                    str(MESH),
+                    env["BC250_GFX1013_GENERATOR"],
+                ],
+                check=True,
+                env=env,
+            )
+            self.assertEqual(self.run_status_json(env)["runtimeState"], "invalid")
+            result = subprocess.run(
+                [
+                    "bash",
+                    "-c",
+                    'script=$1; set -- help; source "$script" >/dev/null; '
+                    "preflight_runtime_ownership",
+                    "_",
+                    str(MESH),
+                ],
+                capture_output=True,
+                text=True,
+                env=env,
+            )
+            self.assertEqual(result.returncode, 0, result.stderr)
 
     def test_previous_global_runtime_can_be_uninstalled(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -597,7 +641,7 @@ class MeshShaderTests(unittest.TestCase):
                 )
             }
             subprocess.run(
-                ["bash", str(MESH), "uninstall", "--fsr4"],
+                ["bash", str(MESH), "uninstall", "--fsr4-legacy"],
                 check=True,
                 capture_output=True,
                 text=True,
@@ -634,7 +678,7 @@ class MeshShaderTests(unittest.TestCase):
         self.assertIn('source="$MESA_SOURCE"', setup)
         self.assertNotIn('${source}-fsr4', setup)
         self.assertIn(
-            "FSR4 setup will install it first",
+            "legacy FSR4 V3 setup will install it first",
             setup,
         )
         self.assertIn('install_default_profile "$base_output" "$mesa_tag"', setup)
@@ -1089,7 +1133,7 @@ class MeshShaderTests(unittest.TestCase):
         self.assertIn("-Dlibdrm:default_library=static", source)
         self.assertIn("-Dbuildtype=release", source)
 
-    def test_fsr4_patch_is_pinned_upstream_v3(self):
+    def test_fsr4_patch_is_retained_as_pinned_legacy_v3(self):
         script = MESH.read_text(encoding="utf-8")
         self.assertIn(
             'FSR4_UPSTREAM_COMMIT="741ff3e369026f34820c41a846cf5e55d08e2a61"',
@@ -1105,9 +1149,184 @@ class MeshShaderTests(unittest.TestCase):
             script,
         )
         self.assertIn("grep -qF bc250_lower_dense_sdot4x8", script)
+        self.assertIn("setup --fsr4-legacy", script)
         self.assertFalse(
             (ROOT / "bc250-mesa-patches/0004-gfx1013-fsr4-sdot-lowering.patch").exists()
         )
+
+    def test_unsafe_mesh_task_patches_are_not_fetched_or_applied(self):
+        script = MESH.read_text(encoding="utf-8")
+        stage = script[script.index("stage_upstream() {") : script.index("verify_fsr4_patch() {")]
+        setup = script[script.index("cmd_setup() (") : script.index("manage_games() {")]
+        for patch in (
+            "0002-gfx1013-mesh-task-shaders.patch",
+            "0003-gfx1013-taskmesh-queries.patch",
+        ):
+            self.assertNotIn(patch, stage)
+            self.assertNotIn(patch, setup)
+
+    def test_purge_serializes_with_fsr4_dll_rollback_state(self):
+        script = MESH.read_text(encoding="utf-8")
+        purge = script[script.index("cmd_purge() (") : script.index("menu_select() {")]
+        self.assertIn('exec 8> "$FSR4_DLL_LOCK"', purge)
+        self.assertIn('flock 8', purge)
+        self.assertIn('FSR4 DLL rollback state exists but its helper is unavailable', purge)
+
+    def test_rc8_helper_is_executable_and_in_toolkit_release_glob(self):
+        workflow = (ROOT / ".github/workflows/release-artifacts.yml").read_text(
+            encoding="utf-8"
+        )
+        self.assertTrue(os.access(FSR4, os.X_OK))
+        self.assertIn("cp README.md bc250-*.sh", workflow)
+
+    def test_rc8_dll_install_is_pinned_transactional_and_reversible(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            payload = root / "payload"
+            (payload / "notices").mkdir(parents=True)
+            dll = payload / "amd_fidelityfx_upscaler_dx12.dll"
+            dll.write_bytes(b"MZ synthetic rc8 payload\n")
+            (payload / "README.md").write_text("test release\n", encoding="utf-8")
+            (payload / "notices/PROVENANCE.md").write_text(
+                "test provenance\n", encoding="utf-8"
+            )
+            archive = root / "rc8.tar.xz"
+            with tarfile.open(archive, "w:xz") as output:
+                for path in sorted(payload.rglob("*")):
+                    output.add(path, arcname=path.relative_to(payload))
+
+            digest = lambda path: hashlib.sha256(path.read_bytes()).hexdigest()
+            target = root / "game with spaces/OptiScaler/amd_fidelityfx_upscaler_dx12.dll"
+            target.parent.mkdir(parents=True)
+            original = b"MZ original game DLL\n"
+            target.write_bytes(original)
+            env = {
+                **os.environ,
+                "HOME": str(root / "home"),
+                "BC250_FSR4_STATE_DIR": str(root / "state"),
+                "BC250_FSR4_LOCK_FILE": str(root / "lock"),
+                "BC250_FSR4_ARCHIVE": str(archive),
+                "BC250_FSR4_ARCHIVE_SHA256": digest(archive),
+                "BC250_FSR4_DLL_SHA256": digest(dll),
+            }
+
+            subprocess.run(
+                ["bash", str(FSR4), "install", str(target)],
+                check=True,
+                env=env,
+                capture_output=True,
+                text=True,
+            )
+            self.assertEqual(target.read_bytes(), dll.read_bytes())
+            status = subprocess.run(
+                ["bash", str(FSR4), "status"],
+                check=True,
+                env=env,
+                capture_output=True,
+                text=True,
+            )
+            self.assertIn("state: installed", status.stdout)
+
+            target.write_bytes(b"externally changed\n")
+            refused = subprocess.run(
+                ["bash", str(FSR4), "uninstall", str(target)],
+                env=env,
+                capture_output=True,
+                text=True,
+            )
+            self.assertNotEqual(refused.returncode, 0)
+            self.assertIn("changed outside the toolkit", refused.stderr)
+            target.write_bytes(dll.read_bytes())
+            upgrade_env = {
+                **env,
+                "BC250_FSR4_RELEASE": "v4.0.0-rc9",
+            }
+            subprocess.run(
+                ["bash", str(FSR4), "install", str(target)],
+                check=True,
+                env=upgrade_env,
+                capture_output=True,
+                text=True,
+            )
+            upgraded = subprocess.run(
+                ["bash", str(FSR4), "status"],
+                check=True,
+                env=upgrade_env,
+                capture_output=True,
+                text=True,
+            )
+            self.assertIn("v4.0.0-rc9", upgraded.stdout)
+            future_env = {
+                **upgrade_env,
+                "BC250_FSR4_RELEASE": "v4.0.0-rc10",
+                "BC250_FSR4_DLL_SHA256": "0" * 64,
+            }
+            subprocess.run(
+                ["bash", str(FSR4), "uninstall", str(target)],
+                check=True,
+                env=future_env,
+                capture_output=True,
+                text=True,
+            )
+            self.assertEqual(target.read_bytes(), original)
+            self.assertEqual(list((root / "state/installs").glob("[0-9a-f]*")), [])
+
+            source = FSR4.read_text(encoding="utf-8")
+            record_commit = source.index('mv "$record_tmp" "$record"')
+            record_sync = source.index('fsync_paths "$INSTALLS_DIR"', record_commit)
+            target_write = source.index(
+                'copy_atomic "$RELEASE_DIR/$DLL_NAME" "$REAL_TARGET"', record_sync
+            )
+            self.assertLess(record_commit, record_sync)
+            self.assertLess(record_sync, target_write)
+
+    def test_rc8_helper_rejects_unsafe_release_and_symlink_inputs(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            bad_release = subprocess.run(
+                ["bash", str(FSR4), "status"],
+                env={**os.environ, "BC250_FSR4_RELEASE": "../escape"},
+                capture_output=True,
+                text=True,
+            )
+            self.assertNotEqual(bad_release.returncode, 0)
+            self.assertIn("Invalid release identifier", bad_release.stderr)
+
+            target = root / "target.dll"
+            target.write_bytes(b"original\n")
+            link = root / "linked.dll"
+            link.symlink_to(target)
+            refused = subprocess.run(
+                ["bash", str(FSR4), "install", str(link)],
+                env={
+                    **os.environ,
+                    "HOME": str(root / "home"),
+                    "BC250_FSR4_STATE_DIR": str(root / "state"),
+                    "BC250_FSR4_LOCK_FILE": str(root / "lock"),
+                },
+                capture_output=True,
+                text=True,
+            )
+            self.assertNotEqual(refused.returncode, 0)
+            self.assertIn("must not be a symlink", refused.stderr)
+            self.assertEqual(target.read_bytes(), b"original\n")
+
+            real_state = root / "real-state"
+            real_state.mkdir()
+            linked_state = root / "linked-state"
+            linked_state.symlink_to(real_state, target_is_directory=True)
+            invalid_count = subprocess.run(
+                ["bash", str(FSR4), "count"],
+                env={
+                    **os.environ,
+                    "HOME": str(root / "home"),
+                    "BC250_FSR4_STATE_DIR": str(linked_state),
+                },
+                capture_output=True,
+                text=True,
+            )
+            self.assertEqual(invalid_count.returncode, 2)
+            self.assertEqual(invalid_count.stdout, "1\n")
 
 
 if __name__ == "__main__":
