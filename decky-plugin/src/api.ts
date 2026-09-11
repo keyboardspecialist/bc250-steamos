@@ -1,5 +1,5 @@
 import { callable } from "@decky/api";
-import type { MeshStatus, Snapshot, TelemetrySample } from "./types";
+import type { Fsr4Inventory, MeshStatus, Snapshot, TelemetrySample } from "./types";
 
 export const getSnapshot = callable<[], Snapshot>("get_snapshot");
 export const getTelemetry = callable<[], TelemetrySample>("get_telemetry");
@@ -45,3 +45,6 @@ export const setHdmiSurround = callable<[enabled: boolean], void>(
   "set_hdmi_surround",
 );
 export const getMeshStatus = callable<[], MeshStatus>("get_mesh_status");
+export const getFsr4Inventory = callable<[], Fsr4Inventory>("get_fsr4_inventory");
+export const installFsr4Dll = callable<[targetId: string], void>("install_fsr4_dll");
+export const uninstallFsr4Dll = callable<[targetId: string], void>("uninstall_fsr4_dll");

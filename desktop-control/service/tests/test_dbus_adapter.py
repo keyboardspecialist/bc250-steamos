@@ -133,6 +133,23 @@ class AdapterHandlerTests(unittest.IsolatedAsyncioTestCase):
         )
         self.assertIn('<method name="GetMeshStatus">', INTROSPECTION_XML)
 
+    def test_fsr4_dbus_signatures_are_declared(self):
+        self.assertEqual(
+            DbusAdapter._METHODS["GetFsr4Inventory"],
+            ("", "s", "get_fsr4_inventory"),
+        )
+        self.assertEqual(
+            DbusAdapter._METHODS["InstallFsr4Dll"],
+            ("s", "s", "install_fsr4_dll"),
+        )
+        self.assertEqual(
+            DbusAdapter._METHODS["UninstallFsr4Dll"],
+            ("s", "s", "uninstall_fsr4_dll"),
+        )
+        self.assertIn('<method name="GetFsr4Inventory">', INTROSPECTION_XML)
+        self.assertIn('<method name="InstallFsr4Dll">', INTROSPECTION_XML)
+        self.assertIn('<method name="UninstallFsr4Dll">', INTROSPECTION_XML)
+
     def test_ram_dbus_signatures_are_declared(self):
         self.assertEqual(DbusAdapter._METHODS["SetUmaSize"], ("u", "s", "set_uma_size"))
         self.assertEqual(DbusAdapter._METHODS["SetTtmPages"], ("u", "s", "set_ttm_pages"))

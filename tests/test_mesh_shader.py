@@ -1080,7 +1080,10 @@ class MeshShaderTests(unittest.TestCase):
         source = MESH.read_text(encoding="utf-8")
         self.assertIn("menu_select()", source)
         self.assertIn("Mesa / RADV async-compute patch", source)
-        self.assertIn("Optional but highly recommended", source)
+        self.assertIn("Install FSR4 RC8 game DLL (recommended)", source)
+        self.assertIn("Install global async-compute RADV (optional)", source)
+        self.assertIn("not required by the recommended FSR4 RC8 DLL route", source)
+        self.assertIn("Build legacy FSR4 V3 RADV (fallback only)", source)
         self.assertIn("usually takes 3-5 minutes", source)
         self.assertIn("GFX1013 async compute", source)
         self.assertIn("require_production_kernel_paths", source)
@@ -1226,8 +1229,30 @@ class MeshShaderTests(unittest.TestCase):
                 text=True,
             )
             self.assertIn("state: installed", status.stdout)
+            records = json.loads(subprocess.run(
+                ["bash", str(FSR4), "records-json"],
+                check=True,
+                env=env,
+                capture_output=True,
+                text=True,
+            ).stdout)
+            self.assertEqual(records["schemaVersion"], 1)
+            self.assertEqual(records["state"], "ready")
+            self.assertEqual(records["invalidRecordCount"], 0)
+            self.assertEqual(len(records["records"]), 1)
+            self.assertEqual(records["records"][0]["targetPath"], str(target.resolve()))
+            self.assertEqual(records["records"][0]["state"], "ready")
 
             target.write_bytes(b"externally changed\n")
+            modified = json.loads(subprocess.run(
+                ["bash", str(FSR4), "records-json"],
+                check=True,
+                env=env,
+                capture_output=True,
+                text=True,
+            ).stdout)
+            self.assertEqual(modified["state"], "invalid")
+            self.assertEqual(modified["records"][0]["state"], "modified")
             refused = subprocess.run(
                 ["bash", str(FSR4), "uninstall", str(target)],
                 env=env,
@@ -1327,6 +1352,22 @@ class MeshShaderTests(unittest.TestCase):
             )
             self.assertEqual(invalid_count.returncode, 2)
             self.assertEqual(invalid_count.stdout, "1\n")
+            invalid_records = subprocess.run(
+                ["bash", str(FSR4), "records-json"],
+                check=True,
+                env={
+                    **os.environ,
+                    "HOME": str(root / "home"),
+                    "BC250_FSR4_STATE_DIR": str(linked_state),
+                    "BC250_FSR4_LOCK_FILE": str(root / "records.lock"),
+                },
+                capture_output=True,
+                text=True,
+            )
+            payload = json.loads(invalid_records.stdout)
+            self.assertEqual(payload["state"], "invalid")
+            self.assertEqual(payload["invalidRecordCount"], 1)
+            self.assertEqual(payload["records"][0]["targetId"], "unsafe-state")
 
 
 if __name__ == "__main__":

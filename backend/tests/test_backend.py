@@ -362,6 +362,207 @@ class BackendParsingTests(unittest.TestCase):
                 )
 
 
+class Fsr4InventoryTests(unittest.IsolatedAsyncioTestCase):
+    def setUp(self):
+        self.temporary = tempfile.TemporaryDirectory()
+        self.root = Path(self.temporary.name)
+        self.steam = self.root / "Steam"
+        self.library = self.root / "External Library"
+        (self.steam / "steamapps").mkdir(parents=True)
+        (self.library / "steamapps" / "common").mkdir(parents=True)
+        (self.steam / "steamapps" / "libraryfolders.vdf").write_text(
+            '"libraryfolders"\n{\n'
+            f'  "0" {{ "path" "{self.steam}" }}\n'
+            f'  "1" {{ "path" "{self.library}" }}\n'
+            '}\n',
+            encoding="utf-8",
+        )
+        self.backend = object.__new__(ToolkitBackend)
+        self.backend.user_home = self.root
+        self.backend._steam_root_override = self.steam
+
+    def tearDown(self):
+        self.temporary.cleanup()
+
+    def add_game(
+        self, app_id="1234", name="A Game", install_dir="A Game", state_flags="4"
+    ):
+        manifest = self.library / "steamapps" / f"appmanifest_{app_id}.acf"
+        manifest.write_text(
+            '"AppState"\n{\n'
+            f'  "appid" "{app_id}"\n'
+            f'  "name" "{name}"\n'
+            f'  "installdir" "{install_dir}"\n'
+            f'  "StateFlags" "{state_flags}"\n'
+            '}\n',
+            encoding="utf-8",
+        )
+        game = self.library / "steamapps" / "common" / install_dir
+        game.mkdir(parents=True, exist_ok=True)
+        return game
+
+    @staticmethod
+    def records(*items):
+        return {
+            "schemaVersion": 1,
+            "currentRelease": "v4.0.0-rc8",
+            "currentDllSha256": "a" * 64,
+            "state": "ready" if items else "not-installed",
+            "invalidRecordCount": 0,
+            "records": list(items),
+        }
+
+    def test_vdf_parser_handles_comments_escapes_and_rejects_malformed_input(self):
+        parsed = ToolkitBackend._parse_vdf(
+            '// comment\n"root" { "name" "A \\"Game\\"" "path" "C:\\\\Steam" }'
+        )
+        self.assertEqual(parsed["root"]["name"], 'A "Game"')
+        self.assertEqual(parsed["root"]["path"], "C:\\Steam")
+        with self.assertRaises(ValueError):
+            ToolkitBackend._parse_vdf('"root" { "name" "unterminated }')
+
+    def test_inventory_discovers_external_library_target_and_uses_opaque_id(self):
+        game = self.add_game(name="Game With Spaces")
+        target = game / "OptiScaler" / "amd_fidelityfx_upscaler_dx12.dll"
+        target.parent.mkdir()
+        target.write_bytes(b"original")
+
+        inventory = self.backend._build_fsr4_inventory(self.records())
+
+        self.assertEqual(inventory["inventoryState"], "ready")
+        self.assertEqual(len(inventory["games"]), 1)
+        discovered = inventory["games"][0]["targets"][0]
+        self.assertEqual(discovered["relativePath"], "OptiScaler/amd_fidelityfx_upscaler_dx12.dll")
+        self.assertEqual(
+            discovered["targetId"], hashlib.sha256(str(target.resolve()).encode()).hexdigest()
+        )
+        self.assertEqual(discovered["state"], "available")
+        self.assertTrue(discovered["discovered"])
+
+    def test_inventory_reports_multiple_targets_and_does_not_follow_symlink_dirs(self):
+        game = self.add_game()
+        for directory in (game / "one", game / "two"):
+            directory.mkdir()
+            (directory / "amd_fidelityfx_upscaler_dx12.dll").write_bytes(b"original")
+        outside = self.root / "outside"
+        outside.mkdir()
+        (outside / "amd_fidelityfx_upscaler_dx12.dll").write_bytes(b"unsafe")
+        (game / "linked").symlink_to(outside, target_is_directory=True)
+
+        inventory = self.backend._build_fsr4_inventory(self.records())
+
+        game_record = inventory["games"][0]
+        self.assertEqual(game_record["scanState"], "complete")
+        self.assertEqual(len(game_record["targets"]), 2)
+        self.assertTrue(all("outside" not in target["targetPath"] for target in game_record["targets"]))
+
+    def test_inventory_associates_missing_record_with_owning_game(self):
+        game = self.add_game()
+        target = game / "amd_fidelityfx_upscaler_dx12.dll"
+        target_id = hashlib.sha256(str(target.resolve()).encode()).hexdigest()
+        record = {
+            "targetId": target_id,
+            "targetPath": str(target.resolve()),
+            "release": "v4.0.0-rc8",
+            "state": "missing",
+            "currentRelease": True,
+        }
+
+        inventory = self.backend._build_fsr4_inventory(self.records(record))
+
+        self.assertEqual(inventory["games"][0]["targets"][0]["state"], "missing")
+        self.assertEqual(inventory["orphanedTargets"], [])
+        self.assertEqual(inventory["inventoryState"], "ready")
+
+    def test_inventory_does_not_treat_combined_update_flags_as_fully_installed(self):
+        self.add_game(state_flags="260")
+
+        inventory = self.backend._build_fsr4_inventory(self.records())
+
+        self.assertFalse(inventory["games"][0]["fullyInstalled"])
+        self.assertEqual(inventory["games"][0]["stateFlags"], 260)
+
+    async def test_mutations_resolve_target_id_server_side(self):
+        prepare_mutation_backend(self.backend)
+        target_id = "1" * 64
+        target_path = str(self.root / "game" / "amd_fidelityfx_upscaler_dx12.dll")
+        self.backend._get_fsr4_records = AsyncMock(return_value=self.records())
+        self.backend._build_fsr4_inventory = MagicMock(return_value={
+            "games": [{
+                "appKey": "game",
+                "fullyInstalled": True,
+                "installPresent": True,
+                "targets": [{
+                "targetId": target_id,
+                "targetPath": target_path,
+                "state": "available",
+                "discovered": True,
+            }]}],
+            "orphanedTargets": [],
+        })
+        self.backend._user_tool = AsyncMock(return_value="")
+
+        await self.backend.install_fsr4_dll(target_id)
+
+        self.backend._user_tool.assert_awaited_once_with(
+            "bc250-fsr4.sh", "install", target_path, timeout=300
+        )
+
+    async def test_record_json_schema_and_consistency_are_validated(self):
+        self.backend._user_script_available = MagicMock(return_value=True)
+        payload = {
+            **self.records(),
+            "currentDllSha256": "a" * 64,
+        }
+        self.backend._user_tool = AsyncMock(return_value=json.dumps(payload))
+        parsed = await self.backend._get_fsr4_records()
+        self.assertEqual(parsed["currentDllSha256"], "a" * 64)
+
+        payload["state"] = "ready"
+        self.backend._user_tool.return_value = json.dumps(payload)
+        with self.assertRaisesRegex(CommandError, "internally inconsistent"):
+            await self.backend._get_fsr4_records()
+
+    async def test_mutations_reject_paths_and_stale_target_ids(self):
+        prepare_mutation_backend(self.backend)
+        with self.assertRaisesRegex(CommandError, "target ID"):
+            await self.backend.install_fsr4_dll("/tmp/game.dll")
+
+        target_id = "2" * 64
+        self.backend._get_fsr4_records = AsyncMock(return_value=self.records())
+        self.backend._build_fsr4_inventory = MagicMock(return_value={
+            "games": [], "orphanedTargets": []
+        })
+        self.backend._user_tool = AsyncMock(return_value="")
+        with self.assertRaisesRegex(CommandError, "stale or ambiguous"):
+            await self.backend.uninstall_fsr4_dll(target_id)
+        self.backend._user_tool.assert_not_awaited()
+
+    async def test_mutation_rejects_game_while_steam_update_is_incomplete(self):
+        prepare_mutation_backend(self.backend)
+        target_id = "3" * 64
+        self.backend._get_fsr4_records = AsyncMock(return_value=self.records())
+        self.backend._build_fsr4_inventory = MagicMock(return_value={
+            "games": [{
+                "appKey": "game",
+                "fullyInstalled": False,
+                "installPresent": True,
+                "targets": [{
+                    "targetId": target_id,
+                    "targetPath": str(self.root / "game/amd_fidelityfx_upscaler_dx12.dll"),
+                    "state": "available",
+                    "discovered": True,
+                }],
+            }],
+            "orphanedTargets": [],
+        })
+        self.backend._user_tool = AsyncMock(return_value="")
+
+        with self.assertRaisesRegex(CommandError, "installing or updating"):
+            await self.backend.install_fsr4_dll(target_id)
+        self.backend._user_tool.assert_not_awaited()
+
+
 class BackendMutationTests(unittest.IsolatedAsyncioTestCase):
     async def test_exec_strips_decky_library_path(self):
         backend = object.__new__(ToolkitBackend)

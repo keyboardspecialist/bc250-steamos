@@ -1,8 +1,9 @@
-import { ButtonItem, PanelSection, PanelSectionRow, Spinner } from "@decky/ui";
+import { ButtonItem, PanelSection, PanelSectionRow, Spinner, TextField, ToggleField } from "@decky/ui";
 import { useEffect, useRef, useState } from "react";
-import { getMeshStatus } from "../api";
-import { EmptyState, StatusRow } from "../components/Common";
-import type { MeshStatus } from "../types";
+import { getFsr4Inventory, getMeshStatus, installFsr4Dll, uninstallFsr4Dll } from "../api";
+import { ActionButton, EmptyState, StatusRow } from "../components/Common";
+import type { Fsr4Inventory, Fsr4Target, MeshStatus } from "../types";
+import type { MutationRunner } from "./shared";
 
 function errorMessage(error: unknown): string {
   if (error instanceof Error) return error.message;
@@ -10,20 +11,27 @@ function errorMessage(error: unknown): string {
   return "The action failed.";
 }
 
-export function MeshTab() {
+export function MeshTab({ busy, runMutation }: { busy: boolean; runMutation: MutationRunner }) {
   const [status, setStatus] = useState<MeshStatus | null>(null);
+  const [inventory, setInventory] = useState<Fsr4Inventory | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  const [search, setSearch] = useState("");
   const mounted = useRef(true);
 
   const refresh = async () => {
     setLoading(true);
     try {
-      const next = await getMeshStatus();
-      if (mounted.current) {
-        setStatus(next);
-        setError("");
-      }
+      const failures: string[] = [];
+      await Promise.all([
+        getMeshStatus().then((next) => {
+          if (mounted.current) setStatus(next);
+        }).catch((caught) => failures.push(errorMessage(caught))),
+        getFsr4Inventory().then((next) => {
+          if (mounted.current) setInventory(next);
+        }).catch((caught) => failures.push(errorMessage(caught))),
+      ]);
+      if (mounted.current) setError(failures.join(" "));
     } catch (caught) {
       if (mounted.current) setError(errorMessage(caught));
     } finally {
@@ -39,7 +47,123 @@ export function MeshTab() {
     };
   }, []);
 
-  if (loading && !status) {
+  const toggleTarget = (target: Fsr4Target, enabled: boolean) => {
+    const action = enabled ? installFsr4Dll : uninstallFsr4Dll;
+    runMutation(
+      enabled ? "FSR4 RC8 installed" : "Original game DLL restored",
+      async () => {
+        try {
+          await action(target.targetId);
+        } finally {
+          await refresh();
+        }
+      },
+      {
+        title: enabled ? "Install FSR4 RC8 for this game?" : "Restore the original game DLL?",
+        description: enabled
+          ? `Close the game first. The toolkit will replace ${target.relativePath || target.targetPath || "the selected DLL"} and retain an exact rollback copy.`
+          : `Close the game first. The toolkit will restore the exact original bytes for ${target.relativePath || target.targetPath || "this target"} and remove its rollback record.`,
+        destructive: true,
+      },
+      { refresh: false },
+    );
+  };
+
+  const query = search.trim().toLocaleLowerCase();
+  const visibleGames = (inventory?.games ?? [])
+    .filter((game) => !query || game.name.toLocaleLowerCase().includes(query) || game.appId.includes(query))
+    .slice(0, 100);
+  const targetToggle = (target: Fsr4Target, label: string, gameReady = true) => {
+    const managed = target.state === "ready" || target.state === "upgrade-required";
+    const integrityBlocked = target.state === "modified" || target.state === "invalid";
+    const undiscoverableInstall = target.state === "restored" && !target.discovered;
+    const disabled = busy || !gameReady || integrityBlocked || target.state === "missing" || undiscoverableInstall;
+    const description = `${target.relativePath || target.targetPath || "Unknown target"} | ${target.state}${target.release ? ` | ${target.release}` : ""}${gameReady ? "" : " | Steam install/update incomplete"}${undiscoverableInstall ? " | target not found during scan" : ""}`;
+    return (
+      <div key={target.targetId}>
+        <ToggleField
+          label={label}
+          description={description}
+          checked={managed}
+          disabled={disabled}
+          onChange={(enabled) => toggleTarget(target, enabled)}
+        />
+        {target.state === "upgrade-required" && (
+          <ActionButton label="Update this target" disabled={busy || !gameReady || !target.discovered} onClick={() => toggleTarget(target, true)} />
+        )}
+        {target.state === "missing" && (
+          <ActionButton label="Restore missing original DLL" disabled={busy || !gameReady} onClick={() => toggleTarget(target, false)} />
+        )}
+      </div>
+    );
+  };
+
+  const gameManager = (
+    <>
+      <PanelSection title="FSR4 RC8 Game Manager">
+        <TextField
+          label="Installed Steam games"
+          description={inventory ? `${inventory.games.length} installed games | ${inventory.currentRelease ?? "helper unavailable"}` : "Loading Steam inventory"}
+          value={search}
+          disabled={loading || !inventory}
+          onChange={(event) => setSearch(event.target.value)}
+        />
+        {!inventory && loading && <PanelSectionRow><Spinner /></PanelSectionRow>}
+        {!inventory && !loading && (
+          <EmptyState>{error || "Unable to load the Steam game inventory."}</EmptyState>
+        )}
+        {inventory && !inventory.available && (
+          <EmptyState>{inventory.currentRelease
+            ? "Steam library metadata is unavailable. Start Steam once, then refresh the game list."
+            : inventory.errors[0] || "The FSR4 helper is unavailable."}</EmptyState>
+        )}
+        {inventory && visibleGames.map((game) => (
+          <div key={game.appKey}>
+            {game.targets.length === 0 ? (
+              <StatusRow
+                label={game.name}
+                value={!game.installPresent
+                  ? "Install unavailable"
+                  : game.scanState === "truncated" || game.scanState === "partial"
+                    ? "Scan incomplete"
+                    : "Compatible DLL not detected"}
+              />
+            ) : game.targets.map((target, index) => targetToggle(
+              target,
+              game.targets.length === 1 ? game.name : `${game.name} | target ${index + 1}`,
+              game.fullyInstalled && game.installPresent,
+            ))}
+          </div>
+        ))}
+        {inventory && inventory.games.length > 100 && !query && (
+          <EmptyState>Showing the first 100 games. Search by game name or Steam app ID.</EmptyState>
+        )}
+        {inventory && visibleGames.length === 0 && (
+          <EmptyState>No installed Steam games match this search.</EmptyState>
+        )}
+      </PanelSection>
+
+      {inventory && inventory.orphanedTargets.length > 0 && (
+        <PanelSection title="Unassociated FSR4 Targets">
+          {inventory.orphanedTargets.map((target) => (
+            <div key={target.targetId}>
+              <StatusRow label={target.targetPath || "Invalid rollback record"} value={target.state} />
+              <ActionButton
+                label="Restore original DLL"
+                disabled={busy || target.state === "modified" || target.state === "invalid"}
+                onClick={() => toggleTarget(target, false)}
+              />
+            </div>
+          ))}
+        </PanelSection>
+      )}
+      {inventory && inventory.errors.length > 0 && (
+        <EmptyState>{inventory.errors.join(" ")}</EmptyState>
+      )}
+    </>
+  );
+
+  if (loading && !status && !inventory) {
     return <PanelSection><PanelSectionRow><Spinner /></PanelSectionRow></PanelSection>;
   }
 
@@ -47,6 +171,7 @@ export function MeshTab() {
     return (
       <>
         <EmptyState>{error || "Unable to load Mesa / RADV runtime status."}</EmptyState>
+        {gameManager}
         <PanelSection><PanelSectionRow><ButtonItem layout="below" onClick={() => void refresh()}>Retry</ButtonItem></PanelSectionRow></PanelSection>
       </>
     );
@@ -77,6 +202,8 @@ export function MeshTab() {
       {status.restartRequired && !status.schedulerActive && <EmptyState>Reboot to activate amdgpu.sched_policy=2 and patched RADV together.</EmptyState>}
       {status.restartRequired && status.schedulerActive && <EmptyState>The global driver is configured but this graphical session has not inherited it. Sign out and back in.</EmptyState>}
       {status.games.length > 0 && <EmptyState>Migration records from the older per-game workflow remain for: {status.games.map((game) => game.name).join(", ")}. Remove MESA_DRICONF_EXECUTABLE_OVERRIDE and VK_ICD_FILENAMES from their Steam launch options, then run bc250-mesh-shader.sh legacy-clear.</EmptyState>}
+
+      {gameManager}
 
       <PanelSection>
         <PanelSectionRow>

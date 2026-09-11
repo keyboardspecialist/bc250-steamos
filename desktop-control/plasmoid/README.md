@@ -70,6 +70,7 @@ Read methods return a single D-Bus string (`s`) containing JSON:
 | `GetTelemetry` | none | `{cpuClock,gpuClock,cpuTemp,gpuTemp}`, nullable numbers |
 | `GetCpuUnlockStatus` | none | CPU topology, active unlock mode, integrity state, action blockers |
 | `GetMeshStatus` | none | Patched-kernel, scheduler, RADV, global activation, and FSR4 state |
+| `GetFsr4Inventory` | none | Installed Steam games and validated game-local DLL targets |
 | `GetOperation` | `s operationId` | `{operationId,method,status,...,error?}` |
 
 Mutation methods return a single string containing an operation ID matching
@@ -87,6 +88,8 @@ returns `b` to support cancelling long-running work.
 | `SetCustomLoadTarget` | `yy` | lower and upper percent |
 | `SetTemperatureTarget` | `y` | GPU throttle temperature Celsius |
 | `SetRamp` | `u` | climb milliseconds |
+| `InstallFsr4Dll` | `s` | opaque 64-character target ID from `GetFsr4Inventory` |
+| `UninstallFsr4Dll` | `s` | opaque 64-character target ID from `GetFsr4Inventory` |
 | `CpuOcAction` | `suuu` | action, MHz, mV, temperature Celsius |
 | `CpuUnlockAction` | `s` | `test`, `enable`, `efi-enable`, or `off` |
 | `SetCpuMitigations` | `b` | configured kernel mitigation state |
@@ -109,7 +112,9 @@ particular, the UI expects service states as `{enabled,active}`, CU `rows` and
 `savedMasks`, GPU live/requested ranges and tuning values, CPU
 `installed`/`staged` profiles, CEC state and behavior booleans, and power
 temperatures, plus CMOS/TTM configured and active memory limits. JSON/free-form service output is parsed only as data and is never
-inserted into a command.
+inserted into a command. FSR4 mutation methods accept only opaque target IDs;
+the service rediscovers each target from Steam metadata before invoking the
+transactional DLL helper.
 
 ## Safety And Polling
 

@@ -24,5 +24,8 @@ assert.strictEqual(
     JSON.stringify({ok: true})
 );
 assert.throws(() => context.safeOperationId("unsafe value"));
+assert.strictEqual(context.safeTargetId("a".repeat(64)), "a".repeat(64));
+assert.throws(() => context.safeTargetId("/tmp/game.dll"));
+assert.throws(() => context.safeTargetId("A".repeat(64)));
 
 console.log("QML utility checks passed");

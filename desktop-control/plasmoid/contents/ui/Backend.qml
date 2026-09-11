@@ -12,6 +12,7 @@ QtObject {
     property var snapshot: null
     property var cpuUnlockStatus: null
     property var meshStatus: null
+    property var fsr4Inventory: null
     property var telemetryHistory: []
     property string error: ""
     property string notice: ""
@@ -19,6 +20,7 @@ QtObject {
     property bool busy: false
     property string busyLabel: ""
     property string operationId: ""
+    property bool operationCancellable: false
     property bool cancelPending: false
     property bool uiVisible: false
     property bool telemetryWanted: false
@@ -60,9 +62,11 @@ QtObject {
     property bool _snapshotQueued: false
     property bool _cpuUnlockQueued: false
     property bool _meshQueued: false
+    property bool _fsr4Queued: false
     property bool _telemetryQueued: false
     property bool _operationQueued: false
     property int _operationPollFailures: 0
+    property bool _refreshFsr4AfterOperation: false
 
     function latestGpuTemperature() {
         if (telemetryHistory.length > 0) {
@@ -82,15 +86,15 @@ QtObject {
     }
 
     function _command(method, signature, argumentsList) {
-        method = Utils.allowed(method, ["GetSnapshot", "GetTelemetry", "GetCpuUnlockStatus", "GetMeshStatus", "GetOperation",
+        method = Utils.allowed(method, ["GetSnapshot", "GetTelemetry", "GetCpuUnlockStatus", "GetMeshStatus", "GetFsr4Inventory", "GetOperation",
             "SetCuWgp", "SetGpuFrequency", "SetLoadTarget", "SetCustomLoadTarget",
             "SetRamp", "CpuOcAction", "CpuUnlockAction", "SetCpuMitigations", "CecAction", "SetCecToggle", "SetCecName",
-            "SetUmaSize", "SetTtmPages", "RemoveTtmOverride", "SetHdmiSurround", "CancelOperation"]);
+            "SetUmaSize", "SetTtmPages", "RemoveTtmOverride", "SetHdmiSurround", "InstallFsr4Dll", "UninstallFsr4Dll", "CancelOperation"]);
         signature = Utils.allowed(signature, ["", "b", "s", "u", "yy", "suu", "yyyb", "suuu", "sb"]);
         var interactive = ["SetCuWgp", "SetGpuFrequency", "SetLoadTarget",
             "SetCustomLoadTarget", "SetRamp", "CpuOcAction", "CpuUnlockAction", "SetCpuMitigations"].indexOf(method) >= 0;
         var command = "/usr/bin/busctl --system --json=short --timeout="
-            + (interactive ? "130" : method === "GetMeshStatus" || method === "GetCpuUnlockStatus" ? "35" : "15") + " call " + service + " "
+            + (interactive ? "130" : method === "GetFsr4Inventory" ? "120" : method === "GetMeshStatus" || method === "GetCpuUnlockStatus" ? "35" : "15") + " call " + service + " "
             + objectPath + " " + serviceInterface + " " + method;
         if (signature)
             command += " " + signature;
@@ -124,6 +128,15 @@ QtObject {
             _meshQueued = true;
             _enqueue("mesh", _command("GetMeshStatus", "", []), {});
         }
+        if (!fsr4Inventory)
+            refreshFsr4();
+    }
+
+    function refreshFsr4() {
+        if (_fsr4Queued || (_current && _current.type === "fsr4") || busy)
+            return;
+        _fsr4Queued = true;
+        _enqueue("fsr4", _command("GetFsr4Inventory", "", []), {});
     }
 
     function sampleTelemetry() {
@@ -141,7 +154,13 @@ QtObject {
         notice = "";
         error = "";
         _operationPollFailures = 0;
-        _enqueue("mutation", _command(method, signature, args), { label: label });
+        var cancellable = ["CpuUnlockAction", "SetCpuMitigations", "SetUmaSize", "SetTtmPages",
+            "RemoveTtmOverride", "SetHdmiSurround", "InstallFsr4Dll", "UninstallFsr4Dll"].indexOf(method) < 0;
+        _enqueue("mutation", _command(method, signature, args), {
+            label: label,
+            refreshFsr4: method === "InstallFsr4Dll" || method === "UninstallFsr4Dll",
+            cancellable: cancellable
+        });
     }
 
     function setCuWgp(se, sh, wgp, enabled) {
@@ -176,6 +195,12 @@ QtObject {
     function setRamp(milliseconds) {
         _startMutation("SetRamp", "u", [Utils.integer(milliseconds, 200, 5000)],
             "Applying GPU ramp time");
+    }
+
+    function setFsr4Dll(targetId, enabled) {
+        var safeId = Utils.safeTargetId(targetId);
+        _startMutation(enabled ? "InstallFsr4Dll" : "UninstallFsr4Dll", "s", [safeId],
+            (enabled ? "Installing" : "Restoring") + " FSR4 game DLL");
     }
 
     function cpuOcAction(action, frequency, voltage, temperature) {
@@ -259,13 +284,18 @@ QtObject {
     }
 
     function _fail(message) {
+        var refreshGames = _refreshFsr4AfterOperation;
         error = message;
         busy = false;
         busyLabel = "";
         operationId = "";
+        operationCancellable = false;
+        _refreshFsr4AfterOperation = false;
         cancelPending = false;
         operationPoll.stop();
         operationFinished(false, message);
+        if (refreshGames)
+            refreshFsr4();
     }
 
     function _operationPollFailed(message) {
@@ -290,6 +320,8 @@ QtObject {
             _cpuUnlockQueued = false;
         else if (request.type === "mesh")
             _meshQueued = false;
+        else if (request.type === "fsr4")
+            _fsr4Queued = false;
         else if (request.type === "telemetry")
             _telemetryQueued = false;
         else if (request.type === "operation")
@@ -321,6 +353,9 @@ QtObject {
                 cpuUnlockStatus = Utils.busValue(data.stdout);
             } else if (request.type === "mesh") {
                 meshStatus = Utils.busValue(data.stdout);
+            } else if (request.type === "fsr4") {
+                fsr4Inventory = Utils.busValue(data.stdout);
+                error = "";
             } else if (request.type === "telemetry") {
                 var sample = Utils.busValue(data.stdout);
                 var history = telemetryHistory.slice(0);
@@ -328,6 +363,8 @@ QtObject {
                 telemetryHistory = history.slice(-36);
             } else if (request.type === "mutation") {
                 operationId = Utils.safeOperationId(Utils.busValue(data.stdout));
+                operationCancellable = request.context.cancellable !== false;
+                _refreshFsr4AfterOperation = Boolean(request.context.refreshFsr4);
                 operationPoll.start();
                 _pollOperation();
             } else if (request.type === "operation") {
@@ -337,12 +374,15 @@ QtObject {
                     throw new Error("The service returned an invalid operation status.");
                 _operationPollFailures = 0;
                 error = "";
+                operationCancellable = operation.cancellable !== false;
                 if (status === "failed") {
                     _fail(String(operation.error || "The hardware operation failed."));
                 } else if (status === "cancelled") {
                     busy = false;
                     busyLabel = "";
                     operationId = "";
+                    operationCancellable = false;
+                    _refreshFsr4AfterOperation = false;
                     cancelPending = false;
                     operationPoll.stop();
                     notice = "Operation cancelled.";
@@ -350,14 +390,19 @@ QtObject {
                     refresh();
                 } else if (status === "succeeded") {
                     var message = String(operation.message || (operation.method ? operation.method + " completed." : "Operation completed."));
+                    var refreshGames = _refreshFsr4AfterOperation;
                     busy = false;
                     busyLabel = "";
                     operationId = "";
+                    operationCancellable = false;
+                    _refreshFsr4AfterOperation = false;
                     cancelPending = false;
                     operationPoll.stop();
                     notice = message;
                     operationFinished(true, message);
                     refresh();
+                    if (refreshGames)
+                        refreshFsr4();
                 } else if (status !== "queued" && status !== "running") {
                     throw new Error("The service returned an unknown operation state.");
                 } else if (operation.label) {

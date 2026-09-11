@@ -27,12 +27,15 @@ INTROSPECTION_XML = """<node>
     <method name="GetTelemetry"><arg name="json" type="s" direction="out"/></method>
     <method name="GetCpuUnlockStatus"><arg name="json" type="s" direction="out"/></method>
     <method name="GetMeshStatus"><arg name="json" type="s" direction="out"/></method>
+    <method name="GetFsr4Inventory"><arg name="json" type="s" direction="out"/></method>
     <method name="SetCuWgp"><arg name="se" type="y" direction="in"/><arg name="sh" type="y" direction="in"/><arg name="wgp" type="y" direction="in"/><arg name="enabled" type="b" direction="in"/><arg name="operation_id" type="s" direction="out"/></method>
     <method name="SetGpuFrequency"><arg name="mode" type="s" direction="in"/><arg name="minimum" type="u" direction="in"/><arg name="maximum" type="u" direction="in"/><arg name="operation_id" type="s" direction="out"/></method>
     <method name="SetLoadTarget"><arg name="preset" type="s" direction="in"/><arg name="operation_id" type="s" direction="out"/></method>
     <method name="SetCustomLoadTarget"><arg name="minimum" type="y" direction="in"/><arg name="maximum" type="y" direction="in"/><arg name="operation_id" type="s" direction="out"/></method>
     <method name="SetTemperatureTarget"><arg name="target" type="y" direction="in"/><arg name="operation_id" type="s" direction="out"/></method>
     <method name="SetRamp"><arg name="climb_ms" type="u" direction="in"/><arg name="operation_id" type="s" direction="out"/></method>
+    <method name="InstallFsr4Dll"><arg name="target_id" type="s" direction="in"/><arg name="operation_id" type="s" direction="out"/></method>
+    <method name="UninstallFsr4Dll"><arg name="target_id" type="s" direction="in"/><arg name="operation_id" type="s" direction="out"/></method>
     <method name="CpuOcAction"><arg name="action" type="s" direction="in"/><arg name="frequency" type="u" direction="in"/><arg name="voltage" type="u" direction="in"/><arg name="temperature" type="u" direction="in"/><arg name="operation_id" type="s" direction="out"/></method>
     <method name="SetCpuMitigations"><arg name="enabled" type="b" direction="in"/><arg name="operation_id" type="s" direction="out"/></method>
     <method name="CpuUnlockAction"><arg name="action" type="s" direction="in"/><arg name="operation_id" type="s" direction="out"/></method>
@@ -158,12 +161,15 @@ class DbusAdapter:
         "GetTelemetry": ("", "s", "get_telemetry"),
         "GetCpuUnlockStatus": ("", "s", "get_cpu_unlock_status"),
         "GetMeshStatus": ("", "s", "get_mesh_status"),
+        "GetFsr4Inventory": ("", "s", "get_fsr4_inventory"),
         "SetCuWgp": ("yyyb", "s", "set_cu_wgp"),
         "SetGpuFrequency": ("suu", "s", "set_gpu_frequency"),
         "SetLoadTarget": ("s", "s", "set_load_target"),
         "SetCustomLoadTarget": ("yy", "s", "set_custom_load_target"),
         "SetTemperatureTarget": ("y", "s", "set_temperature_target"),
         "SetRamp": ("u", "s", "set_ramp"),
+        "InstallFsr4Dll": ("s", "s", "install_fsr4_dll"),
+        "UninstallFsr4Dll": ("s", "s", "uninstall_fsr4_dll"),
         "CpuOcAction": ("suuu", "s", "cpu_oc_action"),
         "SetCpuMitigations": ("b", "s", "set_cpu_mitigations"),
         "CpuUnlockAction": ("s", "s", "cpu_unlock_action"),

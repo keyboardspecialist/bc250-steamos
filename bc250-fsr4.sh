@@ -52,7 +52,8 @@ ensure_state() {
 
 normalize_target() {
     local input=$1
-    [[ -n "$input" && "$input" != *$'\n'* && "${input,,}" == *.dll ]] \
+    [[ -n "$input" && "$input" != *$'\n'* && "$input" != *$'\r'* \
+        && "${input,,}" == *.dll ]] \
         || die "Target must be a DLL path without line breaks."
     [[ ! -L "$input" ]] || die "Target DLL must not be a symlink: $input"
     REAL_TARGET=$(realpath -m -- "$input")
@@ -138,6 +139,7 @@ read_record() {
     IFS= read -r line < "$record/install.conf" || return 1
     read -r RECORD_RELEASE RECORD_DLL_SHA RECORD_ORIGINAL_SHA RECORD_MODE extra <<< "$line"
     [[ -z "$extra" && "$RECORD_TARGET" == /* && "$RECORD_TARGET" != *$'\n'* \
+        && "$RECORD_TARGET" != *$'\r'* \
         && "${RECORD_TARGET,,}" == *.dll \
         && "$RECORD_RELEASE" =~ ^v[0-9][0-9A-Za-z._-]*$ \
         && "$RECORD_DLL_SHA" =~ ^[0-9a-f]{64}$ \
@@ -223,8 +225,9 @@ install_target() {
         die "Target changed before replacement; no FSR4 DLL was installed."
     fi
     copy_atomic "$RELEASE_DIR/$DLL_NAME" "$REAL_TARGET" "$mode"
-    [[ "$(sha256_file "$REAL_TARGET")" == "$DLL_SHA256" ]] \
-        || die "Installed DLL failed verification; run uninstall to restore the original."
+    if [[ "$(sha256_file "$REAL_TARGET")" != "$DLL_SHA256" ]]; then
+        die "Installed DLL changed before verification; the rollback record was retained for manual recovery."
+    fi
     log "Installed BC-250 FSR4 $RELEASE at $REAL_TARGET"
     log "Original preserved at $record/original.dll"
     log 'OptiScaler launch option: PROTON_FSR4_UPGRADE=0 PROTON_USE_OPTISCALER=0 WINEDLLOVERRIDES="winmm=n,b;amdxcffx64=" %command%'
@@ -319,12 +322,102 @@ count_installs() {
     printf '%s\n' "$count"
 }
 
+records_json() {
+    local record state current marker invalid_id count=0
+    command -v flock >/dev/null 2>&1 || die "flock is required."
+    [[ ! -L "$LOCK_FILE" ]] || die "Refusing symlinked FSR4 lock file."
+    mkdir -p "${LOCK_FILE%/*}"
+    exec 9> "$LOCK_FILE"
+    flock -s 9
+    python3 - "$RELEASE" "$DLL_SHA256" 3< <(
+        if [[ -L "$STATE_DIR" || -L "$CACHE_DIR" || -L "$INSTALLS_DIR" \
+            || ( -e "$STATE_DIR" && ! -d "$STATE_DIR" ) \
+            || ( -e "$CACHE_DIR" && ! -d "$CACHE_DIR" ) \
+            || ( -e "$INSTALLS_DIR" && ! -d "$INSTALLS_DIR" ) ]]; then
+            printf 'I\0unsafe-state\0'
+        elif [[ -d "$INSTALLS_DIR" ]]; then
+            for record in "$INSTALLS_DIR"/*; do
+                [[ -e "$record" || -L "$record" ]] || continue
+                count=$((count + 1))
+                if [[ $count -gt 4096 ]]; then
+                    printf 'I\0record-limit\0'
+                    break
+                fi
+                if ! read_record "$record"; then
+                    invalid_id=$(printf '%s' "${record##*/}" | sha256sum | awk '{print $1}')
+                    printf 'I\0invalid-%s\0' "$invalid_id"
+                    continue
+                fi
+                state=$(record_state)
+                current=false
+                if [[ "$RECORD_RELEASE" == "$RELEASE" \
+                    && "$RECORD_DLL_SHA" == "$DLL_SHA256" ]]; then
+                    current=true
+                elif [[ "$state" == ready ]]; then
+                    state=upgrade-required
+                fi
+                printf 'V\0%s\0%s\0%s\0%s\0%s\0' "${record##*/}" \
+                    "$RECORD_TARGET" "$RECORD_RELEASE" "$state" "$current"
+            done
+        fi
+    ) <<'PY'
+import json
+import os
+import sys
+
+release, dll_sha = sys.argv[1:]
+fields = os.fdopen(3, "rb").read().split(b"\0")
+records = []
+invalid = 0
+index = 0
+while index < len(fields) and fields[index]:
+    marker = fields[index].decode("ascii", "strict")
+    index += 1
+    if marker == "I":
+        record_id = fields[index].decode("utf-8", "replace")
+        index += 1
+        records.append({
+            "targetId": record_id,
+            "targetPath": None,
+            "release": None,
+            "state": "invalid",
+            "currentRelease": False,
+        })
+        invalid += 1
+        continue
+    if marker != "V" or index + 5 > len(fields):
+        raise SystemExit("Malformed internal FSR4 record stream")
+    record_id, target, recorded_release, state, current = fields[index:index + 5]
+    index += 5
+    records.append({
+        "targetId": record_id.decode("ascii", "strict"),
+        "targetPath": target.decode("utf-8", "surrogateescape"),
+        "release": recorded_release.decode("ascii", "strict"),
+        "state": state.decode("ascii", "strict"),
+        "currentRelease": current == b"true",
+    })
+
+valid_ready = bool(records) and invalid == 0 and all(
+    record["state"] == "ready" and record["currentRelease"] for record in records
+)
+print(json.dumps({
+    "schemaVersion": 1,
+    "currentRelease": release,
+    "currentDllSha256": dll_sha,
+    "state": "ready" if valid_ready else "not-installed" if not records else "invalid",
+    "invalidRecordCount": invalid,
+    "records": records,
+}, ensure_ascii=True, separators=(",", ":")))
+PY
+}
+
 usage() {
     cat <<EOF
 Usage: $0 install TARGET_DLL
        $0 uninstall TARGET_DLL
        $0 uninstall --all
        $0 status
+       $0 records-json
 
 Installs checksum-pinned BC-250 FSR4 $RELEASE into one compatible game or
 OptiScaler DLL path. The exact original is retained for verified rollback.
@@ -356,6 +449,7 @@ case "${1:-help}" in
         fi
         ;;
     status) (($# == 1)) || die "Usage: $0 status"; show_status ;;
+    records-json) (($# == 1)) || exit 2; records_json ;;
     probe) (($# == 1)) || exit 2; probe_installs ;;
     count) (($# == 1)) || exit 2; count_installs ;;
     help|-h|--help) (($# == 1)) || exit 2; usage ;;

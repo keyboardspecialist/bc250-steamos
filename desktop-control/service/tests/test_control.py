@@ -48,6 +48,9 @@ class FakeBackend:
     async def get_mesh_status(self):
         return {"runtimeState": "ready", "fsr4State": "not-installed"}
 
+    async def get_fsr4_inventory(self):
+        return {"schemaVersion": 1, "games": []}
+
     async def get_telemetry(self):
         return {"cpuClock": 3200}
 
@@ -85,6 +88,12 @@ class FakeBackend:
 
     async def set_ramp(self, *args):
         await self._mutation("set_ramp", *args)
+
+    async def install_fsr4_dll(self, *args):
+        await self._mutation("install_fsr4_dll", *args)
+
+    async def uninstall_fsr4_dll(self, *args):
+        await self._mutation("uninstall_fsr4_dll", *args)
 
     async def cpu_oc_action(self, *args):
         await self._mutation("cpu_oc_action", *args)
@@ -156,6 +165,8 @@ class ControlServiceTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(
             mesh, '{"runtimeState":"ready","fsr4State":"not-installed"}'
         )
+        inventory = await self.service.get_fsr4_inventory(":1.1")
+        self.assertEqual(inventory, '{"schemaVersion":1,"games":[]}')
         self.assertEqual(self.authorizer.calls, [])
 
     async def test_privileged_mutation_is_authorized_and_pollable(self):
@@ -262,6 +273,15 @@ class ControlServiceTests(unittest.IsolatedAsyncioTestCase):
         )
         self.assertEqual(self.backends[0].calls, [("set_hdmi_surround", (True,))])
 
+    async def test_fsr4_mutations_use_opaque_ids_and_are_non_cancellable(self):
+        target_id = "a" * 64
+        operation_id = await self.service.install_fsr4_dll(":1.1", target_id)
+        operation = await self.wait_for_status(":1.1", operation_id, "succeeded")
+        self.assertFalse(operation["cancellable"])
+        self.assertEqual(operation["method"], "InstallFsr4Dll")
+        self.assertEqual(self.authorizer.calls, [(":1.1", 1000, "audit:1000", "gpu")])
+        self.assertEqual(self.backends[0].calls, [("install_fsr4_dll", (target_id,))])
+
     async def test_operations_are_private_to_uid_but_survive_sender_change(self):
         operation_id = await self.service.cec_action(":1.1", "mute")
         await self.wait_for_status(":9.9", operation_id, "succeeded")
@@ -283,6 +303,9 @@ class ControlServiceTests(unittest.IsolatedAsyncioTestCase):
             await self.service.set_cpu_mitigations(":1.1", 0)
         with self.assertRaises(InvalidArguments):
             await self.service.set_hdmi_surround(":1.1", 1)
+        for target_id in ("", "/tmp/game.dll", "A" * 64, "a" * 63, 1):
+            with self.subTest(target_id=target_id), self.assertRaises(InvalidArguments):
+                await self.service.uninstall_fsr4_dll(":1.1", target_id)
         for action in ("", "uninstall", "test; reboot", 1):
             with self.subTest(action=action), self.assertRaises(InvalidArguments):
                 await self.service.cpu_unlock_action(":1.1", action)

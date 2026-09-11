@@ -25,6 +25,13 @@ function safeOperationId(value) {
     return token;
 }
 
+function safeTargetId(value) {
+    var token = String(value);
+    if (!/^[0-9a-f]{64}$/.test(token))
+        throw new Error("The service returned an unsafe FSR4 target identifier.");
+    return token;
+}
+
 // Return exactly one POSIX shell word. Executable DataSource commands are
 // interpreted by a shell, so free-form D-Bus strings must pass through here.
 function shellString(value) {

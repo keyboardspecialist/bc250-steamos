@@ -1,4 +1,5 @@
 import json
+import re
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable, Dict
@@ -79,6 +80,10 @@ class ControlService:
     async def get_mesh_status(self, sender: str) -> str:
         caller = await self._caller(sender)
         return _compact_json(await self._backend(caller).get_mesh_status())
+
+    async def get_fsr4_inventory(self, sender: str) -> str:
+        caller = await self._caller(sender)
+        return _compact_json(await self._backend(caller).get_fsr4_inventory())
 
     async def get_operation(self, sender: str, operation_id: str) -> str:
         caller = await self._caller(sender)
@@ -193,6 +198,28 @@ class ControlService:
             "gpu",
             "SetRamp",
             lambda backend: backend.set_ramp(climb_ms),
+        )
+
+    async def install_fsr4_dll(self, sender: str, target_id: str) -> str:
+        if type(target_id) is not str or re.fullmatch(r"[0-9a-f]{64}", target_id) is None:
+            raise InvalidArguments("FSR4 target ID is invalid.")
+        return await self._submit(
+            sender,
+            "gpu",
+            "InstallFsr4Dll",
+            lambda backend: backend.install_fsr4_dll(target_id),
+            cancellable=False,
+        )
+
+    async def uninstall_fsr4_dll(self, sender: str, target_id: str) -> str:
+        if type(target_id) is not str or re.fullmatch(r"[0-9a-f]{64}", target_id) is None:
+            raise InvalidArguments("FSR4 target ID is invalid.")
+        return await self._submit(
+            sender,
+            "gpu",
+            "UninstallFsr4Dll",
+            lambda backend: backend.uninstall_fsr4_dll(target_id),
+            cancellable=False,
         )
 
     async def cpu_oc_action(

@@ -243,6 +243,46 @@ export interface MeshStatus {
   games: MeshGame[];
 }
 
+export type Fsr4TargetState =
+  | "available"
+  | "ready"
+  | "upgrade-required"
+  | "restored"
+  | "missing"
+  | "modified"
+  | "invalid";
+
+export interface Fsr4Target {
+  targetId: string;
+  targetPath: string | null;
+  relativePath?: string;
+  state: Fsr4TargetState;
+  release: string | null;
+  discovered: boolean;
+}
+
+export interface Fsr4Game {
+  appKey: string;
+  appId: string;
+  name: string;
+  installPath: string;
+  fullyInstalled: boolean;
+  stateFlags: number;
+  installPresent: boolean;
+  scanState: "complete" | "partial" | "truncated" | "unavailable";
+  targets: Fsr4Target[];
+}
+
+export interface Fsr4Inventory {
+  schemaVersion: 1;
+  available: boolean;
+  inventoryState: "ready" | "partial" | "unavailable";
+  currentRelease: string | null;
+  games: Fsr4Game[];
+  orphanedTargets: Fsr4Target[];
+  errors: string[];
+}
+
 export interface Snapshot {
   toolkit: {
     available: boolean;

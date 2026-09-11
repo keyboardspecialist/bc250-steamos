@@ -215,10 +215,13 @@ class ToolkitBackend:
         user_home: str,
         *,
         lock_path: Optional[Path] = None,
+        steam_root: Optional[Path] = None,
     ) -> None:
         self.user = user
         self.user_home = Path(user_home)
-        self.user_uid = pwd.getpwnam(user).pw_uid
+        account = pwd.getpwnam(user)
+        self.user_uid = account.pw_uid
+        self._user_gids = set(os.getgrouplist(user, account.pw_gid))
         override = os.environ.get("BC250_TOOLKIT_DIR")
         self.toolkit = Path(override) if override else (
             self.user_home / ".local/share/bc250-fixes/bc250-steamos"
@@ -227,6 +230,7 @@ class ToolkitBackend:
         self._umr_lock = asyncio.Lock()
         self._backend_lock_path = lock_path or BACKEND_LOCK_PATH
         self._test_lock_path = lock_path is not None
+        self._steam_root_override = steam_root
 
     def _open_backend_lock(self) -> int:
         path = self._backend_lock_path
@@ -583,15 +587,24 @@ class ToolkitBackend:
         descriptor = -1
         try:
             descriptor = os.open(
-                str(path), os.O_RDONLY | os.O_CLOEXEC | os.O_NOFOLLOW
+                str(path),
+                os.O_RDONLY
+                | os.O_CLOEXEC
+                | os.O_NOFOLLOW
+                | getattr(os, "O_NONBLOCK", 0),
             )
             metadata = os.fstat(descriptor)
             if not stat.S_ISREG(metadata.st_mode):
                 return None
-            content = os.read(descriptor, limit + 1)
-            if len(content) > limit:
+            if metadata.st_size > limit:
                 return None
-            return content
+            content = bytearray()
+            while len(content) <= limit:
+                chunk = os.read(descriptor, min(65536, limit + 1 - len(content)))
+                if not chunk:
+                    return bytes(content)
+                content.extend(chunk)
+            return None
         except OSError:
             return None
         finally:
@@ -607,6 +620,100 @@ class ToolkitBackend:
             return content.decode("ascii", "strict").strip()
         except UnicodeError:
             return None
+
+    @classmethod
+    def _read_utf8_bounded(cls, path: Path, limit: int) -> Optional[str]:
+        content = cls._read_bounded_bytes(path, limit)
+        if content is None:
+            return None
+        try:
+            return content.decode("utf-8-sig", "strict")
+        except UnicodeError:
+            return None
+
+    @staticmethod
+    def _parse_vdf(text: str) -> dict[str, Any]:
+        tokens = []
+        index = 0
+        length = len(text)
+        while index < length:
+            character = text[index]
+            if character.isspace():
+                index += 1
+                continue
+            if character == "/" and index + 1 < length and text[index + 1] == "/":
+                index += 2
+                while index < length and text[index] not in "\r\n":
+                    index += 1
+                continue
+            if character in "{}":
+                tokens.append((character, character))
+                if len(tokens) > 250000:
+                    raise ValueError("VDF token limit exceeded")
+                index += 1
+                continue
+            if character != '"':
+                raise ValueError("Unsupported VDF token")
+            index += 1
+            value = []
+            while index < length and text[index] != '"':
+                character = text[index]
+                if character == "\\":
+                    index += 1
+                    if index >= length:
+                        raise ValueError("Unterminated VDF escape")
+                    escaped = text[index]
+                    value.append({"n": "\n", "r": "\r", "t": "\t"}.get(escaped, escaped))
+                else:
+                    value.append(character)
+                index += 1
+                if len(value) > 65536:
+                    raise ValueError("VDF string is too large")
+            if index >= length:
+                raise ValueError("Unterminated VDF string")
+            tokens.append(("string", "".join(value)))
+            if len(tokens) > 250000:
+                raise ValueError("VDF token limit exceeded")
+            index += 1
+
+        position = 0
+
+        def parse_object(depth: int, closing: bool) -> dict[str, Any]:
+            nonlocal position
+            if depth > 32:
+                raise ValueError("VDF nesting limit exceeded")
+            result: dict[str, Any] = {}
+            while position < len(tokens):
+                kind, key = tokens[position]
+                if kind == "}":
+                    if not closing:
+                        raise ValueError("Unexpected VDF close brace")
+                    position += 1
+                    return result
+                if kind != "string":
+                    raise ValueError("VDF key must be a string")
+                position += 1
+                if position >= len(tokens):
+                    raise ValueError("VDF value is missing")
+                normalized = key.casefold()
+                if normalized in result:
+                    raise ValueError("Duplicate VDF key")
+                value_kind, value = tokens[position]
+                position += 1
+                if value_kind == "{":
+                    result[normalized] = parse_object(depth + 1, True)
+                elif value_kind == "string":
+                    result[normalized] = value
+                else:
+                    raise ValueError("VDF value is invalid")
+            if closing:
+                raise ValueError("Unterminated VDF object")
+            return result
+
+        parsed = parse_object(0, False)
+        if position != len(tokens):
+            raise ValueError("Trailing VDF content")
+        return parsed
 
     @staticmethod
     def _read_key_values(path: Union[str, Path]) -> dict[str, str]:
@@ -662,7 +769,7 @@ class ToolkitBackend:
             try:
                 if candidate.stat().st_mode & 0o111:
                     return candidate
-            except OSError:
+            except (OSError, RuntimeError):
                 continue
         return None
 
@@ -695,7 +802,7 @@ class ToolkitBackend:
                     for path in required
                 ):
                     return candidate
-            except OSError:
+            except (OSError, RuntimeError):
                 continue
         return None
 
@@ -2476,6 +2583,467 @@ class ToolkitBackend:
             async with self._process_lock():
                 return await self._get_snapshot()
 
+    async def _get_fsr4_records(self) -> dict[str, Any]:
+        if not self._user_script_available("bc250-fsr4.sh"):
+            raise CommandError("The FSR4 DLL helper is unavailable. Update the toolkit checkout.")
+        output = await self._user_tool("bc250-fsr4.sh", "records-json", timeout=30)
+        try:
+            payload = json.loads(output)
+        except (TypeError, ValueError) as error:
+            raise CommandError("FSR4 rollback status returned invalid JSON.") from error
+        if not isinstance(payload, dict) or payload.get("schemaVersion") != 1:
+            raise CommandError("FSR4 rollback status returned an unsupported schema.")
+        current_release = payload.get("currentRelease")
+        current_dll_sha = payload.get("currentDllSha256")
+        state_value = payload.get("state")
+        invalid_count = payload.get("invalidRecordCount")
+        raw_records = payload.get("records")
+        if (
+            not isinstance(current_release, str)
+            or re.fullmatch(r"v[0-9][0-9A-Za-z._-]*", current_release) is None
+            or not isinstance(current_dll_sha, str)
+            or re.fullmatch(r"[0-9a-f]{64}", current_dll_sha) is None
+            or state_value not in {"ready", "not-installed", "invalid"}
+            or type(invalid_count) is not int
+            or not 0 <= invalid_count <= 4097
+            or not isinstance(raw_records, list)
+            or len(raw_records) > 4097
+        ):
+            raise CommandError("FSR4 rollback status returned invalid data.")
+        records = []
+        valid_states = {
+            "ready", "upgrade-required", "restored", "missing", "modified", "invalid"
+        }
+        for raw in raw_records:
+            if not isinstance(raw, dict):
+                raise CommandError("FSR4 rollback status returned an invalid record.")
+            target_id = raw.get("targetId")
+            target_path = raw.get("targetPath")
+            release = raw.get("release")
+            record_state = raw.get("state")
+            current = raw.get("currentRelease")
+            if record_state not in valid_states or type(current) is not bool:
+                raise CommandError("FSR4 rollback status returned an invalid record.")
+            if record_state == "invalid":
+                if (
+                    not isinstance(target_id, str)
+                    or not target_id.isprintable()
+                    or len(target_id) > 255
+                    or target_path is not None
+                    or release is not None
+                    or current
+                ):
+                    raise CommandError("FSR4 rollback status returned an invalid record.")
+            elif (
+                not isinstance(target_id, str)
+                or re.fullmatch(r"[0-9a-f]{64}", target_id) is None
+                or not isinstance(target_path, str)
+                or not target_path.startswith("/")
+                or "\0" in target_path
+                or "\n" in target_path
+                or "\r" in target_path
+                or len(os.fsencode(target_path)) > 4096
+                or not isinstance(release, str)
+                or re.fullmatch(r"v[0-9][0-9A-Za-z._-]*", release) is None
+            ):
+                raise CommandError("FSR4 rollback status returned an invalid record.")
+            records.append({
+                "targetId": target_id,
+                "targetPath": target_path,
+                "release": release,
+                "state": record_state,
+                "currentRelease": current,
+            })
+        expected_state = (
+            "ready"
+            if records and all(
+                record["state"] == "ready" and record["currentRelease"]
+                for record in records
+            )
+            else "not-installed" if not records else "invalid"
+        )
+        if (
+            invalid_count != sum(record["state"] == "invalid" for record in records)
+            or state_value != expected_state
+        ):
+            raise CommandError("FSR4 rollback status is internally inconsistent.")
+        return {
+            "currentRelease": current_release,
+            "currentDllSha256": current_dll_sha,
+            "state": state_value,
+            "invalidRecordCount": invalid_count,
+            "records": records,
+        }
+
+    def _steam_roots(self) -> list[Path]:
+        candidates = [self._steam_root_override] if self._steam_root_override else [
+            self.user_home / ".local/share/Steam",
+            self.user_home / ".steam/root",
+            self.user_home / ".steam/steam",
+            self.user_home / ".var/app/com.valvesoftware.Steam/.local/share/Steam",
+        ]
+        roots = []
+        identities = set()
+        for candidate in candidates:
+            if candidate is None:
+                continue
+            try:
+                resolved = candidate.resolve(strict=True)
+                metadata = resolved.stat()
+            except (OSError, RuntimeError):
+                continue
+            identity = (metadata.st_dev, metadata.st_ino)
+            if (
+                not stat.S_ISDIR(metadata.st_mode)
+                or not self._user_can_access(resolved, 5)
+                or identity in identities
+            ):
+                continue
+            identities.add(identity)
+            roots.append(resolved)
+        return roots
+
+    @staticmethod
+    def _path_below(path: Path, parent: Path) -> bool:
+        try:
+            path.relative_to(parent)
+            return True
+        except ValueError:
+            return False
+
+    def _user_mode_allows(self, metadata: os.stat_result, mask: int) -> bool:
+        uid = getattr(self, "user_uid", os.getuid())
+        gids = getattr(self, "_user_gids", set(os.getgroups()) | {os.getgid()})
+        shift = 6 if metadata.st_uid == uid else 3 if metadata.st_gid in gids else 0
+        return ((metadata.st_mode >> shift) & mask) == mask
+
+    def _user_can_access(self, path: Path, mask: int) -> bool:
+        try:
+            if path.is_symlink():
+                return False
+            for parent in reversed(path.parents):
+                if not self._user_mode_allows(parent.stat(), 1):
+                    return False
+            return self._user_mode_allows(path.stat(), mask)
+        except (OSError, RuntimeError):
+            return False
+
+    def _scan_fsr4_candidates(
+        self,
+        install_path: Path,
+        records_by_path: dict[str, dict[str, Any]],
+        entry_budget: Optional[list[int]] = None,
+        target_budget: Optional[list[int]] = None,
+    ) -> tuple[list[dict[str, Any]], str]:
+        if (
+            not install_path.is_dir()
+            or install_path.is_symlink()
+            or not self._user_can_access(install_path, 5)
+        ):
+            return [], "unavailable"
+        root = install_path.resolve()
+        stack = [(root, 0)]
+        entry_budget = entry_budget if entry_budget is not None else [20000]
+        target_budget = target_budget if target_budget is not None else [32]
+        visited = 0
+        targets = []
+        scan_state = "complete"
+        while stack:
+            directory, depth = stack.pop()
+            if not self._user_can_access(directory, 5):
+                scan_state = "partial"
+                continue
+            try:
+                entries = os.scandir(str(directory))
+            except OSError:
+                scan_state = "partial"
+                continue
+            with entries:
+                for entry in entries:
+                    if visited >= 20000 or entry_budget[0] <= 0:
+                        scan_state = "truncated"
+                        stack.clear()
+                        break
+                    visited += 1
+                    entry_budget[0] -= 1
+                    try:
+                        if entry.is_symlink():
+                            continue
+                        if entry.is_dir(follow_symlinks=False):
+                            if depth < 8:
+                                stack.append((Path(entry.path), depth + 1))
+                            else:
+                                scan_state = "truncated"
+                            continue
+                        if (
+                            not entry.is_file(follow_symlinks=False)
+                            or entry.name.casefold() != "amd_fidelityfx_upscaler_dx12.dll"
+                        ):
+                            continue
+                        target = Path(entry.path).resolve(strict=True)
+                    except (OSError, RuntimeError):
+                        scan_state = "partial"
+                        continue
+                    if (
+                        not self._path_below(target, root)
+                        or not self._user_can_access(target, 4)
+                        or len(targets) >= 32
+                        or target_budget[0] <= 0
+                    ):
+                        scan_state = "truncated"
+                        continue
+                    target_budget[0] -= 1
+                    target_text = str(target)
+                    record = records_by_path.get(target_text)
+                    targets.append({
+                        "targetId": hashlib.sha256(os.fsencode(target_text)).hexdigest(),
+                        "targetPath": target_text,
+                        "relativePath": target.relative_to(root).as_posix(),
+                        "state": record["state"] if record else "available",
+                        "release": record["release"] if record else None,
+                        "discovered": True,
+                    })
+        targets.sort(key=lambda item: item["relativePath"].casefold())
+        return targets, scan_state
+
+    def _build_fsr4_inventory(self, record_status: dict[str, Any]) -> dict[str, Any]:
+        records = record_status["records"]
+        records_by_path = {
+            record["targetPath"]: record
+            for record in records
+            if record["targetPath"] is not None
+        }
+        errors = []
+        libraries = []
+        seen_libraries = set()
+        library_limit_reached = False
+        roots = self._steam_roots()
+        for root in roots:
+            candidates = [root]
+            metadata_path = root / "steamapps/libraryfolders.vdf"
+            if not metadata_path.is_file():
+                metadata_path = root / "config/libraryfolders.vdf"
+            text = self._read_utf8_bounded(metadata_path, 4 * 1024 * 1024)
+            if text is None and (metadata_path.exists() or metadata_path.is_symlink()):
+                errors.append("Steam library metadata is unavailable or unsafe.")
+            if text is not None:
+                try:
+                    parsed = self._parse_vdf(text).get("libraryfolders")
+                    if not isinstance(parsed, dict):
+                        raise ValueError("libraryfolders object is missing")
+                    for entry in parsed.values():
+                        value = entry.get("path") if isinstance(entry, dict) else entry
+                        if isinstance(value, str) and value.startswith("/") \
+                            and len(value) <= 4096 and value.isprintable():
+                            if len(candidates) < 129:
+                                candidates.append(Path(value))
+                            else:
+                                library_limit_reached = True
+                except ValueError:
+                    errors.append("Steam library metadata is malformed.")
+            for candidate in candidates:
+                try:
+                    library = candidate.resolve(strict=False)
+                except (OSError, RuntimeError):
+                    continue
+                if not library.is_dir():
+                    errors.append("A configured Steam library is unavailable.")
+                    continue
+                if not self._user_can_access(library, 5):
+                    errors.append("A Steam library is not accessible to the desktop user.")
+                    continue
+                key = str(library)
+                if key not in seen_libraries:
+                    seen_libraries.add(key)
+                    if len(libraries) < 128:
+                        libraries.append(library)
+                    else:
+                        library_limit_reached = True
+
+        if library_limit_reached:
+            errors.append("The Steam library limit was reached.")
+
+        apps = []
+        manifest_entry_budget = 20000
+        manifest_byte_budget = 64 * 1024 * 1024
+        scan_entry_budget = [200000]
+        scan_target_budget = [4096]
+        manifest_limit_reached = False
+        for library in libraries:
+            steamapps = library / "steamapps"
+            if (
+                not steamapps.is_dir()
+                or steamapps.is_symlink()
+                or not self._user_can_access(steamapps, 5)
+            ):
+                continue
+            try:
+                manifests = []
+                for path in steamapps.iterdir():
+                    if manifest_entry_budget <= 0:
+                        manifest_limit_reached = True
+                        break
+                    manifest_entry_budget -= 1
+                    if re.fullmatch(r"appmanifest_([1-9][0-9]*)\.acf", path.name):
+                        manifests.append(path)
+                        if len(manifests) > 10000:
+                            errors.append("A Steam library manifest limit was reached.")
+                            break
+                manifests = sorted(manifests[:10000])
+            except OSError:
+                errors.append("A Steam library could not be read.")
+                continue
+            for manifest in manifests:
+                match = re.fullmatch(r"appmanifest_([1-9][0-9]*)\.acf", manifest.name)
+                if not self._user_can_access(manifest, 4):
+                    errors.append("A Steam app manifest is unavailable or unsafe.")
+                    continue
+                try:
+                    manifest_size = manifest.stat().st_size
+                except OSError:
+                    errors.append("A Steam app manifest is unavailable or unsafe.")
+                    continue
+                if manifest_size > manifest_byte_budget:
+                    errors.append("The Steam manifest byte limit was reached.")
+                    manifest_limit_reached = True
+                    break
+                manifest_byte_budget -= manifest_size
+                text = self._read_utf8_bounded(manifest, 16 * 1024 * 1024)
+                if match is None or text is None:
+                    errors.append("A Steam app manifest is unavailable or unsafe.")
+                    continue
+                try:
+                    app_state = self._parse_vdf(text).get("appstate")
+                    if not isinstance(app_state, dict):
+                        raise ValueError("AppState is missing")
+                    app_id = app_state.get("appid")
+                    name = app_state.get("name")
+                    install_dir = app_state.get("installdir")
+                    flags = app_state.get("stateflags", "0")
+                    if (
+                        app_id != match.group(1)
+                        or not isinstance(name, str)
+                        or not name.isprintable()
+                        or not 0 < len(name) <= 1024
+                        or not isinstance(install_dir, str)
+                        or install_dir in {"", ".", ".."}
+                        or "/" in install_dir
+                        or "\\" in install_dir
+                        or not install_dir.isprintable()
+                        or not isinstance(flags, str)
+                        or re.fullmatch(r"[0-9]{1,10}", flags) is None
+                    ):
+                        raise ValueError("AppState fields are invalid")
+                except ValueError:
+                    errors.append("A Steam app manifest is malformed.")
+                    continue
+                if (
+                    name.startswith("Proton ")
+                    or name.startswith("Steam Linux Runtime")
+                    or name == "Steamworks Common Redistributables"
+                ):
+                    continue
+                try:
+                    install_path = (steamapps / "common" / install_dir).resolve(strict=False)
+                    common = (steamapps / "common").resolve(strict=False)
+                except (OSError, RuntimeError):
+                    errors.append("A Steam install path could not be resolved.")
+                    continue
+                if not self._path_below(install_path, common):
+                    errors.append("A Steam install path escaped its library.")
+                    continue
+                targets, scan_state = self._scan_fsr4_candidates(
+                    install_path,
+                    records_by_path,
+                    scan_entry_budget,
+                    scan_target_budget,
+                )
+                if scan_state == "truncated" and "The Steam game scan limit was reached." not in errors:
+                    errors.append("The Steam game scan limit was reached.")
+                apps.append({
+                    "appKey": hashlib.sha256(os.fsencode(str(manifest))).hexdigest(),
+                    "appId": app_id,
+                    "name": name,
+                    "installPath": str(install_path),
+                    "fullyInstalled": int(flags) == 4,
+                    "stateFlags": int(flags),
+                    "installPresent": install_path.is_dir() and not install_path.is_symlink(),
+                    "scanState": scan_state,
+                    "targets": targets,
+                })
+                if len(apps) >= 2048:
+                    errors.append("The Steam app inventory limit was reached.")
+                    break
+            if len(apps) >= 2048:
+                break
+            if manifest_limit_reached:
+                errors.append("The Steam manifest scan limit was reached.")
+                break
+
+        associated = set()
+        apps.sort(
+            key=lambda item: len(Path(item["installPath"]).parts), reverse=True
+        )
+        for app in apps:
+            install_path = Path(app["installPath"])
+            known_paths = {target["targetPath"] for target in app["targets"]}
+            for record in records:
+                target_path = record["targetPath"]
+                if (
+                    target_path is None
+                    or target_path in known_paths
+                    or record["targetId"] in associated
+                ):
+                    continue
+                target = Path(target_path)
+                if self._path_below(target, install_path):
+                    app["targets"].append({
+                        "targetId": record["targetId"],
+                        "targetPath": target_path,
+                        "relativePath": target.relative_to(install_path).as_posix(),
+                        "state": record["state"],
+                        "release": record["release"],
+                        "discovered": False,
+                    })
+                    associated.add(record["targetId"])
+            for target in app["targets"]:
+                if target["state"] != "available":
+                    associated.add(target["targetId"])
+            app["targets"].sort(key=lambda item: item["relativePath"].casefold())
+
+        orphaned = [
+            {**record, "discovered": False}
+            for record in records
+            if record["targetId"] not in associated
+        ]
+        apps.sort(key=lambda item: (item["name"].casefold(), int(item["appId"]), item["appKey"]))
+        state_value = "unavailable" if not roots else "partial" if errors else "ready"
+        return {
+            "schemaVersion": 1,
+            "available": bool(roots),
+            "inventoryState": state_value,
+            "currentRelease": record_status["currentRelease"],
+            "games": apps,
+            "orphanedTargets": orphaned,
+            "errors": errors[:50],
+        }
+
+    async def get_fsr4_inventory(self) -> dict[str, Any]:
+        try:
+            record_status = await self._get_fsr4_records()
+        except CommandError as error:
+            return {
+                "schemaVersion": 1,
+                "available": False,
+                "inventoryState": "unavailable",
+                "currentRelease": None,
+                "games": [],
+                "orphanedTargets": [],
+                "errors": [str(error)],
+            }
+        loop = asyncio.get_running_loop()
+        return await loop.run_in_executor(None, self._build_fsr4_inventory, record_status)
+
     async def get_mesh_status(self) -> dict[str, Any]:
         if not self._user_script_available("bc250-mesh-shader.sh"):
             return {
@@ -2612,6 +3180,86 @@ class ToolkitBackend:
         async with self._mutation_lock:
             async with self._process_lock():
                 return await callback()
+
+    @staticmethod
+    def _validate_fsr4_target_id(target_id: str) -> None:
+        if (
+            type(target_id) is not str
+            or re.fullmatch(r"[0-9a-f]{64}", target_id) is None
+        ):
+            raise CommandError("FSR4 target ID is invalid.")
+
+    async def _resolve_fsr4_target(
+        self,
+        target_id: str,
+        allowed_states: set[str],
+        require_discovered: bool = False,
+    ) -> dict[str, Any]:
+        records = await self._get_fsr4_records()
+        loop = asyncio.get_running_loop()
+        inventory = await loop.run_in_executor(None, self._build_fsr4_inventory, records)
+        matches = []
+        for game in inventory["games"]:
+            matches.extend(
+                (target, game)
+                for target in game["targets"]
+                if target["targetId"] == target_id
+            )
+        matches.extend(
+            (target, None)
+            for target in inventory["orphanedTargets"]
+            if target["targetId"] == target_id
+        )
+        paths = {target.get("targetPath") for target, _game in matches}
+        owners = {
+            game["appKey"] for _target, game in matches if game is not None
+        }
+        if len(paths) != 1 or None in paths or len(owners) > 1:
+            raise CommandError("FSR4 target is stale or ambiguous; refresh the game list.")
+        target, game = matches[0]
+        if game is not None and (
+            not game["fullyInstalled"] or not game["installPresent"]
+        ):
+            raise CommandError(
+                "Steam is installing or updating this game; finish the Steam operation first."
+            )
+        if require_discovered and not target["discovered"]:
+            raise CommandError("FSR4 target is no longer discoverable; refresh the game list.")
+        if target["state"] not in allowed_states:
+            raise CommandError(
+                f"FSR4 target is {target['state']}; refresh it or resolve the integrity warning first."
+            )
+        return target
+
+    async def install_fsr4_dll(self, target_id: str) -> dict[str, str]:
+        self._validate_fsr4_target_id(target_id)
+
+        async def action() -> dict[str, str]:
+            target = await self._resolve_fsr4_target(
+                target_id,
+                {"available", "ready", "upgrade-required", "restored"},
+                require_discovered=True,
+            )
+            await self._user_tool(
+                "bc250-fsr4.sh", "install", target["targetPath"], timeout=300
+            )
+            return {"message": "FSR4 RC8 installed for the selected game."}
+
+        return await self._mutate(action)
+
+    async def uninstall_fsr4_dll(self, target_id: str) -> dict[str, str]:
+        self._validate_fsr4_target_id(target_id)
+
+        async def action() -> dict[str, str]:
+            target = await self._resolve_fsr4_target(
+                target_id, {"ready", "upgrade-required", "missing", "restored"}
+            )
+            await self._user_tool(
+                "bc250-fsr4.sh", "uninstall", target["targetPath"], timeout=120
+            )
+            return {"message": "The original game DLL was restored."}
+
+        return await self._mutate(action)
 
     async def set_uma_size(self, uma_mib: int) -> dict[str, str]:
         if (

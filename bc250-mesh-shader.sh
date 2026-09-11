@@ -2069,7 +2069,7 @@ confirm_menu_action() {
 
 prompt_fsr4_target() {
     local target
-    printf '%s' "${CB}Compatible game or OptiScaler DLL path: ${C0}"
+    printf '%s' "${CB}Exact existing DLL file (absolute path recommended; no quotes): ${C0}"
     IFS= read -r target
     if [[ -z "$target" ]]; then log "Cancelled."; pause_key; return; fi
     run_menu_action setup --fsr4 "$target"
@@ -2094,20 +2094,20 @@ cmd_menu() {
         fi
         local items=(
             "Status overview|${runtime_state}|Verify the patched AMDGPU module, scheduler policy, RADV runtime, and global activation."
-            "Build / install RADV async-compute patch|${runtime_state}|Optional but highly recommended after AMDGPU kernel fixes. Enables GFX1013 async compute; usually takes 3-5 minutes. A verified profile is reused."
-            "Install FSR4 RC8 game DLL|${fsr4_state}|Replaces one compatible OptiScaler or native-game DLL with the checksum-pinned RC8 build and retains the exact original for rollback."
-            "Build legacy FSR4 V3 profile|${legacy_fsr4_state}|Legacy fallback only: builds a private V3 RADV driver without the disabled mesh/task patches."
+            "Install FSR4 RC8 game DLL (recommended)|${fsr4_state}|Preferred FSR4 route. Replaces one exact existing DLL and retains the original; no custom RADV installation is needed."
+            "Install global async-compute RADV (optional)|${runtime_state}|Independent driver optimization for GFX1013 async compute. It is not required by the recommended FSR4 RC8 DLL route; usually takes 3-5 minutes."
+            "Build legacy FSR4 V3 RADV (fallback only)|${legacy_fsr4_state}|Use only if the RC8 DLL route is unsuitable. Automatically installs global async-compute RADV if needed."
             "Older per-game setup cleanup|${legacy_state}|Migration only: remove old MESA_DRICONF_EXECUTABLE_OVERRIDE and VK_ICD_FILENAMES Steam launch options, then clear their records."
             "Uninstall Mesa / RADV runtime|${runtime_state}|Remove the alternate driver, ICD, and user environment generator; preserve build caches."
             "Full help||Show CLI commands, activation behavior, and upstream source."
         )
-        menu_select "BC-250 Mesa / RADV async-compute patch  ${CD}(global user driver)${C0}" "${items[@]}" \
+        menu_select "BC-250 GPU driver and FSR4" "${items[@]}" \
             || { echo; break; }
         case $MENU_CHOICE in
             0) show_menu_status ;;
-            1) confirm_menu_action \
-                "Build and install the global RADV async-compute patch?" setup ;;
-            2) prompt_fsr4_target ;;
+            1) prompt_fsr4_target ;;
+            2) confirm_menu_action \
+                "Install optional global async-compute RADV? This is not required for FSR4 RC8." setup ;;
             3) confirm_menu_action \
                 "Build and install the legacy experimental private FSR4 V3 profile?" setup --fsr4-legacy ;;
             4) confirm_menu_action \
@@ -2126,11 +2126,13 @@ Usage: $0 [menu|setup [--fsr4 TARGET_DLL|--fsr4-legacy]|status|status-json|legac
   setup                        Fetch the verified upstream series, build the
                                audited Mesa RADV driver with GFX1013 async
                                compute, install a separate ICD, and configure
-                               safe global activation. Usually takes 3-5 minutes.
-  setup --fsr4 TARGET_DLL      Install the pinned FSR4 RC8 DLL into one compatible
-                               game or OptiScaler path, retaining the original.
-  setup --fsr4-legacy          Build the older private V3 RADV profile without the
-                               upstream-disabled mesh/task shader patches.
+                               safe global activation. This optional driver is
+                               not required for FSR4 RC8. Usually takes 3-5 minutes.
+  setup --fsr4 TARGET_DLL      Recommended FSR4 route. Replace one exact existing
+                               game or OptiScaler DLL, retaining the original.
+                               Absolute paths are recommended; quote spaces at the shell.
+  setup --fsr4-legacy          Fallback only. Build the older private V3 RADV profile
+                               and install global async-compute RADV if it is missing.
   status                       Verify the AMDGPU module, scheduler policy, and
                                global runtime ownership.
   status-json                  Print machine-readable runtime status.

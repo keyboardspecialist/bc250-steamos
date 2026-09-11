@@ -327,7 +327,7 @@ function FullControl() {
       id: "mesh",
       label: "RADV",
       icon: <FaProjectDiagram />,
-      content: <MeshTab />,
+      content: <MeshTab busy={busy} runMutation={runMutation} />,
     },
   ];
 

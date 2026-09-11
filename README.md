@@ -696,13 +696,27 @@ cannot be deactivated merely by replacing these scripts. After upgrading, run
 it, then sign out and back in before launching games. Status reports older
 patch compositions as invalid rather than reusing their Mesa build output.
 
+For FSR4, choose the **FSR4 RC8 game DLL** route below. It does not require the
+global async-compute RADV driver. Install global async-compute RADV only when
+you independently want that driver optimization. Use the legacy FSR4 V3 RADV
+profile only as a fallback when the RC8 DLL route is unsuitable; legacy setup
+installs its global RADV prerequisite automatically.
+
 ### FSR4 RC8 Game DLL
 
 The current FSR4 path uses the portable RC8 DLL from
 [`daniel-h-0/bc250-fsr4-fork`](https://github.com/daniel-h-0/bc250-fsr4-fork).
 It contains the optimized FSR 4.1.1 INT8 shaders and does not require a custom
-Mesa driver or Proton build. Close the game, provide the existing compatible
-OptiScaler or native-game DLL path, and let the toolkit preserve and replace it:
+Mesa driver or Proton build. The Decky and Plasma GPU pages discover installed
+Steam libraries and provide guarded per-game toggles when they find the exact
+`amd_fidelityfx_upscaler_dx12.dll` target. They rescan and validate an opaque
+target ID before each change; filesystem paths submitted by a UI are never
+accepted as mutation inputs.
+
+For command-line installation, close the game and provide the exact existing
+compatible OptiScaler or native-game `.dll` file, not its directory. Relative
+paths work, but an absolute path is recommended. Quote paths containing spaces
+when using the command line; paste them without quotes in the interactive menu:
 
 ```bash
 ./bc250-mesh-shader.sh setup --fsr4 \

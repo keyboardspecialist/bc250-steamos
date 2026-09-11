@@ -8,6 +8,7 @@ QtObject {
     property bool busy: false
     property string busyLabel: ""
     property string operationId: ""
+    property bool operationCancellable: true
     property bool cancelPending: false
     property string error: ""
     property string notice: "Mock mode: no hardware calls are made."
@@ -34,6 +35,23 @@ QtObject {
         fsr4RunnerPath: "/home/deck/.local/share/bc250-mesh-shader/fsr4/bc250-fsr4-run",
         fsr4DllState: "ready", fsr4DllInstallCount: 1,
         error: null, games: []
+    })
+    property var fsr4Inventory: ({
+        schemaVersion: 1, available: true, inventoryState: "ready",
+        currentRelease: "v4.0.0-rc8", errors: [], orphanedTargets: [],
+        games: [
+            { appKey: "1245620:/mock/GAME", appId: "1245620", name: "ELDEN RING",
+                installPath: "/mock/GAME", fullyInstalled: true, installPresent: true,
+                scanState: "complete", targets: [
+                    { targetId: "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+                        targetPath: "/mock/GAME/OptiScaler/amd_fidelityfx_upscaler_dx12.dll",
+                        relativePath: "OptiScaler/amd_fidelityfx_upscaler_dx12.dll",
+                        state: "ready", release: "v4.0.0-rc8" }
+                ] },
+            { appKey: "730:/mock/Counter-Strike Global Offensive", appId: "730",
+                name: "Counter-Strike 2", installPath: "/mock/Counter-Strike Global Offensive",
+                fullyInstalled: true, installPresent: true, scanState: "complete", targets: [] }
+        ]
     })
     property var telemetryHistory: [
         { cpuClock: 3090, gpuClock: 720, cpuTemp: 51, gpuTemp: 54 },
@@ -103,6 +121,7 @@ QtObject {
 
     function latestGpuTemperature() { return 57; }
     function refresh() { notice = "Mock snapshot refreshed."; }
+    function refreshFsr4() { notice = "Mock Steam game list refreshed."; }
     function openFullControls() { notice = "Mock plasmawindowed launch requested."; }
     function finish(label) { busy = false; busyLabel = ""; operationId = ""; notice = label + " completed (mock)."; }
     function start(label) {
@@ -119,6 +138,7 @@ QtObject {
     function setTemperatureTarget() { start("Applying GPU thermal target"); }
     function setCustomLoadTarget() { start("Applying custom load target"); }
     function setRamp() { start("Applying GPU ramp time"); }
+    function setFsr4Dll() { start("Updating FSR4 game DLL"); }
     function cpuOcAction() { start("Running CPU operation"); }
     function cpuUnlockAction() { start("Running CPU core-unlock operation"); }
     function setCpuMitigations() { start("Updating CPU mitigations"); }

@@ -84,7 +84,7 @@ Item {
                     QQC2.ToolTip.text: text
                 }
                 QQC2.ToolButton {
-                    visible: root.backend.busy && root.backend.operationId
+                    visible: root.backend.busy && root.backend.operationId && root.backend.operationCancellable
                     icon.name: "process-stop"
                     text: "Cancel operation"
                     display: QQC2.AbstractButton.IconOnly

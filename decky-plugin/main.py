@@ -30,6 +30,15 @@ class Plugin:
     async def get_mesh_status(self):
         return await self.backend.get_mesh_status()
 
+    async def get_fsr4_inventory(self):
+        return await self.backend.get_fsr4_inventory()
+
+    async def install_fsr4_dll(self, target_id: str):
+        return await self.backend.install_fsr4_dll(target_id)
+
+    async def uninstall_fsr4_dll(self, target_id: str):
+        return await self.backend.uninstall_fsr4_dll(target_id)
+
     async def set_cu_wgp(self, se: int, sh: int, wgp: int, enabled: bool):
         return await self.backend.set_cu_wgp(se, sh, wgp, enabled)
 
