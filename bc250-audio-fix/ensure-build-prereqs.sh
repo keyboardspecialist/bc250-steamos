@@ -7,6 +7,9 @@ REQUIRED_TOOLS=(
     curl git make gcc ld ar nm objcopy objdump strip patch tar zstd zcat flock
     modinfo
 )
+REQUIRED_FILES=(
+    /usr/include/bfd.h /usr/include/dis-asm.h
+)
 # Name the concrete toolchain packages as well as base-devel so pacman repairs
 # files stripped from packages that may still be recorded as installed.
 PACKAGES=(
@@ -14,15 +17,18 @@ PACKAGES=(
     kmod
 )
 
-missing_tools() {
-    local tool missing=()
+missing_prerequisites() {
+    local tool file missing=()
     for tool in "${REQUIRED_TOOLS[@]}"; do
         command -v "$tool" >/dev/null 2>&1 || missing+=("$tool")
+    done
+    for file in "${REQUIRED_FILES[@]}"; do
+        [ -r "$file" ] || missing+=("$file")
     done
     [ "${#missing[@]}" = 0 ] || printf '%s\n' "${missing[@]}"
 }
 
-mapfile -t MISSING < <(missing_tools)
+mapfile -t MISSING < <(missing_prerequisites)
 [ "${#MISSING[@]}" -gt 0 ] || exit 0
 
 if [ "$(id -u)" != 0 ]; then
@@ -59,7 +65,7 @@ pacman-key --init
 pacman-key --populate archlinux holo 2>/dev/null || pacman-key --populate
 pacman -Sy --noconfirm "${PACKAGES[@]}"
 
-mapfile -t MISSING < <(missing_tools)
+mapfile -t MISSING < <(missing_prerequisites)
 [ "${#MISSING[@]}" = 0 ] \
     || { echo "FATAL: prerequisites are still missing after package installation: ${MISSING[*]}" >&2; exit 1; }
 

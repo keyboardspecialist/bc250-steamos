@@ -473,6 +473,8 @@ class DriverLifecycleTests(unittest.TestCase):
         for entrypoint in (installer, builder, fetcher, preparer):
             self.assertIn('"$HERE/ensure-build-prereqs.sh"', entrypoint)
         self.assertIn("base-devel", prerequisites)
+        self.assertIn("/usr/include/bfd.h", prerequisites)
+        self.assertIn("/usr/include/dis-asm.h", prerequisites)
         for tool in ("make", "gcc", "ld", "patch", "pahole", "bc", "zstd"):
             self.assertIn(tool, environment)
 
