@@ -32,6 +32,13 @@ function safeTargetId(value) {
     return token;
 }
 
+function safeCandidateId(value) {
+    var token = String(value);
+    if (!/^[0-9a-f]{64}$/.test(token))
+        throw new Error("The service returned an unsafe OptiScaler candidate identifier.");
+    return token;
+}
+
 // Return exactly one POSIX shell word. Executable DataSource commands are
 // interpreted by a shell, so free-form D-Bus strings must pass through here.
 function shellString(value) {

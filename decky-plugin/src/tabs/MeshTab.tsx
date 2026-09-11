@@ -1,14 +1,232 @@
-import { ButtonItem, PanelSection, PanelSectionRow, Spinner, TextField, ToggleField } from "@decky/ui";
+import { ButtonItem, DropdownItem, PanelSection, PanelSectionRow, Spinner, TextField, ToggleField } from "@decky/ui";
 import { useEffect, useRef, useState } from "react";
-import { getFsr4Inventory, getMeshStatus, installFsr4Dll, uninstallFsr4Dll } from "../api";
+import {
+  getFsr4Inventory,
+  getMeshStatus,
+  installFsr4Dll,
+  installOptiscaler,
+  uninstallFsr4Dll,
+  uninstallOptiscaler,
+} from "../api";
 import { ActionButton, EmptyState, StatusRow } from "../components/Common";
-import type { Fsr4Inventory, Fsr4Target, MeshStatus } from "../types";
+import type { Fsr4Game, Fsr4Inventory, Fsr4Target, MeshStatus, OptiscalerCandidate } from "../types";
 import type { MutationRunner } from "./shared";
+
+const optiscalerProxies = [
+  "dxgi.dll",
+  "winmm.dll",
+  "version.dll",
+  "dbghelp.dll",
+  "d3d12.dll",
+  "wininet.dll",
+  "winhttp.dll",
+] as const;
+type OptiscalerProxy = (typeof optiscalerProxies)[number];
+
+const optiscalerProxyOptions = optiscalerProxies.map((proxy) => ({
+  data: proxy,
+  label: proxy,
+}));
+
+function supportedProxy(proxy: string | null): proxy is OptiscalerProxy {
+  return proxy !== null && optiscalerProxies.includes(proxy as OptiscalerProxy);
+}
+
+function selectedProxy(proxy: string | null | undefined): OptiscalerProxy {
+  const value = proxy ?? null;
+  return supportedProxy(value) ? value : "winmm.dll";
+}
 
 function errorMessage(error: unknown): string {
   if (error instanceof Error) return error.message;
   if (typeof error === "string") return error;
   return "The action failed.";
+}
+
+function LaunchOption({ value }: { value: string | null }) {
+  if (!value) return null;
+  return (
+    <PanelSectionRow>
+      <div style={{ width: "100%", color: "#b8bcbf", fontSize: 13 }}>
+        <div style={{ marginBottom: 4 }}>Steam launch option</div>
+        <code style={{ color: "#f2f2f2", overflowWrap: "anywhere", userSelect: "text" }}>
+          {value}
+        </code>
+      </div>
+    </PanelSectionRow>
+  );
+}
+
+function preferredOptiscalerCandidate(candidates: OptiscalerCandidate[]) {
+  return candidates.find((candidate) =>
+    candidate.state !== "not-installed" && candidate.state !== "unavailable"
+  ) ?? candidates.find((candidate) => candidate.discovered) ?? candidates[0];
+}
+
+function OptiscalerGameControls({
+  game,
+  available,
+  busy,
+  runMutation,
+  refresh,
+}: {
+  game: Fsr4Game;
+  available: boolean;
+  busy: boolean;
+  runMutation: MutationRunner;
+  refresh: () => Promise<void>;
+}) {
+  const preferred = preferredOptiscalerCandidate(game.optiscalerCandidates);
+  const [candidateId, setCandidateId] = useState(preferred?.candidateId ?? "");
+  const [proxy, setProxy] = useState<OptiscalerProxy>(selectedProxy(preferred?.proxy));
+  const candidate = game.optiscalerCandidates.find((item) => item.candidateId === candidateId)
+    ?? preferred;
+
+  useEffect(() => {
+    if (!candidate) return;
+    if (candidate.candidateId !== candidateId) setCandidateId(candidate.candidateId);
+    if (candidate.state !== "not-installed" && supportedProxy(candidate.proxy)) {
+      setProxy(candidate.proxy);
+    }
+  }, [candidate?.candidateId, candidate?.proxy, candidate?.state, candidateId]);
+
+  if (!candidate) return null;
+
+  const gameReady = game.fullyInstalled
+    && game.installPresent
+    && game.scanState === "complete";
+  const integrityBlocked = candidate.state === "modified" || candidate.state === "invalid";
+  const unavailable = candidate.state === "unavailable";
+  const installDisabled = busy
+    || !available
+    || !gameReady
+    || !candidate.discovered
+    || unavailable
+    || integrityBlocked;
+  const managedMutationDisabled = installDisabled || candidate.fsr4Managed;
+  const proxyDisabled = candidate.state !== "not-installed" || installDisabled;
+  const removeDisabled = busy
+    || !available
+    || !gameReady
+    || unavailable
+    || integrityBlocked
+    || candidate.fsr4Managed;
+  const path = candidate.relativePath || candidate.installPath;
+  const executableSummary = candidate.executables.join(", ") || "No safe executable detected";
+  const stateSummary = `${candidate.state}${candidate.release ? ` | ${candidate.release}` : ""}${candidate.proxy ? ` | ${candidate.proxy}` : ""}`;
+  const warning = "Close the game first. Avoid OptiScaler in anti-cheat or online games; injected DLLs can trigger anti-cheat action or bans.";
+
+  const selectCandidate = (nextId: string) => {
+    const next = game.optiscalerCandidates.find((item) => item.candidateId === nextId);
+    setCandidateId(nextId);
+    setProxy(selectedProxy(next?.proxy));
+  };
+
+  const install = (update: boolean) => runMutation(
+    update ? "OptiScaler updated" : "OptiScaler installed",
+    async () => {
+      try {
+        await installOptiscaler(candidate.candidateId, proxy);
+      } finally {
+        await refresh();
+      }
+    },
+    {
+      title: update ? "Update OptiScaler for this game?" : "Install OptiScaler for this game?",
+      description: `${warning} ${update ? "Update" : "Install"} ${path} using ${proxy}.`,
+      destructive: true,
+    },
+    { refresh: false },
+  );
+
+  const remove = () => runMutation(
+    "OptiScaler removed and original files restored",
+    async () => {
+      try {
+        await uninstallOptiscaler(candidate.candidateId);
+      } finally {
+        await refresh();
+      }
+    },
+    {
+      title: "Uninstall OptiScaler and restore original files?",
+      description: `${warning} The toolkit will restore the original files in ${path} and remove its rollback record.`,
+      destructive: true,
+    },
+    { refresh: false },
+  );
+
+  return (
+    <div>
+      <DropdownItem
+        label={`${game.name} | OptiScaler directory`}
+        description={executableSummary}
+        rgOptions={game.optiscalerCandidates.map((item) => ({
+          data: item.candidateId,
+          label: item.relativePath || item.installPath || "Recorded directory unavailable",
+        }))}
+        selectedOption={candidate.candidateId}
+        disabled={busy}
+        onChange={(option) => selectCandidate(option.data as string)}
+      />
+      <StatusRow label="OptiScaler" value={stateSummary} good={candidate.state === "ready"} />
+      <DropdownItem
+        label="Proxy DLL"
+        rgOptions={optiscalerProxyOptions}
+        selectedOption={proxy}
+        disabled={proxyDisabled}
+        onChange={(option) => setProxy(option.data as OptiscalerProxy)}
+      />
+      {candidate.state === "not-installed" && (
+        <ActionButton
+          label="Install OptiScaler"
+          disabled={installDisabled}
+          onClick={() => install(false)}
+        />
+      )}
+      {candidate.state === "upgrade-required" && (
+        <ActionButton
+          label="Update OptiScaler"
+          disabled={managedMutationDisabled}
+          onClick={() => install(true)}
+        />
+      )}
+      {candidate.state === "restorable" && candidate.currentRelease && (
+        <ActionButton
+          label="Finish OptiScaler install"
+          disabled={managedMutationDisabled}
+          onClick={() => install(true)}
+        />
+      )}
+      {candidate.state === "repair-required" && (
+        <ActionButton
+          label="Repair OptiScaler files"
+          disabled={managedMutationDisabled}
+          onClick={() => install(true)}
+        />
+      )}
+      {candidate.state !== "not-installed" && candidate.state !== "unavailable" && (
+        <ActionButton
+          label={candidate.state === "missing" ? "Restore original files" : "Uninstall OptiScaler"}
+          disabled={removeDisabled}
+          onClick={remove}
+        />
+      )}
+      {candidate.state === "unavailable" && (
+        <ActionButton label="Install OptiScaler" disabled onClick={() => install(false)} />
+      )}
+      {candidate.fsr4Managed && candidate.state !== "not-installed" && (
+        <EmptyState>Restore BC-250 FSR4 for this directory before updating or removing OptiScaler.</EmptyState>
+      )}
+      {candidate.state === "restorable" && !candidate.currentRelease && (
+        <EmptyState>An interrupted older installation must be uninstalled before upgrading.</EmptyState>
+      )}
+      {!gameReady && (
+        <EmptyState>Finish the Steam install/update and a complete executable scan before changing OptiScaler.</EmptyState>
+      )}
+      <LaunchOption value={candidate.launchOption} />
+    </div>
+  );
 }
 
 export function MeshTab({ busy, runMutation }: { busy: boolean; runMutation: MutationRunner }) {
@@ -69,6 +287,25 @@ export function MeshTab({ busy, runMutation }: { busy: boolean; runMutation: Mut
     );
   };
 
+  const restoreOrphanedOptiscaler = (candidate: OptiscalerCandidate) => {
+    runMutation(
+      "OptiScaler removed and original files restored",
+      async () => {
+        try {
+          await uninstallOptiscaler(candidate.candidateId);
+        } finally {
+          await refresh();
+        }
+      },
+      {
+        title: "Restore files from this OptiScaler record?",
+        description: `Close the game first. Avoid OptiScaler in anti-cheat or online games; injected DLLs can trigger anti-cheat action or bans. The toolkit will restore the original files in ${candidate.relativePath || candidate.installPath || "the recorded directory"} and remove its rollback record.`,
+        destructive: true,
+      },
+      { refresh: false },
+    );
+  };
+
   const query = search.trim().toLocaleLowerCase();
   const visibleGames = (inventory?.games ?? [])
     .filter((game) => !query || game.name.toLocaleLowerCase().includes(query) || game.appId.includes(query))
@@ -103,7 +340,7 @@ export function MeshTab({ busy, runMutation }: { busy: boolean; runMutation: Mut
       <PanelSection title="FSR4 RC8 Game Manager">
         <TextField
           label="Installed Steam games"
-          description={inventory ? `${inventory.games.length} installed games | ${inventory.currentRelease ?? "helper unavailable"}` : "Loading Steam inventory"}
+          description={inventory ? `${inventory.games.length} installed games | FSR4 ${inventory.currentRelease ?? "helper unavailable"} | OptiScaler ${inventory.currentOptiscalerRelease ?? "helper unavailable"}` : "Loading Steam inventory"}
           value={search}
           disabled={loading || !inventory}
           onChange={(event) => setSearch(event.target.value)}
@@ -116,6 +353,9 @@ export function MeshTab({ busy, runMutation }: { busy: boolean; runMutation: Mut
           <EmptyState>{inventory.currentRelease
             ? "Steam library metadata is unavailable. Start Steam once, then refresh the game list."
             : inventory.errors[0] || "The FSR4 helper is unavailable."}</EmptyState>
+        )}
+        {inventory && !inventory.optiscalerAvailable && (
+          <EmptyState>The OptiScaler helper is unavailable. Reinstall or update the toolkit before managing OptiScaler.</EmptyState>
         )}
         {inventory && visibleGames.map((game) => (
           <div key={game.appKey}>
@@ -133,6 +373,15 @@ export function MeshTab({ busy, runMutation }: { busy: boolean; runMutation: Mut
               game.targets.length === 1 ? game.name : `${game.name} | target ${index + 1}`,
               game.fullyInstalled && game.installPresent,
             ))}
+            {game.optiscalerCandidates.length > 0 && (
+              <OptiscalerGameControls
+                game={game}
+                available={inventory.optiscalerAvailable}
+                busy={busy}
+                runMutation={runMutation}
+                refresh={refresh}
+              />
+            )}
           </div>
         ))}
         {inventory && inventory.games.length > 100 && !query && (
@@ -155,6 +404,35 @@ export function MeshTab({ busy, runMutation }: { busy: boolean; runMutation: Mut
               />
             </div>
           ))}
+        </PanelSection>
+      )}
+      {inventory && inventory.orphanedOptiscaler.length > 0 && (
+        <PanelSection title="Unassociated OptiScaler Records">
+          {inventory.orphanedOptiscaler.map((candidate) => {
+            const blocked = busy
+              || !inventory.optiscalerAvailable
+              || candidate.state === "modified"
+              || candidate.state === "invalid"
+              || candidate.state === "unavailable"
+              || candidate.fsr4Managed;
+            return (
+              <div key={candidate.candidateId}>
+                <StatusRow
+                  label={candidate.relativePath || candidate.installPath || "Invalid OptiScaler record"}
+                  value={`${candidate.state}${candidate.release ? ` | ${candidate.release}` : ""}${candidate.proxy ? ` | ${candidate.proxy}` : ""}`}
+                />
+                <ActionButton
+                  label="Restore original files"
+                  disabled={blocked}
+                  onClick={() => restoreOrphanedOptiscaler(candidate)}
+                />
+                {candidate.fsr4Managed && (
+                  <EmptyState>Restore BC-250 FSR4 for this directory before removing OptiScaler.</EmptyState>
+                )}
+                <LaunchOption value={candidate.launchOption} />
+              </div>
+            );
+          })}
         </PanelSection>
       )}
       {inventory && inventory.errors.length > 0 && (

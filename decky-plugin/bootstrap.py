@@ -14,6 +14,8 @@ from bc250_control import ToolkitBackend
 ROOT_HELPER_DIR = Path("/var/lib/bc250-control/helper")
 INSTALL_MARKER = Path(".decky-helper-manifest")
 PAYLOAD_FILES: Tuple[Tuple[Path, int], ...] = (
+    (Path("bc250-fsr4.sh"), 0o755),
+    (Path("bc250-optiscaler.sh"), 0o755),
     (Path("bc250-storage.sh"), 0o755),
     (Path("bc250-ram-split.sh"), 0o755),
     (Path("bc250-update-persistence.sh"), 0o755),

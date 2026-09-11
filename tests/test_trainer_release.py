@@ -88,6 +88,8 @@ class TrainerReleaseTests(unittest.TestCase):
                     "desktop-control/shared-service-install.sh",
                     "desktop-control/service/bc250-control-service",
                     "backend/bc250_control/backend.py",
+                    "bc250-fsr4.sh",
+                    "bc250-optiscaler.sh",
                     "bc250-power.sh",
                     "bc250-ram-split.sh",
                     "bc250-storage.sh",
@@ -104,6 +106,8 @@ class TrainerReleaseTests(unittest.TestCase):
                 self.assertFalse(any(name.endswith(".DS_Store") for name in names))
                 self.assertFalse(any(name.endswith("bc250-core-unlock.efi") for name in names))
                 mode = archive.getinfo(prefix + "trainer/bc250-trainer").external_attr >> 16
+                self.assertEqual(mode & 0o777, 0o755)
+                mode = archive.getinfo(prefix + "bc250-optiscaler.sh").external_attr >> 16
                 self.assertEqual(mode & 0o777, 0o755)
                 for name in (
                     "core-unlock/bc250-unlock-cores-efi.c",
@@ -212,6 +216,8 @@ class TrainerReleaseTests(unittest.TestCase):
                     "desktop-control/shared-service-install.sh",
                     "desktop-control/service/bc250-control-service",
                     "backend/bc250_control/backend.py",
+                    "bc250-fsr4.sh",
+                    "bc250-optiscaler.sh",
                     "bc250-storage.sh",
                     "bc250-update-persistence.sh",
                     "core-unlock/bc250-unlock-cores-efi.c",
@@ -222,6 +228,8 @@ class TrainerReleaseTests(unittest.TestCase):
                 self.assertNotIn(prefix + "trainer/bc250-trainer", names)
                 self.assertFalse(any(name.endswith("bc250-core-unlock.efi") for name in names))
                 mode = archive.getinfo(prefix + "trainer/install-flatpak.sh").external_attr >> 16
+                self.assertEqual(mode & 0o777, 0o755)
+                mode = archive.getinfo(prefix + "bc250-optiscaler.sh").external_attr >> 16
                 self.assertEqual(mode & 0o777, 0o755)
 
         installer = FLATPAK_INSTALLER.read_text(encoding="utf-8")
@@ -260,6 +268,8 @@ class TrainerReleaseTests(unittest.TestCase):
     def test_shared_payload_and_client_registry_contract(self):
         source = SHARED.read_text(encoding="utf-8")
         for expected in (
+            '"$SHARED_REPO_DIR/bc250-fsr4.sh"',
+            '"$SHARED_REPO_DIR/bc250-optiscaler.sh"',
             '"$SHARED_REPO_DIR/bc250-power.sh"',
             '"$SHARED_REPO_DIR/bc250-storage.sh"',
             '"$SHARED_REPO_DIR/bc250-update-persistence.sh"',
@@ -270,6 +280,18 @@ class TrainerReleaseTests(unittest.TestCase):
             '"$SHARED_REPO_DIR/core-unlock/LICENSE"',
         ):
             self.assertIn(expected, source)
+        self.assertIn(
+            '"$SHARED_REPO_DIR/bc250-fsr4.sh" '
+            '"$SHARED_STAGE/bc250-fsr4.sh"',
+            source,
+        )
+        self.assertIn(
+            '"$SHARED_REPO_DIR/bc250-optiscaler.sh" '
+            '"$SHARED_STAGE/bc250-optiscaler.sh"',
+            source,
+        )
+        self.assertIn('&& -x "$SHARED_STAGE/bc250-fsr4.sh"', source)
+        self.assertIn('&& -x "$SHARED_STAGE/bc250-optiscaler.sh"', source)
         self.assertIn("/var/lib/bc250-control/service-clients", source)
         self.assertIn("plasma|trainer|trainer-flatpak|cracktro", source)
         self.assertIn('|| "$1" == cracktro', source)

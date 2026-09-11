@@ -49,6 +49,8 @@ shared_validate_sources() {
         "$SHARED_REPO_DIR/backend/vendor/tomli" \
         "$SHARED_SOURCE_DIR/bc250-desktop-control-repair" \
         "$SHARED_SOURCE_DIR/templates" \
+        "$SHARED_REPO_DIR/bc250-fsr4.sh" \
+        "$SHARED_REPO_DIR/bc250-optiscaler.sh" \
         "$SHARED_REPO_DIR/bc250-power.sh" \
         "$SHARED_REPO_DIR/bc250-ram-split.sh" \
         "$SHARED_REPO_DIR/bc250-storage.sh" \
@@ -117,6 +119,10 @@ shared_stage_payload() {
         "$SHARED_SOURCE_DIR/service/io.github.keyboardspecialist.bc250-control.policy" \
         "$SHARED_STAGE/templates/io.github.keyboardspecialist.bc250-control.policy"
     install -o root -g root -m 0755 \
+        "$SHARED_REPO_DIR/bc250-fsr4.sh" "$SHARED_STAGE/bc250-fsr4.sh"
+    install -o root -g root -m 0755 \
+        "$SHARED_REPO_DIR/bc250-optiscaler.sh" "$SHARED_STAGE/bc250-optiscaler.sh"
+    install -o root -g root -m 0755 \
         "$SHARED_REPO_DIR/bc250-power.sh" "$SHARED_STAGE/bc250-power.sh"
     install -o root -g root -m 0755 \
         "$SHARED_REPO_DIR/bc250-ram-split.sh" "$SHARED_STAGE/bc250-ram-split.sh"
@@ -150,6 +156,8 @@ shared_stage_payload() {
     chown -R root:root "$SHARED_STAGE"
     chmod -R go-w "$SHARED_STAGE"
     [[ -x "$SHARED_STAGE/bc250-control-service" \
+        && -x "$SHARED_STAGE/bc250-fsr4.sh" \
+        && -x "$SHARED_STAGE/bc250-optiscaler.sh" \
         && -x "$SHARED_STAGE/bc250-power.sh" \
         && -x "$SHARED_STAGE/bc250-ram-split.sh" \
         && -x "$SHARED_STAGE/bc250-storage.sh" \

@@ -27,5 +27,8 @@ assert.throws(() => context.safeOperationId("unsafe value"));
 assert.strictEqual(context.safeTargetId("a".repeat(64)), "a".repeat(64));
 assert.throws(() => context.safeTargetId("/tmp/game.dll"));
 assert.throws(() => context.safeTargetId("A".repeat(64)));
+assert.strictEqual(context.safeCandidateId("b".repeat(64)), "b".repeat(64));
+assert.throws(() => context.safeCandidateId("/tmp/game"));
+assert.throws(() => context.safeCandidateId("B".repeat(64)));
 
 console.log("QML utility checks passed");

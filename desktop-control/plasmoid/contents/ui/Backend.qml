@@ -89,10 +89,12 @@ QtObject {
         method = Utils.allowed(method, ["GetSnapshot", "GetTelemetry", "GetCpuUnlockStatus", "GetMeshStatus", "GetFsr4Inventory", "GetOperation",
             "SetCuWgp", "SetGpuFrequency", "SetLoadTarget", "SetCustomLoadTarget",
             "SetRamp", "CpuOcAction", "CpuUnlockAction", "SetCpuMitigations", "CecAction", "SetCecToggle", "SetCecName",
-            "SetUmaSize", "SetTtmPages", "RemoveTtmOverride", "SetHdmiSurround", "InstallFsr4Dll", "UninstallFsr4Dll", "CancelOperation"]);
-        signature = Utils.allowed(signature, ["", "b", "s", "u", "yy", "suu", "yyyb", "suuu", "sb"]);
+            "SetUmaSize", "SetTtmPages", "RemoveTtmOverride", "SetHdmiSurround", "InstallFsr4Dll", "UninstallFsr4Dll",
+            "InstallOptiscaler", "UninstallOptiscaler", "CancelOperation"]);
+        signature = Utils.allowed(signature, ["", "b", "s", "u", "yy", "suu", "yyyb", "suuu", "sb", "ss"]);
         var interactive = ["SetCuWgp", "SetGpuFrequency", "SetLoadTarget",
-            "SetCustomLoadTarget", "SetRamp", "CpuOcAction", "CpuUnlockAction", "SetCpuMitigations"].indexOf(method) >= 0;
+            "SetCustomLoadTarget", "SetRamp", "CpuOcAction", "CpuUnlockAction", "SetCpuMitigations",
+            "InstallOptiscaler", "UninstallOptiscaler"].indexOf(method) >= 0;
         var command = "/usr/bin/busctl --system --json=short --timeout="
             + (interactive ? "130" : method === "GetFsr4Inventory" ? "120" : method === "GetMeshStatus" || method === "GetCpuUnlockStatus" ? "35" : "15") + " call " + service + " "
             + objectPath + " " + serviceInterface + " " + method;
@@ -155,10 +157,12 @@ QtObject {
         error = "";
         _operationPollFailures = 0;
         var cancellable = ["CpuUnlockAction", "SetCpuMitigations", "SetUmaSize", "SetTtmPages",
-            "RemoveTtmOverride", "SetHdmiSurround", "InstallFsr4Dll", "UninstallFsr4Dll"].indexOf(method) < 0;
+            "RemoveTtmOverride", "SetHdmiSurround", "InstallFsr4Dll", "UninstallFsr4Dll",
+            "InstallOptiscaler", "UninstallOptiscaler"].indexOf(method) < 0;
         _enqueue("mutation", _command(method, signature, args), {
             label: label,
-            refreshFsr4: method === "InstallFsr4Dll" || method === "UninstallFsr4Dll",
+            refreshFsr4: method === "InstallFsr4Dll" || method === "UninstallFsr4Dll"
+                || method === "InstallOptiscaler" || method === "UninstallOptiscaler",
             cancellable: cancellable
         });
     }
@@ -201,6 +205,19 @@ QtObject {
         var safeId = Utils.safeTargetId(targetId);
         _startMutation(enabled ? "InstallFsr4Dll" : "UninstallFsr4Dll", "s", [safeId],
             (enabled ? "Installing" : "Restoring") + " FSR4 game DLL");
+    }
+
+    function installOptiscaler(candidateId, proxy) {
+        var safeId = Utils.safeCandidateId(candidateId);
+        var safeProxy = Utils.allowed(proxy, ["winmm.dll", "dxgi.dll", "d3d12.dll",
+            "dbghelp.dll", "version.dll", "wininet.dll", "winhttp.dll"]);
+        _startMutation("InstallOptiscaler", "ss", [safeId, safeProxy],
+            "Installing OptiScaler");
+    }
+
+    function uninstallOptiscaler(candidateId) {
+        _startMutation("UninstallOptiscaler", "s", [Utils.safeCandidateId(candidateId)],
+            "Restoring pre-OptiScaler game files");
     }
 
     function cpuOcAction(action, frequency, voltage, temperature) {

@@ -71,6 +71,10 @@ class FakeControl:
         self.senders.append((sender, enabled))
         return "operation"
 
+    async def install_optiscaler(self, sender, candidate_id, proxy):
+        self.senders.append((sender, candidate_id, proxy))
+        return "operation"
+
 
 class IdentityResolverTests(unittest.IsolatedAsyncioTestCase):
     async def test_resolves_pid_and_validated_audit_session(self):
@@ -149,6 +153,18 @@ class AdapterHandlerTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn('<method name="GetFsr4Inventory">', INTROSPECTION_XML)
         self.assertIn('<method name="InstallFsr4Dll">', INTROSPECTION_XML)
         self.assertIn('<method name="UninstallFsr4Dll">', INTROSPECTION_XML)
+
+    def test_optiscaler_dbus_signatures_are_declared(self):
+        self.assertEqual(
+            DbusAdapter._METHODS["InstallOptiscaler"],
+            ("ss", "s", "install_optiscaler"),
+        )
+        self.assertEqual(
+            DbusAdapter._METHODS["UninstallOptiscaler"],
+            ("s", "s", "uninstall_optiscaler"),
+        )
+        self.assertIn('<method name="InstallOptiscaler">', INTROSPECTION_XML)
+        self.assertIn('<method name="UninstallOptiscaler">', INTROSPECTION_XML)
 
     def test_ram_dbus_signatures_are_declared(self):
         self.assertEqual(DbusAdapter._METHODS["SetUmaSize"], ("u", "s", "set_uma_size"))
@@ -240,4 +256,28 @@ class AdapterHandlerTests(unittest.IsolatedAsyncioTestCase):
         await asyncio.sleep(0)
 
         self.assertEqual(control.senders, [(":1.21", "test")])
+        self.assertEqual(bus.sent[0].body, ["operation"])
+
+    async def test_optiscaler_install_propagates_sender_and_arguments(self):
+        bus = HandlerBus()
+        control = FakeControl()
+        adapter = DbusAdapter(bus, control)
+        candidate_id = "c" * 64
+        call = Message(
+            path=OBJECT_PATH,
+            interface=INTERFACE,
+            member="InstallOptiscaler",
+            signature="ss",
+            body=[candidate_id, "winmm.dll"],
+            sender=":1.22",
+            serial=44,
+        )
+
+        self.assertTrue(adapter.handle(call))
+        await asyncio.sleep(0)
+        await asyncio.sleep(0)
+
+        self.assertEqual(
+            control.senders, [(":1.22", candidate_id, "winmm.dll")]
+        )
         self.assertEqual(bus.sent[0].body, ["operation"])

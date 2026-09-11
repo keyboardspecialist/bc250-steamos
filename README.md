@@ -702,6 +702,30 @@ you independently want that driver optimization. Use the legacy FSR4 V3 RADV
 profile only as a fallback when the RC8 DLL route is unsuitable; legacy setup
 installs its global RADV prerequisite automatically.
 
+### OptiScaler Game Manager
+
+The Decky and Plasma GPU pages can install OptiScaler into a selected Steam
+game executable directory. The manager pins OptiScaler `v0.9.4`, verifies the
+release archive with SHA-256
+`575cb4df866116093df75af607e37fd70e10f5163e0f23fd5c804142e80ef0ad`, and
+never runs the upstream setup or uninstall scripts. Choose the directory that
+contains the game executable and the proxy DLL required by that game. The
+default `winmm.dll` proxy is not universal; consult OptiScaler's compatibility
+notes when a game requires `dxgi.dll`, `version.dll`, or another supported
+proxy.
+
+Each installation has a private rollback record. Existing files are backed up
+before replacement, user-modified INI files are preserved, interrupted
+operations remain removable or resumable, and a changed runtime is never
+silently overwritten. The UI sends only an opaque discovered-candidate ID and
+the backend resolves and revalidates the directory before each mutation.
+
+Close the game before installing, updating, repairing, or removing OptiScaler.
+Do not inject OptiScaler into online or anti-cheat games: DLL injection can
+trigger anti-cheat action or account bans. If BC-250 FSR4 is installed beneath
+the same directory, restore that DLL before updating or removing OptiScaler;
+the two rollback systems are deliberately locked against conflicting changes.
+
 ### FSR4 RC8 Game DLL
 
 The current FSR4 path uses the portable RC8 DLL from
@@ -944,6 +968,7 @@ Run the normal component setup commands afterward to regenerate services for the
 | BC-250 CPU Core Unlock | [Linux helper](https://github.com/rw-r-r-0644/bc250-core-unlock) · [EFI source](https://github.com/Hexxeh/bc250-efi-core-unlock) · [EFI headers](https://github.com/yoppeh/efi) | Original SMU method and the optional pre-boot implementation adapted by `bc250-power.sh` |
 | BC-250 Memory Config | [Repository](https://github.com/fanoush/bc250_memcfg) · [VRAM guide](https://elektricm.github.io/amd-bc250-docs/bios/vram/) | CMOS UMA utility fetched by `bc250-ram-split.sh` |
 | BC-250 GFX1013 Fix | [Repository](https://github.com/DryhoppedIPA/bc250-gfx1013-fix) · [integrated commit](https://github.com/DryhoppedIPA/bc250-gfx1013-fix/commit/d3e6dc062c34d2523db0abe5741d1f5b0dea00d9) | Kernel compute lifecycle repair and pinned alternate RADV build by DryhoppedIPA |
+| OptiScaler | [Repository](https://github.com/optiscaler/OptiScaler) · [release](https://github.com/optiscaler/OptiScaler/releases/tag/v0.9.4) | Checksum-pinned per-game installation with collision backups and guarded rollback |
 | BC-250 FSR4 RC8 | [Repository](https://github.com/daniel-h-0/bc250-fsr4-fork) · [release](https://github.com/daniel-h-0/bc250-fsr4-fork/releases/tag/v4.0.0-rc8) | Integrity-checked portable FSR 4.1.1 INT8 DLL with per-target rollback; V3 retained as a legacy fallback |
 | BC-250 HDMI AC-3 encoding | [Implementation guide and scripts](https://github.com/rpf16rj/bc250-steamos-real-toolkit/tree/main/extras/hdmi-ac3-encoding) | ALSA `a52` routing and WirePlumber profile behavior adapted by `hdmi-ac3/hdmi-ac3.sh` |
 | Valve kernel mirror | [Repository](https://github.com/Evlav/linux-integration) | `bc250-audio-fix/fetch-sources.sh` |

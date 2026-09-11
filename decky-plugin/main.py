@@ -39,6 +39,12 @@ class Plugin:
     async def uninstall_fsr4_dll(self, target_id: str):
         return await self.backend.uninstall_fsr4_dll(target_id)
 
+    async def install_optiscaler(self, candidate_id: str, proxy: str):
+        return await self.backend.install_optiscaler(candidate_id, proxy)
+
+    async def uninstall_optiscaler(self, candidate_id: str):
+        return await self.backend.uninstall_optiscaler(candidate_id)
+
     async def set_cu_wgp(self, se: int, sh: int, wgp: int, enabled: bool):
         return await self.backend.set_cu_wgp(se, sh, wgp, enabled)
 

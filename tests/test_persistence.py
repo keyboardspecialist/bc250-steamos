@@ -813,6 +813,7 @@ grep -Fxq "daemon-reload" "$SYSTEMCTL_LOG"
             "bc250-toolkit.sh",
             "bc250-storage.sh",
             "bc250-update-persistence.sh",
+            "bc250-optiscaler.sh",
             "bc250-power.sh",
             "bc250-ram-split.sh",
             "bc250-swap.sh",

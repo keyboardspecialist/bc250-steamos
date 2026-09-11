@@ -95,6 +95,12 @@ class FakeBackend:
     async def uninstall_fsr4_dll(self, *args):
         await self._mutation("uninstall_fsr4_dll", *args)
 
+    async def install_optiscaler(self, *args):
+        await self._mutation("install_optiscaler", *args)
+
+    async def uninstall_optiscaler(self, *args):
+        await self._mutation("uninstall_optiscaler", *args)
+
     async def cpu_oc_action(self, *args):
         await self._mutation("cpu_oc_action", *args)
 
@@ -282,6 +288,30 @@ class ControlServiceTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.authorizer.calls, [(":1.1", 1000, "audit:1000", "gpu")])
         self.assertEqual(self.backends[0].calls, [("install_fsr4_dll", (target_id,))])
 
+    async def test_optiscaler_mutations_are_gpu_authorized_and_non_cancellable(self):
+        candidate_id = "b" * 64
+        operation_id = await self.service.install_optiscaler(
+            ":1.1", candidate_id, "winmm.dll"
+        )
+        operation = await self.wait_for_status(":1.1", operation_id, "succeeded")
+        self.assertFalse(operation["cancellable"])
+        self.assertEqual(operation["method"], "InstallOptiscaler")
+        self.assertEqual(
+            self.authorizer.calls, [(":1.1", 1000, "audit:1000", "gpu")]
+        )
+        self.assertEqual(
+            self.backends[0].calls,
+            [("install_optiscaler", (candidate_id, "winmm.dll"))],
+        )
+
+        operation_id = await self.service.uninstall_optiscaler(":1.1", candidate_id)
+        operation = await self.wait_for_status(":1.1", operation_id, "succeeded")
+        self.assertFalse(operation["cancellable"])
+        self.assertEqual(operation["method"], "UninstallOptiscaler")
+        self.assertEqual(
+            self.backends[0].calls[-1], ("uninstall_optiscaler", (candidate_id,))
+        )
+
     async def test_operations_are_private_to_uid_but_survive_sender_change(self):
         operation_id = await self.service.cec_action(":1.1", "mute")
         await self.wait_for_status(":9.9", operation_id, "succeeded")
@@ -306,6 +336,16 @@ class ControlServiceTests(unittest.IsolatedAsyncioTestCase):
         for target_id in ("", "/tmp/game.dll", "A" * 64, "a" * 63, 1):
             with self.subTest(target_id=target_id), self.assertRaises(InvalidArguments):
                 await self.service.uninstall_fsr4_dll(":1.1", target_id)
+        for candidate_id in ("", "/tmp/game", "A" * 64, "a" * 63, 1):
+            with self.subTest(candidate_id=candidate_id), self.assertRaises(InvalidArguments):
+                await self.service.install_optiscaler(
+                    ":1.1", candidate_id, "winmm.dll"
+                )
+            with self.subTest(candidate_id=candidate_id), self.assertRaises(InvalidArguments):
+                await self.service.uninstall_optiscaler(":1.1", candidate_id)
+        for proxy in ("", "OptiScaler.dll", "winmm", "WINMM.DLL", 1):
+            with self.subTest(proxy=proxy), self.assertRaises(InvalidArguments):
+                await self.service.install_optiscaler(":1.1", "a" * 64, proxy)
         for action in ("", "uninstall", "test; reboot", 1):
             with self.subTest(action=action), self.assertRaises(InvalidArguments):
                 await self.service.cpu_unlock_action(":1.1", action)

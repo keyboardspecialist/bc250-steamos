@@ -27,6 +27,8 @@ CORE_UNLOCK_FILES = (
     "README.md",
 )
 EXECUTABLES = {
+    Path("bc250-fsr4.sh"),
+    Path("bc250-optiscaler.sh"),
     Path("bc250-power.sh"),
     Path("bc250-ram-split.sh"),
     Path("bc250-storage.sh"),
@@ -91,6 +93,8 @@ def stage(output: Path, epoch: int) -> None:
     temporary = Path(tempfile.mkdtemp(prefix=".desktop-runtime-", dir=str(output.parent)))
     try:
         for name in (
+            "bc250-fsr4.sh",
+            "bc250-optiscaler.sh",
             "bc250-power.sh",
             "bc250-ram-split.sh",
             "bc250-storage.sh",

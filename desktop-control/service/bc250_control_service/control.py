@@ -20,6 +20,16 @@ class Caller:
 
 BackendFactory = Callable[[str, str], Any]
 
+OPTISCALER_PROXIES = frozenset({
+    "winmm.dll",
+    "dxgi.dll",
+    "d3d12.dll",
+    "dbghelp.dll",
+    "version.dll",
+    "wininet.dll",
+    "winhttp.dll",
+})
+
 
 def _compact_json(value: Any) -> str:
     return json.dumps(value, ensure_ascii=True, allow_nan=False, separators=(",", ":"))
@@ -219,6 +229,38 @@ class ControlService:
             "gpu",
             "UninstallFsr4Dll",
             lambda backend: backend.uninstall_fsr4_dll(target_id),
+            cancellable=False,
+        )
+
+    async def install_optiscaler(
+        self, sender: str, candidate_id: str, proxy: str
+    ) -> str:
+        if (
+            type(candidate_id) is not str
+            or re.fullmatch(r"[0-9a-f]{64}", candidate_id) is None
+        ):
+            raise InvalidArguments("OptiScaler candidate ID is invalid.")
+        if type(proxy) is not str or proxy not in OPTISCALER_PROXIES:
+            raise InvalidArguments("OptiScaler proxy is invalid.")
+        return await self._submit(
+            sender,
+            "gpu",
+            "InstallOptiscaler",
+            lambda backend: backend.install_optiscaler(candidate_id, proxy),
+            cancellable=False,
+        )
+
+    async def uninstall_optiscaler(self, sender: str, candidate_id: str) -> str:
+        if (
+            type(candidate_id) is not str
+            or re.fullmatch(r"[0-9a-f]{64}", candidate_id) is None
+        ):
+            raise InvalidArguments("OptiScaler candidate ID is invalid.")
+        return await self._submit(
+            sender,
+            "gpu",
+            "UninstallOptiscaler",
+            lambda backend: backend.uninstall_optiscaler(candidate_id),
             cancellable=False,
         )
 

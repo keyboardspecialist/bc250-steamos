@@ -38,11 +38,32 @@ QtObject {
     })
     property var fsr4Inventory: ({
         schemaVersion: 1, available: true, inventoryState: "ready",
-        currentRelease: "v4.0.0-rc8", errors: [], orphanedTargets: [],
+        currentRelease: "v4.0.0-rc8", optiscalerAvailable: true,
+        currentOptiscalerRelease: "v0.9.4", errors: [], orphanedTargets: [],
+        orphanedOptiscaler: [
+            { candidateId: "abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789",
+                installPath: "/mock/REMOVED/Binaries/Win64", relativePath: "Binaries/Win64",
+                executables: ["RemovedGame-Win64-Shipping.exe"], discovered: false,
+                state: "ready", release: "v0.8.1", currentRelease: false, proxy: "winmm.dll",
+                launchOption: "WINEDLLOVERRIDES=winmm=n,b %command%", fsr4Managed: false }
+        ],
         games: [
             { appKey: "1245620:/mock/GAME", appId: "1245620", name: "ELDEN RING",
                 installPath: "/mock/GAME", fullyInstalled: true, installPresent: true,
-                scanState: "complete", targets: [
+                scanState: "complete", optiscalerCandidates: [
+                    { candidateId: "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+                        installPath: "/mock/GAME", relativePath: ".",
+                        executables: ["eldenring.exe"], discovered: true,
+                        state: "not-installed", release: null, currentRelease: false, proxy: null,
+                        launchOption: "",
+                        fsr4Managed: false },
+                    { candidateId: "123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0",
+                        installPath: "/mock/GAME/Game/Binaries/Win64", relativePath: "Game/Binaries/Win64",
+                        executables: ["Game-Win64-Shipping.exe"], discovered: true,
+                        state: "ready", release: "v0.9.4", currentRelease: true, proxy: "winmm.dll",
+                        launchOption: "PROTON_FSR4_UPGRADE=0 PROTON_USE_OPTISCALER=0 WINEDLLOVERRIDES=\"winmm=n,b;amdxcffx64=\" %command%",
+                        fsr4Managed: false }
+                ], targets: [
                     { targetId: "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
                         targetPath: "/mock/GAME/OptiScaler/amd_fidelityfx_upscaler_dx12.dll",
                         relativePath: "OptiScaler/amd_fidelityfx_upscaler_dx12.dll",
@@ -50,7 +71,8 @@ QtObject {
                 ] },
             { appKey: "730:/mock/Counter-Strike Global Offensive", appId: "730",
                 name: "Counter-Strike 2", installPath: "/mock/Counter-Strike Global Offensive",
-                fullyInstalled: true, installPresent: true, scanState: "complete", targets: [] }
+                fullyInstalled: true, installPresent: true, scanState: "complete",
+                optiscalerCandidates: [], targets: [] }
         ]
     })
     property var telemetryHistory: [
@@ -139,6 +161,8 @@ QtObject {
     function setCustomLoadTarget() { start("Applying custom load target"); }
     function setRamp() { start("Applying GPU ramp time"); }
     function setFsr4Dll() { start("Updating FSR4 game DLL"); }
+    function installOptiscaler() { start("Installing OptiScaler"); }
+    function uninstallOptiscaler() { start("Restoring pre-OptiScaler game files"); }
     function cpuOcAction() { start("Running CPU operation"); }
     function cpuUnlockAction() { start("Running CPU core-unlock operation"); }
     function setCpuMitigations() { start("Updating CPU mitigations"); }

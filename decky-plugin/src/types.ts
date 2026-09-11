@@ -261,6 +261,31 @@ export interface Fsr4Target {
   discovered: boolean;
 }
 
+export type OptiscalerCandidateState =
+  | "not-installed"
+  | "ready"
+  | "upgrade-required"
+  | "repair-required"
+  | "restorable"
+  | "missing"
+  | "modified"
+  | "invalid"
+  | "unavailable";
+
+export interface OptiscalerCandidate {
+  candidateId: string;
+  installPath: string | null;
+  relativePath?: string;
+  executables: string[];
+  discovered: boolean;
+  state: OptiscalerCandidateState;
+  release: string | null;
+  currentRelease: boolean;
+  proxy: string | null;
+  launchOption: string | null;
+  fsr4Managed: boolean;
+}
+
 export interface Fsr4Game {
   appKey: string;
   appId: string;
@@ -271,6 +296,7 @@ export interface Fsr4Game {
   installPresent: boolean;
   scanState: "complete" | "partial" | "truncated" | "unavailable";
   targets: Fsr4Target[];
+  optiscalerCandidates: OptiscalerCandidate[];
 }
 
 export interface Fsr4Inventory {
@@ -278,8 +304,11 @@ export interface Fsr4Inventory {
   available: boolean;
   inventoryState: "ready" | "partial" | "unavailable";
   currentRelease: string | null;
+  optiscalerAvailable: boolean;
+  currentOptiscalerRelease: string | null;
   games: Fsr4Game[];
   orphanedTargets: Fsr4Target[];
+  orphanedOptiscaler: OptiscalerCandidate[];
   errors: string[];
 }
 

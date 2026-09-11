@@ -18,6 +18,10 @@ PLUGIN_SOURCE = REPOSITORY / "decky-plugin"
 BACKEND_SOURCE = REPOSITORY / "backend"
 DEFAULT_OUTPUT = PLUGIN_SOURCE / "out"
 DEFAULT_EPOCH = 315532800  # 1980-01-01, the earliest timestamp supported by ZIP.
+EXECUTABLES = {
+    Path("privileged-helper/bc250-fsr4.sh"),
+    Path("privileged-helper/bc250-optiscaler.sh"),
+}
 
 
 def source_date_epoch() -> int:
@@ -58,7 +62,8 @@ def copy_tree(source: Path, destination: Path) -> None:
 def normalize_tree(root: Path, epoch: int) -> None:
     paths = sorted(root.rglob("*"), key=lambda path: str(path), reverse=True)
     for path in paths:
-        path.chmod(0o755 if path.is_dir() else 0o644)
+        relative = path.relative_to(root)
+        path.chmod(0o755 if path.is_dir() or relative in EXECUTABLES else 0o644)
         os.utime(str(path), (epoch, epoch), follow_symlinks=False)
     root.chmod(0o755)
     os.utime(str(root), (epoch, epoch), follow_symlinks=False)
@@ -78,6 +83,8 @@ def stage(output: Path, epoch: int) -> None:
             copy_file(PLUGIN_SOURCE / name, temporary / name)
         copy_file(PLUGIN_SOURCE / "dist/index.js", temporary / "dist/index.js")
         for name in (
+            "bc250-fsr4.sh",
+            "bc250-optiscaler.sh",
             "bc250-power.sh",
             "bc250-ram-split.sh",
             "bc250-storage.sh",
@@ -161,7 +168,9 @@ def write_archive(runtime: Path, archive: Path, epoch: int) -> None:
                     name += "/"
                 info = zipfile.ZipInfo(name, timestamp)
                 info.create_system = 3
-                mode = stat.S_IFDIR | 0o755 if path.is_dir() else stat.S_IFREG | 0o644
+                mode = stat.S_IFDIR | 0o755 if path.is_dir() else stat.S_IFREG | (
+                    path.stat().st_mode & 0o777
+                )
                 info.external_attr = mode << 16
                 info.compress_type = zipfile.ZIP_DEFLATED
                 content = b"" if path.is_dir() else path.read_bytes()

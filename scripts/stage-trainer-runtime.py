@@ -29,6 +29,8 @@ CORE_UNLOCK_FILES = (
     "README.md",
 )
 EXECUTABLES = {
+    Path("bc250-fsr4.sh"),
+    Path("bc250-optiscaler.sh"),
     Path("bc250-storage.sh"),
     Path("bc250-update-persistence.sh"),
     Path("bc250-power.sh"),
@@ -88,7 +90,7 @@ def normalize_tree(root: Path, epoch: int) -> None:
 
 
 def copy_host_runtime(temporary: Path) -> None:
-    for name in ("bc250-storage.sh", "bc250-update-persistence.sh", "bc250-power.sh", "bc250-ram-split.sh", "topology.sh"):
+    for name in ("bc250-fsr4.sh", "bc250-optiscaler.sh", "bc250-storage.sh", "bc250-update-persistence.sh", "bc250-power.sh", "bc250-ram-split.sh", "topology.sh"):
         copy_file(REPOSITORY / name, temporary / name)
     for name in CORE_UNLOCK_FILES:
         copy_file(

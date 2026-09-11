@@ -412,6 +412,31 @@ class Fsr4InventoryTests(unittest.IsolatedAsyncioTestCase):
             "records": list(items),
         }
 
+    @staticmethod
+    def optiscaler_records(*items):
+        return {
+            "schemaVersion": 1,
+            "currentRelease": "v0.7.7",
+            "state": "ready" if items else "not-installed",
+            "invalidRecordCount": 0,
+            "records": list(items),
+        }
+
+    @staticmethod
+    def optiscaler_record(path, **overrides):
+        install_path = str(path)
+        record = {
+            "candidateId": hashlib.sha256(install_path.encode()).hexdigest(),
+            "installPath": install_path,
+            "release": "v0.7.7",
+            "proxy": "winmm.dll",
+            "state": "ready",
+            "currentRelease": True,
+            "launchOption": 'WINEDLLOVERRIDES="winmm=n,b" %command%',
+        }
+        record.update(overrides)
+        return record
+
     def test_vdf_parser_handles_comments_escapes_and_rejects_malformed_input(self):
         parsed = ToolkitBackend._parse_vdf(
             '// comment\n"root" { "name" "A \\"Game\\"" "path" "C:\\\\Steam" }'
@@ -518,26 +543,25 @@ class Fsr4InventoryTests(unittest.IsolatedAsyncioTestCase):
             }]}],
             "orphanedTargets": [],
         })
-        self.backend._user_tool = AsyncMock(return_value="")
+        self.backend._fsr4_tool = AsyncMock(return_value="")
 
         await self.backend.install_fsr4_dll(target_id)
 
-        self.backend._user_tool.assert_awaited_once_with(
-            "bc250-fsr4.sh", "install", target_path, timeout=300
+        self.backend._fsr4_tool.assert_awaited_once_with(
+            "install", target_path, timeout=300
         )
 
     async def test_record_json_schema_and_consistency_are_validated(self):
-        self.backend._user_script_available = MagicMock(return_value=True)
         payload = {
             **self.records(),
             "currentDllSha256": "a" * 64,
         }
-        self.backend._user_tool = AsyncMock(return_value=json.dumps(payload))
+        self.backend._fsr4_tool = AsyncMock(return_value=json.dumps(payload))
         parsed = await self.backend._get_fsr4_records()
         self.assertEqual(parsed["currentDllSha256"], "a" * 64)
 
         payload["state"] = "ready"
-        self.backend._user_tool.return_value = json.dumps(payload)
+        self.backend._fsr4_tool.return_value = json.dumps(payload)
         with self.assertRaisesRegex(CommandError, "internally inconsistent"):
             await self.backend._get_fsr4_records()
 
@@ -579,6 +603,376 @@ class Fsr4InventoryTests(unittest.IsolatedAsyncioTestCase):
         with self.assertRaisesRegex(CommandError, "installing or updating"):
             await self.backend.install_fsr4_dll(target_id)
         self.backend._user_tool.assert_not_awaited()
+
+    async def test_optiscaler_helper_resolution_and_execution_are_user_scoped(self):
+        self.backend.toolkit = self.root / "toolkit"
+        source = self.backend.toolkit / "bc250-optiscaler.sh"
+        trusted = {backend_module.OPTISCALER_DECKY_HELPER_PATH}
+        with patch.object(
+            ToolkitBackend,
+            "_trusted_root_file",
+            side_effect=lambda path: path in trusted,
+        ), patch.object(self.backend, "_toolkit_file", return_value=True):
+            self.assertEqual(self.backend._optiscaler_helper_path(), source)
+
+        trusted.add(backend_module.OPTISCALER_DECKY_MANIFEST_PATH)
+        with patch.object(
+            ToolkitBackend,
+            "_trusted_root_file",
+            side_effect=lambda path: path in trusted,
+        ):
+            self.assertEqual(
+                self.backend._optiscaler_helper_path(),
+                backend_module.OPTISCALER_DECKY_HELPER_PATH,
+            )
+
+        trusted.add(backend_module.OPTISCALER_DESKTOP_HELPER_PATH)
+        with patch.object(
+            ToolkitBackend,
+            "_trusted_root_file",
+            side_effect=lambda path: path in trusted,
+        ):
+            self.assertEqual(
+                self.backend._optiscaler_helper_path(),
+                backend_module.OPTISCALER_DESKTOP_HELPER_PATH,
+            )
+
+        helper = Path("/trusted/bc250-optiscaler.sh")
+        self.backend._optiscaler_helper_path = MagicMock(return_value=helper)
+        self.backend._user_exec = AsyncMock(return_value=(0, "status", ""))
+        self.assertEqual(
+            await self.backend._optiscaler_tool("records-json", timeout=30),
+            "status",
+        )
+        self.backend._user_exec.assert_awaited_once_with(
+            [backend_module.BASH, str(helper), "records-json"], timeout=30
+        )
+
+    async def test_fsr4_helper_resolution_and_execution_are_user_scoped(self):
+        self.backend.toolkit = self.root / "toolkit"
+        source = self.backend.toolkit / "bc250-fsr4.sh"
+        trusted = {
+            backend_module.FSR4_DECKY_HELPER_PATH,
+            backend_module.OPTISCALER_DECKY_MANIFEST_PATH,
+        }
+        with patch.object(
+            ToolkitBackend,
+            "_trusted_root_file",
+            side_effect=lambda path: path in trusted,
+        ):
+            self.assertEqual(
+                self.backend._fsr4_helper_path(),
+                backend_module.FSR4_DECKY_HELPER_PATH,
+            )
+
+        trusted.add(backend_module.FSR4_DESKTOP_HELPER_PATH)
+        with patch.object(
+            ToolkitBackend,
+            "_trusted_root_file",
+            side_effect=lambda path: path in trusted,
+        ):
+            self.assertEqual(
+                self.backend._fsr4_helper_path(),
+                backend_module.FSR4_DESKTOP_HELPER_PATH,
+            )
+
+        trusted.clear()
+        with patch.object(
+            ToolkitBackend, "_trusted_root_file", return_value=False
+        ), patch.object(self.backend, "_toolkit_file", return_value=True):
+            self.assertEqual(self.backend._fsr4_helper_path(), source)
+
+        helper = Path("/trusted/bc250-fsr4.sh")
+        self.backend._fsr4_helper_path = MagicMock(return_value=helper)
+        self.backend._user_exec = AsyncMock(return_value=(0, "status", ""))
+        self.assertEqual(await self.backend._fsr4_tool("records-json"), "status")
+        self.backend._user_exec.assert_awaited_once_with(
+            [backend_module.BASH, str(helper), "records-json"], timeout=30
+        )
+
+    async def test_optiscaler_records_validate_schema_fields_and_consistency(self):
+        path = self.root / "Game"
+        record = self.optiscaler_record(path)
+        payload = self.optiscaler_records(record)
+        self.backend._optiscaler_tool = AsyncMock(return_value=json.dumps(payload))
+
+        parsed = await self.backend._get_optiscaler_records()
+
+        self.assertEqual(parsed["records"], [record])
+        invalid_records = [
+            {**record, "candidateId": "a" * 64},
+            {**record, "installPath": "relative/game"},
+            {**record, "proxy": "evil.dll"},
+            {**record, "state": "restored"},
+            {**record, "launchOption": "bad\noption"},
+            {**record, "currentRelease": 1},
+        ]
+        for invalid_record in invalid_records:
+            with self.subTest(record=invalid_record):
+                invalid_payload = self.optiscaler_records(invalid_record)
+                self.backend._optiscaler_tool.return_value = json.dumps(
+                    invalid_payload
+                )
+                with self.assertRaisesRegex(CommandError, "invalid record"):
+                    await self.backend._get_optiscaler_records()
+
+        payload = self.optiscaler_records()
+        payload["state"] = "ready"
+        self.backend._optiscaler_tool.return_value = json.dumps(payload)
+        with self.assertRaisesRegex(CommandError, "internally inconsistent"):
+            await self.backend._get_optiscaler_records()
+
+        upgrade = self.optiscaler_record(
+            path,
+            release="v0.7.6",
+            state="upgrade-required",
+            currentRelease=False,
+        )
+        payload = self.optiscaler_records(upgrade)
+        payload["state"] = "upgrade-required"
+        self.backend._optiscaler_tool.return_value = json.dumps(payload)
+        parsed = await self.backend._get_optiscaler_records()
+        self.assertEqual(parsed["state"], "upgrade-required")
+
+        restorable = self.optiscaler_record(path, state="restorable")
+        payload = self.optiscaler_records(restorable)
+        payload["state"] = "restorable"
+        self.backend._optiscaler_tool.return_value = json.dumps(payload)
+        parsed = await self.backend._get_optiscaler_records()
+        self.assertEqual(parsed["state"], "restorable")
+
+        repair = self.optiscaler_record(path, state="repair-required")
+        payload = self.optiscaler_records(repair)
+        payload["state"] = "repair-required"
+        self.backend._optiscaler_tool.return_value = json.dumps(payload)
+        parsed = await self.backend._get_optiscaler_records()
+        self.assertEqual(parsed["state"], "repair-required")
+
+        invalid = {
+            "candidateId": "d" * 64,
+            "installPath": None,
+            "release": None,
+            "proxy": None,
+            "state": "invalid",
+            "currentRelease": False,
+            "launchOption": "",
+        }
+        payload = self.optiscaler_records(invalid)
+        payload["state"] = "invalid"
+        payload["invalidRecordCount"] = 1
+        self.backend._optiscaler_tool.return_value = json.dumps(payload)
+        parsed = await self.backend._get_optiscaler_records()
+        self.assertEqual(parsed["records"], [invalid])
+
+    def test_optiscaler_candidates_dedupe_executables_and_ignore_symlinks(self):
+        game = self.add_game()
+        (game / "Game.exe").write_bytes(b"")
+        (game / "Launcher.EXE").write_bytes(b"")
+        engine = game / "bin"
+        engine.mkdir()
+        (engine / "Engine.exe").write_bytes(b"")
+        outside = self.root / "outside-executables"
+        outside.mkdir()
+        (outside / "Unsafe.exe").write_bytes(b"")
+        (game / "linked-bin").symlink_to(outside, target_is_directory=True)
+
+        inventory = self.backend._build_fsr4_inventory(
+            self.records(), self.optiscaler_records()
+        )
+
+        candidates = inventory["games"][0]["optiscalerCandidates"]
+        self.assertEqual(len(candidates), 2)
+        root_candidate = next(
+            candidate for candidate in candidates if candidate["relativePath"] == "."
+        )
+        self.assertEqual(root_candidate["executables"], ["Game.exe", "Launcher.EXE"])
+        self.assertEqual(
+            root_candidate["candidateId"],
+            hashlib.sha256(str(game.resolve()).encode()).hexdigest(),
+        )
+        self.assertEqual(root_candidate["state"], "not-installed")
+        self.assertTrue(root_candidate["discovered"])
+        self.assertFalse(root_candidate["fsr4Managed"])
+        self.assertTrue(
+            all("outside-executables" not in item["installPath"] for item in candidates)
+        )
+
+    def test_optiscaler_records_use_exact_path_deepest_owner_and_orphans(self):
+        parent = self.add_game(app_id="100", name="Parent", install_dir="Parent")
+        nested_library = parent / "NestedLibrary"
+        child = nested_library / "steamapps/common/Child"
+        child.mkdir(parents=True)
+        (child / "Child.exe").write_bytes(b"")
+        (nested_library / "steamapps/appmanifest_200.acf").write_text(
+            '"AppState"\n{\n  "appid" "200"\n  "name" "Child"\n'
+            '  "installdir" "Child"\n  "StateFlags" "4"\n}\n',
+            encoding="utf-8",
+        )
+        self.steam.joinpath("steamapps/libraryfolders.vdf").write_text(
+            '"libraryfolders"\n{\n'
+            f'  "0" {{ "path" "{self.steam}" }}\n'
+            f'  "1" {{ "path" "{self.library}" }}\n'
+            f'  "2" {{ "path" "{nested_library}" }}\n'
+            '}\n',
+            encoding="utf-8",
+        )
+        child_record = self.optiscaler_record(child.resolve())
+        orphan_path = self.root / "orphan"
+        orphan_record = self.optiscaler_record(orphan_path)
+        fsr4_path = child / "amd_fidelityfx_upscaler_dx12.dll"
+        fsr4_record = {
+            "targetId": hashlib.sha256(str(fsr4_path).encode()).hexdigest(),
+            "targetPath": str(fsr4_path),
+            "release": "v4.0.0-rc8",
+            "state": "missing",
+            "currentRelease": True,
+        }
+
+        inventory = self.backend._build_fsr4_inventory(
+            self.records(fsr4_record),
+            self.optiscaler_records(child_record, orphan_record),
+        )
+
+        games = {game["appId"]: game for game in inventory["games"]}
+        child_candidates = games["200"]["optiscalerCandidates"]
+        self.assertEqual(len(child_candidates), 1)
+        self.assertEqual(child_candidates[0]["state"], "ready")
+        self.assertEqual(child_candidates[0]["proxy"], "winmm.dll")
+        self.assertTrue(child_candidates[0]["discovered"])
+        self.assertTrue(child_candidates[0]["fsr4Managed"])
+        self.assertEqual(
+            child_candidates[0]["launchOption"],
+            'PROTON_FSR4_UPGRADE=0 PROTON_USE_OPTISCALER=0 '
+            'WINEDLLOVERRIDES="winmm=n,b;amdxcffx64=" %command%',
+        )
+        self.assertFalse(any(
+            candidate["installPath"] == str(child.resolve())
+            for candidate in games["100"]["optiscalerCandidates"]
+        ))
+        self.assertEqual(
+            [record["candidateId"] for record in inventory["orphanedOptiscaler"]],
+            [orphan_record["candidateId"]],
+        )
+
+    async def test_inventory_survives_unavailable_optiscaler_helper(self):
+        game = self.add_game()
+        (game / "Game.exe").write_bytes(b"")
+        self.backend._get_fsr4_records = AsyncMock(return_value=self.records())
+        self.backend._get_optiscaler_records = AsyncMock(
+            side_effect=CommandError("helper unavailable")
+        )
+
+        inventory = await self.backend.get_fsr4_inventory()
+
+        self.assertTrue(inventory["available"])
+        self.assertEqual(inventory["inventoryState"], "ready")
+        self.assertFalse(inventory["optiscalerAvailable"])
+        self.assertIsNone(inventory["currentOptiscalerRelease"])
+        candidate = inventory["games"][0]["optiscalerCandidates"][0]
+        self.assertEqual(candidate["state"], "unavailable")
+
+    async def test_optiscaler_mutations_rescan_and_use_exact_argv(self):
+        prepare_mutation_backend(self.backend)
+        candidate_path = str(self.root / "game")
+        candidate_id = hashlib.sha256(candidate_path.encode()).hexdigest()
+        self.backend._get_fsr4_records = AsyncMock(return_value=self.records())
+        self.backend._get_optiscaler_records = AsyncMock(
+            return_value=self.optiscaler_records()
+        )
+        self.backend._build_fsr4_inventory = MagicMock(return_value={
+            "games": [{
+                "appKey": "game",
+                "fullyInstalled": True,
+                "installPresent": True,
+                "optiscalerCandidates": [{
+                    "candidateId": candidate_id,
+                    "installPath": candidate_path,
+                    "state": "not-installed",
+                    "discovered": True,
+                    "fsr4Managed": False,
+                }],
+            }],
+            "orphanedOptiscaler": [],
+        })
+        self.backend._optiscaler_tool = AsyncMock(return_value="")
+
+        await self.backend.install_optiscaler(candidate_id, "dxgi.dll")
+
+        self.backend._get_fsr4_records.assert_awaited_once()
+        self.backend._get_optiscaler_records.assert_awaited_once()
+        self.backend._optiscaler_tool.assert_awaited_once_with(
+            "install", candidate_path, "dxgi.dll", candidate_id, timeout=300
+        )
+
+        self.backend._optiscaler_tool.reset_mock()
+        self.backend._build_fsr4_inventory.return_value["games"][0][
+            "optiscalerCandidates"
+        ][0]["state"] = "ready"
+        await self.backend.uninstall_optiscaler(candidate_id)
+        self.backend._optiscaler_tool.assert_awaited_once_with(
+            "uninstall", candidate_path, candidate_id, timeout=120
+        )
+
+    async def test_optiscaler_mutations_reject_invalid_and_stale_candidates(self):
+        prepare_mutation_backend(self.backend)
+        with self.assertRaisesRegex(CommandError, "candidate ID"):
+            await self.backend.install_optiscaler("/tmp/game", "dxgi.dll")
+        with self.assertRaisesRegex(CommandError, "proxy"):
+            await self.backend.install_optiscaler("a" * 64, "not-a-proxy.dll")
+
+        self.backend._get_fsr4_records = AsyncMock(return_value=self.records())
+        self.backend._get_optiscaler_records = AsyncMock(
+            return_value=self.optiscaler_records()
+        )
+        self.backend._build_fsr4_inventory = MagicMock(return_value={
+            "games": [],
+            "orphanedOptiscaler": [],
+        })
+        self.backend._optiscaler_tool = AsyncMock(return_value="")
+        with self.assertRaisesRegex(CommandError, "stale or ambiguous"):
+            await self.backend.uninstall_optiscaler("b" * 64)
+        self.backend._optiscaler_tool.assert_not_awaited()
+
+    async def test_optiscaler_install_rejects_incomplete_undiscovered_and_fsr4(self):
+        prepare_mutation_backend(self.backend)
+        candidate_id = "c" * 64
+        candidate = {
+            "candidateId": candidate_id,
+            "installPath": str(self.root / "game"),
+            "state": "not-installed",
+            "discovered": True,
+            "fsr4Managed": False,
+        }
+        game = {
+            "appKey": "game",
+            "fullyInstalled": False,
+            "installPresent": True,
+            "optiscalerCandidates": [candidate],
+        }
+        self.backend._get_fsr4_records = AsyncMock(return_value=self.records())
+        self.backend._get_optiscaler_records = AsyncMock(
+            return_value=self.optiscaler_records()
+        )
+        self.backend._build_fsr4_inventory = MagicMock(return_value={
+            "games": [game],
+            "orphanedOptiscaler": [],
+        })
+        self.backend._optiscaler_tool = AsyncMock(return_value="")
+
+        with self.assertRaisesRegex(CommandError, "installing or updating"):
+            await self.backend.install_optiscaler(candidate_id, "winmm.dll")
+        game["fullyInstalled"] = True
+        candidate["discovered"] = False
+        with self.assertRaisesRegex(CommandError, "no longer discoverable"):
+            await self.backend.install_optiscaler(candidate_id, "winmm.dll")
+        candidate["discovered"] = True
+        candidate["fsr4Managed"] = True
+        with self.assertRaisesRegex(CommandError, "managed FSR4"):
+            await self.backend.install_optiscaler(candidate_id, "winmm.dll")
+        candidate["state"] = "ready"
+        with self.assertRaisesRegex(CommandError, "managed FSR4"):
+            await self.backend.uninstall_optiscaler(candidate_id)
+        self.backend._optiscaler_tool.assert_not_awaited()
 
 
 class BackendMutationTests(unittest.IsolatedAsyncioTestCase):
@@ -2353,6 +2747,8 @@ class DeckyRuntimeTests(unittest.TestCase):
             )
 
             payload_sources = {
+                Path("bc250-fsr4.sh"): repository / "bc250-fsr4.sh",
+                Path("bc250-optiscaler.sh"): repository / "bc250-optiscaler.sh",
                 Path("bc250-power.sh"): repository / "bc250-power.sh",
                 Path("bc250-storage.sh"): repository / "bc250-storage.sh",
                 Path("bc250-update-persistence.sh"): repository

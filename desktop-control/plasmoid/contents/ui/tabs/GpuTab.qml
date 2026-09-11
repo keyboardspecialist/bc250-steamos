@@ -10,7 +10,11 @@ ColumnLayout {
     readonly property var snapshot: backend.snapshot
     readonly property var gpu: snapshot.gpu
     readonly property var mesh: backend.meshStatus || ({})
-    readonly property var fsr4: backend.fsr4Inventory || ({ games: [], orphanedTargets: [], errors: [] })
+    readonly property var fsr4: backend.fsr4Inventory || ({
+        games: [], orphanedTargets: [], orphanedOptiscaler: [], errors: []
+    })
+    readonly property var optiscalerProxies: ["winmm.dll", "dxgi.dll", "d3d12.dll",
+        "dbghelp.dll", "version.dll", "wininet.dll", "winhttp.dll"]
     property string fsr4Search: ""
     property string mode: gpu.mode
     property int minimum: gpu.minimum || 0
@@ -108,7 +112,7 @@ ColumnLayout {
     }
 
     Components.Section {
-        title: "FSR4 RC8 Game Manager"
+        title: "FSR4 and OptiScaler Game Manager"
         QQC2.TextField {
             Layout.fillWidth: true
             placeholderText: "Search installed Steam games or app ID"
@@ -121,6 +125,14 @@ ColumnLayout {
                 : (root.fsr4.games ? root.fsr4.games.length : 0) + " installed games | "
                     + (root.fsr4.currentRelease || "helper unavailable")
             color: Kirigami.Theme.disabledTextColor
+        }
+        QQC2.Label {
+            Layout.fillWidth: true
+            visible: Boolean(root.backend.fsr4Inventory)
+            text: "OptiScaler: " + (root.fsr4.currentOptiscalerRelease || "helper unavailable")
+                + " | select the directory containing the game executable"
+            color: Kirigami.Theme.disabledTextColor
+            wrapMode: Text.Wrap
         }
         Components.ActionButton {
             text: "Refresh game list"
@@ -137,6 +149,18 @@ ColumnLayout {
                 : root.fsr4.errors && root.fsr4.errors.length > 0
                     ? root.fsr4.errors[0] : "The FSR4 helper is unavailable."
         }
+        Kirigami.InlineMessage {
+            Layout.fillWidth: true
+            visible: root.backend.fsr4Inventory && !root.fsr4.optiscalerAvailable
+            type: Kirigami.MessageType.Warning
+            text: "The OptiScaler helper is unavailable. Reinstall or update the toolkit before managing OptiScaler."
+        }
+        Kirigami.InlineMessage {
+            Layout.fillWidth: true
+            visible: root.backend.fsr4Inventory && root.fsr4.optiscalerAvailable
+            type: Kirigami.MessageType.Warning
+            text: "Do not use OptiScaler with online or anti-cheat games; injected DLLs may trigger bans."
+        }
         Repeater {
             model: root.visibleFsr4Games()
             ColumnLayout {
@@ -144,6 +168,51 @@ ColumnLayout {
                 required property var modelData
                 Layout.fillWidth: true
                 spacing: Kirigami.Units.smallSpacing
+                readonly property var optiscalerCandidates: modelData.optiscalerCandidates || []
+                property int selectedOptiscalerIndex: preferredOptiscalerIndex()
+                readonly property var selectedOptiscaler: optiscalerCandidates.length > selectedOptiscalerIndex
+                    ? optiscalerCandidates[selectedOptiscalerIndex] : null
+                property string selectedProxy: "winmm.dll"
+                readonly property string optiscalerState: selectedOptiscaler
+                    ? String(selectedOptiscaler.state || "unknown") : "unknown"
+                readonly property bool optiscalerManaged: ["ready", "upgrade-required", "repair-required", "restorable", "missing"].indexOf(optiscalerState) >= 0
+                readonly property bool optiscalerIntegrityBlocked: optiscalerState === "modified" || optiscalerState === "invalid"
+                readonly property bool gameReady: modelData.fullyInstalled && modelData.installPresent
+
+                function preferredOptiscalerIndex() {
+                    for (var index = 0; index < optiscalerCandidates.length; ++index) {
+                        var state = String(optiscalerCandidates[index].state || "");
+                        if (state !== "not-installed" && state !== "unavailable")
+                            return index;
+                    }
+                    return 0;
+                }
+
+                onSelectedOptiscalerChanged: selectedProxy = selectedOptiscaler && selectedOptiscaler.proxy
+                    ? String(selectedOptiscaler.proxy) : "winmm.dll"
+
+                function confirmOptiscaler(installing) {
+                    var candidate = selectedOptiscaler;
+                    if (!candidate)
+                        return;
+                    var candidateId = String(candidate.candidateId);
+                    var proxy = selectedProxy;
+                    var updating = optiscalerState === "upgrade-required" || optiscalerState === "restorable";
+                    var repairing = optiscalerState === "repair-required";
+                    confirmation.ask(
+                        installing ? (repairing ? "Repair OptiScaler for this game?"
+                            : updating ? "Update OptiScaler for this game?" : "Install OptiScaler for this game?")
+                            : "Restore the pre-OptiScaler game files?",
+                        "Do not use injected DLLs with online or anti-cheat games; they may trigger bans. Close the game before continuing.",
+                        true,
+                        function() {
+                            if (installing)
+                                root.backend.installOptiscaler(candidateId, proxy);
+                            else
+                                root.backend.uninstallOptiscaler(candidateId);
+                        });
+                }
+
                 QQC2.Label {
                     Layout.fillWidth: true
                     text: gameDelegate.modelData.name
@@ -159,6 +228,111 @@ ColumnLayout {
                         : "Install unavailable"
                     color: Kirigami.Theme.disabledTextColor
                     wrapMode: Text.Wrap
+                }
+                ColumnLayout {
+                    Layout.fillWidth: true
+                    visible: gameDelegate.optiscalerCandidates.length > 0
+                    spacing: Kirigami.Units.smallSpacing
+
+                    QQC2.Label {
+                        text: "OptiScaler"
+                        font.bold: true
+                    }
+                    QQC2.Label {
+                        text: "Executable directory"
+                        color: Kirigami.Theme.disabledTextColor
+                    }
+                    QQC2.ComboBox {
+                        Layout.fillWidth: true
+                        model: gameDelegate.optiscalerCandidates
+                        textRole: "relativePath"
+                        currentIndex: gameDelegate.selectedOptiscalerIndex
+                        enabled: !root.backend.busy && count > 0
+                        onActivated: gameDelegate.selectedOptiscalerIndex = currentIndex
+                    }
+                    QQC2.Label {
+                        Layout.fillWidth: true
+                        text: gameDelegate.selectedOptiscaler
+                            ? "Executables: " + (gameDelegate.selectedOptiscaler.executables || []).join(", ")
+                            : "No executable selected"
+                        color: Kirigami.Theme.disabledTextColor
+                        wrapMode: Text.WrapAnywhere
+                    }
+                    QQC2.Label {
+                        text: "Proxy DLL"
+                        color: Kirigami.Theme.disabledTextColor
+                    }
+                    QQC2.ComboBox {
+                        Layout.fillWidth: true
+                        model: root.optiscalerProxies
+                        currentIndex: Math.max(0, root.optiscalerProxies.indexOf(gameDelegate.selectedProxy))
+                        enabled: !root.backend.busy && Boolean(gameDelegate.selectedOptiscaler)
+                            && !gameDelegate.optiscalerManaged
+                        onActivated: gameDelegate.selectedProxy = String(currentText)
+                    }
+                    QQC2.Label {
+                        Layout.fillWidth: true
+                        text: gameDelegate.selectedOptiscaler
+                            ? (gameDelegate.selectedOptiscaler.relativePath || gameDelegate.selectedOptiscaler.installPath || "Unknown directory")
+                                + " | " + gameDelegate.optiscalerState
+                                + (gameDelegate.selectedOptiscaler.release ? " | " + gameDelegate.selectedOptiscaler.release : "")
+                                + (gameDelegate.selectedOptiscaler.proxy ? " | " + gameDelegate.selectedOptiscaler.proxy : "")
+                                + (gameDelegate.selectedOptiscaler.fsr4Managed ? " | FSR4 managed" : " | FSR4 not managed")
+                            : "No OptiScaler candidate selected"
+                        color: gameDelegate.optiscalerIntegrityBlocked
+                            ? Kirigami.Theme.negativeTextColor : Kirigami.Theme.disabledTextColor
+                        wrapMode: Text.WrapAnywhere
+                    }
+                    QQC2.TextArea {
+                        Layout.fillWidth: true
+                        visible: gameDelegate.selectedOptiscaler && Boolean(gameDelegate.selectedOptiscaler.launchOption)
+                        readOnly: true
+                        text: visible ? "Steam launch option:\n" + gameDelegate.selectedOptiscaler.launchOption : ""
+                        wrapMode: TextEdit.WrapAnywhere
+                        background: null
+                    }
+                    RowLayout {
+                        Layout.fillWidth: true
+                        Components.ActionButton {
+                            visible: !gameDelegate.optiscalerManaged || gameDelegate.optiscalerState === "upgrade-required"
+                                || gameDelegate.optiscalerState === "repair-required"
+                                || (gameDelegate.optiscalerState === "restorable" && gameDelegate.selectedOptiscaler.currentRelease)
+                            text: gameDelegate.optiscalerState === "restorable" ? "Finish OptiScaler install"
+                                : gameDelegate.optiscalerState === "repair-required" ? "Repair OptiScaler files"
+                                : gameDelegate.optiscalerState === "upgrade-required" ? "Update OptiScaler" : "Install OptiScaler"
+                            enabled: !root.backend.busy && root.fsr4.optiscalerAvailable
+                                && gameDelegate.gameReady && Boolean(gameDelegate.selectedOptiscaler)
+                                && gameDelegate.selectedOptiscaler.discovered
+                                && !gameDelegate.selectedOptiscaler.fsr4Managed
+                                && !gameDelegate.optiscalerIntegrityBlocked
+                                && (["not-installed", "upgrade-required"].indexOf(gameDelegate.optiscalerState) >= 0
+                                    || gameDelegate.optiscalerState === "repair-required"
+                                    || (gameDelegate.optiscalerState === "restorable" && gameDelegate.selectedOptiscaler.currentRelease))
+                            disabledReason: root.backend.busy ? root.backend.busyLabel
+                                : !root.fsr4.optiscalerAvailable ? "The OptiScaler helper is unavailable."
+                                : !gameDelegate.gameReady ? "Finish the Steam install or update first."
+                                : !gameDelegate.selectedOptiscaler || !gameDelegate.selectedOptiscaler.discovered
+                                    ? "The executable directory was not found during the latest scan."
+                                : gameDelegate.selectedOptiscaler.fsr4Managed
+                                    ? "Restore the managed FSR4 DLL in this directory first."
+                                : gameDelegate.optiscalerIntegrityBlocked ? "Resolve the install integrity warning manually."
+                                : "Refresh the game list before retrying."
+                            onClicked: gameDelegate.confirmOptiscaler(true)
+                        }
+                        Components.ActionButton {
+                            visible: gameDelegate.optiscalerManaged
+                            text: gameDelegate.optiscalerState === "restorable" ? "Undo interrupted install" : "Uninstall OptiScaler"
+                            enabled: !root.backend.busy && gameDelegate.gameReady
+                                && !gameDelegate.selectedOptiscaler.fsr4Managed
+                                && !gameDelegate.optiscalerIntegrityBlocked
+                            disabledReason: root.backend.busy ? root.backend.busyLabel
+                                : !gameDelegate.gameReady ? "Finish the Steam install or update first."
+                                : gameDelegate.selectedOptiscaler.fsr4Managed
+                                    ? "Restore the managed FSR4 DLL in this directory first."
+                                : gameDelegate.optiscalerIntegrityBlocked ? "Resolve the install integrity warning manually." : ""
+                            onClicked: gameDelegate.confirmOptiscaler(false)
+                        }
+                    }
                 }
                 Repeater {
                     model: gameDelegate.modelData.targets || []
@@ -271,6 +445,42 @@ ColumnLayout {
                         confirmation.ask("Restore the original game DLL?",
                             "Close the game first. The toolkit will validate this recorded target and restore its exact original bytes.",
                             true, function() { root.backend.setFsr4Dll(targetId, false); });
+                    }
+                }
+            }
+        }
+        Repeater {
+            model: root.fsr4.orphanedOptiscaler || []
+            ColumnLayout {
+                id: orphanedOptiscalerDelegate
+                required property var modelData
+                Layout.fillWidth: true
+                readonly property bool integrityBlocked: modelData.state === "modified" || modelData.state === "invalid"
+                QQC2.Label {
+                    Layout.fillWidth: true
+                    text: "Unassociated OptiScaler rollback | "
+                        + (orphanedOptiscalerDelegate.modelData.installPath || "Invalid rollback record")
+                        + " | " + orphanedOptiscalerDelegate.modelData.state
+                        + (orphanedOptiscalerDelegate.modelData.release
+                            ? " | " + orphanedOptiscalerDelegate.modelData.release : "")
+                    color: orphanedOptiscalerDelegate.integrityBlocked
+                        ? Kirigami.Theme.negativeTextColor : Kirigami.Theme.disabledTextColor
+                    wrapMode: Text.WrapAnywhere
+                }
+                Components.ActionButton {
+                    text: "Restore pre-OptiScaler files"
+                    enabled: !root.backend.busy && !orphanedOptiscalerDelegate.integrityBlocked
+                        && !orphanedOptiscalerDelegate.modelData.fsr4Managed
+                    disabledReason: root.backend.busy ? root.backend.busyLabel
+                        : orphanedOptiscalerDelegate.modelData.fsr4Managed
+                            ? "Restore the managed FSR4 DLL in this directory first."
+                        : orphanedOptiscalerDelegate.integrityBlocked
+                            ? "Resolve the rollback integrity warning manually." : ""
+                    onClicked: {
+                        var candidateId = String(orphanedOptiscalerDelegate.modelData.candidateId);
+                        confirmation.ask("Restore the pre-OptiScaler game files?",
+                            "Do not use injected DLLs with online or anti-cheat games; they may trigger bans. Close the game before continuing.",
+                            true, function() { root.backend.uninstallOptiscaler(candidateId); });
                     }
                 }
             }

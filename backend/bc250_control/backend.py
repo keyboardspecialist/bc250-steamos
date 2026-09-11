@@ -36,6 +36,17 @@ GPU_CONFIG_PATH = Path("/etc/cyan-skillfish-governor-smu/config.toml")
 GPU_STATE_PATH = Path("/var/lib/bc250-control/governor/freq-state")
 CPU_HELPER_PATH = Path("/var/lib/bc250-control/helper/bc250-power.sh")
 DESKTOP_HELPER_PATH = Path("/var/lib/bc250-control/desktop/bc250-power.sh")
+OPTISCALER_DESKTOP_HELPER_PATH = Path(
+    "/var/lib/bc250-control/desktop/bc250-optiscaler.sh"
+)
+OPTISCALER_DECKY_HELPER_PATH = Path(
+    "/var/lib/bc250-control/helper/bc250-optiscaler.sh"
+)
+OPTISCALER_DECKY_MANIFEST_PATH = Path(
+    "/var/lib/bc250-control/helper/.decky-helper-manifest"
+)
+FSR4_DESKTOP_HELPER_PATH = Path("/var/lib/bc250-control/desktop/bc250-fsr4.sh")
+FSR4_DECKY_HELPER_PATH = Path("/var/lib/bc250-control/helper/bc250-fsr4.sh")
 HDMI_AUDIO_HELPER_PATH = Path(
     "/var/lib/bc250-control/helper/hdmi-ac3/hdmi-ac3.sh"
 )
@@ -398,6 +409,48 @@ class ToolkitBackend:
     async def _user_tool(self, name: str, *args: str, timeout: float = 30) -> str:
         argv = [BASH, str(self._user_script(name)), *args]
         _, out, _ = await self._user_exec(argv, timeout=timeout)
+        return out
+
+    def _optiscaler_helper_path(self) -> Optional[Path]:
+        if self._trusted_root_file(OPTISCALER_DESKTOP_HELPER_PATH):
+            return OPTISCALER_DESKTOP_HELPER_PATH
+        if self._trusted_root_file(
+            OPTISCALER_DECKY_HELPER_PATH
+        ) and self._trusted_root_file(OPTISCALER_DECKY_MANIFEST_PATH):
+            return OPTISCALER_DECKY_HELPER_PATH
+        source = self.toolkit / "bc250-optiscaler.sh"
+        return source if self._toolkit_file(source) else None
+
+    async def _optiscaler_tool(self, *args: str, timeout: float = 30) -> str:
+        helper = self._optiscaler_helper_path()
+        if helper is None:
+            raise CommandError(
+                "The OptiScaler helper is missing or unsafe; update the toolkit checkout."
+            )
+        _, out, _ = await self._user_exec(
+            [BASH, str(helper), *args], timeout=timeout
+        )
+        return out
+
+    def _fsr4_helper_path(self) -> Optional[Path]:
+        if self._trusted_root_file(FSR4_DESKTOP_HELPER_PATH):
+            return FSR4_DESKTOP_HELPER_PATH
+        if self._trusted_root_file(
+            FSR4_DECKY_HELPER_PATH
+        ) and self._trusted_root_file(OPTISCALER_DECKY_MANIFEST_PATH):
+            return FSR4_DECKY_HELPER_PATH
+        source = self.toolkit / "bc250-fsr4.sh"
+        return source if self._toolkit_file(source) else None
+
+    async def _fsr4_tool(self, *args: str, timeout: float = 30) -> str:
+        helper = self._fsr4_helper_path()
+        if helper is None:
+            raise CommandError(
+                "The FSR4 DLL helper is missing or unsafe; update the toolkit checkout."
+            )
+        _, out, _ = await self._user_exec(
+            [BASH, str(helper), *args], timeout=timeout
+        )
         return out
 
     @staticmethod
@@ -2584,9 +2637,7 @@ class ToolkitBackend:
                 return await self._get_snapshot()
 
     async def _get_fsr4_records(self) -> dict[str, Any]:
-        if not self._user_script_available("bc250-fsr4.sh"):
-            raise CommandError("The FSR4 DLL helper is unavailable. Update the toolkit checkout.")
-        output = await self._user_tool("bc250-fsr4.sh", "records-json", timeout=30)
+        output = await self._fsr4_tool("records-json", timeout=30)
         try:
             payload = json.loads(output)
         except (TypeError, ValueError) as error:
@@ -2603,7 +2654,9 @@ class ToolkitBackend:
             or re.fullmatch(r"v[0-9][0-9A-Za-z._-]*", current_release) is None
             or not isinstance(current_dll_sha, str)
             or re.fullmatch(r"[0-9a-f]{64}", current_dll_sha) is None
-            or state_value not in {"ready", "not-installed", "invalid"}
+            or state_value not in {
+                "ready", "upgrade-required", "not-installed", "invalid"
+            }
             or type(invalid_count) is not int
             or not 0 <= invalid_count <= 4097
             or not isinstance(raw_records, list)
@@ -2675,6 +2728,160 @@ class ToolkitBackend:
             "records": records,
         }
 
+    async def _get_optiscaler_records(self) -> dict[str, Any]:
+        output = await self._optiscaler_tool("records-json", timeout=30)
+        try:
+            payload = json.loads(output)
+        except (TypeError, ValueError) as error:
+            raise CommandError("OptiScaler status returned invalid JSON.") from error
+        if (
+            not isinstance(payload, dict)
+            or type(payload.get("schemaVersion")) is not int
+            or payload.get("schemaVersion") != 1
+        ):
+            raise CommandError("OptiScaler status returned an unsupported schema.")
+        current_release = payload.get("currentRelease")
+        state_value = payload.get("state")
+        invalid_count = payload.get("invalidRecordCount")
+        raw_records = payload.get("records")
+        if (
+            not isinstance(current_release, str)
+            or re.fullmatch(r"v[0-9][0-9A-Za-z._-]*", current_release) is None
+            or state_value
+            not in {
+                "ready", "upgrade-required", "repair-required", "restorable",
+                "not-installed", "invalid"
+            }
+            or type(invalid_count) is not int
+            or not 0 <= invalid_count <= 4097
+            or not isinstance(raw_records, list)
+            or len(raw_records) > 4097
+        ):
+            raise CommandError("OptiScaler status returned invalid data.")
+
+        valid_proxies = {
+            "dxgi.dll",
+            "winmm.dll",
+            "version.dll",
+            "dbghelp.dll",
+            "d3d12.dll",
+            "wininet.dll",
+            "winhttp.dll",
+        }
+        valid_states = {
+            "ready",
+            "upgrade-required",
+            "repair-required",
+            "restorable",
+            "missing",
+            "modified",
+            "invalid",
+        }
+        records = []
+        candidate_ids = set()
+        install_paths = set()
+        for raw in raw_records:
+            if not isinstance(raw, dict):
+                raise CommandError("OptiScaler status returned an invalid record.")
+            candidate_id = raw.get("candidateId")
+            install_path = raw.get("installPath")
+            release = raw.get("release")
+            proxy = raw.get("proxy")
+            record_state = raw.get("state")
+            current = raw.get("currentRelease")
+            launch_option = raw.get("launchOption")
+            invalid_record = record_state == "invalid"
+            valid_identity = (
+                isinstance(candidate_id, str)
+                and re.fullmatch(r"[0-9a-f]{64}", candidate_id) is not None
+                and candidate_id not in candidate_ids
+            )
+            valid_install = (
+                isinstance(install_path, str)
+                and install_path.startswith("/")
+                and install_path.isprintable()
+                and len(os.fsencode(install_path)) <= 4096
+                and candidate_id
+                == hashlib.sha256(os.fsencode(install_path)).hexdigest()
+                and install_path not in install_paths
+            )
+            if (
+                not valid_identity
+                or record_state not in valid_states
+                or type(current) is not bool
+                or not isinstance(launch_option, str)
+                or not launch_option.isprintable()
+                or len(launch_option) > 8192
+                or (
+                    invalid_record
+                    and (
+                        install_path is not None
+                        or release is not None
+                        or proxy is not None
+                        or current
+                        or launch_option
+                    )
+                )
+                or (
+                    not invalid_record
+                    and (
+                        not valid_install
+                        or not isinstance(release, str)
+                        or re.fullmatch(r"v[0-9][0-9A-Za-z._-]*", release) is None
+                        or proxy not in valid_proxies
+                    )
+                )
+            ):
+                raise CommandError("OptiScaler status returned an invalid record.")
+            candidate_ids.add(candidate_id)
+            if install_path is not None:
+                install_paths.add(install_path)
+            records.append({
+                "candidateId": candidate_id,
+                "installPath": install_path,
+                "release": release,
+                "proxy": proxy,
+                "state": record_state,
+                "currentRelease": current,
+                "launchOption": launch_option,
+            })
+
+        if any(
+            (record["state"] == "ready" and not record["currentRelease"])
+            or (
+                record["state"] == "upgrade-required"
+                and record["currentRelease"]
+            )
+            for record in records
+        ):
+            raise CommandError("OptiScaler status is internally inconsistent.")
+        if not records:
+            expected_state = "not-installed"
+        elif invalid_count or any(
+            record["state"] in {"invalid", "missing", "modified"}
+            for record in records
+        ):
+            expected_state = "invalid"
+        elif any(record["state"] == "restorable" for record in records):
+            expected_state = "restorable"
+        elif any(record["state"] == "upgrade-required" for record in records):
+            expected_state = "upgrade-required"
+        elif any(record["state"] == "repair-required" for record in records):
+            expected_state = "repair-required"
+        else:
+            expected_state = "ready"
+        if (
+            invalid_count != sum(record["state"] == "invalid" for record in records)
+            or state_value != expected_state
+        ):
+            raise CommandError("OptiScaler status is internally inconsistent.")
+        return {
+            "currentRelease": current_release,
+            "state": state_value,
+            "invalidRecordCount": invalid_count,
+            "records": records,
+        }
+
     def _steam_roots(self) -> list[Path]:
         candidates = [self._steam_root_override] if self._steam_root_override else [
             self.user_home / ".local/share/Steam",
@@ -2734,6 +2941,9 @@ class ToolkitBackend:
         records_by_path: dict[str, dict[str, Any]],
         entry_budget: Optional[list[int]] = None,
         target_budget: Optional[list[int]] = None,
+        optiscaler_candidates: Optional[list[dict[str, Any]]] = None,
+        optiscaler_available: bool = False,
+        optiscaler_budget: Optional[list[int]] = None,
     ) -> tuple[list[dict[str, Any]], str]:
         if (
             not install_path.is_dir()
@@ -2747,6 +2957,7 @@ class ToolkitBackend:
         target_budget = target_budget if target_budget is not None else [32]
         visited = 0
         targets = []
+        executable_directories = set()
         scan_state = "complete"
         while stack:
             directory, depth = stack.pop()
@@ -2758,6 +2969,9 @@ class ToolkitBackend:
             except OSError:
                 scan_state = "partial"
                 continue
+            executable_names = []
+            has_executable = False
+            executable_name_limit_reached = False
             with entries:
                 for entry in entries:
                     if visited >= 20000 or entry_budget[0] <= 0:
@@ -2775,10 +2989,19 @@ class ToolkitBackend:
                             else:
                                 scan_state = "truncated"
                             continue
-                        if (
-                            not entry.is_file(follow_symlinks=False)
-                            or entry.name.casefold() != "amd_fidelityfx_upscaler_dx12.dll"
-                        ):
+                        if not entry.is_file(follow_symlinks=False):
+                            continue
+                        if entry.name.casefold().endswith(".exe"):
+                            has_executable = True
+                            if (
+                                entry.name.isprintable()
+                                and len(os.fsencode(entry.name)) <= 255
+                            ):
+                                if len(executable_names) < 64:
+                                    executable_names.append(entry.name)
+                                else:
+                                    executable_name_limit_reached = True
+                        if entry.name.casefold() != "amd_fidelityfx_upscaler_dx12.dll":
                             continue
                         target = Path(entry.path).resolve(strict=True)
                     except (OSError, RuntimeError):
@@ -2803,10 +3026,53 @@ class ToolkitBackend:
                         "release": record["release"] if record else None,
                         "discovered": True,
                     })
+            if executable_name_limit_reached:
+                scan_state = "truncated"
+            if has_executable and optiscaler_candidates is not None:
+                try:
+                    candidate_path = directory.resolve(strict=True)
+                except (OSError, RuntimeError):
+                    scan_state = "partial"
+                    continue
+                candidate_text = str(candidate_path)
+                if candidate_text in executable_directories:
+                    continue
+                executable_directories.add(candidate_text)
+                if (
+                    len(optiscaler_candidates) >= 32
+                    or (optiscaler_budget is not None and optiscaler_budget[0] <= 0)
+                ):
+                    scan_state = "truncated"
+                    continue
+                if optiscaler_budget is not None:
+                    optiscaler_budget[0] -= 1
+                optiscaler_candidates.append({
+                    "candidateId": hashlib.sha256(
+                        os.fsencode(candidate_text)
+                    ).hexdigest(),
+                    "installPath": candidate_text,
+                    "relativePath": candidate_path.relative_to(root).as_posix(),
+                    "executables": sorted(executable_names, key=str.casefold),
+                    "discovered": True,
+                    "state": "not-installed" if optiscaler_available else "unavailable",
+                    "release": None,
+                    "currentRelease": False,
+                    "proxy": None,
+                    "launchOption": "",
+                    "fsr4Managed": False,
+                })
         targets.sort(key=lambda item: item["relativePath"].casefold())
+        if optiscaler_candidates is not None:
+            optiscaler_candidates.sort(
+                key=lambda item: item["relativePath"].casefold()
+            )
         return targets, scan_state
 
-    def _build_fsr4_inventory(self, record_status: dict[str, Any]) -> dict[str, Any]:
+    def _build_fsr4_inventory(
+        self,
+        record_status: dict[str, Any],
+        optiscaler_status: Optional[dict[str, Any]] = None,
+    ) -> dict[str, Any]:
         records = record_status["records"]
         records_by_path = {
             record["targetPath"]: record
@@ -2868,6 +3134,7 @@ class ToolkitBackend:
         manifest_byte_budget = 64 * 1024 * 1024
         scan_entry_budget = [200000]
         scan_target_budget = [4096]
+        optiscaler_budget = [4096]
         manifest_limit_reached = False
         for library in libraries:
             steamapps = library / "steamapps"
@@ -2952,11 +3219,15 @@ class ToolkitBackend:
                 if not self._path_below(install_path, common):
                     errors.append("A Steam install path escaped its library.")
                     continue
+                optiscaler_candidates: list[dict[str, Any]] = []
                 targets, scan_state = self._scan_fsr4_candidates(
                     install_path,
                     records_by_path,
                     scan_entry_budget,
                     scan_target_budget,
+                    optiscaler_candidates,
+                    optiscaler_status is not None,
+                    optiscaler_budget,
                 )
                 if scan_state == "truncated" and "The Steam game scan limit was reached." not in errors:
                     errors.append("The Steam game scan limit was reached.")
@@ -2970,6 +3241,7 @@ class ToolkitBackend:
                     "installPresent": install_path.is_dir() and not install_path.is_symlink(),
                     "scanState": scan_state,
                     "targets": targets,
+                    "optiscalerCandidates": optiscaler_candidates,
                 })
                 if len(apps) >= 2048:
                     errors.append("The Steam app inventory limit was reached.")
@@ -2984,6 +3256,61 @@ class ToolkitBackend:
         apps.sort(
             key=lambda item: len(Path(item["installPath"]).parts), reverse=True
         )
+
+        claimed_candidates = set()
+        for app in apps:
+            unique_candidates = []
+            for candidate in app["optiscalerCandidates"]:
+                if candidate["installPath"] in claimed_candidates:
+                    continue
+                claimed_candidates.add(candidate["installPath"])
+                unique_candidates.append(candidate)
+            app["optiscalerCandidates"] = unique_candidates
+
+        optiscaler_records = (
+            optiscaler_status["records"] if optiscaler_status is not None else []
+        )
+        associated_optiscaler = set()
+        for app in apps:
+            install_path = Path(app["installPath"])
+            candidates_by_path = {
+                candidate["installPath"]: candidate
+                for candidate in app["optiscalerCandidates"]
+            }
+            for record in optiscaler_records:
+                if record["candidateId"] in associated_optiscaler:
+                    continue
+                if record["installPath"] is None:
+                    continue
+                candidate_path = Path(record["installPath"])
+                if not self._path_below(candidate_path, install_path):
+                    continue
+                candidate = candidates_by_path.get(record["installPath"])
+                if candidate is None:
+                    candidate = {
+                        "candidateId": record["candidateId"],
+                        "installPath": record["installPath"],
+                        "relativePath": candidate_path.relative_to(
+                            install_path
+                        ).as_posix(),
+                        "executables": [],
+                        "discovered": False,
+                        "fsr4Managed": False,
+                    }
+                    app["optiscalerCandidates"].append(candidate)
+                    candidates_by_path[record["installPath"]] = candidate
+                candidate.update({
+                    "state": record["state"],
+                    "release": record["release"],
+                    "currentRelease": record["currentRelease"],
+                    "proxy": record["proxy"],
+                    "launchOption": record["launchOption"],
+                })
+                associated_optiscaler.add(record["candidateId"])
+            app["optiscalerCandidates"].sort(
+                key=lambda item: item["relativePath"].casefold()
+            )
+
         for app in apps:
             install_path = Path(app["installPath"])
             known_paths = {target["targetPath"] for target in app["targets"]}
@@ -3011,11 +3338,51 @@ class ToolkitBackend:
                     associated.add(target["targetId"])
             app["targets"].sort(key=lambda item: item["relativePath"].casefold())
 
+        fsr4_managed_targets = [
+            Path(record["targetPath"])
+            for record in records
+            if record["targetPath"] is not None
+        ]
+        for app in apps:
+            for candidate in app["optiscalerCandidates"]:
+                candidate_path = Path(candidate["installPath"])
+                candidate["fsr4Managed"] = any(
+                    self._path_below(target, candidate_path)
+                    for target in fsr4_managed_targets
+                )
+                if candidate["proxy"] and candidate["fsr4Managed"]:
+                    proxy = candidate["proxy"][:-4]
+                    candidate["launchOption"] = (
+                        "PROTON_FSR4_UPGRADE=0 PROTON_USE_OPTISCALER=0 "
+                        f'WINEDLLOVERRIDES="{proxy}=n,b;amdxcffx64=" %command%'
+                    )
+
         orphaned = [
             {**record, "discovered": False}
             for record in records
             if record["targetId"] not in associated
         ]
+        orphaned_optiscaler = [
+            {
+                **record,
+                "executables": [],
+                "discovered": False,
+                "fsr4Managed": any(
+                    record["installPath"] is not None
+                    and self._path_below(target, Path(record["installPath"]))
+                    for target in fsr4_managed_targets
+                ),
+            }
+            for record in optiscaler_records
+            if record["candidateId"] not in associated_optiscaler
+        ]
+        for candidate in orphaned_optiscaler:
+            if candidate["proxy"] and candidate["fsr4Managed"]:
+                proxy = candidate["proxy"][:-4]
+                candidate["launchOption"] = (
+                    "PROTON_FSR4_UPGRADE=0 PROTON_USE_OPTISCALER=0 "
+                    f'WINEDLLOVERRIDES="{proxy}=n,b;amdxcffx64=" %command%'
+                )
         apps.sort(key=lambda item: (item["name"].casefold(), int(item["appId"]), item["appKey"]))
         state_value = "unavailable" if not roots else "partial" if errors else "ready"
         return {
@@ -3023,26 +3390,60 @@ class ToolkitBackend:
             "available": bool(roots),
             "inventoryState": state_value,
             "currentRelease": record_status["currentRelease"],
+            "optiscalerAvailable": optiscaler_status is not None,
+            "currentOptiscalerRelease": (
+                optiscaler_status["currentRelease"]
+                if optiscaler_status is not None
+                else None
+            ),
             "games": apps,
             "orphanedTargets": orphaned,
+            "orphanedOptiscaler": orphaned_optiscaler,
             "errors": errors[:50],
         }
 
     async def get_fsr4_inventory(self) -> dict[str, Any]:
-        try:
-            record_status = await self._get_fsr4_records()
-        except CommandError as error:
+        fsr4_result, optiscaler_result = await asyncio.gather(
+            self._get_fsr4_records(),
+            self._get_optiscaler_records(),
+            return_exceptions=True,
+        )
+        if isinstance(fsr4_result, Exception) and not isinstance(
+            fsr4_result, CommandError
+        ):
+            raise fsr4_result
+        if isinstance(optiscaler_result, Exception) and not isinstance(
+            optiscaler_result, CommandError
+        ):
+            raise optiscaler_result
+        if isinstance(fsr4_result, CommandError):
             return {
                 "schemaVersion": 1,
                 "available": False,
                 "inventoryState": "unavailable",
                 "currentRelease": None,
+                "optiscalerAvailable": not isinstance(
+                    optiscaler_result, CommandError
+                ),
+                "currentOptiscalerRelease": (
+                    optiscaler_result["currentRelease"]
+                    if not isinstance(optiscaler_result, CommandError)
+                    else None
+                ),
                 "games": [],
                 "orphanedTargets": [],
-                "errors": [str(error)],
+                "orphanedOptiscaler": [],
+                "errors": [str(fsr4_result)],
             }
         loop = asyncio.get_running_loop()
-        return await loop.run_in_executor(None, self._build_fsr4_inventory, record_status)
+        optiscaler_status = (
+            None
+            if isinstance(optiscaler_result, CommandError)
+            else optiscaler_result
+        )
+        return await loop.run_in_executor(
+            None, self._build_fsr4_inventory, fsr4_result, optiscaler_status
+        )
 
     async def get_mesh_status(self) -> dict[str, Any]:
         if not self._user_script_available("bc250-mesh-shader.sh"):
@@ -3240,9 +3641,7 @@ class ToolkitBackend:
                 {"available", "ready", "upgrade-required", "restored"},
                 require_discovered=True,
             )
-            await self._user_tool(
-                "bc250-fsr4.sh", "install", target["targetPath"], timeout=300
-            )
+            await self._fsr4_tool("install", target["targetPath"], timeout=300)
             return {"message": "FSR4 RC8 installed for the selected game."}
 
         return await self._mutate(action)
@@ -3254,10 +3653,127 @@ class ToolkitBackend:
             target = await self._resolve_fsr4_target(
                 target_id, {"ready", "upgrade-required", "missing", "restored"}
             )
-            await self._user_tool(
-                "bc250-fsr4.sh", "uninstall", target["targetPath"], timeout=120
-            )
+            await self._fsr4_tool("uninstall", target["targetPath"], timeout=120)
             return {"message": "The original game DLL was restored."}
+
+        return await self._mutate(action)
+
+    @staticmethod
+    def _validate_optiscaler_candidate_id(candidate_id: str) -> None:
+        if (
+            type(candidate_id) is not str
+            or re.fullmatch(r"[0-9a-f]{64}", candidate_id) is None
+        ):
+            raise CommandError("OptiScaler candidate ID is invalid.")
+
+    @staticmethod
+    def _validate_optiscaler_proxy(proxy: str) -> None:
+        if type(proxy) is not str or proxy not in {
+            "dxgi.dll",
+            "winmm.dll",
+            "version.dll",
+            "dbghelp.dll",
+            "d3d12.dll",
+            "wininet.dll",
+            "winhttp.dll",
+        }:
+            raise CommandError("OptiScaler proxy is invalid.")
+
+    async def _resolve_optiscaler_candidate(
+        self,
+        candidate_id: str,
+        allowed_states: set[str],
+        require_discovered: bool = False,
+    ) -> dict[str, Any]:
+        fsr4_records, optiscaler_records = await asyncio.gather(
+            self._get_fsr4_records(), self._get_optiscaler_records()
+        )
+        loop = asyncio.get_running_loop()
+        inventory = await loop.run_in_executor(
+            None,
+            self._build_fsr4_inventory,
+            fsr4_records,
+            optiscaler_records,
+        )
+        matches = []
+        for game in inventory["games"]:
+            matches.extend(
+                (candidate, game)
+                for candidate in game["optiscalerCandidates"]
+                if candidate["candidateId"] == candidate_id
+            )
+        matches.extend(
+            (candidate, None)
+            for candidate in inventory["orphanedOptiscaler"]
+            if candidate["candidateId"] == candidate_id
+        )
+        if len(matches) != 1:
+            raise CommandError(
+                "OptiScaler candidate is stale or ambiguous; refresh the game list."
+            )
+        candidate, game = matches[0]
+        if game is not None and (
+            not game["fullyInstalled"] or not game["installPresent"]
+        ):
+            raise CommandError(
+                "Steam is installing or updating this game; finish the Steam operation first."
+            )
+        if require_discovered and not candidate["discovered"]:
+            raise CommandError(
+                "OptiScaler candidate is no longer discoverable; refresh the game list."
+            )
+        if candidate["state"] not in allowed_states:
+            raise CommandError(
+                f"OptiScaler candidate is {candidate['state']}; refresh it or resolve the integrity warning first."
+            )
+        return candidate
+
+    async def install_optiscaler(
+        self, candidate_id: str, proxy: str
+    ) -> dict[str, str]:
+        self._validate_optiscaler_candidate_id(candidate_id)
+        self._validate_optiscaler_proxy(proxy)
+
+        async def action() -> dict[str, str]:
+            candidate = await self._resolve_optiscaler_candidate(
+                candidate_id,
+                {
+                    "not-installed", "ready", "upgrade-required", "repair-required",
+                    "restorable",
+                },
+                require_discovered=True,
+            )
+            if candidate["fsr4Managed"]:
+                raise CommandError(
+                    "Remove the managed FSR4 DLL from this directory before installing OptiScaler."
+                )
+            if candidate["state"] == "restorable" and not candidate["currentRelease"]:
+                raise CommandError(
+                    "Uninstall the interrupted OptiScaler operation before upgrading it."
+                )
+            await self._optiscaler_tool(
+                "install", candidate["installPath"], proxy, candidate_id, timeout=300
+            )
+            return {"message": "OptiScaler installed for the selected game."}
+
+        return await self._mutate(action)
+
+    async def uninstall_optiscaler(self, candidate_id: str) -> dict[str, str]:
+        self._validate_optiscaler_candidate_id(candidate_id)
+
+        async def action() -> dict[str, str]:
+            candidate = await self._resolve_optiscaler_candidate(
+                candidate_id,
+                {"ready", "upgrade-required", "repair-required", "restorable", "missing"},
+            )
+            if candidate["fsr4Managed"]:
+                raise CommandError(
+                    "Remove the managed FSR4 DLL from this directory before uninstalling OptiScaler."
+                )
+            await self._optiscaler_tool(
+                "uninstall", candidate["installPath"], candidate_id, timeout=120
+            )
+            return {"message": "OptiScaler was removed from the selected game."}
 
         return await self._mutate(action)
 
