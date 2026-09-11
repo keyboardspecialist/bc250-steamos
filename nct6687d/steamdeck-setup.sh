@@ -90,6 +90,15 @@ module_copy_valid() {
     fi
 }
 
+persistent_source_present() {
+    local metadata owner mode
+    [[ -d "$ROOT_SOURCE" && ! -L "$ROOT_SOURCE" ]] || return 1
+    metadata=$(stat -Lc '%u %a' "$ROOT_SOURCE") || return 1
+    read -r owner mode <<< "$metadata"
+    [[ "$owner" == 0 && $((8#$mode & 8#500)) -eq 8#500 \
+        && $((8#$mode & 8#022)) -eq 0 ]]
+}
+
 show_status() {
     local failed=0 state hwmon=- options=- keep_file=/etc/atomic-update.conf.d/bc250-fan.conf
     if ! runtime_artifact_present; then
@@ -127,8 +136,8 @@ show_status() {
     log "load option: $options"
 
     if [[ -f "$SERVICE_UNIT" && ! -L "$SERVICE_UNIT" \
-        && -x "$ROOT_HELPER" && ! -L "$ROOT_HELPER" \
-        && -f "$ROOT_SOURCE/Kbuild" && ! -L "$ROOT_SOURCE/Kbuild" ]] \
+        && -x "$ROOT_HELPER" && ! -L "$ROOT_HELPER" ]] \
+        && persistent_source_present \
         && systemctl is-enabled nct6687-modules.service >/dev/null 2>&1; then
         state=enabled
     else

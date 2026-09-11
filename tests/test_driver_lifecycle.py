@@ -434,6 +434,53 @@ class DriverLifecycleTests(unittest.TestCase):
             helper.index("modprobe -r nct6683"),
         )
 
+    def test_nct6687_status_accepts_root_only_persistent_source(self):
+        source = FAN_INSTALLER.read_text(encoding="utf-8")
+        functions = source[: source.index("usage() {")]
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            persistent_source = root / "source"
+            persistent_source.mkdir(mode=0o000)
+            bindir = root / "bin"
+            bindir.mkdir()
+            stat = bindir / "stat"
+            stat.write_text("#!/bin/sh\nprintf '0 700\\n'\n", encoding="utf-8")
+            stat.chmod(0o755)
+            env = os.environ.copy()
+            env["PATH"] = f"{bindir}:{env['PATH']}"
+
+            result = subprocess.run(
+                [
+                    "bash",
+                    "-c",
+                    functions
+                    + '\nROOT_SOURCE=$1\npersistent_source_present',
+                    "_",
+                    str(persistent_source),
+                ],
+                env=env,
+            )
+
+            self.assertEqual(result.returncode, 0)
+            stat.write_text("#!/bin/sh\nprintf '0 777\\n'\n", encoding="utf-8")
+            invalid = subprocess.run(
+                [
+                    "bash",
+                    "-c",
+                    functions
+                    + '\nROOT_SOURCE=$1\npersistent_source_present',
+                    "_",
+                    str(persistent_source),
+                ],
+                env=env,
+            )
+            self.assertNotEqual(invalid.returncode, 0)
+        status = source[
+            source.index("show_status() {") : source.index("usage() {")
+        ]
+        self.assertIn("persistent_source_present", status)
+        self.assertNotIn('$ROOT_SOURCE/Kbuild', status)
+
     def test_lifecycle_scripts_parse(self):
         subprocess.run(
             [
