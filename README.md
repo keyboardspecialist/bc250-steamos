@@ -31,6 +31,7 @@ Open the unified toolkit menu as the logged-in Deck user:
 | CEC | `./bc250-cec.sh setup` |
 | HDMI Dolby Digital 5.1 (optional) | **Device drivers & connectivity > HDMI audio** or `./hdmi-ac3/hdmi-ac3.sh install` |
 | NCT6687 fan-control driver | `./bc250-toolkit.sh fan-driver` |
+| GDDR6 memory temperature (experimental) | `./bc250-toolkit.sh memory-temperature` |
 | AIC8800 | `sudo bash ./aic8800/steamdeck-setup.sh` |
 | Decky plugin | `bash ./decky-plugin/install.sh` |
 | Plasma desktop control | `bash ./desktop-control/install.sh install` |
@@ -90,6 +91,7 @@ sudo ./bc250-power.sh status
 | [`bc250-audio-fix/`](#amdgpu-driver) | DisplayPort clock, GPU telemetry, and GFX1013 compute repair |
 | [`hdmi-ac3/`](#hdmi-ac-3-surround-encoding-optional) | Real-time Dolby Digital 5.1 encoding over HDMI/DisplayPort |
 | [`bc250-mesh-shader.sh`](#mesa--radv-async-compute-patch-optional-recommended) | Optional, recommended Mesa / RADV async-compute driver enabled globally for the user session |
+| [`bc250-memory-temperature.sh`](#gddr6-memory-temperature-experimental) | Guarded, checksum-pinned live SMU payload for reading all eight GDDR6 chip temperatures |
 | [`nct6687d/`](#nct6687d-fan-control-driver) | Optional NCT6683/6686/6687 hwmon fan tachometer and PWM driver |
 | [`aic8800/`](#wifi-and-bluetooth) | AIC8800 USB WiFi and Bluetooth driver |
 
@@ -122,6 +124,7 @@ Each child requests administrator access only when needed.
 | `./bc250-toolkit.sh radv` | Open the global Mesa / RADV async-compute menu |
 | `./bc250-toolkit.sh audio-output` | Open HDMI AC-3 enable and stereo-revert options |
 | `./bc250-toolkit.sh fan-driver` | Build and install NCT6687 hwmon fan/PWM support for the onboard controller |
+| `./bc250-toolkit.sh memory-temperature` | Open the experimental GDDR6 temperature workflow |
 | `./bc250-toolkit.sh coolercontrol` | Install CoolerControl for fan profiles, curves, and monitoring |
 | `./bc250-toolkit.sh trainer` | Download, verify, and install the latest native BC250 Trainer release |
 | `./bc250-toolkit.sh manage` | Review and remove installed components |
@@ -836,6 +839,49 @@ installation fails. If the legacy FSR4 compilation fails after the async profile
 was installed successfully, that valid prerequisite remains installed. Retry
 legacy setup; invalid intermediate build state falls back to a clean base build.
 
+## GDDR6 Memory Temperature (Experimental)
+
+The optional memory-temperature tool integrates
+[`pan-Rijovich/bc250-memory-temperature`](https://github.com/pan-Rijovich/bc250-memory-temperature)
+at pinned commit `b7e6bffcb5d592fc03edde375b7598ddc79aa846`. It installs a
+176-byte Xtensa payload into live SMU SRAM, redirects Queue 3 / Message 5, and
+reads the JEDEC GDDR6 MR3 temperature response from all eight memory chips.
+This is not a kernel or Mesa patch, does not run at boot, and is reset by a cold
+power cycle.
+
+Open the guided workflow with `./bc250-toolkit.sh memory-temperature`, or use:
+
+```bash
+sudo ./bc250-memory-temperature.sh prepare
+sudo ./bc250-memory-temperature.sh patch --acknowledge-smu-risk
+sudo ./bc250-memory-temperature.sh read
+sudo ./bc250-memory-temperature.sh read --json
+sudo ./bc250-memory-temperature.sh restore --acknowledge-smu-risk
+```
+
+`prepare` downloads the exact upstream Python source, payload source, README,
+MIT license, and prebuilt payload. Every consumed file has a fixed SHA-256 and
+is staged root-owned under `/var/lib/bc250-memory-temperature`. The toolkit does
+not download or redistribute the external Xtensa compiler. Before any live SMU
+operation, the helper requires the Ariel root complex at `00:00.0` and GFX1013
+GPU at `01:00.0`, pauses the GPU governor, and locks the shared PCI `0xB8/0xBC`
+indirect window for the complete transaction.
+
+Patch setup records the original handler and overwritten SRAM bytes, writes and
+reads back the payload before redirecting the handler, and attempts rollback if
+installation fails. Each temperature read re-attests the handler and complete
+payload and rejects malformed, non-duplicated, or implausible MR3 responses.
+Use `restore` before `purge`; a cold power cycle also returns the SMU to firmware
+state, but the recorded backup is deliberately retained until explicitly
+restored.
+
+This payload is documented only for the **ASRock BC-250 P3.0 firmware layout**.
+The toolkit cannot prove the SMU firmware revision from Linux, and upstream's
+firmware-side UMC polling loops have no timeout. An incompatible or wedged
+payload can cause memory corruption, filesystem/data corruption, crashes, an
+unbootable system, or require a cold power cycle. Live writes therefore require
+the exact `--acknowledge-smu-risk` flag and are never automatic.
+
 ## NCT6687D Fan-Control Driver
 
 Install the optional enhanced hwmon driver on systems with a compatible
@@ -975,6 +1021,7 @@ Run the normal component setup commands afterward to regenerate services for the
 | CachyOS BC250 Toolkit | [Repository](https://github.com/redbeard1083/bc250-toolkit) | Design reference for the independently implemented zswap-backed disk profile; upstream code has no declared license |
 | BC-250 CPU Core Unlock | [Linux helper](https://github.com/rw-r-r-0644/bc250-core-unlock) · [EFI source](https://github.com/Hexxeh/bc250-efi-core-unlock) · [EFI headers](https://github.com/yoppeh/efi) | Original SMU method and the optional pre-boot implementation adapted by `bc250-power.sh` |
 | BC-250 Memory Config | [Repository](https://github.com/fanoush/bc250_memcfg) · [VRAM guide](https://elektricm.github.io/amd-bc250-docs/bios/vram/) | CMOS UMA utility fetched by `bc250-ram-split.sh` |
+| BC-250 GDDR6 Memory Temperature | [Repository](https://github.com/pan-Rijovich/bc250-memory-temperature) · [integrated commit](https://github.com/pan-Rijovich/bc250-memory-temperature/commit/b7e6bffcb5d592fc03edde375b7598ddc79aa846) | Live SMU payload and MR3 temperature method by pan-Rijovich and bc250-collective, guarded by `bc250-memory-temperature.sh` |
 | BC-250 GFX1013 Fix | [Repository](https://github.com/DryhoppedIPA/bc250-gfx1013-fix) · [integrated commit](https://github.com/DryhoppedIPA/bc250-gfx1013-fix/commit/d3e6dc062c34d2523db0abe5741d1f5b0dea00d9) | Kernel compute lifecycle repair and pinned alternate RADV build by DryhoppedIPA |
 | OptiScaler | [Repository](https://github.com/optiscaler/OptiScaler) · [release](https://github.com/optiscaler/OptiScaler/releases/tag/v0.9.4) | Checksum-pinned per-game installation with collision backups and guarded rollback |
 | BC-250 FSR4 RC8 | [Repository](https://github.com/daniel-h-0/bc250-fsr4-fork) · [release](https://github.com/daniel-h-0/bc250-fsr4-fork/releases/tag/v4.0.0-rc8) | Integrity-checked portable FSR 4.1.1 INT8 DLL with per-target rollback; V3 retained as a legacy fallback |

@@ -19,6 +19,7 @@ AUDIO_CLEAN_SH="$SCRIPT_DIR/bc250-audio-fix/clean.sh"
 AMDGPU_BOOT_CONFIG_SH="$SCRIPT_DIR/bc250-audio-fix/boot-config.sh"
 HDMI_AC3_SH="$SCRIPT_DIR/hdmi-ac3/hdmi-ac3.sh"
 MESH_SHADER_SH="$SCRIPT_DIR/bc250-mesh-shader.sh"
+MEMORY_TEMP_SH="$SCRIPT_DIR/bc250-memory-temperature.sh"
 DECKY_INSTALL_SH="$SCRIPT_DIR/decky-plugin/install.sh"
 DESKTOP_INSTALL_SH="$SCRIPT_DIR/desktop-control/install.sh"
 TRAINER_RELEASE_INSTALLER="$SCRIPT_DIR/trainer/install-release.py"
@@ -959,6 +960,17 @@ run_menu_action() {
     pause_key
 }
 
+run_confirmed_menu_action() {
+    local prompt="$1" rc=0
+    shift
+    echo
+    confirm_action "$prompt" "$@" || rc=$?
+    if [[ $rc -ne 0 ]]; then
+        printf '%s\n' "${CR}${CB}[bc250-toolkit]${C0} action failed (exit $rc)"
+    fi
+    pause_key
+}
+
 show_guided_setup_overview() {
     echo
     printf '%s\n' "${CB}${CC}BC-250 guided setup${C0}"
@@ -1139,12 +1151,14 @@ cmd_performance_menu() {
             "Install / resume async-compute stack|$(radv_badge)|Automatically install AMDGPU first when needed, then resume Mesa / RADV after reboot."
             "GPU driver & FSR4 options|${CG}[menu]${C0}|Manage global Mesa / RADV, FSR4 RC8 game DLLs, legacy FSR4, or cleanup."
             "GPU / CPU tuning|${CG}[menu]${C0}|Adjust GPU clocks, load response, ramp behavior, and CPU undervolt/overclock."
+            "GDDR6 memory temperature|${CY}[experimental]${C0}|Prepare, apply, read, or restore the P3.0-only live SMU temperature payload."
         )
         menu_select "BC-250 performance tuning" "${items[@]}" || { echo; break; }
         case $MENU_CHOICE in
             0) run_menu_action graphics-setup ;;
             1) run_menu_child radv ;;
             2) run_menu_child power ;;
+            3) cmd_memory_temperature_menu ;;
         esac
     done
 }
@@ -1165,6 +1179,32 @@ cmd_devices_menu() {
             1) run_menu_child cec ;;
             2) run_menu_action fan-driver ;;
             3) run_menu_action wifi ;;
+        esac
+    done
+}
+
+cmd_memory_temperature_menu() {
+    require_terminal
+    require_normal_user
+    require_script "$MEMORY_TEMP_SH"
+    while true; do
+        local items=(
+            "Status|${CD}[read only]${C0}|Verify the pinned source and show whether an original-SMU backup is recorded."
+            "Prepare verified source|${CY}[download]${C0}|Download the pinned upstream payload, source, README, and MIT license with fixed SHA-256 hashes."
+            "Apply live SMU payload|${CR}[high risk]${C0}|Patch this SMU runtime only. Requires ASRock BC-250 P3.0 firmware and explicit acknowledgement."
+            "Read GDDR6 temperatures|${CY}[live read]${C0}|Attest the payload, then read and validate MR3 data from all eight memory chips."
+            "Restore original SMU bytes|${CR}[high risk]${C0}|Restore the recorded handler and overwritten bytes before purging state."
+        )
+        menu_select "BC-250 GDDR6 memory temperature" "${items[@]}" || { echo; break; }
+        case $MENU_CHOICE in
+            0) run_menu_action memory-temperature-status ;;
+            1) run_confirmed_menu_action "Download and verify the pinned memory-temperature source?" \
+                bash "$SELF" memory-temperature-prepare ;;
+            2) run_confirmed_menu_action "Apply the P3.0-only live SMU payload? Memory corruption, data loss, crashes, and a required cold power cycle are possible." \
+                bash "$SELF" memory-temperature-patch ;;
+            3) run_menu_action memory-temperature-read ;;
+            4) run_confirmed_menu_action "Restore the recorded original live SMU handler and bytes?" \
+                bash "$SELF" memory-temperature-restore ;;
         esac
     done
 }
@@ -1236,7 +1276,7 @@ cmd_menu() {
 
 cmd_help() {
     cat << EOF
-Usage: $0 [menu|setup|auto-base-installation|graphics-setup|status|inventory-json|action OPERATION_ID|drivers|unlocks|storage-updates|interfaces|power|ram|swap|compute|cpu-unlock|cec|audio-output|hdmi-ac3-enable|hdmi-ac3-revert|storage|persistence|wifi|fan-driver|amdgpu|amdgpu-clean|scheduler-policy|kfd-runlist|radv|decky|desktop|coolercontrol|trainer|manage|help]
+Usage: $0 [menu|setup|auto-base-installation|graphics-setup|status|inventory-json|action OPERATION_ID|drivers|unlocks|storage-updates|interfaces|power|ram|swap|compute|cpu-unlock|cec|audio-output|hdmi-ac3-enable|hdmi-ac3-revert|storage|persistence|wifi|fan-driver|memory-temperature|amdgpu|amdgpu-clean|scheduler-policy|kfd-runlist|radv|decky|desktop|coolercontrol|trainer|manage|help]
 
 Run without arguments in a terminal to open the unified toolkit menu.
 Run the toolkit as the logged-in Deck user, not with sudo; child tools request
@@ -1266,6 +1306,7 @@ Commands:
   persistence            Open the SteamOS Update Persistence menu
   wifi                   Confirm and run the AIC8800 installer
   fan-driver             Confirm and install NCT6687 hwmon fan/PWM support
+  memory-temperature     Open the experimental GDDR6 temperature tool
   amdgpu                 Confirm and build the AMDGPU kernel fixes
   amdgpu-clean           Confirm and clean the AMDGPU kernel build tree
   scheduler-policy       Advanced: toggle policy only after RADV is installed
@@ -1333,6 +1374,12 @@ case "$command_name" in
     persistence) (($# == 0)) || die "Usage: $0 persistence"; run_script "$PERSISTENCE_SH" menu ;;
     wifi) (($# == 0)) || die "Usage: $0 wifi"; install_wifi ;;
     fan-driver) (($# == 0)) || die "Usage: $0 fan-driver"; install_fan_driver ;;
+    memory-temperature) (($# == 0)) || die "Usage: $0 memory-temperature"; cmd_memory_temperature_menu ;;
+    memory-temperature-status) (($# == 0)) || die "Usage: $0 memory-temperature-status"; run_sudo_script "$MEMORY_TEMP_SH" status ;;
+    memory-temperature-prepare) (($# == 0)) || die "Usage: $0 memory-temperature-prepare"; run_sudo_script "$MEMORY_TEMP_SH" prepare ;;
+    memory-temperature-patch) (($# == 0)) || die "Usage: $0 memory-temperature-patch"; run_sudo_script "$MEMORY_TEMP_SH" patch --acknowledge-smu-risk ;;
+    memory-temperature-read) (($# == 0)) || die "Usage: $0 memory-temperature-read"; run_sudo_script "$MEMORY_TEMP_SH" read ;;
+    memory-temperature-restore) (($# == 0)) || die "Usage: $0 memory-temperature-restore"; run_sudo_script "$MEMORY_TEMP_SH" restore --acknowledge-smu-risk ;;
     amdgpu|audio) (($# == 0)) || die "Usage: $0 amdgpu"; install_audio_fix ;;
     amdgpu-clean) (($# == 0)) || die "Usage: $0 amdgpu-clean"; clean_audio_fix ;;
     scheduler-policy) (($# == 0)) || die "Usage: $0 scheduler-policy"; toggle_scheduler_policy ;;
