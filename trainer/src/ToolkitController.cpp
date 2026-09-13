@@ -52,6 +52,8 @@ struct OperationDefinition {
 // Mutating scripts can be in a firmware or filesystem transaction, so they are
 // intentionally not eligible for asynchronous process-group termination.
 constexpr OperationDefinition Operations[] = {
+    {"auto-base-installation", "Auto Base Toolkit Installation", nullptr, "INSTALL / RESUME",
+     "Install AMDGPU/RADV, the power foundation, and the RAM helper with automatic dependencies. Rerunning after mandatory reboots resumes the setup.", false, false},
     {"storage-install", "Install persistent storage", "storage", "INSTALL",
      "Create the persistent data mount and recovery infrastructure.", false, false},
     {"storage-repair", "Repair persistent storage", "storage", "REPAIR",
@@ -98,9 +100,9 @@ constexpr OperationDefinition Operations[] = {
      "Install kernel-specific telemetry and GFX1013 fixes, plus display/audio corrections where required, without enabling sched_policy=2. Reboot before RADV setup.", false, false},
     {"audio-remove", "Remove AMDGPU kernel fixes", "audio", "REMOVE",
      "Restore stock AMDGPU module overrides and preserve build caches.", false, true},
-    {"mesh-setup", "Build Mesa / RADV async-compute patch", "mesh", "BUILD + INSTALL",
-     "Enable GFX1013 async compute after the patched AMDGPU module is active. The build normally takes 3-5 minutes.", false, false},
-    {"mesh-remove", "Remove Mesa / RADV async-compute patch", "mesh", "REMOVE",
+    {"mesh-setup", "Build Mesa / RADV async-compute runtime", "mesh", "BUILD + INSTALL",
+     "Install AMDGPU first when needed, then resume the 3-5 minute GFX1013 RADV build after reboot.", false, false},
+    {"mesh-remove", "Remove Mesa / RADV async-compute runtime", "mesh", "REMOVE",
      "Remove the global alternate runtime and activation while preserving build caches.", false, true},
     {"decky-install", "Install Decky plugin", "decky", "INSTALL",
      "Build and install the BC-250 Decky plugin and privileged helper.", false, false},
@@ -623,11 +625,13 @@ void ToolkitController::pollChild()
         finishOperation(code, QStringLiteral("cancelled"));
     } else if (WIFEXITED(status)) {
         const int code = WEXITSTATUS(status);
-        const bool rebootRequired = code == 75
-            && m_activeOperationId == QStringLiteral("swap-remove");
-        finishOperation(code, code == 0 ? QStringLiteral("succeeded")
-                              : rebootRequired ? QStringLiteral("reboot-required")
-                                               : QStringLiteral("failed"));
+        const bool rebootRequired =
+            (code == 75 && m_activeOperationId == QStringLiteral("swap-remove"))
+            || (code == 0 && m_activeOperationId == QStringLiteral("auto-base-installation")
+                && m_outputText.contains(QStringLiteral("CHECKPOINT: Reboot")));
+        finishOperation(code, rebootRequired ? QStringLiteral("reboot-required")
+                               : code == 0 ? QStringLiteral("succeeded")
+                                           : QStringLiteral("failed"));
     } else if (WIFSIGNALED(status)) {
         finishOperation(128 + WTERMSIG(status), QStringLiteral("signaled"));
     } else {
@@ -892,13 +896,17 @@ QVariantMap ToolkitController::operationMetadata(const QString &operationId)
 {
     for (const OperationDefinition &operation : Operations) {
         if (operationId == QLatin1String(operation.id)) {
-            return {{QStringLiteral("id"), operationId},
-                    {QStringLiteral("title"), QString::fromLatin1(operation.title)},
-                    {QStringLiteral("component"), QString::fromLatin1(operation.component)},
-                    {QStringLiteral("verb"), QString::fromLatin1(operation.verb)},
-                    {QStringLiteral("description"), QString::fromLatin1(operation.description)},
-                    {QStringLiteral("cancellable"), operation.cancellable},
-                    {QStringLiteral("destructive"), operation.destructive}};
+            QVariantMap metadata = {
+                {QStringLiteral("id"), operationId},
+                {QStringLiteral("title"), QString::fromLatin1(operation.title)},
+                {QStringLiteral("verb"), QString::fromLatin1(operation.verb)},
+                {QStringLiteral("description"), QString::fromLatin1(operation.description)},
+                {QStringLiteral("cancellable"), operation.cancellable},
+                {QStringLiteral("destructive"), operation.destructive},
+            };
+            if (operation.component)
+                metadata.insert(QStringLiteral("component"), QString::fromLatin1(operation.component));
+            return metadata;
         }
     }
     return {};

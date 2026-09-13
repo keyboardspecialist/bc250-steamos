@@ -235,11 +235,16 @@ amdgpu_badge() {
         printf '%s' "${CR}[unavailable]${C0}"
         return
     fi
-    status=$(bash "$AUDIO_FIX_SH" status 2>/dev/null || true)
-    case "$status" in
-        *"state: installed"*) printf '%s' "${CG}[installed]${C0}" ;;
-        *"state: incomplete"*) printf '%s' "${CY}[incomplete]${C0}" ;;
-        *) printf '%s' "${CD}[not installed]${C0}" ;;
+    if ! status=$(bash "$AUDIO_FIX_SH" status-json 2>/dev/null); then
+        printf '%s' "${CR}[status unavailable]${C0}"
+        return
+    fi
+    case "$(json_field "$status" state || true)" in
+        ready) printf '%s' "${CG}[active]${C0}" ;;
+        reboot-required) printf '%s' "${CY}[reboot needed]${C0}" ;;
+        invalid) printf '%s' "${CY}[repair needed]${C0}" ;;
+        not-installed) printf '%s' "${CD}[not installed]${C0}" ;;
+        *) printf '%s' "${CR}[status unavailable]${C0}" ;;
     esac
 }
 
@@ -273,17 +278,179 @@ fan_driver_badge() {
 }
 
 radv_badge() {
-    local status=""
+    local status="" runtime_state kernel_ready scheduler_configured scheduler_active global_enabled
     if [[ ! -f "$MESH_SHADER_SH" || -L "$MESH_SHADER_SH" ]]; then
         printf '%s' "${CR}[unavailable]${C0}"
         return
     fi
-    status=$(bash "$MESH_SHADER_SH" status 2>/dev/null || true)
-    case "$status" in
-        *"runtime: installed"*) printf '%s' "${CG}[installed]${C0}" ;;
-        *"runtime: incomplete"*|*"legacy install"*) printf '%s' "${CY}[repair needed]${C0}" ;;
-        *) printf '%s' "${CD}[optional]${C0}" ;;
+    if ! status=$(bash "$MESH_SHADER_SH" status-json 2>/dev/null); then
+        printf '%s' "${CR}[status unavailable]${C0}"
+        return
+    fi
+    runtime_state=$(json_field "$status" runtimeState || true)
+    kernel_ready=$(json_field "$status" kernelReady || true)
+    scheduler_configured=$(json_field "$status" schedulerConfigured || true)
+    scheduler_active=$(json_field "$status" schedulerActive || true)
+    global_enabled=$(json_field "$status" globalEnabled || true)
+    case "$runtime_state:$kernel_ready:$scheduler_configured:$scheduler_active:$global_enabled" in
+        ready:true:true:true:true) printf '%s' "${CG}[active]${C0}" ;;
+        ready:true:true:false:*) printf '%s' "${CY}[reboot needed]${C0}" ;;
+        ready:true:true:true:false) printf '%s' "${CY}[sign-out needed]${C0}" ;;
+        ready:*) printf '%s' "${CY}[repair needed]${C0}" ;;
+        invalid:*) printf '%s' "${CY}[repair needed]${C0}" ;;
+        *) printf '%s' "${CD}[not installed]${C0}" ;;
     esac
+}
+
+json_field() {
+    local json="$1" key="$2" tail
+    tail=${json#*\"$key\":}
+    [[ "$tail" != "$json" ]] || return 1
+    if [[ "$tail" == \"* ]]; then
+        tail=${tail#\"}
+        printf '%s' "${tail%%\"*}"
+    else
+        tail=${tail%%,*}
+        tail=${tail%%\}*}
+        printf '%s' "$tail"
+    fi
+}
+
+power_foundation_installed() {
+    bash "$POWER_SH" foundation-ready >/dev/null 2>&1
+}
+
+show_auto_base_installation_plan() {
+    printf '%s\n' "${CB}${CC}Auto Base Toolkit Installation${C0}"
+    printf '%s\n' "  Installs or repairs:"
+    printf '%s\n' "    - Power foundation (ACPI and test-started GPU governor)"
+    printf '%s\n' "    - RAM / VRAM helper (no memory split is selected automatically)"
+    printf '%s\n' "    - AMDGPU kernel fixes"
+    printf '%s\n' "    - Mesa / RADV async compute and its scheduler policy"
+    printf '%s\n' "    - Required signed packages, storage, and update protection"
+    printf '%s\n' "  Excludes hardware unlocks, tuning, swap, device-specific drivers, interfaces, and FSR4."
+    printf '%s\n' "  Re-run this same option after each requested reboot to resume."
+}
+
+show_graphics_setup_plan() {
+    printf '%s\n' "${CB}${CC}Async-compute graphics installation${C0}"
+    printf '%s\n' "  Installs or repairs AMDGPU kernel fixes, Mesa / RADV async compute,"
+    printf '%s\n' "  its scheduler policy, and required signed SteamOS packages."
+    printf '%s\n' "  Re-run this same option after each requested reboot to resume."
+}
+
+run_graphics_setup() {
+    require_normal_user
+    require_script "$AUDIO_FIX_SH"
+    require_script "$MESH_SHADER_SH"
+    local amdgpu_json amdgpu_state radv_json runtime_state
+    local scheduler_configured scheduler_active global_enabled
+
+    amdgpu_json=$(bash "$AUDIO_FIX_SH" status-json 2>/dev/null) \
+        || die "Could not determine current-kernel AMDGPU state."
+    amdgpu_state=$(json_field "$amdgpu_json" state || true)
+    case "$amdgpu_state" in
+        not-installed)
+            log "Installing the AMDGPU prerequisite for the async-compute stack."
+            bash "$AUDIO_FIX_SH"
+            amdgpu_json=$(bash "$AUDIO_FIX_SH" status-json 2>/dev/null) \
+                || die "AMDGPU installation completed, but its state could not be verified."
+            amdgpu_state=$(json_field "$amdgpu_json" state || true)
+            ;;
+        reboot-required|ready) ;;
+        invalid) die "Current-kernel AMDGPU state is incomplete or unsafe. Review '$AUDIO_FIX_SH status' before continuing." ;;
+        *) die "Unknown current-kernel AMDGPU state: ${amdgpu_state:-unavailable}" ;;
+    esac
+
+    if [[ "$amdgpu_state" == reboot-required ]]; then
+        log "CHECKPOINT: Reboot to activate the AMDGPU kernel fixes, then run this graphics setup again."
+        return 0
+    fi
+    [[ "$amdgpu_state" == ready ]] \
+        || die "AMDGPU installation did not reach a safe reboot or active state."
+
+    # Setup is idempotent and performs ownership checks before mutation. Let it
+    # repair python and other prerequisites before asking it for JSON status.
+    bash "$MESH_SHADER_SH" setup
+    radv_json=$(bash "$MESH_SHADER_SH" status-json 2>/dev/null) \
+        || die "Mesa / RADV setup completed, but its state could not be verified."
+
+    runtime_state=$(json_field "$radv_json" runtimeState || true)
+    scheduler_configured=$(json_field "$radv_json" schedulerConfigured || true)
+    scheduler_active=$(json_field "$radv_json" schedulerActive || true)
+    global_enabled=$(json_field "$radv_json" globalEnabled || true)
+    [[ "$runtime_state" == ready && "$scheduler_configured" == true ]] \
+        || die "Mesa / RADV setup did not produce a complete, safely gated runtime."
+    if [[ "$scheduler_active" != true ]]; then
+        log "CHECKPOINT: Reboot to activate the scheduler policy and Mesa / RADV together, then run this graphics setup again."
+    elif [[ "$global_enabled" != true ]]; then
+        log "CHECKPOINT: Sign out and back in so the graphical session inherits Mesa / RADV, then run this graphics setup again."
+    else
+        log "The async-compute graphics stack is active."
+    fi
+}
+
+run_auto_base_installation() {
+    require_normal_user
+    require_script "$POWER_SH"
+    require_script "$RAM_SPLIT_SH"
+    require_script "$AUDIO_FIX_SH"
+    require_script "$MESH_SHADER_SH"
+    local amdgpu_json amdgpu_state radv_json ram_json ram_tool_state
+
+    amdgpu_json=$(bash "$AUDIO_FIX_SH" status-json 2>/dev/null) \
+        || die "Could not determine current-kernel AMDGPU state."
+    amdgpu_state=$(json_field "$amdgpu_json" state || true)
+    case "$amdgpu_state" in
+        not-installed|reboot-required|ready) ;;
+        invalid) die "Current-kernel AMDGPU state is incomplete or unsafe. Review '$AUDIO_FIX_SH status' before continuing." ;;
+        *) die "Unknown current-kernel AMDGPU state: ${amdgpu_state:-unavailable}" ;;
+    esac
+    ram_json=$(bash "$RAM_SPLIT_SH" status-json 2>/dev/null) \
+        || die "Could not determine RAM / VRAM helper state."
+    ram_tool_state=$(json_field "$ram_json" toolState || true)
+    case "$ram_tool_state" in
+        verified|not-installed) ;;
+        invalid) die "The existing RAM / VRAM helper is incomplete or unverified. Review '$RAM_SPLIT_SH status' before continuing." ;;
+        *) die "Unknown RAM / VRAM helper state: ${ram_tool_state:-unavailable}" ;;
+    esac
+    if ! power_foundation_installed; then
+        log "Installing the power foundation."
+        sudo bash "$POWER_SH" all
+        power_foundation_installed \
+            || die "Power installation completed, but the foundation did not pass verification."
+        log "The GPU governor is test-started only. Load-test it before enabling it at boot."
+    fi
+    if [[ "$ram_tool_state" == not-installed ]]; then
+        log "Installing the RAM / VRAM helper."
+        sudo bash "$RAM_SPLIT_SH" install
+        ram_json=$(bash "$RAM_SPLIT_SH" status-json 2>/dev/null) \
+            || die "RAM / VRAM helper installation completed, but its state could not be verified."
+        [[ "$(json_field "$ram_json" toolState || true)" == verified ]] \
+            || die "RAM / VRAM helper installation did not pass verification."
+        log "No CMOS UMA or dynamic TTM value was selected automatically."
+    fi
+
+    run_graphics_setup
+
+    amdgpu_json=$(bash "$AUDIO_FIX_SH" status-json 2>/dev/null || true)
+    radv_json=$(bash "$MESH_SHADER_SH" status-json 2>/dev/null || true)
+    ram_json=$(bash "$RAM_SPLIT_SH" status-json 2>/dev/null || true)
+    if power_foundation_installed \
+        && [[ "$(json_field "$ram_json" toolState || true)" == verified \
+            && "$(json_field "$amdgpu_json" state || true)" == ready \
+            && "$(json_field "$radv_json" globalEnabled || true)" == true ]]; then
+        log "Auto Base Toolkit Installation is complete."
+        show_status || true
+    else
+        log "Auto Base Toolkit Installation is safely paused. Re-run this option after the checkpoint above."
+    fi
+}
+
+install_auto_base_installation() {
+    show_auto_base_installation_plan
+    echo
+    confirm_action "Install or resume Auto Base Toolkit Installation?" run_auto_base_installation
 }
 
 toggle_scheduler_policy() {
@@ -291,9 +458,15 @@ toggle_scheduler_policy() {
     require_script "$AMDGPU_BOOT_CONFIG_SH"
     if bash "$AMDGPU_BOOT_CONFIG_SH" configured 2>/dev/null; then
         confirm_action \
-            "Disable amdgpu.sched_policy=2? Compute repair will be incomplete until re-enabled; reboot required." \
+            "Disable amdgpu.sched_policy=2? Global RADV async compute will remain inactive after reboot until re-enabled." \
             sudo bash "$AMDGPU_BOOT_CONFIG_SH" policy-remove
     elif bash "$AMDGPU_BOOT_CONFIG_SH" runlist-configured 2>/dev/null; then
+        require_script "$MESH_SHADER_SH"
+        local radv_json
+        radv_json=$(bash "$MESH_SHADER_SH" status-json 2>/dev/null || true)
+        [[ "$(json_field "$radv_json" runtimeState || true)" == ready \
+            && "$(json_field "$radv_json" kernelReady || true)" == true ]] \
+            || die "Install and activate the AMDGPU and Mesa / RADV async-compute stack before enabling amdgpu.sched_policy=2."
         confirm_action \
             "Enable amdgpu.sched_policy=2? This disables the incompatible KFD HWS runlist workaround and requires a reboot." \
             sudo bash "$AMDGPU_BOOT_CONFIG_SH" install
@@ -301,9 +474,11 @@ toggle_scheduler_policy() {
         die "Scheduler policy state is incomplete. Review '$AMDGPU_BOOT_CONFIG_SH status' before changing it."
     else
         require_script "$MESH_SHADER_SH"
-        bash "$MESH_SHADER_SH" status-json 2>/dev/null \
-            | grep -qF '"runtimeState":"ready"' \
-            || die "Install the Mesa / RADV async-compute patch before enabling amdgpu.sched_policy=2."
+        local radv_json
+        radv_json=$(bash "$MESH_SHADER_SH" status-json 2>/dev/null || true)
+        [[ "$(json_field "$radv_json" runtimeState || true)" == ready \
+            && "$(json_field "$radv_json" kernelReady || true)" == true ]] \
+            || die "Install and activate the AMDGPU and Mesa / RADV async-compute stack before enabling amdgpu.sched_policy=2."
         confirm_action \
             "Enable amdgpu.sched_policy=2 for the installed RADV async-compute patch? Reboot required." \
             sudo bash "$AMDGPU_BOOT_CONFIG_SH" install
@@ -369,6 +544,8 @@ run_machine_action() {
     export BC250_TOOLKIT_MACHINE=1
 
     case "$operation" in
+        auto-base-installation) run_auto_base_installation ;;
+        graphics-setup) run_graphics_setup ;;
         storage-install) run_sudo_script "$STORAGE_SH" install ;;
         storage-repair) run_sudo_script "$STORAGE_SH" repair-infrastructure ;;
         power-install) run_sudo_script "$POWER_SH" all ;;
@@ -447,7 +624,7 @@ status_row() {
         bad) color="$CR" ;;
         *) color="$CD" ;;
     esac
-    printf '  %-20s %s%-16s%s %s\n' "$label" "$color" "[$state]" "$C0" "$detail"
+    printf '  %-30s %s%-16s%s %s\n' "$label" "$color" "[$state]" "$C0" "$detail"
 }
 
 show_status() {
@@ -458,8 +635,9 @@ show_status() {
     local persistence_output="" persistence_rc=0 cpu_output="" cpu_rc=0
     local amdgpu_output="" amdgpu_rc=0 radv_output="" radv_rc=0
     local cu_output="" cu_rc=0 cec_output="" cec_rc=0
+    local cec_bus_output="" cec_bus_rc=0
     local fan_output="" fan_rc=0
-    local enabled active installed_count pending_count
+    local enabled active mode installed_count pending_count
     local failed_components=()
     sudo -v
 
@@ -469,13 +647,14 @@ show_status() {
     status_script_capture swap_output swap_rc root "$SWAP_SH" verify
     status_script_capture persistence_output persistence_rc user "$PERSISTENCE_SH" status
     status_script_capture cpu_output cpu_rc root "$POWER_SH" cpu-unlock status
-    status_script_capture amdgpu_output amdgpu_rc user "$AUDIO_FIX_SH" status
-    status_script_capture radv_output radv_rc user "$MESH_SHADER_SH" status
+    status_script_capture amdgpu_output amdgpu_rc user "$AUDIO_FIX_SH" status-json
+    status_script_capture radv_output radv_rc user "$MESH_SHADER_SH" status-json
     status_script_capture cu_output cu_rc root "$CU_STATUS_SH" -q
     status_script_capture cec_output cec_rc user "$CEC_SH" status
+    status_script_capture cec_bus_output cec_bus_rc user "$CEC_SH" scan
     status_script_capture fan_output fan_rc user "$FAN_SETUP_SH" status
 
-    printf '%s\n' "${CB}${CC}BC-250 complete system status ${CD}[${TOOLKIT_VERSION}]${C0}"
+    printf '%s\n' "${CB}${CC}BC-250 system health ${CD}[${TOOLKIT_VERSION}]${C0}"
 
     status_heading "CORE SYSTEM"
     state=$(status_value "$storage_output" "storage: " || true)
@@ -496,9 +675,9 @@ show_status() {
             secondary=${secondary#*(}
             secondary=${secondary%)}
         fi
-        status_row "RAM / VRAM" "configured" good "VRAM ${state:-ready}; TTM ${secondary:-ready}"
+        status_row "RAM / VRAM split" "configured" good "VRAM ${state:-ready}; TTM ${secondary:-ready}"
     else
-        status_row "RAM / VRAM" "incomplete" bad "${state:-status unavailable}"
+        status_row "RAM / VRAM split" "incomplete" bad "${state:-status unavailable}"
         failed=1; failed_components+=("RAM / VRAM split")
     fi
 
@@ -516,18 +695,18 @@ show_status() {
     installed_count=$(grep -c 'keep list: installed' <<< "$persistence_output" || true)
     pending_count=$(grep -Ec 'keep list: (stale|foreign)' <<< "$persistence_output" || true)
     if [[ $persistence_rc -ne 0 ]]; then
-        status_row "Update persistence" "failed" bad "status unavailable"
+        status_row "SteamOS update protection" "failed" bad "status unavailable"
         failed=1; failed_components+=("SteamOS update persistence")
     elif [[ $pending_count -gt 0 ]]; then
-        status_row "Update persistence" "attention" warn "$installed_count protected; $pending_count stale or foreign"
+        status_row "SteamOS update protection" "attention" warn "$installed_count protected; $pending_count stale or foreign"
         failed=1; failed_components+=("SteamOS update persistence")
     elif [[ $installed_count -gt 0 ]]; then
-        status_row "Update persistence" "protected" good "$installed_count managed component lists"
+        status_row "SteamOS update protection" "protected" good "$installed_count managed component lists"
     else
-        status_row "Update persistence" "not configured" dim "no managed component lists"
+        status_row "SteamOS update protection" "not configured" dim "no managed component lists"
     fi
 
-    status_heading "CPU AND POWER"
+    status_heading "POWER FOUNDATION"
     enabled=$(systemctl is-enabled cyan-skillfish-governor-smu.service 2>/dev/null || true)
     active=$(systemctl is-active cyan-skillfish-governor-smu.service 2>/dev/null || true)
     detail=$(status_value "$power_output" "max MHz: " || true)
@@ -593,58 +772,110 @@ show_status() {
     detail=$(status_value "$fan_output" "hwmon: " || true)
     secondary=$(status_value "$fan_output" "load option: " || true)
     case "$state" in
-        installed) status_row "Fan controller" "installed" good "hwmon ${detail:--}; ${secondary:-force=0}" ;;
-        not-installed) status_row "Fan controller" "not installed" dim "onboard NCT6687 driver" ;;
+        installed) status_row "NCT6687 fan-control driver" "installed" good "hwmon ${detail:--}; ${secondary:-force=0}" ;;
+        not-installed) status_row "NCT6687 fan-control driver" "not installed" dim "onboard controller uses firmware control" ;;
         *)
-            status_row "Fan controller" "${state:-incomplete}" bad "${detail:+hwmon $detail; }${secondary:-status unavailable}"
+            status_row "NCT6687 fan-control driver" "${state:-incomplete}" bad "${detail:+hwmon $detail; }${secondary:-status unavailable}"
             failed=1; failed_components+=("NCT6687 fan-control driver") ;;
     esac
 
-    status_heading "GRAPHICS"
-    state=$(status_value "$amdgpu_output" "state: " || true)
-    detail=$(status_value "$amdgpu_output" "scheduler policy: " || true)
+    status_heading "GRAPHICS STACK"
+    state=$(json_field "$amdgpu_output" state || true)
     case "$state" in
-        installed) status_row "AMDGPU fixes" "installed" good "${detail:-module active}" ;;
-        not-installed) status_row "AMDGPU fixes" "not installed" dim "stock kernel module" ;;
+        ready) status_row "AMDGPU kernel fixes" "active" good "patched module loaded for $(json_field "$amdgpu_output" runningKernel || true)" ;;
+        reboot-required) status_row "AMDGPU kernel fixes" "reboot needed" warn "installed and selected for the running kernel" ;;
+        not-installed) status_row "AMDGPU kernel fixes" "not installed" dim "stock kernel module" ;;
         *)
-            status_row "AMDGPU fixes" "${state:-incomplete}" bad "${detail:-module status invalid}"
+            status_row "AMDGPU kernel fixes" "${state:-incomplete}" bad "current-kernel module state is invalid"
             failed=1; failed_components+=("AMDGPU kernel fixes") ;;
     esac
 
-    state=$(status_value "$radv_output" "runtime: " || true)
-    detail=$(status_value "$radv_output" "FSR4 RC8: " || true)
-    if [[ $radv_rc -eq 0 && "$state" == installed* ]]; then
-        status_row "Mesa / RADV" "installed" good "$state${detail:+; FSR4 $detail}"
-    elif [[ $radv_rc -le 1 && ( -z "$state" || "$state" == "not installed"* ) ]]; then
-        status_row "Mesa / RADV" "not installed" dim "optional async-compute runtime"
+    state=$(json_field "$radv_output" runtimeState || true)
+    enabled=$(json_field "$radv_output" schedulerConfigured || true)
+    active=$(json_field "$radv_output" schedulerActive || true)
+    if [[ $radv_rc -ne 0 \
+        || ( "$state" != ready && "$state" != not-installed && "$state" != invalid ) ]]; then
+        status_row "AMDGPU scheduler policy" "unavailable" bad "Mesa / RADV status probe failed"
+        status_row "Mesa / RADV async compute" "unavailable" bad "status probe failed"
+        failed=1; failed_components+=("Mesa / RADV async compute")
     else
-        status_row "Mesa / RADV" "incomplete" bad "${state:-status unavailable}"
-        failed=1; failed_components+=("Mesa / RADV async-compute patch")
+        if [[ "$active" == true ]]; then
+            status_row "AMDGPU scheduler policy" "active" good "managed by Mesa / RADV setup"
+        elif [[ "$enabled" == true ]]; then
+            status_row "AMDGPU scheduler policy" "reboot needed" warn "configured for the next boot"
+            failed=1; failed_components+=("AMDGPU scheduler policy")
+        else
+            status_row "AMDGPU scheduler policy" "disabled" dim "enabled automatically with Mesa / RADV"
+        fi
+        detail=$(json_field "$radv_output" globalEnabled || true)
+        if [[ "$state" == ready && "$detail" == true ]]; then
+            status_row "Mesa / RADV async compute" "active" good "global user environment enabled"
+        elif [[ "$state" == ready && "$active" == true ]]; then
+            status_row "Mesa / RADV async compute" "sign-out needed" warn "runtime installed; session environment is stale"
+            failed=1; failed_components+=("Mesa / RADV async compute")
+        elif [[ "$state" == ready ]]; then
+            status_row "Mesa / RADV async compute" "reboot needed" warn "runtime installed; scheduler policy is not active"
+            failed=1; failed_components+=("Mesa / RADV async compute")
+        elif [[ "$state" == not-installed ]]; then
+            status_row "Mesa / RADV async compute" "not installed" dim "optional global runtime"
+        else
+            status_row "Mesa / RADV async compute" "incomplete" bad "$state"
+            failed=1; failed_components+=("Mesa / RADV async compute")
+        fi
     fi
 
     if [[ $cu_rc -ne 0 ]]; then
-        status_row "GPU compute units" "unavailable" bad "${cu_output:-register read failed}"
-        failed=1; failed_components+=("GPU compute units")
+        status_row "GPU compute-unit unlock" "unavailable" bad "${cu_output:-register read failed}"
+        failed=1; failed_components+=("GPU compute-unit unlock")
     elif [[ "$cu_output" == 40/40 ]]; then
-        status_row "GPU compute units" "40 / 40" good "all compute units routed"
+        status_row "GPU compute-unit unlock" "40 / 40" good "all compute units routed"
     else
-        status_row "GPU compute units" "${cu_output:-unknown}" warn "current hardware route"
+        status_row "GPU compute-unit unlock" "${cu_output:-unknown}" warn "current hardware route"
     fi
 
     status_heading "DISPLAY"
     state=$(status_value "$cec_output" "cecd.service: " || true)
-    detail=$(status_value "$cec_output" "power status: " || true)
-    secondary=$(status_value "$cec_output" "active source: " || true)
+    detail=$(status_value "$cec_output" "aggregate integration: " || true)
+    secondary=$(status_value "$cec_output" "poweroff standby unit: " || true)
+    enabled=$(status_value "$cec_output" "boot wake unit (user): " || true)
+    mode=$(status_value "$cec_output" "boot wake mode: " || true)
     if [[ $cec_rc -ne 0 ]]; then
-        status_row "HDMI-CEC" "unavailable" bad "status probe failed"
+        status_row "CEC setup & automation" "unavailable" bad "status probe failed"
         failed=1; failed_components+=("CEC")
     elif [[ "$state" == *active* ]]; then
-        secondary=${secondary%% *}
-        status_row "HDMI-CEC" "active" good "TV ${detail:-unknown}; source ${secondary:-unknown}"
+        if [[ "$detail" == installed ]]; then
+            status_row "CEC setup & automation" "configured" good "pre-installed CEC active"
+        else
+            status_row "CEC setup & automation" "defaults" dim \
+                "pre-installed CEC active; optional automation not configured"
+        fi
+        case "$secondary" in
+            *enabled*|*active*) status_row "  Poweroff standby" "enabled" good "TV standby during system shutdown" ;;
+            *disabled*|*inactive*|*not-found*) status_row "  Poweroff standby" "disabled" dim "optional automation" ;;
+            *) status_row "  Poweroff standby" "unknown" warn "${secondary:-state unavailable}" ;;
+        esac
+        case "$enabled" in
+            *enabled*|*active*) status_row "  Boot wake" "enabled" good "TV wake at session start" ;;
+            *disabled*|*inactive*|*not-found*) status_row "  Boot wake" "disabled" dim "optional automation" ;;
+            *) status_row "  Boot wake" "unknown" warn "${enabled:-state unavailable}" ;;
+        esac
+        case "$mode" in
+            polite) status_row "  Boot wake mode" "polite" good "backs off when another source is active" ;;
+            grab) status_row "  Boot wake mode" "grab" warn "always takes the TV input at session start" ;;
+            not-installed) status_row "  Boot wake mode" "not installed" dim "install boot wake to choose a mode" ;;
+            *) status_row "  Boot wake mode" "unknown" warn "helper mode could not be verified" ;;
+        esac
     elif [[ "$cec_output" == *"/dev/cec0: present"* ]]; then
-        status_row "HDMI-CEC" "available" warn "daemon ${state:-inactive}"
+        status_row "CEC setup & automation" "available" warn "daemon ${state:-inactive}"
     else
-        status_row "HDMI-CEC" "not available" dim "no active CEC adapter"
+        status_row "CEC setup & automation" "not available" dim "no active CEC adapter"
+    fi
+
+    status_heading "CEC BUS MAP"
+    if [[ $cec_bus_rc -eq 0 && -n "$cec_bus_output" ]]; then
+        printf '%s\n' "$cec_bus_output"
+    else
+        status_row "CEC bus" "unavailable" warn "${cec_bus_output:-no bus map returned}"
     fi
 
     if [[ $failed -ne 0 ]]; then
@@ -734,16 +965,15 @@ show_guided_setup_overview() {
     printf '%s\n' "Start with the hardware unlock you care about, then complete its supporting setup."
     printf '%s\n' "Each unlock has its own test and recovery path; performance tuning comes afterward."
     echo
-    printf '  %-24s %s\n' "GPU CU unlock" "$(component_badge "$COMPUTE_SH")"
+    printf '  %-24s %s\n' "GPU compute-unit unlock" "$(component_badge "$COMPUTE_SH")"
     printf '  %-24s %s\n' "CPU core unlock" "${CD}[guided test]${C0}"
     printf '  %-24s %s\n' "AMDGPU kernel fixes" "$(amdgpu_badge)"
     printf '  %-24s %s\n' "Power foundation" "$(power_foundation_badge)"
-    printf '  %-24s %s\n' "RAM / VRAM helper" "$(component_badge "$RAM_SPLIT_SH")"
-    printf '  %-24s %s\n' "Performance tuning" "$(radv_badge)"
+    printf '  %-24s %s\n' "RAM / VRAM split" "$(component_badge "$RAM_SPLIT_SH")"
+    printf '  %-24s %s\n' "Mesa / RADV async compute" "$(radv_badge)"
     printf '  %-24s %s\n' "Compressed swap" "$(component_badge "$SWAP_SH")"
-    printf '  %-24s %s\n' "HDMI / CEC" "$(component_badge "$CEC_SH")"
     echo
-    printf '  %-24s %s\n' "Automatic infrastructure" "$(component_badge "$STORAGE_SH")"
+    printf '  %-24s %s\n' "Persistent storage" "$(component_badge "$STORAGE_SH")"
     printf '%s\n' "  Persistent storage is installed automatically by components that need it."
     echo
     printf '%s\n' "${CY}Checkpoints:${C0} Reboot after AMDGPU, install RADV, then reboot again to enable async compute safely."
@@ -761,11 +991,10 @@ cmd_guided_setup_menu() {
             "CPU core unlock|${CD}[guided test]${C0}|Test eight cores once, then choose one automatic unlock method: standard Linux or EFI pre-boot. Install AMDGPU fixes afterward for corrected eight-core telemetry."
             "AMDGPU kernel fixes|$(amdgpu_badge)|Build the corrected kernel module, but leave sched_policy=2 off. Reboot before RADV setup."
             "Power foundation|$(power_foundation_badge)|Install ACPI, reboot, then load-test the GPU governor before enabling it at boot."
-            "Memory balance|$(component_badge "$RAM_SPLIT_SH")|Install the helper, then choose CMOS minimum VRAM and the dynamic TTM limit."
+            "RAM / VRAM split|$(component_badge "$RAM_SPLIT_SH")|Install the helper, then choose CMOS minimum VRAM and the dynamic TTM limit."
             "Performance tuning|$(radv_badge)|Build the Mesa RADV async-compute patch or tune GPU and CPU behavior after unlock testing. RADV takes about 3-5 minutes."
             "Device drivers & connectivity||Configure HDMI audio, CEC, NCT6687 fan control, or hardware-specific AIC8800 support."
             "Choose control interface||Install Decky, Plasma, CoolerControl, or the standalone Trainer."
-            "Finish - Verify system|${CD}[read only]${C0}|Run the complete status report after required reboot and sign-out checkpoints."
         )
         menu_select "BC-250 guided setup  ${CD}(choose by goal)${C0}" "${items[@]}" || { echo; break; }
         case $MENU_CHOICE in
@@ -778,7 +1007,6 @@ cmd_guided_setup_menu() {
             6) cmd_performance_menu ;;
             7) cmd_devices_menu ;;
             8) cmd_interfaces_menu ;;
-            9) run_menu_action status ;;
         esac
     done
 }
@@ -792,7 +1020,7 @@ cmd_drivers_menu() {
             "Clean AMDGPU build tree|${CY}[cleanup]${C0}|Reset patched source and generated build output while keeping cached downloads and dependencies."
             "AMDGPU scheduler policy (advanced)|$(scheduler_policy_badge)|Normally managed by RADV setup. Enabling is blocked until the patched RADV runtime is installed."
             "KFD HWS runlist TLB flush (experimental)|$(kfd_runlist_badge)|Opt-in ROCm workaround for stale mappings. Requires HWS and cannot coexist with sched_policy=2."
-            "Mesa / RADV async-compute patch (optional)|${CG}[menu]${C0}|Enables GFX1013 async compute. Requires the patched AMDGPU module; builds in about 3-5 minutes."
+            "Install / resume async-compute stack|$(radv_badge)|Automatically installs AMDGPU first when needed, then resumes Mesa / RADV after reboot."
             "NCT6687 fan-control driver|$(fan_driver_badge)|Install Linux hwmon fan-speed and PWM support for the BC-250's onboard controller."
             "AIC8800 WiFi / Bluetooth|${CY}[installer]${C0}|Install only when the system uses the AIC8800 wireless adapter."
         )
@@ -802,7 +1030,7 @@ cmd_drivers_menu() {
             1) run_menu_action amdgpu-clean ;;
             2) run_menu_action scheduler-policy ;;
             3) run_menu_action kfd-runlist ;;
-            4) run_menu_child radv ;;
+            4) run_menu_action graphics-setup ;;
             5) run_menu_action fan-driver ;;
             6) run_menu_action wifi ;;
         esac
@@ -830,8 +1058,8 @@ cmd_storage_updates_menu() {
     require_normal_user
     while true; do
         local items=(
-            "Persistent storage & boot recovery|${CG}[menu]${C0}|Install, inspect, or repair the toolkit's persistent privileged storage."
-            "SteamOS update persistence|${CG}[menu]${C0}|Protect and recover supported component configuration across SteamOS updates."
+            "Persistent storage|${CG}[menu]${C0}|Install, inspect, or repair the toolkit's persistent privileged storage and boot recovery."
+            "SteamOS update protection|${CG}[menu]${C0}|Protect and recover supported component configuration across SteamOS updates."
         )
         menu_select "BC-250 storage & SteamOS updates" "${items[@]}" || { echo; break; }
         case $MENU_CHOICE in
@@ -861,15 +1089,31 @@ cmd_interfaces_menu() {
     done
 }
 
+cmd_amdgpu_boot_menu() {
+    require_terminal
+    require_normal_user
+    while true; do
+        local items=(
+            "AMDGPU scheduler policy|$(scheduler_policy_badge)|Normally managed automatically by Mesa / RADV setup."
+            "KFD runlist workaround (experimental)|$(kfd_runlist_badge)|Opt-in ROCm workaround for stale mappings; cannot coexist with the RADV scheduler policy."
+        )
+        menu_select "BC-250 advanced AMDGPU boot options" "${items[@]}" || { echo; break; }
+        case $MENU_CHOICE in
+            0) run_menu_action scheduler-policy ;;
+            1) run_menu_action kfd-runlist ;;
+        esac
+    done
+}
+
 cmd_core_system_menu() {
     require_terminal
     require_normal_user
     while true; do
         local items=(
-            "Persistent storage & boot recovery|$(component_badge "$STORAGE_SH")|Installed automatically when needed; open for status, repair, or manual management."
+            "Persistent storage|$(component_badge "$STORAGE_SH")|Installed automatically when needed; open for status, boot recovery, repair, or manual management."
             "AMDGPU kernel fixes|$(amdgpu_badge)|Install kernel-specific telemetry and GFX1013 async-compute fixes, plus display/audio corrections where required. Reboot afterward."
-            "AMDGPU scheduler policy|$(scheduler_policy_badge)|Normally enabled by RADV setup after both async-compute halves are installed."
-            "Power foundation & tuning|$(power_foundation_badge)|Set up ACPI and the GPU governor, then access GPU and CPU tuning."
+            "Advanced AMDGPU boot options|${CY}[advanced]${C0}|Inspect the RADV scheduler policy or experimental KFD runlist workaround."
+            "Power foundation|$(power_foundation_badge)|Set up ACPI and the GPU governor. GPU and CPU tuning remains under Performance tuning."
             "RAM / VRAM split|$(component_badge "$RAM_SPLIT_SH")|Balance the persistent CMOS minimum and dynamic Linux TTM limit."
             "Compressed swap|$(component_badge "$SWAP_SH")|Choose mutually exclusive zram or zswap-backed disk swap profiles."
             "SteamOS update protection|${CG}[menu]${C0}|Protect installed integration and recover supported settings after updates."
@@ -878,7 +1122,7 @@ cmd_core_system_menu() {
         case $MENU_CHOICE in
             0) run_menu_child storage ;;
             1) run_menu_action amdgpu ;;
-            2) run_menu_action scheduler-policy ;;
+            2) cmd_amdgpu_boot_menu ;;
             3) run_menu_child power ;;
             4) run_menu_child ram ;;
             5) run_menu_child swap ;;
@@ -892,13 +1136,15 @@ cmd_performance_menu() {
     require_normal_user
     while true; do
         local items=(
-            "Mesa / RADV async-compute patch|$(radv_badge)|Enables GFX1013 async compute globally. Requires the active patched AMDGPU module; builds in about 3-5 minutes."
-            "GPU and CPU tuning|${CG}[menu]${C0}|Adjust GPU clocks, load response, ramp behavior, and CPU undervolt/overclock."
+            "Install / resume async-compute stack|$(radv_badge)|Automatically install AMDGPU first when needed, then resume Mesa / RADV after reboot."
+            "GPU driver & FSR4 options|${CG}[menu]${C0}|Manage global Mesa / RADV, FSR4 RC8 game DLLs, legacy FSR4, or cleanup."
+            "GPU / CPU tuning|${CG}[menu]${C0}|Adjust GPU clocks, load response, ramp behavior, and CPU undervolt/overclock."
         )
         menu_select "BC-250 performance tuning" "${items[@]}" || { echo; break; }
         case $MENU_CHOICE in
-            0) run_menu_child radv ;;
-            1) run_menu_child power ;;
+            0) run_menu_action graphics-setup ;;
+            1) run_menu_child radv ;;
+            2) run_menu_child power ;;
         esac
     done
 }
@@ -909,7 +1155,7 @@ cmd_devices_menu() {
     while true; do
         local items=(
             "HDMI audio|${CG}[menu]${C0}|Enable Dolby Digital 5.1 encoding or revert to the default HDMI stereo profile."
-            "CEC / HDMI control|$(component_badge "$CEC_SH")|Set up TV and receiver behavior, then access everyday HDMI controls."
+            "HDMI-CEC|${CG}[menu]${C0}|Review setup automation, everyday controls, and the live CEC bus."
             "NCT6687 fan-control driver|$(fan_driver_badge)|Install Linux hwmon fan-speed and PWM support for the BC-250's onboard controller."
             "AIC8800 WiFi / Bluetooth|${CY}[hardware specific]${C0}|Install only when the system uses the AIC8800 wireless adapter."
         )
@@ -944,17 +1190,15 @@ cmd_maintenance_menu() {
     require_normal_user
     while true; do
         local items=(
-            "Complete system status|${CD}[read only]${C0}|Show a compact health dashboard for storage, power, CPU core unlock, graphics, and display integration."
             "SteamOS update recovery|${CG}[menu]${C0}|Inspect protection or restore supported settings from the newest update snapshot."
             "Clean AMDGPU build tree|${CY}[cleanup]${C0}|Reset patched source and build output while retaining downloads and dependencies."
             "Manage installed components|${CG}[menu]${C0}|Review removal plans, uninstall components, or permanently purge preserved data."
         )
         menu_select "BC-250 maintenance & recovery" "${items[@]}" || { echo; break; }
         case $MENU_CHOICE in
-            0) run_menu_action status ;;
-            1) run_menu_child persistence ;;
-            2) run_menu_action amdgpu-clean ;;
-            3) run_menu_child manage ;;
+            0) run_menu_child persistence ;;
+            1) run_menu_action amdgpu-clean ;;
+            2) run_menu_child manage ;;
         esac
     done
 }
@@ -965,32 +1209,34 @@ cmd_menu() {
     start_sudo_session
     while true; do
         local items=(
-            "Start here - Guided setup|${CG}[recommended]${C0}|Choose a hardware-unlock goal first, then follow its support, reboot, load-test, and tuning checkpoints."
+            "Auto Base Toolkit Installation|${CG}[install / resume]${C0}|Install the safe foundation in dependency order; re-run this option after each requested reboot."
+            "Manual guided setup|${CG}[menu]${C0}|Choose individual hardware goals and follow their support, reboot, load-test, and tuning checkpoints."
             "Core system|${CG}[menu]${C0}|Configure storage, AMDGPU, power foundations, memory balance, and update protection."
             "Performance tuning|${CG}[menu]${C0}|Configure Mesa / RADV and optional GPU or CPU tuning after setup is stable."
             "Hardware unlocks|${CG}[menu]${C0}|Test GPU compute units or CPU cores with explicit stability and recovery steps."
             "Device drivers & connectivity|${CG}[menu]${C0}|Configure HDMI audio, HDMI-CEC, NCT6687 fan control, or hardware-specific AIC8800 support."
             "Control interfaces|${CG}[menu]${C0}|Install Decky, Plasma, CoolerControl, or the standalone BC250 Trainer."
             "Maintenance & recovery|${CG}[menu]${C0}|Verify, repair, clean build state, remove components, or purge preserved data."
-            "Complete system status|${CD}[read only]${C0}|Show a compact health dashboard for storage, power, CPU core unlock, graphics, and display integration."
+            "System health|${CD}[read only]${C0}|Show the operational state of configured components using the same names as their menu options."
         )
         menu_select "BC-250 SteamOS toolkit ${CD}[${TOOLKIT_VERSION}]${C0}" "${items[@]}" || { echo; break; }
         case $MENU_CHOICE in
-            0) cmd_guided_setup_menu ;;
-            1) cmd_core_system_menu ;;
-            2) cmd_performance_menu ;;
-            3) cmd_unlocks_menu ;;
-            4) cmd_devices_menu ;;
-            5) cmd_interfaces_menu ;;
-            6) cmd_maintenance_menu ;;
-            7) run_menu_action status ;;
+            0) run_menu_action auto-base-installation ;;
+            1) cmd_guided_setup_menu ;;
+            2) cmd_core_system_menu ;;
+            3) cmd_performance_menu ;;
+            4) cmd_unlocks_menu ;;
+            5) cmd_devices_menu ;;
+            6) cmd_interfaces_menu ;;
+            7) cmd_maintenance_menu ;;
+            8) run_menu_action status ;;
         esac
     done
 }
 
 cmd_help() {
     cat << EOF
-Usage: $0 [menu|setup|status|inventory-json|action OPERATION_ID|drivers|unlocks|storage-updates|interfaces|power|ram|swap|compute|cpu-unlock|cec|audio-output|hdmi-ac3-enable|hdmi-ac3-revert|storage|persistence|wifi|fan-driver|amdgpu|amdgpu-clean|scheduler-policy|kfd-runlist|radv|decky|desktop|coolercontrol|trainer|manage|help]
+Usage: $0 [menu|setup|auto-base-installation|graphics-setup|status|inventory-json|action OPERATION_ID|drivers|unlocks|storage-updates|interfaces|power|ram|swap|compute|cpu-unlock|cec|audio-output|hdmi-ac3-enable|hdmi-ac3-revert|storage|persistence|wifi|fan-driver|amdgpu|amdgpu-clean|scheduler-policy|kfd-runlist|radv|decky|desktop|coolercontrol|trainer|manage|help]
 
 Run without arguments in a terminal to open the unified toolkit menu.
 Run the toolkit as the logged-in Deck user, not with sudo; child tools request
@@ -998,7 +1244,9 @@ administrator access when needed.
 
 Commands:
   setup                  Open the status-aware guided setup checklist
-  status                 Show a read-only component status overview
+  auto-base-installation Run Auto Base Toolkit Installation
+  graphics-setup         Install or resume AMDGPU and Mesa / RADV in order
+  status                 Show read-only system health
   inventory-json         Emit versioned JSON component inventory for automation
   action OPERATION_ID    Run one fixed, noninteractive dashboard operation
   drivers                Open AMDGPU, Mesa / RADV, and wireless drivers
@@ -1032,6 +1280,7 @@ Commands:
 Compatibility aliases: audio (amdgpu), mesh (radv)
 
 Action operation IDs:
+  auto-base-installation graphics-setup
   storage-install        power-install          ram-install
   swap-zram-install      swap-zswap-install     compute-build
   cec-setup              persistence-install
@@ -1062,6 +1311,8 @@ shift
 case "$command_name" in
     menu) (($# == 0)) || die "Usage: $0 menu"; cmd_menu ;;
     setup) (($# == 0)) || die "Usage: $0 setup"; cmd_guided_setup_menu ;;
+    auto-base-installation) (($# == 0)) || die "Usage: $0 auto-base-installation"; install_auto_base_installation ;;
+    graphics-setup) (($# == 0)) || die "Usage: $0 graphics-setup"; show_graphics_setup_plan; echo; confirm_action "Install or resume the async-compute graphics stack?" run_graphics_setup ;;
     status) (($# == 0)) || die "Usage: $0 status"; show_status ;;
     inventory-json) (($# == 0)) || die "Usage: $0 inventory-json"; show_inventory_json ;;
     action) run_machine_action "$@" ;;

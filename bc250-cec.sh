@@ -622,6 +622,14 @@ cmd_status() {
     fi
     echo "  poweroff standby unit: $(c_state "$(unit_state is-enabled "$STANDBY_SVC")")"
     echo "  boot wake unit (user): $(c_state "$(unit_state --user is-enabled "$WAKE_SVC")")"
+    local mode
+    mode=$(wake_mode)
+    case "$mode" in
+        polite|grab) ;;
+        "") mode=not-installed ;;
+        *) mode=unknown ;;
+    esac
+    echo "  boot wake mode: $mode"
     echo "  amp suspend/resume hook: $([[ -f "$SLEEP_HOOK" ]] && echo present || echo absent)"
     local k follows=""
     for k in boot poweroff suspend resume; do

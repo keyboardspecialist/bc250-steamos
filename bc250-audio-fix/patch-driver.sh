@@ -5,22 +5,123 @@
 #
 #   ./patch-driver.sh [kernel-tree]  (default: ./valve-kernel)
 #   ./patch-driver.sh status
+#   ./patch-driver.sh status-json
 #   ./patch-driver.sh uninstall
 set -euo pipefail
 
 HERE=$(cd "$(dirname "$0")" && pwd)
 TREE_DRIFT_EXIT=75
+GFX1013_COMMIT=d3e6dc062c34d2523db0abe5741d1f5b0dea00d9
 
 usage() {
     cat <<EOF
 Usage: $0 [kernel-tree]
        $0 status
+       $0 status-json
        $0 uninstall
 
 Run as the logged-in user. The build requests sudo if a SteamOS update removed
 its host toolchain. Install and uninstall also request sudo for privileged
 steps. Uninstall preserves source, downloads, and build output.
 EOF
+}
+
+show_status_json() {
+    local rel updates default_module default_audio_marker default_metrics_marker
+    local default_gfx1013_marker default_active module audio_marker metrics_marker
+    local gfx1013_marker active resolved selected_path module_path actual expected
+    local owner mode state artifact_present=0 override_installed=1
+    local override_selected=0 active_ready=0 boot_present=0 marker path
+
+    rel=$(uname -r)
+    updates="/usr/lib/modules/$rel/updates"
+    default_module="$updates/amdgpu.ko.zst"
+    default_audio_marker="$updates/.bc250-audio-fix"
+    default_metrics_marker="$updates/.bc250-metrics-fix"
+    default_gfx1013_marker="$updates/.bc250-gfx1013-fix"
+    default_active=/sys/module/amdgpu/parameters/bc250_gfx1013_fix
+    module=${BC250_GFX1013_MODULE:-$default_module}
+    audio_marker=${BC250_AUDIO_MARKER:-$default_audio_marker}
+    metrics_marker=${BC250_METRICS_MARKER:-$default_metrics_marker}
+    gfx1013_marker=${BC250_GFX1013_MARKER:-$default_gfx1013_marker}
+    active=${BC250_GFX1013_ACTIVE:-$default_active}
+
+    for path in "$module" "$audio_marker" "$metrics_marker" "$gfx1013_marker"; do
+        if [ -e "$path" ] || [ -L "$path" ]; then
+            artifact_present=1
+        fi
+    done
+
+    if [ ! -f "$module" ] || [ -L "$module" ]; then
+        override_installed=0
+    else
+        actual=$(sha256sum "$module" 2>/dev/null | awk '{print $1}') || actual=
+        [[ "$actual" =~ ^[0-9a-f]{64}$ ]] || override_installed=0
+        for marker in "$audio_marker" "$metrics_marker" "$gfx1013_marker"; do
+            if [ ! -f "$marker" ] || [ -L "$marker" ]; then
+                override_installed=0
+                continue
+            fi
+            read -r expected < "$marker" || expected=
+            [[ "$expected" =~ ^[0-9a-f]{64}$ && "$expected" == "$actual" ]] \
+                || override_installed=0
+        done
+
+        for path in "$module" "$audio_marker" "$metrics_marker" "$gfx1013_marker"; do
+            case "$path" in
+                "$default_module"|"$default_audio_marker"|"$default_metrics_marker"|"$default_gfx1013_marker")
+                    read -r owner mode < <(stat -Lc '%u %a' "$path" 2>/dev/null) \
+                        || { override_installed=0; continue; }
+                    [[ "$owner" == 0 && "$mode" =~ ^[0-7]+$ ]] \
+                        && (( (8#$mode & 8#022) == 0 )) \
+                        || override_installed=0
+                    ;;
+            esac
+        done
+    fi
+
+    if resolved=$(modinfo -k "$rel" -F filename amdgpu 2>/dev/null); then
+        selected_path=$(readlink -f "$resolved" 2>/dev/null) || selected_path=
+        module_path=$(readlink -f "$module" 2>/dev/null) || module_path=
+        if [ -n "$selected_path" ] && [ "$selected_path" = "$module_path" ] \
+           && { [ -e "$module" ] || [ -L "$module" ]; }; then
+            override_selected=1
+        fi
+    fi
+
+    if [ -r "$active" ] && [ ! -L "$active" ]; then
+        read -r expected < "$active" || expected=
+        [ "$expected" = "$GFX1013_COMMIT" ] && active_ready=1
+    fi
+
+    if [ -f "${BC250_AMDGPU_BOOT_CONFIG:-$HERE/boot-config.sh}" ] \
+       && [ ! -L "${BC250_AMDGPU_BOOT_CONFIG:-$HERE/boot-config.sh}" ] \
+       && bash "${BC250_AMDGPU_BOOT_CONFIG:-$HERE/boot-config.sh}" present >/dev/null 2>&1; then
+        boot_present=1
+    fi
+
+    if [ "$artifact_present" = 0 ]; then
+        if [ "$boot_present" = 1 ] || [ -e "$active" ] || [ -L "$active" ]; then
+            state=invalid
+        else
+            state=not-installed
+        fi
+    elif [ "$override_installed" = 1 ] && [ "$override_selected" = 1 ]; then
+        if [ "$active_ready" = 1 ]; then
+            state=ready
+        else
+            state=reboot-required
+        fi
+    else
+        state=invalid
+    fi
+
+    printf '{"scriptAvailable":true,"runningKernel":"%s","state":"%s","overrideInstalled":%s,"overrideSelected":%s,"activeReady":%s,"rebootRequired":%s}\n' \
+        "$rel" "$state" \
+        "$([ "$override_installed" = 1 ] && printf true || printf false)" \
+        "$([ "$override_selected" = 1 ] && printf true || printf false)" \
+        "$([ "$active_ready" = 1 ] && printf true || printf false)" \
+        "$([ "$state" = reboot-required ] && printf true || printf false)"
 }
 
 show_status() {
@@ -138,6 +239,11 @@ case "${1:-}" in
     status)
         [ "$#" = 1 ] || { usage >&2; exit 2; }
         show_status
+        exit
+        ;;
+    status-json)
+        [ "$#" = 1 ] || { usage >&2; exit 2; }
+        show_status_json
         exit
         ;;
     uninstall)

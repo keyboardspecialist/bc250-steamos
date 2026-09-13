@@ -21,8 +21,9 @@ Open the unified toolkit menu as the logged-in Deck user:
 
 | Component | Setup command |
 |---|---|
+| Auto Base Toolkit Installation | `./bc250-toolkit.sh auto-base-installation`; run the same command after each requested reboot |
 | AMDGPU kernel fixes | `./bc250-toolkit.sh amdgpu`, then reboot |
-| Mesa / RADV async-compute patch (optional, highly recommended) | `./bc250-toolkit.sh radv`, then reboot |
+| Mesa / RADV async compute (optional, highly recommended) | `./bc250-toolkit.sh graphics-setup`, then resume after reboot |
 | Power management | `sudo ./bc250-power.sh all`, then `sudo ./bc250-power.sh enable` |
 | RAM / VRAM split | `./bc250-ram-split.sh` |
 | Compressed swap (optional) | `sudo ./bc250-swap.sh`, then choose zram or zswap-backed disk swap |
@@ -36,7 +37,7 @@ Open the unified toolkit menu as the logged-in Deck user:
 | BC250 Trainer | `./bc250-toolkit.sh trainer` |
 | Compressed swap | `sudo ./bc250-swap.sh install zram` or `sudo ./bc250-swap.sh install zswap` |
 | Persistent storage and recovery | Automatic with each setup workflow; `./bc250-storage.sh` opens its menu |
-| Verification | `sudo ./bc250-storage.sh status` |
+| System health | `./bc250-toolkit.sh status` |
 
 ### Existing Users
 
@@ -74,7 +75,7 @@ sudo ./bc250-power.sh status
 
 | Tool | Purpose |
 |---|---|
-| [`bc250-toolkit.sh`](#toolkit-menu) | Unified menu and read-only status overview for all toolkit components |
+| [`bc250-toolkit.sh`](#toolkit-menu) | Unified menu, resumable Auto Base Toolkit Installation, and read-only system health |
 | [`bc250-40cu.sh`](#gpu-compute-unit-unlock) | Runtime GPU CU/WGP configuration and boot persistence |
 | [`bc250-cu-status.sh`](#gpu-compute-unit-unlock) | CU dispatch status |
 | [`bc250-power.sh`](#power-management) | CPU power states, GPU governor, clock and voltage tuning, CPU overclocking |
@@ -107,7 +108,9 @@ Each child requests administrator access only when needed.
 |---|---|
 | `./bc250-toolkit.sh` | Open the unified interactive menu |
 | `./bc250-toolkit.sh setup` | Open the status-aware guided setup checklist |
-| `./bc250-toolkit.sh status` | Show the read-only component status overview |
+| `./bc250-toolkit.sh auto-base-installation` | Run Auto Base Toolkit Installation in dependency order |
+| `./bc250-toolkit.sh graphics-setup` | Install or resume AMDGPU and Mesa / RADV in dependency order |
+| `./bc250-toolkit.sh status` | Show read-only system health using the menu's component names |
 | `./bc250-toolkit.sh inventory-json` | Emit versioned lifecycle state for the native Trainer dashboard |
 | `./bc250-toolkit.sh action OPERATION_ID` | Run one fixed dashboard action without opening a TUI |
 | `./bc250-toolkit.sh drivers` | Open AMDGPU, Mesa / RADV, NCT6687, and AIC8800 driver setup |
@@ -131,18 +134,20 @@ menu.
 
 ### Guided Setup
 
-The `Start here - Guided setup` menu organizes initial setup around dependency
-and restart boundaries rather than exposing every tuning option at once:
+The top-level **Auto Base Toolkit Installation** action installs the safe foundation and
+resumes from verified state after each restart boundary:
 
-1. Install the AMDGPU kernel fixes, then reboot.
-2. Install the ACPI and GPU-governor foundation. Reboot for ACPI, load-test the
-   governor, and only then enable it at boot.
-3. Install the memory helper and choose the CMOS minimum and dynamic TTM limit.
-4. Optionally follow the staged GPU-CU or CPU-core unlock workflows, including
-   their reboot and stability tests.
-5. Optionally build the Mesa / RADV async-compute patch after AMDGPU is active,
-   then reboot so RADV and `amdgpu.sched_policy=2` activate together.
-6. Add matching devices and a control UI, then run the complete status report.
+1. Install the ACPI and GPU-governor foundation, the verified memory helper,
+   and the AMDGPU kernel fixes, then stop for the required reboot.
+2. Run **Auto Base Toolkit Installation** again. It verifies the active AMDGPU module,
+   installs signed RADV prerequisites and the Mesa / RADV runtime, configures
+   `amdgpu.sched_policy=2`, then stops for the second reboot.
+3. Run it once more to verify global activation and show **System health**.
+
+The automatic path test-starts the GPU governor but does not enable it at boot;
+load-test it first. It installs the memory helper but does not choose CMOS UMA
+or TTM values. Hardware unlocks, tuning, swap profiles, device-specific drivers,
+control interfaces, and FSR4 remain explicit choices under manual setup.
 
 Persistent storage and boot recovery are infrastructure rather than a separate
 setup prerequisite. Supported component installers create them automatically
@@ -607,8 +612,8 @@ before installation. If Valve omitted the matching headers, the toolkit can
 generate the required symbols with a complete exact-source kernel build.
 
 The module also carries a disabled-by-default KFD HWS runlist TLB-flush
-workaround for stale ROCm mappings. Enable it only from **Drivers > KFD HWS
-runlist TLB flush**. It requires hardware scheduling and is mutually exclusive
+workaround for stale ROCm mappings. Enable it only from **Core system > Advanced
+AMDGPU boot options > KFD runlist workaround**. It requires hardware scheduling and is mutually exclusive
 with the RADV workflow's `amdgpu.sched_policy=2`; enabling RADV policy replaces
 the workaround rather than combining both boot options.
 
@@ -627,10 +632,11 @@ This optional but highly recommended patch builds the Mesa/RADV half of
 as a separate Vulkan ICD to enable GFX1013 asynchronous compute. The matching
 `bc250-audio-fix` AMDGPU kernel module must be built, installed, selected, and
 active first. Setup refuses to continue unless all installed module markers,
-the selected `modinfo` path, and the loaded repair attestation agree. Use the
-toolkit's **Drivers** menu: install **AMDGPU kernel fixes**, reboot, and then
-open **Mesa / RADV async-compute patch**. The RADV-only build normally takes
-about 3-5 minutes.
+the selected `modinfo` path, and the loaded repair attestation agree. Use
+**Auto Base Toolkit Installation** for the complete foundation, or choose **Install / resume
+async-compute stack** under Performance tuning. The toolkit installs AMDGPU
+first, pauses for reboot, and resumes RADV when the same option is selected
+again. The RADV-only build normally takes about 3-5 minutes.
 
 Open the menu as the logged-in user:
 
@@ -659,7 +665,9 @@ read-only GFX1013 repair attestation, and active scheduler policy all validate.
 
 The global driver list is architecture-qualified. Native 64-bit processes use
 the patched GFX1013 RADV ICD, while 32-bit processes fall back to SteamOS's
-stock `radeon_icd.i686.json` and `lib32-vulkan-radeon`. This also supports games
+stock `radeon_icd.i686.json` and `lib32-vulkan-radeon`. Setup installs and
+strictly verifies that signed SteamOS fallback package when needed. This also
+supports games
 that launch a mixture of 64-bit and 32-bit Vulkan processes.
 
 Do not use this ICD with the stock kernel module. The alternate driver exposes
@@ -883,7 +891,7 @@ by SCSI eject, while `1111:1111` adapters use the required two-message sequence.
 | CEC | Home configuration and allowlisted system integration carry forward |
 | HDMI AC-3 encoding | The udev profile selector is retained; the WirePlumber fragment lives in the user's home directory |
 | Patched AMDGPU module | Run `bc250-audio-fix/patch-driver.sh` after each kernel update to rebuild the kernel-specific module; the rebuild disables any retained scheduler policy until RADV setup is rerun |
-| Mesa / RADV async-compute patch | Rerun `bc250-mesh-shader.sh setup` after a SteamOS update to restore the root-owned driver, safety-gated environment generator, and scheduler policy |
+| Mesa / RADV async compute | Rerun `bc250-mesh-shader.sh setup` after a SteamOS update to restore the root-owned driver, safety-gated environment generator, and scheduler policy |
 | NCT6687 fan-control module | The boot helper restores only a verified module already staged for the running kernel; rerun setup interactively after a kernel change |
 | AIC8800 modules | The boot helper reuses staged modules or published headers; rerun setup if it requests interactive source preparation |
 

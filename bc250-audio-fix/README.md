@@ -149,7 +149,8 @@ BC-250 PCI device with GFX1013, and does nothing under MES, with no active
 runlist, or with `amdgpu.sched_policy=2` (`KFD_SCHED_POLICY_NO_HWS`). The module
 parameter defaults to off.
 
-Toggle the persistent boot option from **Drivers > KFD HWS runlist TLB flush**
+Toggle the persistent boot option from **Core system > Advanced AMDGPU boot
+options > KFD runlist workaround**
 or with `../bc250-toolkit.sh kfd-runlist`. Enabling writes
 `amdgpu.bc250_flush_by_runlist=1` and requires a reboot. The toolkit refuses to
 enable it while policy `2` is configured. RADV setup can replace the workaround

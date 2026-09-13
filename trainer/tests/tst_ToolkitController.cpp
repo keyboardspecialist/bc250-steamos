@@ -23,7 +23,8 @@ private slots:
     void allowlistMetadataIsFixed()
     {
         const QStringList expectedIds = {
-            QStringLiteral("storage-install"), QStringLiteral("storage-repair"),
+            QStringLiteral("auto-base-installation"), QStringLiteral("storage-install"),
+            QStringLiteral("storage-repair"),
             QStringLiteral("storage-remove"), QStringLiteral("power-install"),
             QStringLiteral("power-remove"), QStringLiteral("ram-install"),
             QStringLiteral("ram-remove"), QStringLiteral("swap-zram-install"),
@@ -42,6 +43,23 @@ private slots:
             QStringLiteral("coolercontrol-remove")};
         for (const QString &id : expectedIds)
             QCOMPARE(ToolkitController::operationMetadata(id).value(QStringLiteral("id")), id);
+
+        const QVariantMap autoBase =
+            ToolkitController::operationMetadata(QStringLiteral("auto-base-installation"));
+        QCOMPARE(autoBase.value(QStringLiteral("title")).toString(),
+                  QStringLiteral("Auto Base Toolkit Installation"));
+        QCOMPARE(autoBase.value(QStringLiteral("verb")).toString(),
+                  QStringLiteral("INSTALL / RESUME"));
+        QVERIFY(!autoBase.contains(QStringLiteral("component")));
+        QVERIFY(!autoBase.value(QStringLiteral("cancellable")).toBool());
+        QVERIFY(!autoBase.value(QStringLiteral("destructive")).toBool());
+        const QString autoBaseDescription = autoBase.value(QStringLiteral("description")).toString();
+        QVERIFY(autoBaseDescription.contains(QStringLiteral("AMDGPU/RADV")));
+        QVERIFY(autoBaseDescription.contains(QStringLiteral("power foundation")));
+        QVERIFY(autoBaseDescription.contains(QStringLiteral("RAM helper")));
+        QVERIFY(autoBaseDescription.contains(QStringLiteral("automatic dependencies")));
+        QVERIFY(autoBaseDescription.contains(QStringLiteral("mandatory reboots")));
+        QVERIFY(autoBaseDescription.contains(QStringLiteral("resumes")));
 
         const QVariantMap power = ToolkitController::operationMetadata(QStringLiteral("power-install"));
         QVERIFY(!power.isEmpty());
@@ -172,6 +190,23 @@ private slots:
         QVERIFY(controller.start(QStringLiteral("swap-remove")));
         QTRY_COMPARE_WITH_TIMEOUT(controller.resultStatus(), QStringLiteral("reboot-required"), 3000);
         QCOMPARE(controller.exitCode(), 75);
+    }
+
+    void reportsAutoBaseInstallationCheckpointAsRebootRequired()
+    {
+        QTemporaryDir directory;
+        QVERIFY(directory.isValid());
+        writeLauncher(directory.path(), QByteArrayLiteral(
+            "case \"$1\" in\n"
+            "  inventory-json) printf '%s\\n' '{\"schemaVersion\":1,\"components\":[]}' ;;\n"
+            "  action) [[ $2 == auto-base-installation ]] || exit 91; printf '%s\\n' '[bc250-toolkit] CHECKPOINT: Reboot to resume.' ;;\n"
+            "esac\n"));
+
+        ToolkitController controller(false, directory.path());
+        QTRY_VERIFY_WITH_TIMEOUT(!controller.refreshing(), 3000);
+        QVERIFY(controller.start(QStringLiteral("auto-base-installation")));
+        QTRY_COMPARE_WITH_TIMEOUT(controller.resultStatus(), QStringLiteral("reboot-required"), 3000);
+        QCOMPARE(controller.exitCode(), 0);
     }
 
     void mockModeNeverExecutesLauncher()

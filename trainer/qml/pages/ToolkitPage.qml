@@ -13,6 +13,7 @@ ColumnLayout {
     readonly property bool actionsEnabled: controller.available && inventoryReady
         && !controller.refreshing && !controller.running && !backend.busy
     readonly property var toolkitSnapshot: (backend.snapshot || {}).toolkit || ({})
+    readonly property var autoBaseInstallationOperation: operation("auto-base-installation") || ({})
 
     function componentState(componentId) {
         if (componentId === "persistence")
@@ -60,7 +61,7 @@ ColumnLayout {
         ListElement { componentId: "ram"; categoryName: "PERFORMANCE"; title: "MEMORY BALANCE HELPER"; description: "Install the verified helper before choosing CMOS and TTM limits on MEMORY."; primary: "ram-install"; repair: ""; secondaryText: "REPAIR"; remove: "ram-remove" }
         ListElement { componentId: "swap"; categoryName: "PERFORMANCE"; title: "COMPRESSED SWAP"; description: "Choose half-RAM zstd zram, or lz4 zswap with a 16 GiB persistent disk swapfile."; primary: "swap-zram-install"; repair: "swap-zswap-install"; secondaryText: "ZSWAP"; remove: "swap-remove" }
         ListElement { componentId: "compute"; categoryName: "PERFORMANCE"; title: "GPU CU PREREQUISITES"; description: "Build UMR only; routing, stability testing, and boot replay are separate steps."; primary: "compute-build"; repair: ""; secondaryText: "REPAIR"; remove: "compute-remove" }
-        ListElement { componentId: "mesh"; categoryName: "PERFORMANCE"; title: "MESA / RADV ASYNC COMPUTE"; description: "Builds the GFX1013 async-compute driver in about 3-5 minutes; requires the patched AMDGPU module."; primary: "mesh-setup"; repair: ""; secondaryText: "REPAIR"; remove: "mesh-remove" }
+        ListElement { componentId: "mesh"; categoryName: "PERFORMANCE"; title: "MESA / RADV ASYNC COMPUTE"; description: "Installs AMDGPU first when needed, then resumes the 3-5 minute RADV build after reboot."; primary: "mesh-setup"; repair: ""; secondaryText: "REPAIR"; remove: "mesh-remove" }
         ListElement { componentId: "cec"; categoryName: "DEVICES"; title: "HDMI-CEC"; description: "TV, receiver, boot, and sleep integration."; primary: "cec-setup"; repair: "cec-repair"; secondaryText: "REPAIR"; remove: "cec-remove" }
         ListElement { componentId: "fan"; categoryName: "DEVICES"; title: "NCT6687 FAN DRIVER"; description: "Pinned hwmon tachometer and PWM support for the onboard BC-250 controller."; primary: "fan-install"; repair: ""; secondaryText: "REPAIR"; remove: "fan-remove" }
         ListElement { componentId: "aic"; categoryName: "DEVICES"; title: "AIC8800 WIRELESS"; description: "Hardware-specific WiFi and Bluetooth modules."; primary: "aic-install"; repair: ""; secondaryText: "REPAIR"; remove: "aic-remove" }
@@ -69,7 +70,7 @@ ColumnLayout {
         ListElement { componentId: "coolercontrol"; categoryName: "INTERFACES"; title: "COOLERCONTROL"; description: "Fan profiles, curves, and monitoring for the onboard controller."; primary: "coolercontrol-install"; repair: ""; secondaryText: "REPAIR"; remove: "coolercontrol-remove" }
     }
 
-    C.ConfirmDialog { id: confirmation }
+    C.ConfirmDialog { id: confirmation; objectName: "toolkitConfirmDialog" }
 
     Rectangle {
         Layout.fillWidth: true
@@ -143,6 +144,77 @@ ColumnLayout {
                 font.pixelSize: 8
                 Layout.fillWidth: true
                 onClicked: root.category = modelData
+            }
+        }
+    }
+
+    Item {
+        id: autoBaseInstallationCard
+        objectName: "autoBaseInstallationCard"
+        readonly property bool categoryVisible: root.showsCategory("FOUNDATION")
+        visible: categoryVisible
+        Layout.fillWidth: true
+        implicitHeight: 116
+
+        C.NeonPanel {
+            anchors.fill: parent
+            accent: "#ef48bb"
+        }
+
+        ColumnLayout {
+            anchors.fill: parent
+            anchors.margins: 10
+            anchors.leftMargin: 13
+            spacing: 4
+
+            RowLayout {
+                Layout.fillWidth: true
+                spacing: 8
+                Text {
+                    text: "FOUNDATION // AUTOMATIC SEQUENCE"
+                    color: "#ef48bb"
+                    font.family: "monospace"; font.pixelSize: 8; font.bold: true
+                    Layout.fillWidth: true
+                }
+                Text {
+                    text: "RESUMABLE"
+                    color: "#65f5ad"
+                    font.family: "monospace"; font.pixelSize: 7; font.bold: true
+                }
+            }
+
+            Text {
+                objectName: "autoBaseInstallationTitle"
+                text: (root.autoBaseInstallationOperation.title || "Auto Base Toolkit Installation").toUpperCase()
+                color: "#f5d9ed"
+                font.family: "monospace"; font.pixelSize: 12; font.bold: true
+                Layout.fillWidth: true
+            }
+
+            RowLayout {
+                Layout.fillWidth: true
+                Layout.fillHeight: true
+                spacing: 10
+                Text {
+                    objectName: "autoBaseInstallationDescription"
+                    text: root.autoBaseInstallationOperation.description || ""
+                    color: "#a9c2cb"
+                    font.family: "monospace"; font.pixelSize: 8
+                    wrapMode: Text.Wrap
+                    maximumLineCount: 3
+                    elide: Text.ElideRight
+                    Layout.fillWidth: true
+                    Layout.fillHeight: true
+                }
+                C.NeonButton {
+                    objectName: "autoBaseInstallationAction"
+                    text: root.autoBaseInstallationOperation.verb || "INSTALL / RESUME"
+                    enabled: root.actionsEnabled && root.autoBaseInstallationOperation.id === "auto-base-installation"
+                    accent: "#ef48bb"
+                    implicitHeight: 31
+                    Layout.preferredWidth: 126
+                    onClicked: root.requestOperation("auto-base-installation")
+                }
             }
         }
     }

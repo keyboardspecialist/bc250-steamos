@@ -702,7 +702,6 @@ class MeshShaderTests(unittest.TestCase):
         )
         return_index = setup.index("return 0", message_index)
 
-        self.assertLess(return_index, setup.index('command -v curl', guard_index))
         self.assertLess(return_index, setup.index('work=$(mktemp', guard_index))
         self.assertLess(return_index, setup.index("stage_upstream", guard_index))
         self.assertIn("verify_scheduler_configured", setup[guard_index:return_index])
@@ -1081,11 +1080,11 @@ class MeshShaderTests(unittest.TestCase):
         self.assertIn("menu_select()", source)
         self.assertIn("Mesa / RADV async-compute patch", source)
         self.assertIn("Install FSR4 RC8 game DLL (recommended)", source)
-        self.assertIn("Install global async-compute RADV (optional)", source)
-        self.assertIn("not required by the recommended FSR4 RC8 DLL route", source)
+        self.assertIn("Install / resume global async-compute RADV (optional)", source)
+        self.assertIn("Not required by the recommended FSR4 RC8 DLL route", source)
         self.assertIn("Build legacy FSR4 V3 RADV (fallback only)", source)
-        self.assertIn("usually takes 3-5 minutes", source)
-        self.assertIn("GFX1013 async compute", source)
+        self.assertIn("Usually takes 3-5 minutes", source)
+        self.assertIn("GFX1013 async-compute marker", source)
         self.assertIn("require_production_kernel_paths", source)
         self.assertIn('ldd -r "$output"', source)
         self.assertIn('readelf -h "$output"', source)
@@ -1135,6 +1134,181 @@ class MeshShaderTests(unittest.TestCase):
         self.assertIn("-Dallow-fallback-for=libdrm", source)
         self.assertIn("-Dlibdrm:default_library=static", source)
         self.assertIn("-Dbuildtype=release", source)
+
+    def test_radv_prerequisite_repair_follows_active_kernel_gate(self):
+        source = MESH.read_text(encoding="utf-8")
+        setup = source.split("cmd_setup() (", 1)[1].split(
+            "\n)\n\nmanage_games", 1
+        )[0]
+        kernel_gate = setup.index("ensure_compute_kernel_prerequisite")
+        core_tools = setup.index("ensure_radv_core_tools")
+        prerequisites = setup.index("ensure_radv_prerequisites")
+        ownership = setup.index("preflight_runtime_ownership")
+        package_repair = source.split("ensure_radv_prerequisites() {", 1)[1].split(
+            "\n}\n\nmanager_environment_active", 1
+        )[0]
+
+        self.assertLess(setup.index("command -v systemctl"), kernel_gate)
+        self.assertLess(kernel_gate, ownership)
+        self.assertLess(ownership, core_tools)
+        self.assertLess(core_tools, setup.index("flock 9"))
+        self.assertLess(setup.index("recover_install_transaction"), prerequisites)
+        self.assertNotIn("systemctl", package_repair)
+        self.assertIn("verify_32bit_fallback", package_repair)
+        self.assertIn(
+            "install_signed_steamos_packages", package_repair
+        )
+        self.assertIn('pacman -S --noconfirm "$@"', source)
+        for package in ("curl", "lib32-vulkan-radeon"):
+            self.assertIn(package, package_repair)
+        core_repair = source.split("ensure_radv_core_tools() {", 1)[1].split(
+            "\n}\n\nensure_radv_prerequisites", 1
+        )[0]
+        for package in ("python", "util-linux"):
+            self.assertIn(package, core_repair)
+        self.assertIn(
+            "Signed SteamOS package lib32-vulkan-radeon",
+            package_repair,
+        )
+        self.assertLess(
+            setup.index("preflight_runtime_ownership"),
+            setup.index('install_default_profile "$output" "$mesa_tag"'),
+        )
+
+    def test_radv_prerequisites_install_and_strictly_revalidate_fallback(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            env = self.environment(root)
+            self.install_runtime(env)
+            fallback = Path(env["BC250_MESH_32BIT_ICD"])
+            valid_fallback = root / "valid-fallback.json"
+            valid_fallback.write_bytes(fallback.read_bytes())
+            fallback.write_text("{}\n", encoding="ascii")
+            log = root / "packages.log"
+            available = root / "available"
+            available.mkdir()
+            command = r'''
+script=$1
+set -- help
+source "$script" >/dev/null
+as_root() { "$@"; }
+command() {
+    if [[ "${1:-}" == -v ]]; then
+        case "${2:-}" in
+            curl|python3|flock) [[ -e "$BC250_TEST_AVAILABLE/${2}" ]]; return ;;
+        esac
+    fi
+    builtin command "$@"
+}
+steamos-readonly() {
+    printf 'readonly %s\n' "$1" >> "$BC250_TEST_PACKAGE_LOG"
+    [[ "$1" != status ]] || printf 'enabled\n'
+}
+pacman-key() { printf 'pacman-key %s\n' "$*" >> "$BC250_TEST_PACKAGE_LOG"; }
+pacman() {
+    printf 'pacman %s\n' "$*" >> "$BC250_TEST_PACKAGE_LOG"
+    for package; do
+        case "$package" in
+            curl) touch "$BC250_TEST_AVAILABLE/curl" ;;
+            python) touch "$BC250_TEST_AVAILABLE/python3" ;;
+            util-linux) touch "$BC250_TEST_AVAILABLE/flock" ;;
+            lib32-vulkan-radeon) cp "$BC250_TEST_VALID_FALLBACK" "$FALLBACK_ICD" ;;
+        esac
+    done
+}
+ensure_radv_core_tools
+ensure_radv_prerequisites
+'''
+            result = subprocess.run(
+                ["bash", "-c", command, "_", str(MESH)],
+                capture_output=True,
+                text=True,
+                env={
+                    **env,
+                    "BC250_TEST_AVAILABLE": str(available),
+                    "BC250_TEST_PACKAGE_LOG": str(log),
+                    "BC250_TEST_VALID_FALLBACK": str(valid_fallback),
+                },
+            )
+            self.assertEqual(result.returncode, 0, result.stderr)
+            package_log = log.read_text(encoding="utf-8")
+            pacman_lines = [
+                line for line in package_log.splitlines() if line.startswith("pacman -S")
+            ]
+            for package in ("curl", "python", "util-linux", "lib32-vulkan-radeon"):
+                self.assertTrue(
+                    any(package in line.split() for line in pacman_lines), package
+                )
+            self.assertLess(
+                package_log.index("readonly disable"),
+                package_log.index("pacman -S"),
+            )
+            self.assertLess(
+                package_log.index("pacman -S"),
+                package_log.rindex("readonly enable"),
+            )
+
+            fallback.write_text("{}\n", encoding="ascii")
+            previous_log_size = len(log.read_text(encoding="utf-8"))
+            failed = subprocess.run(
+                [
+                    "bash",
+                    "-c",
+                    command.replace(
+                        'lib32-vulkan-radeon) cp "$BC250_TEST_VALID_FALLBACK" "$FALLBACK_ICD"',
+                        "lib32-vulkan-radeon) :",
+                    ),
+                    "_",
+                    str(MESH),
+                ],
+                capture_output=True,
+                text=True,
+                env={
+                    **env,
+                    "BC250_TEST_AVAILABLE": str(available),
+                    "BC250_TEST_PACKAGE_LOG": str(log),
+                    "BC250_TEST_VALID_FALLBACK": str(valid_fallback),
+                },
+            )
+            self.assertNotEqual(failed.returncode, 0)
+            self.assertIn("did not provide a valid 32-bit RADV ICD", failed.stderr)
+            retry_log = log.read_text(encoding="utf-8")[previous_log_size:]
+            self.assertLess(
+                retry_log.index("readonly disable"), retry_log.index("pacman -S")
+            )
+            self.assertLess(
+                retry_log.index("pacman -S"), retry_log.index("readonly enable")
+            )
+
+    def test_radv_package_failure_restores_readonly_root(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            env = self.environment(root)
+            self.install_runtime(env)
+            Path(env["BC250_MESH_32BIT_ICD"]).write_text("{}\n", encoding="ascii")
+            log = root / "readonly.log"
+            command = r'''
+script=$1
+set -- help
+source "$script" >/dev/null
+as_root() { "$@"; }
+steamos-readonly() {
+    printf '%s\n' "$1" >> "$BC250_TEST_READONLY_LOG"
+    [[ "$1" != status ]] || printf 'enabled\n'
+}
+pacman-key() { :; }
+pacman() { return 23; }
+ensure_radv_prerequisites
+'''
+            result = subprocess.run(
+                ["bash", "-c", command, "_", str(MESH)],
+                capture_output=True,
+                text=True,
+                env={**env, "BC250_TEST_READONLY_LOG": str(log)},
+            )
+            self.assertNotEqual(result.returncode, 0)
+            actions = log.read_text(encoding="utf-8").splitlines()
+            self.assertEqual(actions, ["status", "disable", "enable"])
 
     def test_fsr4_patch_is_retained_as_pinned_legacy_v3(self):
         script = MESH.read_text(encoding="utf-8")

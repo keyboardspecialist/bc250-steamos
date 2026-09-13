@@ -54,7 +54,7 @@ component_label() {
         ram) echo "RAM / VRAM split" ;;
         swap) echo "Compressed swap" ;;
         compute) echo "GPU compute-unit unlock" ;;
-        mesh) echo "Mesa / RADV async-compute patch" ;;
+        mesh) echo "Mesa / RADV async compute" ;;
         audio) echo "AMDGPU kernel fixes" ;;
         aic) echo "AIC8800 WiFi / Bluetooth" ;;
         fan) echo "NCT6687 fan-control driver" ;;

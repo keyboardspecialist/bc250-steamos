@@ -1,3 +1,5 @@
+import hashlib
+import json
 import os
 import subprocess
 import tempfile
@@ -43,6 +45,136 @@ GFX1013_ATTESTATION_PATCH = (
 
 
 class DriverLifecycleTests(unittest.TestCase):
+    def audio_status_environment(self, root):
+        bindir = root / "bin"
+        bindir.mkdir()
+        module_dir = root / "modules"
+        module = module_dir / "amdgpu.ko.zst"
+        boot_config = root / "boot-config.sh"
+        (bindir / "modinfo").write_text(
+            '#!/bin/sh\nprintf "%s\\n" "${BC250_TEST_MODINFO_PATH:-$BC250_GFX1013_MODULE}"\n',
+            encoding="utf-8",
+        )
+        (bindir / "modinfo").chmod(0o755)
+        boot_config.write_text(
+            '#!/bin/sh\n[ "$1" = present ] && [ "${BC250_TEST_BOOT_PRESENT:-0}" = 1 ]\n',
+            encoding="utf-8",
+        )
+        boot_config.chmod(0o755)
+        return {
+            **os.environ,
+            "PATH": f"{bindir}:{os.environ['PATH']}",
+            "BC250_GFX1013_MODULE": str(module),
+            "BC250_AUDIO_MARKER": str(module_dir / ".bc250-audio-fix"),
+            "BC250_METRICS_MARKER": str(module_dir / ".bc250-metrics-fix"),
+            "BC250_GFX1013_MARKER": str(module_dir / ".bc250-gfx1013-fix"),
+            "BC250_GFX1013_ACTIVE": str(root / "sys" / "bc250_gfx1013_fix"),
+            "BC250_AMDGPU_BOOT_CONFIG": str(boot_config),
+        }
+
+    def install_audio_status_fixture(self, env):
+        module = Path(env["BC250_GFX1013_MODULE"])
+        module.parent.mkdir(parents=True, exist_ok=True)
+        module.write_bytes(b"patched amdgpu\n")
+        digest = hashlib.sha256(module.read_bytes()).hexdigest() + "\n"
+        for key in (
+            "BC250_AUDIO_MARKER",
+            "BC250_METRICS_MARKER",
+            "BC250_GFX1013_MARKER",
+        ):
+            Path(env[key]).write_text(digest, encoding="ascii")
+
+    def audio_status_json(self, env):
+        result = subprocess.run(
+            ["bash", str(AUDIO_INSTALLER), "status-json"],
+            check=True,
+            capture_output=True,
+            text=True,
+            env=env,
+        )
+        self.assertEqual(len(result.stdout.splitlines()), 1)
+        return json.loads(result.stdout)
+
+    def test_audio_status_json_reports_current_kernel_lifecycle(self):
+        with tempfile.TemporaryDirectory() as directory:
+            env = self.audio_status_environment(Path(directory))
+            status = self.audio_status_json(env)
+            self.assertEqual(
+                status,
+                {
+                    "scriptAvailable": True,
+                    "runningKernel": os.uname().release,
+                    "state": "not-installed",
+                    "overrideInstalled": False,
+                    "overrideSelected": False,
+                    "activeReady": False,
+                    "rebootRequired": False,
+                },
+            )
+
+            self.install_audio_status_fixture(env)
+            status = self.audio_status_json(env)
+            self.assertEqual(status["state"], "reboot-required")
+            self.assertTrue(status["overrideInstalled"])
+            self.assertTrue(status["overrideSelected"])
+            self.assertFalse(status["activeReady"])
+            self.assertTrue(status["rebootRequired"])
+
+            active = Path(env["BC250_GFX1013_ACTIVE"])
+            active.parent.mkdir(parents=True)
+            active.write_text("wrong-commit\n", encoding="ascii")
+            status = self.audio_status_json(env)
+            self.assertEqual(status["state"], "reboot-required")
+            self.assertFalse(status["activeReady"])
+
+            active.write_text(
+                "d3e6dc062c34d2523db0abe5741d1f5b0dea00d9\n",
+                encoding="ascii",
+            )
+            status = self.audio_status_json(env)
+            self.assertEqual(status["state"], "ready")
+            self.assertTrue(status["activeReady"])
+            self.assertFalse(status["rebootRequired"])
+
+    def test_audio_status_json_rejects_partial_or_unselected_override(self):
+        with tempfile.TemporaryDirectory() as directory:
+            env = self.audio_status_environment(Path(directory))
+            self.install_audio_status_fixture(env)
+            Path(env["BC250_METRICS_MARKER"]).write_text("0" * 64 + "\n")
+            status = self.audio_status_json(env)
+            self.assertEqual(status["state"], "invalid")
+            self.assertFalse(status["overrideInstalled"])
+            self.assertTrue(status["overrideSelected"])
+
+            metrics_marker = Path(env["BC250_METRICS_MARKER"])
+            metrics_marker.unlink()
+            metrics_marker.symlink_to(Path(env["BC250_AUDIO_MARKER"]))
+            status = self.audio_status_json(env)
+            self.assertEqual(status["state"], "invalid")
+            self.assertFalse(status["overrideInstalled"])
+
+            metrics_marker.unlink()
+            self.install_audio_status_fixture(env)
+            env["BC250_TEST_MODINFO_PATH"] = str(Path(directory) / "stock-amdgpu.ko.zst")
+            status = self.audio_status_json(env)
+            self.assertEqual(status["state"], "invalid")
+            self.assertTrue(status["overrideInstalled"])
+            self.assertFalse(status["overrideSelected"])
+
+    def test_audio_status_json_rejects_boot_only_state_and_help_lists_command(self):
+        with tempfile.TemporaryDirectory() as directory:
+            env = self.audio_status_environment(Path(directory))
+            env["BC250_TEST_BOOT_PRESENT"] = "1"
+            self.assertEqual(self.audio_status_json(env)["state"], "invalid")
+
+        help_result = subprocess.run(
+            ["bash", str(AUDIO_INSTALLER), "help"],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        self.assertIn("status-json", help_result.stdout)
+
     def test_status_entrypoints_are_read_only_and_do_not_require_sudo(self):
         for script, prefix in (
             (AIC_INSTALLER, "[aic8800]"),

@@ -58,6 +58,7 @@ DEFAULT_METRICS_MARKER="$MODULE_UPDATES/.bc250-metrics-fix"
 DEFAULT_COMPUTE_ACTIVE="/sys/module/amdgpu/parameters/bc250_gfx1013_fix"
 DEFAULT_SCHED_POLICY="/sys/module/amdgpu/parameters/sched_policy"
 DEFAULT_BOOT_CONFIG="${SELF%/*}/bc250-audio-fix/boot-config.sh"
+DEFAULT_AMDGPU_INSTALLER="${SELF%/*}/bc250-audio-fix/patch-driver.sh"
 COMPUTE_MODULE="${BC250_GFX1013_MODULE:-$DEFAULT_COMPUTE_MODULE}"
 COMPUTE_MARKER="${BC250_GFX1013_MARKER:-$DEFAULT_COMPUTE_MARKER}"
 AUDIO_MARKER="${BC250_AUDIO_MARKER:-$DEFAULT_AUDIO_MARKER}"
@@ -65,6 +66,7 @@ METRICS_MARKER="${BC250_METRICS_MARKER:-$DEFAULT_METRICS_MARKER}"
 COMPUTE_ACTIVE="${BC250_GFX1013_ACTIVE:-$DEFAULT_COMPUTE_ACTIVE}"
 SCHED_POLICY="${BC250_SCHED_POLICY_PARAM:-$DEFAULT_SCHED_POLICY}"
 BOOT_CONFIG="${BC250_AMDGPU_BOOT_CONFIG:-$DEFAULT_BOOT_CONFIG}"
+AMDGPU_INSTALLER="${BC250_AMDGPU_INSTALLER:-$DEFAULT_AMDGPU_INSTALLER}"
 
 C0=$'\033[0m'; CB=$'\033[1m'; CD=$'\033[2m'; CI=$'\033[7m'
 CG=$'\033[32m'; CY=$'\033[33m'; CR=$'\033[31m'; CC=$'\033[36m'
@@ -415,12 +417,108 @@ require_production_kernel_paths() {
         && "$METRICS_MARKER" == "$DEFAULT_METRICS_MARKER" \
         && "$COMPUTE_ACTIVE" == "$DEFAULT_COMPUTE_ACTIVE" \
         && "$SCHED_POLICY" == "$DEFAULT_SCHED_POLICY" \
-        && "$BOOT_CONFIG" == "$DEFAULT_BOOT_CONFIG" ]] \
+        && "$BOOT_CONFIG" == "$DEFAULT_BOOT_CONFIG" \
+        && "$AMDGPU_INSTALLER" == "$DEFAULT_AMDGPU_INSTALLER" ]] \
         || die "RADV setup refuses overridden AMDGPU safety-check paths."
 }
 
 require_compute_kernel() {
     verify_compute_kernel || die "The patched AMDGPU module is not installed, selected, and active for this kernel. Run bc250-audio-fix/patch-driver.sh, reboot, and retry."
+}
+
+json_string_field() {
+    local json="$1" key="$2" tail
+    tail=${json#*\"$key\":\"}
+    [[ "$tail" != "$json" ]] || return 1
+    printf '%s' "${tail%%\"*}"
+}
+
+ensure_compute_kernel_prerequisite() {
+    local status state
+    verify_compute_kernel && return 0
+    [[ -f "$AMDGPU_INSTALLER" && ! -L "$AMDGPU_INSTALLER" ]] \
+        || die "AMDGPU prerequisite installer is missing or unsafe: $AMDGPU_INSTALLER"
+    status=$(bash "$AMDGPU_INSTALLER" status-json 2>/dev/null) \
+        || die "Could not determine current-kernel AMDGPU state."
+    state=$(json_string_field "$status" state || true)
+    case "$state" in
+        not-installed)
+            log "Installing the required AMDGPU kernel fixes first."
+            bash "$AMDGPU_INSTALLER"
+            status=$(bash "$AMDGPU_INSTALLER" status-json 2>/dev/null) \
+                || die "AMDGPU installation completed, but its state could not be verified."
+            state=$(json_string_field "$status" state || true)
+            ;;
+        reboot-required) ;;
+        invalid) die "Current-kernel AMDGPU state is incomplete or unsafe. Review '$AMDGPU_INSTALLER status' before continuing." ;;
+        *) die "Unknown current-kernel AMDGPU state: ${state:-unavailable}" ;;
+    esac
+    if [[ "$state" == reboot-required ]]; then
+        log "CHECKPOINT: Reboot to activate the AMDGPU kernel fixes, then select this same option again."
+        return 1
+    fi
+    verify_compute_kernel \
+        || die "AMDGPU installation did not reach a safe reboot or active state."
+}
+
+install_signed_steamos_packages() (
+    local ro_was_enabled=0
+    restore_readonly() {
+        local rc=${1:-$?}
+        trap - EXIT INT TERM HUP
+        if [[ $ro_was_enabled -eq 1 ]]; then
+            as_root steamos-readonly enable || rc=1
+        fi
+        exit "$rc"
+    }
+    trap restore_readonly EXIT
+    trap 'restore_readonly 130' INT
+    trap 'restore_readonly 143' TERM
+    trap 'restore_readonly 129' HUP
+    command -v steamos-readonly >/dev/null 2>&1 \
+        || die "SteamOS package prerequisites are missing."
+    if steamos-readonly status 2>/dev/null | grep -qi enabled; then
+        ro_was_enabled=1
+        as_root steamos-readonly disable
+    fi
+    as_root pacman-key --init
+    as_root pacman-key --populate archlinux holo 2>/dev/null \
+        || as_root pacman-key --populate
+    as_root pacman -S --noconfirm "$@"
+    if [[ $ro_was_enabled -eq 1 ]]; then
+        as_root steamos-readonly enable
+        ro_was_enabled=0
+    fi
+)
+
+ensure_radv_core_tools() {
+    local packages=()
+    command -v python3 >/dev/null 2>&1 || packages+=(python)
+    command -v flock >/dev/null 2>&1 || packages+=(util-linux)
+    if ((${#packages[@]})); then
+        log "Installing signed SteamOS tools required for locked RADV recovery."
+        install_signed_steamos_packages "${packages[@]}"
+    fi
+    command -v python3 >/dev/null 2>&1 \
+        || die "Signed SteamOS packages did not provide required tool: python3"
+    command -v flock >/dev/null 2>&1 \
+        || die "Signed SteamOS packages did not provide required tool: flock"
+}
+
+ensure_radv_prerequisites() {
+    local packages=()
+    command -v curl >/dev/null 2>&1 || packages+=(curl)
+    if ! verify_32bit_fallback; then
+        packages+=(lib32-vulkan-radeon)
+    fi
+    if ((${#packages[@]})); then
+        log "Installing signed SteamOS RADV prerequisites."
+        install_signed_steamos_packages "${packages[@]}"
+    fi
+    command -v curl >/dev/null 2>&1 \
+        || die "Signed SteamOS packages did not provide required tool: curl"
+    verify_32bit_fallback \
+        || die "Signed SteamOS package lib32-vulkan-radeon did not provide a valid 32-bit RADV ICD."
 }
 
 manager_environment_active() {
@@ -1232,12 +1330,22 @@ cmd_setup() (
     local cache_profile="" expected_sha="" committed=0 default_ready=0 default_bootstrapped=0
     local ro_was_enabled=0 root_unlocked=0 need_packages=0
     [[ "$profile" == default || "$profile" == fsr4 ]] || die "Unknown RADV profile: $profile"
-    command -v python3 >/dev/null 2>&1 || die "python3 is required"
-    command -v flock >/dev/null 2>&1 || die "flock is required"
     command -v systemctl >/dev/null 2>&1 || die "systemctl is required for global RADV activation"
     require_production_kernel_paths
     [[ -f "$BOOT_CONFIG" && ! -L "$BOOT_CONFIG" ]] \
         || die "AMDGPU scheduler-policy helper is missing or unsafe: $BOOT_CONFIG"
+    if ! ensure_compute_kernel_prerequisite; then
+        return 0
+    fi
+    if [[ ! -e "$TRANSACTION_DIR" && ! -L "$TRANSACTION_DIR" \
+        && ! -e "$FSR4_TRANSACTION_DIR" && ! -L "$FSR4_TRANSACTION_DIR" ]]; then
+        preflight_runtime_ownership
+        if [[ -e "$FSR4_DIR" || -L "$FSR4_DIR" ]]; then
+            verify_owned_fsr4_runtime \
+                || die "Existing legacy FSR4 V3 profile is incomplete or not a recorded toolkit install."
+        fi
+    fi
+    ensure_radv_core_tools
     ensure_state_dir
     exec 9> "$LOCK_FILE"
     flock 9
@@ -1257,9 +1365,7 @@ cmd_setup() (
                 || die "Existing legacy FSR4 V3 profile is incomplete or not a recorded toolkit install."
         fi
     fi
-    require_compute_kernel
-    verify_32bit_fallback \
-        || die "SteamOS's 32-bit RADV ICD is unavailable or invalid. Install lib32-vulkan-radeon and retry."
+    ensure_radv_prerequisites
     if [[ "$profile" == default ]] && verify_current_runtime; then
         if ! verify_scheduler_configured; then
             if ! as_root bash "$BOOT_CONFIG" install; then
@@ -1276,7 +1382,6 @@ cmd_setup() (
         report_fsr4_preserved
         return 0
     fi
-    command -v curl >/dev/null 2>&1 || die "curl is required"
     work=$(mktemp -d "$STATE_DIR/.setup.XXXXXX")
     staged_driver="${DRIVER}.bc250-new"
     [[ ! -e "$staged_driver" && ! -L "$staged_driver" ]] \
@@ -1346,8 +1451,8 @@ cmd_setup() (
         as_root pacman-key --init
         as_root pacman-key --populate archlinux holo 2>/dev/null || as_root pacman-key --populate
         as_root pacman -S --needed --noconfirm \
-            base-devel git meson ninja python-mako python-packaging python-yaml pkgconf \
-            glslang spirv-tools \
+            base-devel curl git meson ninja python python-mako python-packaging python-yaml \
+            pkgconf glslang spirv-tools util-linux lib32-vulkan-radeon \
             "${development_packages[@]}"
         # SteamOS images can record these packages while omitting development
         # files, so force a signed reinstall instead of trusting --needed.
@@ -2095,7 +2200,7 @@ cmd_menu() {
         local items=(
             "Status overview|${runtime_state}|Verify the patched AMDGPU module, scheduler policy, RADV runtime, and global activation."
             "Install FSR4 RC8 game DLL (recommended)|${fsr4_state}|Preferred FSR4 route. Replaces one exact existing DLL and retains the original; no custom RADV installation is needed."
-            "Install global async-compute RADV (optional)|${runtime_state}|Independent driver optimization for GFX1013 async compute. It is not required by the recommended FSR4 RC8 DLL route; usually takes 3-5 minutes."
+            "Install / resume global async-compute RADV (optional)|${runtime_state}|Installs AMDGPU first when needed, then resumes here after reboot. Not required by the recommended FSR4 RC8 DLL route."
             "Build legacy FSR4 V3 RADV (fallback only)|${legacy_fsr4_state}|Use only if the RC8 DLL route is unsuitable. Automatically installs global async-compute RADV if needed."
             "Older per-game setup cleanup|${legacy_state}|Migration only: remove old MESA_DRICONF_EXECUTABLE_OVERRIDE and VK_ICD_FILENAMES Steam launch options, then clear their records."
             "Uninstall Mesa / RADV runtime|${runtime_state}|Remove the alternate driver, ICD, and user environment generator; preserve build caches."
@@ -2107,7 +2212,7 @@ cmd_menu() {
             0) show_menu_status ;;
             1) prompt_fsr4_target ;;
             2) confirm_menu_action \
-                "Install optional global async-compute RADV? This is not required for FSR4 RC8." setup ;;
+                "Install or resume optional global async-compute RADV and its AMDGPU prerequisite? This is not required for FSR4 RC8." setup ;;
             3) confirm_menu_action \
                 "Build and install the legacy experimental private FSR4 V3 profile?" setup --fsr4-legacy ;;
             4) confirm_menu_action \

@@ -2847,6 +2847,25 @@ power_is_installed() {
         || efi_artifacts_present
 }
 
+foundation_file_trusted() {
+    local path="$1" owner mode
+    [[ -f "$path" && ! -L "$path" ]] || return 1
+    read -r owner mode < <(stat -Lc '%u %a' "$path") || return 1
+    [[ "$owner" == 0 && "$mode" =~ ^[0-7]+$ ]] \
+        && (( (8#$mode & 8#022) == 0 ))
+}
+
+power_foundation_ready() {
+    local path
+    acpi_boot_ready || return 1
+    for path in "$HEAL_UNIT" "$CPUFREQ_UNIT" "$HEAL_HELPER" \
+        "$GOV_BIN" "$GOV_CONF" "$GOV_UNIT" "$DBUS_POLICY" \
+        "$RESTORE_BIN" "$RESTORE_UNIT" "$POWER_KEEP_FILE"; do
+        foundation_file_trusted "$path" || return 1
+    done
+    [[ -x "$HEAL_HELPER" && -x "$GOV_BIN" && -x "$RESTORE_BIN" ]]
+}
+
 cmd_installed() {
     if power_is_installed; then
         printf '%s\n' installed
@@ -4543,6 +4562,10 @@ SETUP COMMANDS (run once, in this order)
   enable      Enable the governor at boot. Run after you've load-tested
               a 'governor' install.
 
+  foundation-ready
+              Exit successfully only when the ACPI, governor, helper, and
+              update-protection payloads are complete and trusted.
+
   installed   Noninteractive lifecycle probe. Prints exactly "installed"
               and exits 0 when power integration/payloads are present;
               otherwise prints "not-installed" and exits 1. Preserved
@@ -4769,13 +4792,14 @@ case "${1:-}" in
     cpu-unlock)   shift; cmd_cpu_unlock "$@" ;;
     cpu-mitigations) shift; cmd_cpu_mitigations "$@" ;;
     enable)       cmd_enable ;;
+    foundation-ready) (($# == 1)) || die "Usage: $0 foundation-ready"; power_foundation_ready ;;
     installed)    (($# == 1)) || die "Usage: $0 installed"; cmd_installed ;;
     uninstall)    (($# == 1)) || die "Usage: $0 uninstall"; cmd_uninstall ;;
     status)       cmd_status ;;
     all)          cmd_acpi; cmd_governor ;;
     menu)         cmd_menu ;;
     help|-h|--help) cmd_help ;;
-    *) echo "Usage: $0 {acpi|governor|helpers|freq|gpu-volt|load-target|temperature|ramp|cpu-oc|cpu-unlock|cpu-mitigations|enable|installed|uninstall|status|all|menu|help}"
+    *) echo "Usage: $0 {acpi|governor|helpers|freq|gpu-volt|load-target|temperature|ramp|cpu-oc|cpu-unlock|cpu-mitigations|enable|foundation-ready|installed|uninstall|status|all|menu|help}"
        echo "  (no arguments on a terminal opens the guided menu)"
        echo "  freq                 show performance-mode state"
        echo "  freq 1800            pin GPU at 1800 MHz (perf mode)"

@@ -22,6 +22,8 @@ class ToolkitTests(unittest.TestCase):
         )
         for command in (
             "setup",
+            "auto-base-installation",
+            "graphics-setup",
             "status",
             "drivers",
             "unlocks",
@@ -69,10 +71,17 @@ class ToolkitTests(unittest.TestCase):
         interfaces_menu = source[
             source.index("cmd_interfaces_menu() {") : source.index("cmd_core_system_menu() {")
         ]
+        devices_menu = source[
+            source.index("cmd_devices_menu() {") : source.index("cmd_audio_menu() {")
+        ]
+        guided_overview = source[
+            source.index("show_guided_setup_overview() {") : source.index("cmd_guided_setup_menu() {")
+        ]
 
         for label in (
-            "Start here - Guided setup",
-            "Complete system status",
+            "Auto Base Toolkit Installation",
+            "Manual guided setup",
+            "System health",
             "Core system",
             "Performance tuning",
             "Hardware unlocks",
@@ -90,17 +99,17 @@ class ToolkitTests(unittest.TestCase):
             main_menu,
         )
         self.assertGreater(
-            main_menu.index('"Complete system status|'),
+            main_menu.index('"System health|'),
             main_menu.index('"Maintenance & recovery|'),
         )
-        self.assertIn("7) run_menu_action status", main_menu)
+        self.assertIn("0) run_menu_action auto-base-installation", main_menu)
+        self.assertIn("8) run_menu_action status", main_menu)
         self.assertNotIn("Mesh shaders (per game)", source)
         self.assertNotIn("[optional]", drivers_menu)
-        self.assertIn("Mesa / RADV async-compute patch (optional)", drivers_menu)
+        self.assertIn("Install / resume async-compute stack", drivers_menu)
         self.assertIn("AMDGPU scheduler policy (advanced)", drivers_menu)
         self.assertIn("KFD HWS runlist TLB flush (experimental)", drivers_menu)
         self.assertIn("Clean AMDGPU build tree", drivers_menu)
-        self.assertIn("[menu]", drivers_menu)
         self.assertLess(
             drivers_menu.index("AMDGPU kernel fixes"),
             drivers_menu.index("Clean AMDGPU build tree"),
@@ -115,10 +124,10 @@ class ToolkitTests(unittest.TestCase):
         )
         self.assertLess(
             drivers_menu.index("KFD HWS runlist TLB flush (experimental)"),
-            drivers_menu.index("Mesa / RADV async-compute patch"),
+            drivers_menu.index("Install / resume async-compute stack"),
         )
         self.assertLess(
-            drivers_menu.index("Mesa / RADV async-compute patch"),
+            drivers_menu.index("Install / resume async-compute stack"),
             drivers_menu.index("NCT6687 fan-control driver"),
         )
         self.assertLess(
@@ -129,7 +138,7 @@ class ToolkitTests(unittest.TestCase):
         self.assertIn("1) run_menu_action amdgpu-clean", drivers_menu)
         self.assertIn("2) run_menu_action scheduler-policy", drivers_menu)
         self.assertIn("3) run_menu_action kfd-runlist", drivers_menu)
-        self.assertIn("4) run_menu_child radv", drivers_menu)
+        self.assertIn("4) run_menu_action graphics-setup", drivers_menu)
         self.assertIn("GPU compute-unit unlock", unlocks_menu)
         self.assertIn("CPU core unlock", unlocks_menu)
         self.assertIn(
@@ -140,6 +149,8 @@ class ToolkitTests(unittest.TestCase):
         self.assertIn("0) run_menu_child compute", unlocks_menu)
         self.assertIn("1) run_menu_child cpu-unlock", unlocks_menu)
         self.assertIn('"HDMI audio|', source)
+        self.assertNotIn('"HDMI-CEC"', guided_overview)
+        self.assertIn('"HDMI-CEC|${CG}[menu]${C0}|', devices_menu)
         self.assertIn('"Enable HDMI AC-3 5.1|', source)
         self.assertIn('"Revert HDMI AC-3 to stereo|', source)
         self.assertIn("0) run_menu_action hdmi-ac3-enable", source)
@@ -161,13 +172,13 @@ class ToolkitTests(unittest.TestCase):
             source.index("cmd_guided_setup_menu() {") : source.index("cmd_drivers_menu() {")
         ]
         for label in (
+            "Setup overview",
             "GPU compute-unit unlock",
             "CPU core unlock",
             "AMDGPU kernel fixes",
             "Power foundation",
-            "Memory balance",
+            "RAM / VRAM split",
             "Performance tuning",
-            "Finish - Verify system",
         ):
             self.assertIn(label, guided_menu)
         self.assertIn("load-test", guided_menu.lower())
@@ -186,13 +197,14 @@ class ToolkitTests(unittest.TestCase):
             guided_menu.index("CPU core unlock"),
             guided_menu.index("Performance tuning"),
         )
+        self.assertNotIn("auto-base-installation", guided_menu)
         self.assertIn("1) run_menu_child compute", guided_menu)
         self.assertIn("2) run_menu_child cpu-unlock", guided_menu)
         self.assertIn("3) run_menu_action amdgpu", guided_menu)
         self.assertIn("4) run_menu_child power", guided_menu)
         self.assertIn("5) run_menu_child ram", guided_menu)
         self.assertIn("6) cmd_performance_menu", guided_menu)
-        self.assertIn("9) run_menu_action status", guided_menu)
+        self.assertNotIn("Finish - Verify system", guided_menu)
         self.assertIn("cmd_guided_setup_menu", main_menu)
 
     def test_dense_component_menus_are_grouped_by_intent(self):
@@ -215,6 +227,7 @@ class ToolkitTests(unittest.TestCase):
         self.assertIn("menu_setup()", cec)
         self.assertIn("menu_controls()", cec)
         self.assertIn("menu_diagnostics()", cec)
+        self.assertIn('echo "  boot wake mode: $mode"', cec)
         controls = cec[cec.index("menu_controls() {") : cec.index("menu_diagnostics() {")]
         self.assertIn("Take the input", controls)
         self.assertIn("4) run_action cmd_switch", controls)
@@ -310,6 +323,7 @@ class ToolkitTests(unittest.TestCase):
         self.assertIn('sudo bash "$AMDGPU_BOOT_CONFIG_SH" runlist-remove', toggle)
         self.assertIn("kfd_runlist_supported", toggle)
         self.assertIn('bash "$MESH_SHADER_SH" status-json', toggle)
+        self.assertIn('json_field "$radv_json" kernelReady', toggle)
         self.assertIn("before enabling amdgpu.sched_policy=2", toggle)
         self.assertIn("Scheduler policy state is incomplete", toggle)
         self.assertIn("cannot coexist with sched_policy=2", source)
@@ -444,7 +458,7 @@ class ToolkitTests(unittest.TestCase):
         env["HOME"] = str(home)
         return toolkit, env
 
-    def make_status_environment(self, root, amdgpu_status, amdgpu_result):
+    def make_status_environment(self, root, amdgpu_state):
         toolkit = root / TOOLKIT.name
         shutil.copy2(TOOLKIT, toolkit)
         bindir = root / "bin"
@@ -480,6 +494,26 @@ class ToolkitTests(unittest.TestCase):
                     "  printf '%s\\n' '  governor: schedutil'\n"
                     "fi\n"
                 )
+            elif relative == "bc250-cec.sh":
+                content = (
+                    "#!/usr/bin/env bash\n"
+                    "case \"${1:-}\" in\n"
+                    "  status)\n"
+                    "    printf '%s\\n' '/dev/cec0: present'\n"
+                    "    printf '%s\\n' 'cecd.service: active'\n"
+                    "    printf '%s\\n' 'aggregate integration: installed'\n"
+                    "    printf '%s\\n' 'poweroff standby unit: enabled'\n"
+                    "    printf '%s\\n' 'boot wake unit (user): enabled'\n"
+                    "    printf '%s\\n' 'boot wake mode: polite'\n"
+                    "    ;;\n"
+                    "  scan)\n"
+                    "    printf '%s\\n' 'physical      LA  role                 OSD name         vendor     power'\n"
+                    "    printf '%s\\n' '0.0.0.0       0   TV                   Living Room TV   0x123456   on'\n"
+                    "    printf '%s\\n' '  1.0.0.0     4   Playback Device      BC-250           -          (this device)'\n"
+                    "    ;;\n"
+                    "  *) exit 2 ;;\n"
+                    "esac\n"
+                )
             else:
                 content = "#!/usr/bin/env bash\nexit 0\n"
             script.write_text(content, encoding="utf-8")
@@ -487,13 +521,15 @@ class ToolkitTests(unittest.TestCase):
         audio.parent.mkdir(parents=True)
         audio.write_text(
             "#!/usr/bin/env bash\n"
-            f"printf '%s\\n' {json.dumps(amdgpu_status)}\n"
-            f"exit {amdgpu_result}\n",
+            "[[ \"${1:-}\" == status-json ]] || exit 2\n"
+            f"printf '%s\\n' {json.dumps(json.dumps({'scriptAvailable': True, 'runningKernel': 'test-kernel', 'state': amdgpu_state, 'overrideInstalled': amdgpu_state != 'not-installed', 'overrideSelected': amdgpu_state in ('reboot-required', 'ready'), 'activeReady': amdgpu_state == 'ready', 'rebootRequired': amdgpu_state == 'reboot-required'}, separators=(',', ':')))}\n",
             encoding="utf-8",
         )
         mesh = root / "bc250-mesh-shader.sh"
         mesh.write_text(
-            "#!/usr/bin/env bash\nprintf '%s\\n' 'runtime: not installed'\nexit 1\n",
+            "#!/usr/bin/env bash\n"
+            "[[ \"${1:-}\" == status-json ]] || exit 2\n"
+            "printf '%s\\n' '{\"runtimeState\":\"not-installed\",\"kernelReady\":false,\"schedulerConfigured\":false,\"schedulerActive\":false,\"globalEnabled\":false}'\n",
             encoding="utf-8",
         )
         fan = root / "nct6687d/steamdeck-setup.sh"
@@ -523,15 +559,10 @@ class ToolkitTests(unittest.TestCase):
         self.assertIn("Usage:", result.stderr)
 
     def test_status_accepts_missing_amdgpu_but_rejects_incomplete_integration(self):
-        cases = (
-            ("[bc250-amdgpu] state: not-installed", 1, 0, False),
-            ("[bc250-amdgpu] state: incomplete", 1, 1, True),
-        )
-        for status, component_result, expected, incomplete in cases:
-            with self.subTest(status=status), tempfile.TemporaryDirectory() as directory:
-                toolkit, env = self.make_status_environment(
-                    Path(directory), status, component_result
-                )
+        cases = (("not-installed", 0, False), ("invalid", 1, True))
+        for state, expected, incomplete in cases:
+            with self.subTest(state=state), tempfile.TemporaryDirectory() as directory:
+                toolkit, env = self.make_status_environment(Path(directory), state)
                 result = subprocess.run(
                     ["bash", str(toolkit), "status"],
                     capture_output=True,
@@ -539,12 +570,33 @@ class ToolkitTests(unittest.TestCase):
                     env=env,
                 )
                 self.assertEqual(result.returncode, expected)
-                self.assertIn("BC-250 complete system status", result.stdout)
+                self.assertIn("BC-250 system health", result.stdout)
                 self.assertIn("CPU core unlock", result.stdout)
                 self.assertIn("6 cores / 12 threads (locked)", result.stdout)
-                self.assertIn("GPU compute units", result.stdout)
+                self.assertIn("GPU compute-unit unlock", result.stdout)
                 self.assertIn("[38/40]", result.stdout)
-                expected_badge = "[incomplete]" if incomplete else "[not installed]"
+                self.assertIn("CEC setup & automation", result.stdout)
+                self.assertIn("[configured]", result.stdout)
+                self.assertIn("Poweroff standby", result.stdout)
+                self.assertIn("Boot wake", result.stdout)
+                self.assertIn("Boot wake mode", result.stdout)
+                self.assertIn("\x1b[32m[polite]", result.stdout)
+                self.assertLess(
+                    result.stdout.index("CEC setup & automation"),
+                    result.stdout.index("Poweroff standby"),
+                )
+                self.assertLess(
+                    result.stdout.index("Poweroff standby"),
+                    result.stdout.index("Boot wake"),
+                )
+                self.assertLess(
+                    result.stdout.index("Boot wake"),
+                    result.stdout.index("Boot wake mode"),
+                )
+                self.assertIn("CEC BUS MAP", result.stdout)
+                self.assertIn("Living Room TV", result.stdout)
+                self.assertIn("BC-250", result.stdout)
+                expected_badge = "[invalid]" if incomplete else "[not installed]"
                 self.assertIn(expected_badge, result.stdout)
                 self.assertEqual("OVERALL  [attention required]" in result.stdout, incomplete)
                 if incomplete:
@@ -553,16 +605,17 @@ class ToolkitTests(unittest.TestCase):
                     self.assertIn("OVERALL  [healthy]", result.stdout)
 
                 plain = re.sub(r"\x1b\[[0-9;]*m", "", result.stdout)
-                rows = [line for line in plain.splitlines() if line.startswith("  ")]
-                self.assertLessEqual(len(plain.splitlines()), 25)
-                self.assertTrue(all(re.match(r"^  .{20} \[", line) for line in rows))
+                rows = [
+                    line
+                    for line in plain.splitlines()
+                    if re.match(r"^  .{30} \[", line)
+                ]
+                self.assertGreaterEqual(len(rows), 10)
 
     def test_status_reports_unlocked_cpu_topology_and_efi_mode(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
-            toolkit, env = self.make_status_environment(
-                root, "[bc250-amdgpu] state: not-installed", 1
-            )
+            toolkit, env = self.make_status_environment(root, "not-installed")
             power = root / "bc250-power.sh"
             content = power.read_text(encoding="utf-8")
             content = content.replace(
@@ -766,6 +819,143 @@ class ToolkitTests(unittest.TestCase):
                     )
                     self.assertNotEqual(result.returncode, 0)
                     self.assertFalse(call_log.exists())
+
+    def make_auto_base_installation_environment(
+        self, root, audio_state="not-installed", radv_state="not-installed"
+    ):
+        toolkit = root / TOOLKIT.name
+        shutil.copy2(TOOLKIT, toolkit)
+        bindir = root / "bin"
+        bindir.mkdir()
+        call_log = root / "calls"
+        audio_state_file = root / "audio-state"
+        radv_state_file = root / "radv-state"
+        ram_state_file = root / "ram-state"
+        power_state_file = root / "power-state"
+        audio_state_file.write_text(audio_state, encoding="ascii")
+        radv_state_file.write_text(radv_state, encoding="ascii")
+
+        sudo = bindir / "sudo"
+        sudo.write_text("#!/usr/bin/env bash\nexec \"$@\"\n", encoding="utf-8")
+        sudo.chmod(0o755)
+
+        power = root / "bc250-power.sh"
+        power.write_text(
+            "#!/usr/bin/env bash\n"
+            "case \"${1:-}\" in\n"
+            "  foundation-ready) [[ -e \"$POWER_STATE_FILE\" ]] ;;\n"
+            "  all) printf 'power|all\\n' >> \"$CALL_LOG\"; touch \"$POWER_STATE_FILE\" ;;\n"
+            "  *) exit 2 ;;\n"
+            "esac\n",
+            encoding="utf-8",
+        )
+        ram = root / "bc250-ram-split.sh"
+        ram.write_text(
+            "#!/usr/bin/env bash\n"
+            "case \"${1:-}\" in\n"
+            "  status-json) if [[ -e \"$RAM_STATE_FILE\" ]]; then state=$(< \"$RAM_STATE_FILE\"); else state=not-installed; fi; printf '{\"toolState\":\"%s\"}\\n' \"$state\" ;;\n"
+            "  install) printf 'ram|install\\n' >> \"$CALL_LOG\"; printf 'verified\\n' > \"$RAM_STATE_FILE\" ;;\n"
+            "  *) exit 2 ;;\n"
+            "esac\n",
+            encoding="utf-8",
+        )
+        audio = root / "bc250-audio-fix/patch-driver.sh"
+        audio.parent.mkdir(parents=True)
+        audio.write_text(
+            "#!/usr/bin/env bash\n"
+            "if [[ \"${1:-}\" == status-json ]]; then\n"
+            "  state=$(< \"$AUDIO_STATE_FILE\")\n"
+            "  [[ $state == ready ]] && active=true || active=false\n"
+            "  [[ $state == reboot-required ]] && reboot=true || reboot=false\n"
+            "  printf '{\"state\":\"%s\",\"activeReady\":%s,\"rebootRequired\":%s}\\n' \"$state\" \"$active\" \"$reboot\"\n"
+            "else\n"
+            "  printf 'audio|install\\n' >> \"$CALL_LOG\"\n"
+            "  printf 'reboot-required\\n' > \"$AUDIO_STATE_FILE\"\n"
+            "fi\n",
+            encoding="utf-8",
+        )
+        mesh = root / "bc250-mesh-shader.sh"
+        mesh.write_text(
+            "#!/usr/bin/env bash\n"
+            "if [[ \"${1:-}\" == status-json ]]; then\n"
+            "  state=$(< \"$RADV_STATE_FILE\")\n"
+            "  case $state in\n"
+            "    active) printf '%s\\n' '{\"runtimeState\":\"ready\",\"kernelReady\":true,\"schedulerConfigured\":true,\"schedulerActive\":true,\"globalEnabled\":true}' ;;\n"
+            "    reboot-required) printf '%s\\n' '{\"runtimeState\":\"ready\",\"kernelReady\":true,\"schedulerConfigured\":true,\"schedulerActive\":false,\"globalEnabled\":false}' ;;\n"
+            "    *) printf '%s\\n' '{\"runtimeState\":\"not-installed\",\"kernelReady\":false,\"schedulerConfigured\":false,\"schedulerActive\":false,\"globalEnabled\":false}' ;;\n"
+            "  esac\n"
+            "elif [[ \"${1:-}\" == setup ]]; then\n"
+            "  printf 'mesh|setup\\n' >> \"$CALL_LOG\"\n"
+            "  printf 'reboot-required\\n' > \"$RADV_STATE_FILE\"\n"
+            "else exit 2\n"
+            "fi\n",
+            encoding="utf-8",
+        )
+
+        env = {
+            **os.environ,
+            "PATH": f"{bindir}:{os.environ['PATH']}",
+            "CALL_LOG": str(call_log),
+            "AUDIO_STATE_FILE": str(audio_state_file),
+            "RADV_STATE_FILE": str(radv_state_file),
+            "RAM_STATE_FILE": str(ram_state_file),
+            "POWER_STATE_FILE": str(power_state_file),
+        }
+        return toolkit, call_log, ram_state_file, env
+
+    def test_auto_base_installation_installs_foundation_then_pauses_for_amdgpu_reboot(self):
+        with tempfile.TemporaryDirectory() as directory:
+            toolkit, call_log, _, env = self.make_auto_base_installation_environment(
+                Path(directory)
+            )
+            result = subprocess.run(
+                ["bash", str(toolkit), "action", "auto-base-installation"],
+                check=True,
+                capture_output=True,
+                text=True,
+                env=env,
+            )
+            self.assertEqual(
+                call_log.read_text(encoding="utf-8").splitlines(),
+                ["power|all", "ram|install", "audio|install"],
+            )
+            self.assertIn("Reboot to activate the AMDGPU kernel fixes", result.stdout)
+            self.assertNotIn("mesh|setup", call_log.read_text(encoding="utf-8"))
+
+    def test_auto_base_installation_resumes_with_radv_after_amdgpu_reboot(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            toolkit, call_log, ram_state_file, env = self.make_auto_base_installation_environment(
+                root, audio_state="ready"
+            )
+            Path(env["POWER_STATE_FILE"]).touch()
+            ram_state_file.write_text("verified\n", encoding="ascii")
+
+            result = subprocess.run(
+                ["bash", str(toolkit), "action", "auto-base-installation"],
+                check=True,
+                capture_output=True,
+                text=True,
+                env=env,
+            )
+            self.assertEqual(call_log.read_text(encoding="utf-8").strip(), "mesh|setup")
+            self.assertIn("Reboot to activate the scheduler policy", result.stdout)
+
+    def test_auto_base_installation_rejects_invalid_state_before_mutation(self):
+        with tempfile.TemporaryDirectory() as directory:
+            toolkit, call_log, ram_state_file, env = self.make_auto_base_installation_environment(
+                Path(directory)
+            )
+            ram_state_file.write_text("invalid\n", encoding="ascii")
+            result = subprocess.run(
+                ["bash", str(toolkit), "action", "auto-base-installation"],
+                capture_output=True,
+                text=True,
+                env=env,
+            )
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("RAM / VRAM helper is incomplete", result.stderr)
+            self.assertFalse(call_log.exists())
 
     def test_inventory_json_uses_maintenance_states_without_terminal_output(self):
         with tempfile.TemporaryDirectory() as directory:

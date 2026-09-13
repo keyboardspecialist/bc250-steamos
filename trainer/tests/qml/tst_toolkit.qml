@@ -33,6 +33,7 @@ TestCase {
             ]
         })
         property var operations: [
+            {"id": "auto-base-installation", "title": "Auto Base Toolkit Installation", "verb": "INSTALL / RESUME", "description": "Install AMDGPU/RADV, the power foundation, and the RAM helper with automatic dependencies. Rerunning after mandatory reboots resumes the setup.", "cancellable": false, "destructive": false},
             {"id": "storage-install", "title": "Install storage", "verb": "INSTALL", "description": "Install storage.", "destructive": false},
             {"id": "storage-repair", "title": "Repair storage", "verb": "REPAIR", "description": "Repair storage.", "destructive": false},
             {"id": "storage-remove", "title": "Remove storage", "verb": "REMOVE", "description": "Remove storage.", "destructive": true},
@@ -68,6 +69,7 @@ TestCase {
     }
 
     function init() {
+        page.category = "FOUNDATION"
         backend.busy = false
         backend.refreshCalls = 0
         controller.available = true
@@ -98,6 +100,39 @@ TestCase {
         backend.busy = false
         controller.refreshing = true
         tryCompare(storage, "actionEnabled", false)
+    }
+
+    function test_autoBaseInstallationIsIndependentAndDispatches() {
+        var card = findChild(page, "autoBaseInstallationCard")
+        var title = findChild(page, "autoBaseInstallationTitle")
+        var description = findChild(page, "autoBaseInstallationDescription")
+        var action = findChild(page, "autoBaseInstallationAction")
+        verify(card !== null)
+        verify(title !== null)
+        verify(description !== null)
+        verify(action !== null)
+        compare(page.category, "FOUNDATION")
+        compare(page.showsCategory("FOUNDATION"), true)
+        verify(card.categoryVisible)
+        compare(title.text, "AUTO BASE TOOLKIT INSTALLATION")
+        compare(action.text, "INSTALL / RESUME")
+        verify(description.text.indexOf("AMDGPU/RADV") >= 0)
+        verify(description.text.indexOf("automatic dependencies") >= 0)
+        verify(description.text.indexOf("mandatory reboots") >= 0)
+        verify(action.enabled)
+
+        action.clicked()
+        var dialog = findChild(page, "toolkitConfirmDialog")
+        verify(dialog !== null)
+        compare(dialog.title, "Auto Base Toolkit Installation")
+        dialog.accept()
+        compare(controller.startedOperation, "auto-base-installation")
+
+        page.category = "PERFORMANCE"
+        tryCompare(card, "categoryVisible", false)
+        page.category = "ALL"
+        tryCompare(card, "categoryVisible", true)
+        page.category = "FOUNDATION"
     }
 
     function test_missingToolkitDisablesActions() {
