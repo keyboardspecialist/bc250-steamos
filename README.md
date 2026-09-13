@@ -2,6 +2,22 @@
 
 Management tools for SteamOS 3.8.x and 3.9.x.
 
+## Quick Navigation
+
+| | |
+|---|---|
+| [Install](#install) | [Tools](#tools) |
+| [Toolkit Menu](#toolkit-menu) | [GPU Compute-Unit Unlock](#gpu-compute-unit-unlock) |
+| [RAM / VRAM Split](#ram--vram-split) | [Compressed Swap](#compressed-swap) |
+| [Power Management](#power-management) | [Experimental CPU Core Unlock](#experimental-cpu-core-unlock) |
+| [CEC](#cec) | [Big Picture Plugin](#big-picture-plugin) |
+| [Plasma Desktop Control](#plasma-desktop-control) | [CoolerControl](#coolercontrol) |
+| [BC250 Trainer](#bc250-trainer) | [HDMI AC-3 Surround Encoding](#hdmi-ac-3-surround-encoding-optional) |
+| [AMDGPU Driver](#amdgpu-driver) | [Mesa / RADV Async-Compute Patch](#mesa--radv-async-compute-patch-optional-recommended) |
+| [GDDR6 Memory Temperature](#gddr6-memory-temperature-experimental) | [NCT6687D Fan-Control Driver](#nct6687d-fan-control-driver) |
+| [AIC8800 WiFi and Bluetooth Driver](#aic8800-class-wifi-and-bluetooth-driver) | [SteamOS Updates](#steamos-updates) |
+| [References](#references) | |
+
 ## Install
 
 ```bash
