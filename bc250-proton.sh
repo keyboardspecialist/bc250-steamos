@@ -357,10 +357,10 @@ recover_removal() {
 require_production_radv() {
     local status
     [[ -f "$MESH_TOOL" && ! -L "$MESH_TOOL" ]] \
-        || die "The production RADV manager is missing: $MESH_TOOL"
+        || die "The RADV manager is missing: $MESH_TOOL"
     status=$(bash "$MESH_TOOL" status-json 2>/dev/null) \
-        || die "Production FSR4 RADV is not ready. Run '$MESH_TOOL setup', reboot or sign out as instructed, then retry."
-    python3 - "$status" <<'PY' || die "Production FSR4 RADV is not active. Run the RADV setup and complete its reboot/sign-out step first."
+        || die "FSR4 RADV is not ready. Run '$MESH_TOOL setup', reboot or sign out as instructed, then retry."
+    python3 - "$status" <<'PY' || die "FSR4 RADV is not active. Run the RADV setup and complete its reboot/sign-out step first."
 import json
 import sys
 
@@ -576,7 +576,7 @@ usage() {
 Usage: $0 {install|update|status|status-json|uninstall|help}
 
 Installs the checksum-pinned BC-250 GE-Proton $PACKAGE_VERSION build beneath
-$COMPAT_ROOT. Production FSR4 RADV must already be active. No root filesystem
+$COMPAT_ROOT. FSR4 RADV must already be active. No root filesystem
 changes are made, and Steam prefixes and saves are never removed.
 EOF
 }

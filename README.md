@@ -13,7 +13,7 @@ Management tools for SteamOS 3.8.x and 3.9.x.
 | [CEC](#cec) | [Big Picture Plugin](#big-picture-plugin) |
 | [Plasma Desktop Control](#plasma-desktop-control) | [CoolerControl](#coolercontrol) |
 | [BC250 Trainer](#bc250-trainer) | [HDMI AC-3 Surround Encoding](#hdmi-ac-3-surround-encoding-optional) |
-| [AMDGPU Driver](#amdgpu-driver) | [Production FSR4 RADV and GE-Proton](#mesa--radv-async-compute-and-fsr4) |
+| [AMDGPU Driver](#amdgpu-driver) | [FSR4 RADV and GE-Proton](#mesa--radv-async-compute-and-fsr4) |
 | [GDDR6 Memory Temperature](#gddr6-memory-temperature-experimental) | [NCT6687D Fan-Control Driver](#nct6687d-fan-control-driver) |
 | [AIC8800 WiFi and Bluetooth Driver](#aic8800-class-wifi-and-bluetooth-driver) | [SteamOS Updates](#steamos-updates) |
 | [References](#references) | |
@@ -40,7 +40,7 @@ Open the unified toolkit menu as the logged-in Deck user:
 | Auto Base Toolkit Installation | `./bc250-toolkit.sh auto-base-installation`; run the same command after each requested reboot |
 | AMDGPU kernel fixes | `./bc250-toolkit.sh amdgpu`, then reboot |
 | Mesa / RADV async compute (optional, highly recommended) | `./bc250-toolkit.sh graphics-setup`, then resume after reboot |
-| BC-250 GE-Proton for integrated FSR4 | Activate production RADV first, then run `./bc250-toolkit.sh proton-install` |
+| BC-250 GE-Proton for integrated FSR4 | Activate FSR4 RADV first, then run `./bc250-toolkit.sh proton-install` |
 | Power management | `sudo ./bc250-power.sh all`, then `sudo ./bc250-power.sh enable` |
 | RAM / VRAM split | `./bc250-ram-split.sh` |
 | Compressed swap (optional) | `sudo ./bc250-swap.sh`, then choose zram or zswap-backed disk swap |
@@ -107,7 +107,7 @@ sudo ./bc250-power.sh status
 | [`trainer/`](#bc250-trainer) | Standalone native Qt control application |
 | [`bc250-audio-fix/`](#amdgpu-driver) | DisplayPort clock, GPU telemetry, and GFX1013 compute repair |
 | [`hdmi-ac3/`](#hdmi-ac-3-surround-encoding-optional) | Real-time Dolby Digital 5.1 encoding over HDMI/DisplayPort |
-| [`bc250-mesh-shader.sh`](#mesa--radv-async-compute-and-fsr4) | Production Mesa / RADV build with GFX1013 async compute and integrated BC-250 FSR4 patches |
+| [`bc250-mesh-shader.sh`](#mesa--radv-async-compute-and-fsr4) | Mesa / RADV build with GFX1013 async compute and integrated BC-250 FSR4 patches |
 | `bc250-proton.sh` | Transactional user-local installer for the checksum-pinned BC-250 GE-Proton build |
 | [`bc250-memory-temperature.sh`](#gddr6-memory-temperature-experimental) | Guarded, checksum-pinned live SMU payload for reading all eight GDDR6 chip temperatures |
 | [`nct6687d/`](#nct6687d-fan-control-driver) | Optional NCT6683/6686/6687 hwmon fan tachometer and PWM driver |
@@ -141,7 +141,7 @@ Each child requests administrator access only when needed.
 | `./bc250-toolkit.sh amdgpu` | Build the AMDGPU kernel fixes |
 | `./bc250-toolkit.sh radv` | Open the global Mesa / RADV async-compute menu |
 | `./bc250-toolkit.sh proton` | Open BC-250 GE-Proton status, installation, update, and removal |
-| `./bc250-toolkit.sh proton-install` | Install the pinned GE-Proton build after production RADV is active |
+| `./bc250-toolkit.sh proton-install` | Install the pinned GE-Proton build after FSR4 RADV is active |
 | `./bc250-toolkit.sh audio-output` | Open HDMI AC-3 enable and stereo-revert options |
 | `./bc250-toolkit.sh fan-driver` | Build and install NCT6687 hwmon fan/PWM support for the onboard controller |
 | `./bc250-toolkit.sh memory-temperature` | Open the experimental GDDR6 temperature workflow |
@@ -661,13 +661,13 @@ async-compute stack** under Performance tuning. The toolkit installs AMDGPU
 first, pauses for reboot, and resumes RADV when the same option is selected
 again. The RADV build normally takes about 3-5 minutes.
 
-The production profile also applies the BC-250 FSR4 series from
+The FSR4 profile also applies the BC-250 FSR4 series from
 [`MastaG/linux-cachyos-bc250`](https://github.com/MastaG/linux-cachyos-bc250)
 at pinned commit `db49878af40551b481f511053201fcf1e1bd5d90`. It uses Mesa
 `mesa-26.2.2` at commit `3281a69a8bfd9f997e91c15ed0e6290cae12dd32` and applies
 patches `0001` and `0005` through `0009` with zero fuzz. Unsafe mesh/task and
 query patches `0002` through `0004` are not downloaded or applied. Build output
-must contain the production FSR4 feature markers and pass ELF, linkage, and
+must contain the FSR4 feature markers and pass ELF, linkage, and
 dependency checks before installation.
 
 Open the menu as the logged-in user:
@@ -740,7 +740,7 @@ Two FSR4 routes are available:
 
 - **Portable RC9 DLL:** game-local, reversible, and independent of custom RADV
   or Proton. This is the lower-risk initial route.
-- **Production RADV plus BC-250 GE-Proton:** integrated compatibility-tool
+- **FSR4 RADV plus BC-250 GE-Proton:** integrated compatibility-tool
   route. Complete `graphics-setup`, its reboot/sign-out checkpoint, and then
   install GE-Proton from the toolkit. Keep portable RC9 available until the
   integrated route is qualified for each game.
@@ -822,7 +822,7 @@ Restore a target's exact original DLL with:
 
 ### BC-250 GE-Proton
 
-After production RADV reports active, install the integrated Proton route as the
+After FSR4 RADV reports active, install the integrated Proton route as the
 logged-in Deck user:
 
 ```bash
@@ -1052,7 +1052,7 @@ Run the normal component setup commands afterward to regenerate services for the
 | BC-250 GFX1013 Fix | [Repository](https://github.com/DryhoppedIPA/bc250-gfx1013-fix) · [integrated commit](https://github.com/DryhoppedIPA/bc250-gfx1013-fix/commit/d3e6dc062c34d2523db0abe5741d1f5b0dea00d9) | Kernel compute lifecycle repair and pinned alternate RADV build by DryhoppedIPA |
 | OptiScaler | [Repository](https://github.com/optiscaler/OptiScaler) · [release](https://github.com/optiscaler/OptiScaler/releases/tag/v0.9.4) | Checksum-pinned per-game installation with collision backups and guarded rollback |
 | BC-250 FSR4 RC9 | [Repository](https://github.com/daniel-h-0/bc250-fsr4-fork) · [release](https://github.com/daniel-h-0/bc250-fsr4-fork/releases/tag/v4.0.0-rc9) | Integrity-checked portable FSR 4.1.1 INT8 DLL with per-target rollback |
-| CachyOS BC-250 GE-Proton and RADV | [Repository](https://github.com/MastaG/linux-cachyos-bc250) · [release assets](https://github.com/MastaG/linux-cachyos-bc250/releases/tag/repo) | Checksum-pinned GE compatibility tool and production FSR4 Mesa patch series adapted for user-local SteamOS installation |
+| CachyOS BC-250 GE-Proton and RADV | [Repository](https://github.com/MastaG/linux-cachyos-bc250) · [release assets](https://github.com/MastaG/linux-cachyos-bc250/releases/tag/repo) | Checksum-pinned GE compatibility tool and FSR4 Mesa patch series adapted for user-local SteamOS installation |
 | BC-250 HDMI AC-3 encoding | [Implementation guide and scripts](https://github.com/rpf16rj/bc250-steamos-real-toolkit/tree/main/extras/hdmi-ac3-encoding) | ALSA `a52` routing and WirePlumber profile behavior adapted by `hdmi-ac3/hdmi-ac3.sh` |
 | Valve kernel mirror | [Repository](https://github.com/Evlav/linux-integration) | `bc250-audio-fix/fetch-sources.sh` |
 | SteamOS package mirror | [Package index](https://steamdeck-packages.steamos.cloud/archlinux-mirror/) | Audio, AIC8800, and NCT6687 build scripts; stable channels are discovered automatically |

@@ -147,7 +147,7 @@ class ToolkitTests(unittest.TestCase):
         self.assertIn("2) run_menu_action scheduler-policy", drivers_menu)
         self.assertIn("3) run_menu_action kfd-runlist", drivers_menu)
         self.assertIn("4) run_menu_action graphics-setup", drivers_menu)
-        self.assertIn("GE-Proton for production FSR4", performance_menu)
+        self.assertIn("GE-Proton with FSR4", performance_menu)
         self.assertIn("portable FSR4 RC9 game DLLs", performance_menu)
         self.assertIn("2) cmd_proton_menu", performance_menu)
         self.assertIn("bc250-proton.sh", source)

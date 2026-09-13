@@ -323,7 +323,7 @@ install_proton() {
     require_normal_user
     require_script "$PROTON_SH"
     confirm_action \
-        "Download and install the pinned BC-250 GE-Proton build for production FSR4?" \
+        "Download and install the pinned BC-250 GE-Proton build with FSR4?" \
         bash "$PROTON_SH" install
 }
 
@@ -869,7 +869,7 @@ show_status() {
 
     state=$(status_value "$proton_output" "state: " || true)
     case "$state" in
-        installed) status_row "BC-250 GE-Proton" "installed" good "production FSR4 compatibility tool" ;;
+        installed) status_row "BC-250 GE-Proton" "installed" good "FSR4 compatibility tool" ;;
         not-installed) status_row "BC-250 GE-Proton" "not installed" dim "optional integrated FSR4 route" ;;
         upgrade-required)
             status_row "BC-250 GE-Proton" "update needed" warn "run proton-update"
@@ -1207,8 +1207,8 @@ cmd_performance_menu() {
     while true; do
         local items=(
             "Install / resume async-compute stack|$(radv_badge)|Automatically install AMDGPU first when needed, then resume Mesa / RADV after reboot."
-            "GPU driver & FSR4 options|${CG}[menu]${C0}|Manage production Mesa / RADV, portable FSR4 RC9 game DLLs, or cleanup."
-            "GE-Proton for production FSR4|$(proton_badge)|Install the pinned BC-250 GE build after production RADV is active; Steam prefixes and saves remain separate."
+            "GPU driver & FSR4 options|${CG}[menu]${C0}|Manage Mesa / RADV, portable FSR4 RC9 game DLLs, or cleanup."
+            "GE-Proton with FSR4|$(proton_badge)|Install the pinned BC-250 GE build after FSR4 RADV is active; Steam prefixes and saves remain separate."
             "GPU / CPU tuning|${CG}[menu]${C0}|Adjust GPU clocks, load response, ramp behavior, and CPU undervolt/overclock."
             "GDDR6 memory temperature|${CY}[experimental]${C0}|Prepare, apply, read, or restore the P3.0-only live SMU temperature payload."
         )
@@ -1229,7 +1229,7 @@ cmd_proton_menu() {
     while true; do
         local items=(
             "Status|$(proton_badge)|Verify the pinned compatibility-tool version and required files."
-            "Install|${CY}[731 MB download]${C0}|Require active production RADV, then install GE-Proton for the current user."
+            "Install|${CY}[731 MB download]${C0}|Require active FSR4 RADV, then install GE-Proton for the current user."
             "Update / repair|$(proton_badge)|Transactionally replace a recorded older or incomplete toolkit installation."
             "Uninstall|${CY}[preserves prefixes]${C0}|Remove only the compatibility tool; keep Steam prefixes, saves, and game data."
         )

@@ -15,10 +15,10 @@ This route does not replace Mesa or require the alternate RADV runtime or a
 custom Proton build. The toolkit retains the release notices and the original
 target DLL for verified rollback.
 
-## Production RADV Profile
+## FSR4 RADV Profile
 
 The integrated GE-Proton route builds Mesa `mesa-26.2.2` at commit
-`3281a69a8bfd9f997e91c15ed0e6290cae12dd32`. The production patch series is
+`3281a69a8bfd9f997e91c15ed0e6290cae12dd32`. The FSR4 patch series is
 downloaded from `MastaG/linux-cachyos-bc250` at immutable commit
 `db49878af40551b481f511053201fcf1e1bd5d90`:
 
@@ -30,10 +30,10 @@ downloaded from `MastaG/linux-cachyos-bc250` at immutable commit
 6. `0009-bc250-fsr4-production-defaults.patch`
 
 Every file has a fixed SHA-256 in `bc250-mesh-shader.sh`. Setup requires
-`--fuzz=0`, validates source markers after patching, and checks production FSR4
+`--fuzz=0`, validates source markers after patching, and checks FSR4
 markers in the final ELF driver. Patches `0002` through `0004` are deliberately
 omitted because the mesh/task path is unsafe on this hardware and the broad
-GFX10.3 override is not required by the production profile.
+GFX10.3 override is not required by the FSR4 profile.
 
 The GFX1013 async-compute kernel lifecycle remains based on
 `DryhoppedIPA/bc250-gfx1013-fix` commit

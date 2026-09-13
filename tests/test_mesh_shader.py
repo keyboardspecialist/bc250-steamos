@@ -1085,7 +1085,7 @@ class MeshShaderTests(unittest.TestCase):
         self.assertIn("menu_select()", source)
         self.assertIn("Mesa / RADV async-compute patch", source)
         self.assertIn("Install FSR4 RC9 game DLL (recommended)", source)
-        self.assertIn("Install / resume production FSR4 RADV", source)
+        self.assertIn("Install / resume FSR4 RADV", source)
         self.assertIn("not required for the portable FSR4 RC9 route", source)
         self.assertIn("Older per-game setup cleanup", source)
         self.assertIn("Usually takes 3-5 minutes", source)

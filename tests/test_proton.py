@@ -125,7 +125,7 @@ class ProtonManagerTests(unittest.TestCase):
         )
         result = self.run_manager("install")
         self.assertNotEqual(result.returncode, 0)
-        self.assertIn("Production FSR4 RADV is not active", result.stderr)
+        self.assertIn("FSR4 RADV is not active", result.stderr)
         target = (
             Path(self.env["BC250_PROTON_COMPAT_DIR"]) / "protonge-latest-bc250"
         )

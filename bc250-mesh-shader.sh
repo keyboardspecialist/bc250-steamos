@@ -1344,7 +1344,7 @@ PY
         BC250_FSR4_IMAGEPREP BC250_FSR4_TEXTURE \
         BC250_FSR4_RESOLUTION_VARIANTS BC250_FSR4_RESOLUTION_GUARD; do
         grep -aqF "$marker" "$output" \
-            || die "Built RADV driver is missing production FSR4 marker: $marker"
+            || die "Built RADV driver is missing FSR4 marker: $marker"
     done
 }
 
@@ -1520,7 +1520,7 @@ cmd_setup() (
         if verify_current_runtime; then expected_sha=$STORED_DRIVER_SHA; fi
         if verify_cached_build base "$expected_sha"; then
             cache_profile=base
-            log "Reusing the verified production FSR4 RADV build output."
+            log "Reusing the verified FSR4 RADV build output."
         else
             log "Preparing a clean pinned Mesa tree for the async-compute base build."
             rm -f "$BUILD_STATE"
@@ -1548,7 +1548,7 @@ cmd_setup() (
                 || die "Patched Mesa source is missing the GFX1013 async-compute marker"
             grep -qF bc250-fsr4-integrated-v3 "$source/src/amd/vulkan/radv_physical_device.c" \
                 && grep -qF bc250_imageprep_spirv "$source/src/amd/vulkan/radv_shader.c" \
-                || die "Patched Mesa source is missing production FSR4 markers"
+                || die "Patched Mesa source is missing FSR4 markers"
             meson setup "$build" "$source" \
                 -Dbuildtype=release \
                 -Dvulkan-drivers=amd -Dgallium-drivers= -Dplatforms=x11,wayland \
@@ -2236,7 +2236,7 @@ cmd_menu() {
         local items=(
             "Status overview|${runtime_state}|Verify the patched AMDGPU module, scheduler policy, RADV runtime, and global activation."
             "Install FSR4 RC9 game DLL (recommended)|${fsr4_state}|Portable FSR4 route. Replaces one exact existing DLL and retains the original; no custom RADV installation is needed."
-            "Install / resume production FSR4 RADV|${runtime_state}|Installs AMDGPU first when needed, then builds async compute plus the production FSR4 v4 driver for GE Proton."
+            "Install / resume FSR4 RADV|${runtime_state}|Installs AMDGPU first when needed, then builds async compute plus the FSR4 v4 driver for GE Proton."
             "Older per-game setup cleanup|${legacy_state}|Migration only: remove old MESA_DRICONF_EXECUTABLE_OVERRIDE and VK_ICD_FILENAMES Steam launch options, then clear their records."
             "Uninstall Mesa / RADV runtime|${runtime_state}|Remove the alternate driver, ICD, and user environment generator; preserve build caches."
             "Full help||Show CLI commands, activation behavior, and upstream source."
@@ -2247,7 +2247,7 @@ cmd_menu() {
             0) show_menu_status ;;
             1) prompt_fsr4_target ;;
             2) confirm_menu_action \
-                "Install or resume production FSR4 RADV and its AMDGPU prerequisite? This is not required for the portable FSR4 RC9 route." setup ;;
+                "Install or resume FSR4 RADV and its AMDGPU prerequisite? This is not required for the portable FSR4 RC9 route." setup ;;
             3) confirm_menu_action \
                 "Have you removed MESA_DRICONF_EXECUTABLE_OVERRIDE and VK_ICD_FILENAMES from the old per-game Steam launch options?" legacy-clear ;;
             4) confirm_menu_action \
@@ -2265,7 +2265,7 @@ Usage: $0 [menu|setup [--fsr4 TARGET_DLL|--fsr4-legacy]|status|status-json|legac
                                audited Mesa RADV driver with GFX1013 async
                                compute, install a separate ICD, and configure
                                safe global activation. The default profile includes
-                               the production FSR4 v4 patches required by BC-250 GE
+                               the FSR4 v4 patches required by BC-250 GE
                                Proton. Usually takes 3-5 minutes.
   setup --fsr4 TARGET_DLL      Recommended FSR4 route. Replace one exact existing
                                game or OptiScaler DLL, retaining the original.
@@ -2296,7 +2296,7 @@ still be inspected and removed with 'uninstall --fsr4-legacy'.
 
 Async-compute upstream (pinned to $UPSTREAM_COMMIT):
   $UPSTREAM_REPO
-Production FSR4 patches (pinned to $FSR4_RADV_COMMIT):
+FSR4 patches (pinned to $FSR4_RADV_COMMIT):
   $FSR4_RADV_REPO
 EOF
 }
@@ -2307,7 +2307,7 @@ case "${1:-menu}" in
         if (($# == 1)); then cmd_setup default
         elif (($# == 3)) && [[ "$2" == --fsr4 ]]; then cmd_setup_fsr4_dll "$3"
         elif (($# == 2)) && [[ "$2" == --fsr4-legacy ]]; then
-            die "Legacy FSR4 V3 builds are retired; use production RADV or the portable RC9 DLL."
+            die "Legacy FSR4 V3 builds are retired; use FSR4 RADV or the portable RC9 DLL."
         else die "Usage: $0 setup [--fsr4 TARGET_DLL|--fsr4-legacy]"
         fi ;;
     status) (($# == 1)) || die "Usage: $0 status"; cmd_status ;;

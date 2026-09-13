@@ -55,7 +55,7 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y \
-            acpica-tools cpio clang lld file
+            acpica-tools cpio clang lld file libarchive-tools
 
       - name: Build hardened EFI core unlock
         run: bash scripts/check-efi-core-unlock-build.sh
