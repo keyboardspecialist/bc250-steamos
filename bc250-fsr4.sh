@@ -2,13 +2,13 @@
 # Install the pinned BC-250 FSR4 DLL into one compatible game or OptiScaler tree.
 set -euo pipefail
 
-RELEASE="${BC250_FSR4_RELEASE:-v4.0.0-rc8}"
+RELEASE="${BC250_FSR4_RELEASE:-v4.0.0-rc9}"
 [[ "$RELEASE" =~ ^v[0-9][0-9A-Za-z._-]*$ ]] \
     || { printf '[bc250-fsr4] Invalid release identifier.\n' >&2; exit 1; }
-ARCHIVE_NAME="bc250-fsr4-dll-${RELEASE#v}.tar.xz"
+ARCHIVE_NAME="${BC250_FSR4_ARCHIVE_NAME:-bc250-fsr4-dll-${RELEASE#v}-docs2.tar.xz}"
 ARCHIVE_URL="https://github.com/daniel-h-0/bc250-fsr4-fork/releases/download/$RELEASE/$ARCHIVE_NAME"
-ARCHIVE_SHA256="${BC250_FSR4_ARCHIVE_SHA256:-805a3df9cef931decd42d02eaffb375f95844afce2e13d78bad757a27c806da2}"
-DLL_SHA256="${BC250_FSR4_DLL_SHA256:-f8816fed46bce60179228a58905e16788f021fad0b68c08d1e3555564093b2b4}"
+ARCHIVE_SHA256="${BC250_FSR4_ARCHIVE_SHA256:-063e23e0a56605b63deef2c03100432eb75d991c68eb04c6eb9b4a8444fd4f06}"
+DLL_SHA256="${BC250_FSR4_DLL_SHA256:-eefcac03ab17b04a29a5bb16e3f3e9c3181ba9ea46b05a61cb49a5003e1516ef}"
 DLL_NAME=amd_fidelityfx_upscaler_dx12.dll
 MESH_STATE="${BC250_MESH_STATE_DIR:-$HOME/.local/share/bc250-mesh-shader}"
 STATE_DIR="${BC250_FSR4_STATE_DIR:-$MESH_STATE/fsr4-dll}"
@@ -198,7 +198,7 @@ install_target() {
             fsync_paths "$INSTALLS_DIR"
         fi
     elif [[ "$(sha256_file "$REAL_TARGET")" == "$DLL_SHA256" ]]; then
-        die "Target already contains RC8 without a toolkit rollback record: $REAL_TARGET"
+        die "Target already contains $RELEASE without a toolkit rollback record: $REAL_TARGET"
     fi
 
     if [[ $release_staged -eq 0 ]]; then stage_release; fi

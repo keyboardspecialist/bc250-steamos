@@ -7,10 +7,13 @@ SELF="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/$(basename "${BASH_SOURCE[0]
 UPSTREAM_REPO="https://github.com/DryhoppedIPA/bc250-gfx1013-fix"
 UPSTREAM_COMMIT="d3e6dc062c34d2523db0abe5741d1f5b0dea00d9"
 LEGACY_UPSTREAM_COMMIT="b66203e012594204e5e3049856b28a2681112985"
-RADV_PROFILE_REVISION="compute-only-v2"
+RADV_PROFILE_REVISION="production-fsr4-v4"
 RAW_BASE="https://raw.githubusercontent.com/DryhoppedIPA/bc250-gfx1013-fix/$UPSTREAM_COMMIT"
-DEFAULT_MESA_TAG="mesa-26.2.0"
-MESA_COMMIT="9f0a761020bca92f2b07156a0621e5360cb8eca5"
+FSR4_RADV_REPO="https://github.com/MastaG/linux-cachyos-bc250"
+FSR4_RADV_COMMIT="db49878af40551b481f511053201fcf1e1bd5d90"
+FSR4_RADV_BASE="https://raw.githubusercontent.com/MastaG/linux-cachyos-bc250/$FSR4_RADV_COMMIT/patches/mesa"
+DEFAULT_MESA_TAG="mesa-26.2.2"
+MESA_COMMIT="3281a69a8bfd9f997e91c15ed0e6290cae12dd32"
 MESA_REPO="https://gitlab.freedesktop.org/mesa/mesa.git"
 LIBDRM_TARBALL="libdrm-2.4.133.tar.xz"
 LIBDRM_URL="https://dri.freedesktop.org/libdrm/$LIBDRM_TARBALL"
@@ -265,7 +268,6 @@ verify_cached_build() {
         && -f "$MESA_COREDATA" && ! -L "$MESA_COREDATA" \
         && "$(git -C "$MESA_SOURCE" rev-parse HEAD 2>/dev/null)" == "$MESA_COMMIT" ]] \
         || return 1
-    git -C "$MESA_SOURCE" diff --check >/dev/null || return 1
     [[ -z "$(git -C "$MESA_SOURCE" ls-files --others --exclude-standard)" ]] || return 1
     actual=$(sha256_file "$MESA_OUTPUT")
     [[ "$actual" == "$BUILD_STATE_DRIVER_SHA" \
@@ -341,8 +343,23 @@ stage_upstream() {
         ccf962b0b8aca2b9a67a2e2081d4edf6a66f8403fdf66a54d08a1ef10367f3eb \
         "$RAW_BASE/NOTICE.md"
     fetch_verified 0001-gfx1013-compute-queue-fix.patch \
-        78bccb8022955b3e4e11ab76d8373e95e5cd0b4e8b09f5a9abbe87dce8d92484 \
-        "$RAW_BASE/patches/mesa/0001-gfx1013-compute-queue-fix.patch"
+        b30db62d989977e0cf7c99813f029ade75da128623966616330b0dacc98a5788 \
+        "$FSR4_RADV_BASE/0001-gfx1013-compute-queue-fix.patch"
+    fetch_verified 0005-bc250-fsr4-v3.patch \
+        43202e01e3a3cad51c9d879b49a56ef8b06232daf6f30e2d196e13df634bb502 \
+        "$FSR4_RADV_BASE/0005-bc250-fsr4-v3.patch"
+    fetch_verified 0006-bc250-fsr4-combined-unroll.patch \
+        b19281863aa2b8465649d370a39bf436d65ae6f06c51fb8f79228d0277d848ec \
+        "$FSR4_RADV_BASE/0006-bc250-fsr4-combined-unroll.patch"
+    fetch_verified 0007-bc250-fsr4-imageprep-texture.patch \
+        004644a2704e69b1083cf26c8d250f860eb9595573188343137615afdcc31c93 \
+        "$FSR4_RADV_BASE/0007-bc250-fsr4-imageprep-texture.patch"
+    fetch_verified 0008-bc250-fsr4-resolution-variants.patch \
+        517cf1be2d9e69031793121d9b80a1d968411cc06b982a3155de927690aa1d42 \
+        "$FSR4_RADV_BASE/0008-bc250-fsr4-resolution-variants.patch"
+    fetch_verified 0009-bc250-fsr4-production-defaults.patch \
+        f0a38daa798f681b44ba07f6222ff3338726f64b78d4a33b3c04c9e424025496 \
+        "$FSR4_RADV_BASE/0009-bc250-fsr4-production-defaults.patch"
     if [[ "$profile" == fsr4 ]]; then
         fetch_verified "$FSR4_PATCH_NAME" "$FSR4_PATCH_SHA256" "$FSR4_PATCH_URL"
     fi
@@ -589,6 +606,7 @@ read_manifest() {
         && ( "$STORED_COMMIT" == "$UPSTREAM_COMMIT" \
             || "$STORED_COMMIT" == "$LEGACY_UPSTREAM_COMMIT" ) \
         && ( -z "$STORED_PROFILE_REVISION" \
+            || "$STORED_PROFILE_REVISION" == "compute-only-v2" \
             || "$STORED_PROFILE_REVISION" == "$RADV_PROFILE_REVISION" ) \
         && "$(wc -l < "$MANIFEST")" -eq 1 ]]
 }
@@ -1321,6 +1339,13 @@ PY
         || die "Built RADV driver failed dynamic-link validation: $linkage"
     ! grep -Eq 'not found|undefined symbol:' <<< "$linkage" \
         || die "Built RADV driver has unresolved dynamic dependencies: $linkage"
+    local marker
+    for marker in bc250-fsr4-integrated-v3 BC250_FSR4_DISABLE \
+        BC250_FSR4_IMAGEPREP BC250_FSR4_TEXTURE \
+        BC250_FSR4_RESOLUTION_VARIANTS BC250_FSR4_RESOLUTION_GUARD; do
+        grep -aqF "$marker" "$output" \
+            || die "Built RADV driver is missing production FSR4 marker: $marker"
+    done
 }
 
 cmd_setup() (
@@ -1493,9 +1518,9 @@ cmd_setup() (
     else
         expected_sha=""
         if verify_current_runtime; then expected_sha=$STORED_DRIVER_SHA; fi
-        if [[ -n "$expected_sha" ]] && verify_cached_build base "$expected_sha"; then
+        if verify_cached_build base "$expected_sha"; then
             cache_profile=base
-            log "Reusing the verified async-compute Mesa build for the incremental FSR4 phase."
+            log "Reusing the verified production FSR4 RADV build output."
         else
             log "Preparing a clean pinned Mesa tree for the async-compute base build."
             rm -f "$BUILD_STATE"
@@ -1507,12 +1532,23 @@ cmd_setup() (
             mkdir -p "$source/subprojects/packagecache"
             cp "$CACHE_DIR/$LIBDRM_TARBALL" "$source/subprojects/packagecache/"
             local patch_name
-            for patch_name in 0001-gfx1013-compute-queue-fix.patch; do
-                patch -d "$source" -p1 --fuzz=0 --dry-run -i "$CACHE_DIR/$patch_name"
-                patch -d "$source" -p1 --fuzz=0 -i "$CACHE_DIR/$patch_name"
+            for patch_name in \
+                0001-gfx1013-compute-queue-fix.patch \
+                0005-bc250-fsr4-v3.patch \
+                0006-bc250-fsr4-combined-unroll.patch \
+                0007-bc250-fsr4-imageprep-texture.patch \
+                0008-bc250-fsr4-resolution-variants.patch \
+                0009-bc250-fsr4-production-defaults.patch; do
+                patch -d "$source" -p1 --fuzz=0 --no-backup-if-mismatch \
+                    --dry-run -i "$CACHE_DIR/$patch_name"
+                patch -d "$source" -p1 --fuzz=0 --no-backup-if-mismatch \
+                    -i "$CACHE_DIR/$patch_name"
             done
             grep -qF has_async_compute_threadgroup_bug "$source/src/amd/common/ac_gpu_info.c" \
                 || die "Patched Mesa source is missing the GFX1013 async-compute marker"
+            grep -qF bc250-fsr4-integrated-v3 "$source/src/amd/vulkan/radv_physical_device.c" \
+                && grep -qF bc250_imageprep_spirv "$source/src/amd/vulkan/radv_shader.c" \
+                || die "Patched Mesa source is missing production FSR4 markers"
             meson setup "$build" "$source" \
                 -Dbuildtype=release \
                 -Dvulkan-drivers=amd -Dgallium-drivers= -Dplatforms=x11,wayland \
@@ -1812,11 +1848,11 @@ cmd_status() {
         fsr4_dll_rc=2
     fi
     if [[ $fsr4_dll_rc -eq 0 ]]; then
-        echo "  FSR4 RC8:  installed ($fsr4_dll_installs game-local DLL target(s))"
+        echo "  FSR4 RC9:  installed ($fsr4_dll_installs game-local DLL target(s))"
     elif [[ $fsr4_dll_rc -eq 1 ]]; then
-        echo "  FSR4 RC8:  not installed"
+        echo "  FSR4 RC9:  not installed"
     else
-        echo "  FSR4 RC8:  incomplete or ownership mismatch"
+        echo "  FSR4 RC9:  incomplete or ownership mismatch"
         failed=2
     fi
     if [[ -e "$FSR4_TRANSACTION_DIR" || -L "$FSR4_TRANSACTION_DIR" ]]; then
@@ -1826,7 +1862,7 @@ cmd_status() {
         echo "  legacy FSR4 V3: installed (experimental private RADV profile)"
         echo "  launcher:  $FSR4_RUNNER"
     elif verify_owned_fsr4_runtime; then
-        echo "  legacy FSR4 V3: previous patch composition requires '$0 setup --fsr4-legacy'"
+        echo "  legacy FSR4 V3: previous patch composition; remove with '$0 uninstall --fsr4-legacy'"
         echo "  warning: do not launch the recorded runner until that rebuild completes"
         failed=2
     elif [[ -e "$FSR4_DIR" || -L "$FSR4_DIR" ]]; then
@@ -2199,9 +2235,8 @@ cmd_menu() {
         fi
         local items=(
             "Status overview|${runtime_state}|Verify the patched AMDGPU module, scheduler policy, RADV runtime, and global activation."
-            "Install FSR4 RC8 game DLL (recommended)|${fsr4_state}|Preferred FSR4 route. Replaces one exact existing DLL and retains the original; no custom RADV installation is needed."
-            "Install / resume global async-compute RADV (optional)|${runtime_state}|Installs AMDGPU first when needed, then resumes here after reboot. Not required by the recommended FSR4 RC8 DLL route."
-            "Build legacy FSR4 V3 RADV (fallback only)|${legacy_fsr4_state}|Use only if the RC8 DLL route is unsuitable. Automatically installs global async-compute RADV if needed."
+            "Install FSR4 RC9 game DLL (recommended)|${fsr4_state}|Portable FSR4 route. Replaces one exact existing DLL and retains the original; no custom RADV installation is needed."
+            "Install / resume production FSR4 RADV|${runtime_state}|Installs AMDGPU first when needed, then builds async compute plus the production FSR4 v4 driver for GE Proton."
             "Older per-game setup cleanup|${legacy_state}|Migration only: remove old MESA_DRICONF_EXECUTABLE_OVERRIDE and VK_ICD_FILENAMES Steam launch options, then clear their records."
             "Uninstall Mesa / RADV runtime|${runtime_state}|Remove the alternate driver, ICD, and user environment generator; preserve build caches."
             "Full help||Show CLI commands, activation behavior, and upstream source."
@@ -2212,14 +2247,12 @@ cmd_menu() {
             0) show_menu_status ;;
             1) prompt_fsr4_target ;;
             2) confirm_menu_action \
-                "Install or resume optional global async-compute RADV and its AMDGPU prerequisite? This is not required for FSR4 RC8." setup ;;
+                "Install or resume production FSR4 RADV and its AMDGPU prerequisite? This is not required for the portable FSR4 RC9 route." setup ;;
             3) confirm_menu_action \
-                "Build and install the legacy experimental private FSR4 V3 profile?" setup --fsr4-legacy ;;
-            4) confirm_menu_action \
                 "Have you removed MESA_DRICONF_EXECUTABLE_OVERRIDE and VK_ICD_FILENAMES from the old per-game Steam launch options?" legacy-clear ;;
-            5) confirm_menu_action \
+            4) confirm_menu_action \
                 "Remove the global Mesa / RADV runtime?" uninstall ;;
-            6) echo; cmd_help; pause_key ;;
+            5) echo; cmd_help; pause_key ;;
         esac
     done
 }
@@ -2231,13 +2264,14 @@ Usage: $0 [menu|setup [--fsr4 TARGET_DLL|--fsr4-legacy]|status|status-json|legac
   setup                        Fetch the verified upstream series, build the
                                audited Mesa RADV driver with GFX1013 async
                                compute, install a separate ICD, and configure
-                               safe global activation. This optional driver is
-                               not required for FSR4 RC8. Usually takes 3-5 minutes.
+                               safe global activation. The default profile includes
+                               the production FSR4 v4 patches required by BC-250 GE
+                               Proton. Usually takes 3-5 minutes.
   setup --fsr4 TARGET_DLL      Recommended FSR4 route. Replace one exact existing
                                game or OptiScaler DLL, retaining the original.
                                Absolute paths are recommended; quote spaces at the shell.
-  setup --fsr4-legacy          Fallback only. Build the older private V3 RADV profile
-                               and install global async-compute RADV if it is missing.
+  setup --fsr4-legacy          Retired compatibility command; exits without
+                               changing an existing legacy profile.
   status                       Verify the AMDGPU module, scheduler policy, and
                                global runtime ownership.
   status-json                  Print machine-readable runtime status.
@@ -2257,14 +2291,13 @@ an update when the policy is already active.
 The patched ICD serves 64-bit processes; SteamOS's stock RADV serves 32-bit
 processes through the same global driver list.
 
-After 'setup --fsr4-legacy', opt in one Steam game with this launch option:
-  $FSR4_RUNNER %command%
+Legacy FSR4 V3 RADV setup has been retired. Existing recorded legacy profiles can
+still be inspected and removed with 'uninstall --fsr4-legacy'.
 
-Legacy V3 setup reuses an integrity-checked cache only while it still matches the
-installed base driver. Otherwise it clean-builds before the incremental pass.
-
-Upstream (pinned to $UPSTREAM_COMMIT):
+Async-compute upstream (pinned to $UPSTREAM_COMMIT):
   $UPSTREAM_REPO
+Production FSR4 patches (pinned to $FSR4_RADV_COMMIT):
+  $FSR4_RADV_REPO
 EOF
 }
 
@@ -2273,7 +2306,8 @@ case "${1:-menu}" in
     setup)
         if (($# == 1)); then cmd_setup default
         elif (($# == 3)) && [[ "$2" == --fsr4 ]]; then cmd_setup_fsr4_dll "$3"
-        elif (($# == 2)) && [[ "$2" == --fsr4-legacy ]]; then cmd_setup fsr4
+        elif (($# == 2)) && [[ "$2" == --fsr4-legacy ]]; then
+            die "Legacy FSR4 V3 builds are retired; use production RADV or the portable RC9 DLL."
         else die "Usage: $0 setup [--fsr4 TARGET_DLL|--fsr4-legacy]"
         fi ;;
     status) (($# == 1)) || die "Usage: $0 status"; cmd_status ;;

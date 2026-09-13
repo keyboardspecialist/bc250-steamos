@@ -3642,7 +3642,7 @@ class ToolkitBackend:
                 require_discovered=True,
             )
             await self._fsr4_tool("install", target["targetPath"], timeout=300)
-            return {"message": "FSR4 RC8 installed for the selected game."}
+            return {"message": "FSR4 RC9 installed for the selected game."}
 
         return await self._mutate(action)
 

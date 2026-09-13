@@ -13,6 +13,8 @@ ROOT = Path(__file__).resolve().parents[1]
 MESH = ROOT / "bc250-mesh-shader.sh"
 FSR4 = ROOT / "bc250-fsr4.sh"
 UPSTREAM_COMMIT = "d3e6dc062c34d2523db0abe5741d1f5b0dea00d9"
+MESA_TAG = "mesa-26.2.2"
+RADV_PROFILE_REVISION = "production-fsr4-v4"
 
 
 class MeshShaderTests(unittest.TestCase):
@@ -166,7 +168,8 @@ class MeshShaderTests(unittest.TestCase):
         generator.chmod(0o755)
         digest = lambda path: hashlib.sha256(path.read_bytes()).hexdigest()
         (state / "install.conf").write_text(
-            f"{digest(driver)} {digest(icd)} mesa-26.2.0 {commit} compute-only-v2\n",
+            f"{digest(driver)} {digest(icd)} {MESA_TAG} {commit} "
+            f"{RADV_PROFILE_REVISION}\n",
             encoding="ascii",
         )
         driver_files = f'{icd}:{env["BC250_MESH_32BIT_ICD"]}'
@@ -203,7 +206,8 @@ class MeshShaderTests(unittest.TestCase):
         digest = lambda path: hashlib.sha256(path.read_bytes()).hexdigest()
         profile_digest = "835842eb8beccd6e0498a771c5ea4d8c9ac86ee994e4659045e9f3bf4321404d"
         (profile / "install.conf").write_text(
-            f"{digest(driver)} {digest(icd)} {digest(runner)} mesa-26.2.0 {profile_digest}\n",
+            f"{digest(driver)} {digest(icd)} {digest(runner)} {MESA_TAG} "
+            f"{profile_digest}\n",
             encoding="ascii",
         )
 
@@ -271,7 +275,7 @@ class MeshShaderTests(unittest.TestCase):
             self.install_runtime(env)
             status = self.run_status_json(env)
             self.assertEqual(status["runtimeState"], "ready")
-            self.assertEqual(status["mesaVersion"], "mesa-26.2.0")
+            self.assertEqual(status["mesaVersion"], MESA_TAG)
             self.assertEqual(status["fsr4State"], "not-installed")
             self.assertEqual(status["fsr4DllState"], "not-installed")
             self.assertEqual(status["fsr4DllInstallCount"], 0)
@@ -332,7 +336,8 @@ class MeshShaderTests(unittest.TestCase):
             driver = Path(env["BC250_MESH_DRIVER"])
             digest = lambda path: hashlib.sha256(path.read_bytes()).hexdigest()
             (state / "install.conf").write_text(
-                f"{digest(driver)} {digest(icd)} mesa-26.2.0 {UPSTREAM_COMMIT} compute-only-v2\n",
+                f"{digest(driver)} {digest(icd)} {MESA_TAG} {UPSTREAM_COMMIT} "
+                f"{RADV_PROFILE_REVISION}\n",
                 encoding="ascii",
             )
             generated = subprocess.run(
@@ -1079,10 +1084,10 @@ class MeshShaderTests(unittest.TestCase):
         source = MESH.read_text(encoding="utf-8")
         self.assertIn("menu_select()", source)
         self.assertIn("Mesa / RADV async-compute patch", source)
-        self.assertIn("Install FSR4 RC8 game DLL (recommended)", source)
-        self.assertIn("Install / resume global async-compute RADV (optional)", source)
-        self.assertIn("Not required by the recommended FSR4 RC8 DLL route", source)
-        self.assertIn("Build legacy FSR4 V3 RADV (fallback only)", source)
+        self.assertIn("Install FSR4 RC9 game DLL (recommended)", source)
+        self.assertIn("Install / resume production FSR4 RADV", source)
+        self.assertIn("not required for the portable FSR4 RC9 route", source)
+        self.assertIn("Older per-game setup cleanup", source)
         self.assertIn("Usually takes 3-5 minutes", source)
         self.assertIn("GFX1013 async-compute marker", source)
         self.assertIn("require_production_kernel_paths", source)
@@ -1094,8 +1099,8 @@ class MeshShaderTests(unittest.TestCase):
         self.assertNotIn("20-40", source)
         self.assertNotIn("Enable one executable|", source)
         self.assertIn("DryhoppedIPA/bc250-gfx1013-fix", source)
-        self.assertIn('DEFAULT_MESA_TAG="mesa-26.2.0"', source)
-        self.assertIn("setup --fsr4", source)
+        self.assertIn('DEFAULT_MESA_TAG="mesa-26.2.2"', source)
+        self.assertIn("Legacy FSR4 V3 RADV setup has been retired", source)
         self.assertIn("render_fsr4_runner", source)
         self.assertIn("FSR4_PATCH_SHA256", source)
         self.assertIn("refs/heads/bc250-pinned-mesa", source)
@@ -1331,6 +1336,48 @@ ensure_radv_prerequisites
             (ROOT / "bc250-mesa-patches/0004-gfx1013-fsr4-sdot-lowering.patch").exists()
         )
 
+    def test_new_legacy_fsr4_builds_are_refused_without_mutation(self):
+        with tempfile.TemporaryDirectory() as directory:
+            env = self.environment(Path(directory))
+            result = subprocess.run(
+                ["bash", str(MESH), "setup", "--fsr4-legacy"],
+                capture_output=True,
+                text=True,
+                env=env,
+            )
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("Legacy FSR4 V3 builds are retired", result.stderr)
+            self.assertFalse(Path(env["BC250_MESH_STATE_DIR"]).exists())
+
+    def test_production_fsr4_radv_patch_series_is_pinned_and_validated(self):
+        script = MESH.read_text(encoding="utf-8")
+        self.assertIn(
+            'FSR4_RADV_COMMIT="db49878af40551b481f511053201fcf1e1bd5d90"',
+            script,
+        )
+        for patch in (
+            "0001-gfx1013-compute-queue-fix.patch",
+            "0005-bc250-fsr4-v3.patch",
+            "0006-bc250-fsr4-combined-unroll.patch",
+            "0007-bc250-fsr4-imageprep-texture.patch",
+            "0008-bc250-fsr4-resolution-variants.patch",
+            "0009-bc250-fsr4-production-defaults.patch",
+        ):
+            self.assertIn(patch, script)
+        self.assertIn(
+            'patch -d "$source" -p1 --fuzz=0 --no-backup-if-mismatch',
+            script,
+        )
+        for marker in (
+            "bc250-fsr4-integrated-v3",
+            "BC250_FSR4_DISABLE",
+            "BC250_FSR4_IMAGEPREP",
+            "BC250_FSR4_TEXTURE",
+            "BC250_FSR4_RESOLUTION_VARIANTS",
+            "BC250_FSR4_RESOLUTION_GUARD",
+        ):
+            self.assertIn(marker, script)
+
     def test_unsafe_mesh_task_patches_are_not_fetched_or_applied(self):
         script = MESH.read_text(encoding="utf-8")
         stage = script[script.index("stage_upstream() {") : script.index("verify_fsr4_patch() {")]
@@ -1338,6 +1385,7 @@ ensure_radv_prerequisites
         for patch in (
             "0002-gfx1013-mesh-task-shaders.patch",
             "0003-gfx1013-taskmesh-queries.patch",
+            "0004-radv-gfx103.patch",
         ):
             self.assertNotIn(patch, stage)
             self.assertNotIn(patch, setup)
@@ -1349,25 +1397,39 @@ ensure_radv_prerequisites
         self.assertIn('flock 8', purge)
         self.assertIn('FSR4 DLL rollback state exists but its helper is unavailable', purge)
 
-    def test_rc8_helper_is_executable_and_in_toolkit_release_glob(self):
+    def test_rc9_helper_is_executable_and_in_toolkit_release_glob(self):
         workflow = (ROOT / ".github/workflows/release-artifacts.yml").read_text(
             encoding="utf-8"
         )
         self.assertTrue(os.access(FSR4, os.X_OK))
         self.assertIn("cp README.md bc250-*.sh", workflow)
+        helper = FSR4.read_text(encoding="utf-8")
+        self.assertIn('RELEASE="${BC250_FSR4_RELEASE:-v4.0.0-rc9}"', helper)
+        self.assertIn(
+            'ARCHIVE_NAME="${BC250_FSR4_ARCHIVE_NAME:-bc250-fsr4-dll-${RELEASE#v}-docs2.tar.xz}"',
+            helper,
+        )
+        self.assertIn(
+            "063e23e0a56605b63deef2c03100432eb75d991c68eb04c6eb9b4a8444fd4f06",
+            helper,
+        )
+        self.assertIn(
+            "eefcac03ab17b04a29a5bb16e3f3e9c3181ba9ea46b05a61cb49a5003e1516ef",
+            helper,
+        )
 
-    def test_rc8_dll_install_is_pinned_transactional_and_reversible(self):
+    def test_rc9_dll_install_is_pinned_transactional_and_reversible(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             payload = root / "payload"
             (payload / "notices").mkdir(parents=True)
             dll = payload / "amd_fidelityfx_upscaler_dx12.dll"
-            dll.write_bytes(b"MZ synthetic rc8 payload\n")
+            dll.write_bytes(b"MZ synthetic rc9 payload\n")
             (payload / "README.md").write_text("test release\n", encoding="utf-8")
             (payload / "notices/PROVENANCE.md").write_text(
                 "test provenance\n", encoding="utf-8"
             )
-            archive = root / "rc8.tar.xz"
+            archive = root / "rc9.tar.xz"
             with tarfile.open(archive, "w:xz") as output:
                 for path in sorted(payload.rglob("*")):
                     output.add(path, arcname=path.relative_to(payload))
@@ -1479,7 +1541,7 @@ ensure_radv_prerequisites
             self.assertLess(record_commit, record_sync)
             self.assertLess(record_sync, target_write)
 
-    def test_rc8_helper_rejects_unsafe_release_and_symlink_inputs(self):
+    def test_rc9_helper_rejects_unsafe_release_and_symlink_inputs(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             bad_release = subprocess.run(

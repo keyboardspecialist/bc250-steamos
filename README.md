@@ -13,7 +13,7 @@ Management tools for SteamOS 3.8.x and 3.9.x.
 | [CEC](#cec) | [Big Picture Plugin](#big-picture-plugin) |
 | [Plasma Desktop Control](#plasma-desktop-control) | [CoolerControl](#coolercontrol) |
 | [BC250 Trainer](#bc250-trainer) | [HDMI AC-3 Surround Encoding](#hdmi-ac-3-surround-encoding-optional) |
-| [AMDGPU Driver](#amdgpu-driver) | [Mesa / RADV Async-Compute Patch](#mesa--radv-async-compute-patch-optional-recommended) |
+| [AMDGPU Driver](#amdgpu-driver) | [Production FSR4 RADV and GE-Proton](#mesa--radv-async-compute-and-fsr4) |
 | [GDDR6 Memory Temperature](#gddr6-memory-temperature-experimental) | [NCT6687D Fan-Control Driver](#nct6687d-fan-control-driver) |
 | [AIC8800 WiFi and Bluetooth Driver](#aic8800-class-wifi-and-bluetooth-driver) | [SteamOS Updates](#steamos-updates) |
 | [References](#references) | |
@@ -40,6 +40,7 @@ Open the unified toolkit menu as the logged-in Deck user:
 | Auto Base Toolkit Installation | `./bc250-toolkit.sh auto-base-installation`; run the same command after each requested reboot |
 | AMDGPU kernel fixes | `./bc250-toolkit.sh amdgpu`, then reboot |
 | Mesa / RADV async compute (optional, highly recommended) | `./bc250-toolkit.sh graphics-setup`, then resume after reboot |
+| BC-250 GE-Proton for integrated FSR4 | Activate production RADV first, then run `./bc250-toolkit.sh proton-install` |
 | Power management | `sudo ./bc250-power.sh all`, then `sudo ./bc250-power.sh enable` |
 | RAM / VRAM split | `./bc250-ram-split.sh` |
 | Compressed swap (optional) | `sudo ./bc250-swap.sh`, then choose zram or zswap-backed disk swap |
@@ -106,7 +107,8 @@ sudo ./bc250-power.sh status
 | [`trainer/`](#bc250-trainer) | Standalone native Qt control application |
 | [`bc250-audio-fix/`](#amdgpu-driver) | DisplayPort clock, GPU telemetry, and GFX1013 compute repair |
 | [`hdmi-ac3/`](#hdmi-ac-3-surround-encoding-optional) | Real-time Dolby Digital 5.1 encoding over HDMI/DisplayPort |
-| [`bc250-mesh-shader.sh`](#mesa--radv-async-compute-patch-optional-recommended) | Optional, recommended Mesa / RADV async-compute driver enabled globally for the user session |
+| [`bc250-mesh-shader.sh`](#mesa--radv-async-compute-and-fsr4) | Production Mesa / RADV build with GFX1013 async compute and integrated BC-250 FSR4 patches |
+| `bc250-proton.sh` | Transactional user-local installer for the checksum-pinned BC-250 GE-Proton build |
 | [`bc250-memory-temperature.sh`](#gddr6-memory-temperature-experimental) | Guarded, checksum-pinned live SMU payload for reading all eight GDDR6 chip temperatures |
 | [`nct6687d/`](#nct6687d-fan-control-driver) | Optional NCT6683/6686/6687 hwmon fan tachometer and PWM driver |
 | [`aic8800/`](#wifi-and-bluetooth) | AIC8800 USB WiFi and Bluetooth driver |
@@ -138,6 +140,8 @@ Each child requests administrator access only when needed.
 | `./bc250-toolkit.sh swap` | Choose a compressed swap profile |
 | `./bc250-toolkit.sh amdgpu` | Build the AMDGPU kernel fixes |
 | `./bc250-toolkit.sh radv` | Open the global Mesa / RADV async-compute menu |
+| `./bc250-toolkit.sh proton` | Open BC-250 GE-Proton status, installation, update, and removal |
+| `./bc250-toolkit.sh proton-install` | Install the pinned GE-Proton build after production RADV is active |
 | `./bc250-toolkit.sh audio-output` | Open HDMI AC-3 enable and stereo-revert options |
 | `./bc250-toolkit.sh fan-driver` | Build and install NCT6687 hwmon fan/PWM support for the onboard controller |
 | `./bc250-toolkit.sh memory-temperature` | Open the experimental GDDR6 temperature workflow |
@@ -644,7 +648,7 @@ sudo ./rollback.sh
 
 See [`bc250-audio-fix/README.md`](bc250-audio-fix/README.md) for kernel support and build controls.
 
-## Mesa / RADV Async-Compute Patch (Optional, Recommended)
+## Mesa / RADV Async Compute and FSR4
 
 This optional but highly recommended patch builds the Mesa/RADV half of
 [`DryhoppedIPA/bc250-gfx1013-fix`](https://github.com/DryhoppedIPA/bc250-gfx1013-fix)
@@ -655,7 +659,16 @@ the selected `modinfo` path, and the loaded repair attestation agree. Use
 **Auto Base Toolkit Installation** for the complete foundation, or choose **Install / resume
 async-compute stack** under Performance tuning. The toolkit installs AMDGPU
 first, pauses for reboot, and resumes RADV when the same option is selected
-again. The RADV-only build normally takes about 3-5 minutes.
+again. The RADV build normally takes about 3-5 minutes.
+
+The production profile also applies the BC-250 FSR4 series from
+[`MastaG/linux-cachyos-bc250`](https://github.com/MastaG/linux-cachyos-bc250)
+at pinned commit `db49878af40551b481f511053201fcf1e1bd5d90`. It uses Mesa
+`mesa-26.2.2` at commit `3281a69a8bfd9f997e91c15ed0e6290cae12dd32` and applies
+patches `0001` and `0005` through `0009` with zero fuzz. Unsafe mesh/task and
+query patches `0002` through `0004` are not downloaded or applied. Build output
+must contain the production FSR4 feature markers and pass ELF, linkage, and
+dependency checks before installation.
 
 Open the menu as the logged-in user:
 
@@ -711,7 +724,7 @@ options. Remove those options, run `./bc250-mesh-shader.sh legacy-clear`, and
 then uninstall; unrelated `~/.drirc` content is preserved. New installations
 do not create per-game records.
 
-The upstream alpha build itself remains x86-64 only. Its async-compute change
+The alternate build remains x86-64 only. Its async-compute and FSR4 changes
 therefore does not apply to 32-bit processes; those processes use the stock
 SteamOS RADV fallback instead. The toolkit no longer applies the optional
 GFX1013 mesh/task and query patches: upstream disabled them after mesh/task
@@ -719,15 +732,18 @@ workloads caused an unrecoverable GPU hang.
 
 An existing environment generator or legacy V3 runner from an older toolkit
 cannot be deactivated merely by replacing these scripts. After upgrading, run
-`./bc250-mesh-shader.sh setup`, rebuild legacy V3 separately if you still need
-it, then sign out and back in before launching games. Status reports older
-patch compositions as invalid rather than reusing their Mesa build output.
+`./bc250-mesh-shader.sh setup`, then sign out and back in before launching
+games. Status reports older patch compositions as invalid rather than reusing
+their Mesa build output.
 
-For FSR4, choose the **FSR4 RC8 game DLL** route below. It does not require the
-global async-compute RADV driver. Install global async-compute RADV only when
-you independently want that driver optimization. Use the legacy FSR4 V3 RADV
-profile only as a fallback when the RC8 DLL route is unsuitable; legacy setup
-installs its global RADV prerequisite automatically.
+Two FSR4 routes are available:
+
+- **Portable RC9 DLL:** game-local, reversible, and independent of custom RADV
+  or Proton. This is the lower-risk initial route.
+- **Production RADV plus BC-250 GE-Proton:** integrated compatibility-tool
+  route. Complete `graphics-setup`, its reboot/sign-out checkpoint, and then
+  install GE-Proton from the toolkit. Keep portable RC9 available until the
+  integrated route is qualified for each game.
 
 ### OptiScaler Game Manager
 
@@ -753,9 +769,9 @@ trigger anti-cheat action or account bans. If BC-250 FSR4 is installed beneath
 the same directory, restore that DLL before updating or removing OptiScaler;
 the two rollback systems are deliberately locked against conflicting changes.
 
-### FSR4 RC8 Game DLL
+### FSR4 RC9 Game DLL
 
-The current FSR4 path uses the portable RC8 DLL from
+The portable FSR4 path uses the RC9 DLL from
 [`daniel-h-0/bc250-fsr4-fork`](https://github.com/daniel-h-0/bc250-fsr4-fork).
 It contains the optimized FSR 4.1.1 INT8 shaders and does not require a custom
 Mesa driver or Proton build. The Decky and Plasma GPU pages discover installed
@@ -774,13 +790,13 @@ when using the command line; paste them without quotes in the interactive menu:
   "/path/to/OptiScaler/amd_fidelityfx_upscaler_dx12.dll"
 ```
 
-The installer downloads `bc250-fsr4-dll-4.0.0-rc8.tar.xz`, verifies archive
-SHA-256 `805a3df9cef931decd42d02eaffb375f95844afce2e13d78bad757a27c806da2`,
+The installer downloads `bc250-fsr4-dll-4.0.0-rc9-docs2.tar.xz`, verifies archive
+SHA-256 `063e23e0a56605b63deef2c03100432eb75d991c68eb04c6eb9b4a8444fd4f06`,
 then verifies DLL SHA-256
-`f8816fed46bce60179228a58905e16788f021fad0b68c08d1e3555564093b2b4`.
+`eefcac03ab17b04a29a5bb16e3f3e9c3181ba9ea46b05a61cb49a5003e1516ef`.
 The release instructions and notices remain in the private cache. Each target
 has a separate rollback record containing the exact original bytes. The
-toolkit refuses to overwrite symlinks, unrecorded RC8 copies, or a target that
+toolkit refuses to overwrite symlinks, unrecorded RC9 copies, or a target that
 changed after installation.
 
 For OptiScaler installed through `winmm.dll`, use the upstream launch option:
@@ -792,8 +808,8 @@ PROTON_FSR4_UPGRADE=0 PROTON_USE_OPTISCALER=0 WINEDLLOVERRIDES="winmm=n,b;amdxcf
 Set OptiScaler to the FFX backend, FSR4 INT8 model 2, and disable frame
 generation unless separately qualified. Native FidelityFX games may require a
 different destination filename; follow the upstream compatibility notes rather
-than applying one filename rule to every game. RC8 has synthetic BC-250/Linux
-qualification on ordinary Mesa and GE-Proton, but no fresh game qualification.
+than applying one filename rule to every game. RC9 remains experimental and
+must be qualified per game.
 Initial shader compilation can pause long enough to trigger a game's hang
 detector.
 
@@ -804,56 +820,50 @@ Restore a target's exact original DLL with:
   "/path/to/OptiScaler/amd_fidelityfx_upscaler_dx12.dll"
 ```
 
-### Legacy FSR4 V3 Profile
+### BC-250 GE-Proton
 
-The former private RADV profile remains available as an explicit fallback:
+After production RADV reports active, install the integrated Proton route as the
+logged-in Deck user:
 
 ```bash
-./bc250-mesh-shader.sh setup --fsr4-legacy
+./bc250-toolkit.sh proton-install
 ```
 
-Legacy setup first builds the global async-compute driver with only
-DryhoppedIPA's required `0001` patch. Because FSR4 V3 duplicates that change,
-setup preserves the base output, reverses `0001`, applies V3 with zero fuzz,
-and incrementally rebuilds the private driver. The disabled mesh/task patches
-are not present in either output.
+The manager downloads
+`protonge-latest-bc250-11.6-155-x86_64.pkg.tar.zst` from the pinned upstream
+release and requires SHA-256
+`f2b4b30c5fcd73756906e6ce452b9cfbb38ab87eadc3de645bf92eb7b36e1cd7`.
+It extracts only the compatibility tool and license payload. CachyOS package
+metadata, pacman hooks, kernel modules, and host integration are not installed.
+The resulting tool lives at
+`~/.local/share/Steam/compatibilitytools.d/protonge-latest-bc250` and continues
+to use Steam Linux Runtime rather than CachyOS host libraries.
 
-The legacy artifact remains under `~/.local/share/bc250-mesh-shader/fsr4` and
-is never globally enabled. Setup prints its per-game runner command. Remove it
-with `./bc250-mesh-shader.sh uninstall --fsr4-legacy`.
+Restart Steam, open an eligible game's compatibility settings, and select
+**GE-Proton 11-6 (BC-250 FSR4)**. Do not enable DLL injection or FSR4 upgrade
+for online or anti-cheat games; use ordinary Proton or set
+`PROTON_FSR4_UPGRADE=0`. Installation and updates are transactional. Removal
+deletes only this compatibility tool and preserves Steam prefixes, saves, and
+game data:
 
-Legacy setup fetches `bc250-fsr4-v3.patch` from
-[`dmorazasanchez/bc250-fsr4`](https://github.com/dmorazasanchez/bc250-fsr4)
-at immutable commit `741ff3e369026f34820c41a846cf5e55d08e2a61` and verifies SHA-256
-`7fde37fad572b4ba4dcac6052792d10d8d3df65982b01236c63a3eff0a25d225`.
-The patch is not copied into this repository. Its upstream repository currently
-declares no license; users should account for that before redistribution.
+```bash
+./bc250-toolkit.sh proton-status
+./bc250-toolkit.sh proton-update
+./bc250-toolkit.sh proton-uninstall
+```
 
-V3 implements deferred signed-dot optimization, software signed i24 MUL/MAD
-lowering, FSR4 wrapper fusion, tuned dense-reduction strategies, and the tested
-ACO spill policy. It does not use the BC-250's broken native signed packed-dot
-instruction. V3 also includes an optional `RADV_GFX103` override; the toolkit
-does not set that variable. Upstream reports 63 FPS in its Cyberpunk 2077 test
-and no new spill or resident-wave regressions across its 64 captured shaders.
-The toolkit has not independently reproduced those results. Treat the profile
-as experimental: games may regress, corrupt frames, hang, or reset the GPU.
+The CachyOS native Proton package is intentionally not installed because it
+bypasses Steam Linux Runtime and requires CachyOS host libraries. The alternate
+CachyOS SLR package remains deferred until it can be benchmarked against the GE
+build.
 
-The async-compute series is pinned to commit
-[`d3e6dc0`](https://github.com/DryhoppedIPA/bc250-gfx1013-fix/commit/d3e6dc062c34d2523db0abe5741d1f5b0dea00d9),
-tagged `v0.2.0-alpha`. DryhoppedIPA developed the scoped V33 kernel repair and
-the narrow GFX1013 compute implementation through direct hardware testing.
-Setup downloads only the required compute patch and the pristine
-final `mesa-26.2.0` source at commit `9f0a761`. Setup verifies the Git commit,
-the downloaded patch and libdrm SHA-256 hashes, and requires zero-fuzz
-patch application. The Mesa patches retain their upstream MIT license; the
-kernel patches are `GPL-2.0-only`.
+### Legacy FSR4 V3 Profile
 
-The legacy profile remains alpha hardware research tested upstream on one board, not a full
-Vulkan conformance result. The toolkit restores SteamOS read-only-root state,
-records installed hashes, and transactionally restores a prior profile if its
-installation fails. If the legacy FSR4 compilation fails after the async profile
-was installed successfully, that valid prerequisite remains installed. Retry
-legacy setup; invalid intermediate build state falls back to a clean base build.
+New legacy V3 builds are retired. Existing recorded private profiles remain
+detectable for safe cleanup and are never enabled globally. Remove one with
+`./bc250-mesh-shader.sh uninstall --fsr4-legacy`. The old source pin and
+checksum remain in the script only so existing lifecycle state can be validated
+and removed without treating it as foreign data.
 
 ## GDDR6 Memory Temperature (Experimental)
 
@@ -954,6 +964,7 @@ by SCSI eject, while `1111:1111` adapters use the required two-message sequence.
 | HDMI AC-3 encoding | The udev profile selector is retained; the WirePlumber fragment lives in the user's home directory |
 | Patched AMDGPU module | Run `bc250-audio-fix/patch-driver.sh` after each kernel update to rebuild the kernel-specific module; the rebuild disables any retained scheduler policy until RADV setup is rerun |
 | Mesa / RADV async compute | Rerun `bc250-mesh-shader.sh setup` after a SteamOS update to restore the root-owned driver, safety-gated environment generator, and scheduler policy |
+| BC-250 GE-Proton | Lives in the user's Steam compatibility-tools directory and survives normal atomic updates; rerun `bc250-proton.sh status` to verify it |
 | NCT6687 fan-control module | The boot helper restores only a verified module already staged for the running kernel; rerun setup interactively after a kernel change |
 | AIC8800 modules | The boot helper reuses staged modules or published headers; rerun setup if it requests interactive source preparation |
 
@@ -1040,7 +1051,8 @@ Run the normal component setup commands afterward to regenerate services for the
 | BC-250 GDDR6 Memory Temperature | [Repository](https://github.com/pan-Rijovich/bc250-memory-temperature) · [integrated commit](https://github.com/pan-Rijovich/bc250-memory-temperature/commit/b7e6bffcb5d592fc03edde375b7598ddc79aa846) | Live SMU payload and MR3 temperature method by pan-Rijovich and bc250-collective, guarded by `bc250-memory-temperature.sh` |
 | BC-250 GFX1013 Fix | [Repository](https://github.com/DryhoppedIPA/bc250-gfx1013-fix) · [integrated commit](https://github.com/DryhoppedIPA/bc250-gfx1013-fix/commit/d3e6dc062c34d2523db0abe5741d1f5b0dea00d9) | Kernel compute lifecycle repair and pinned alternate RADV build by DryhoppedIPA |
 | OptiScaler | [Repository](https://github.com/optiscaler/OptiScaler) · [release](https://github.com/optiscaler/OptiScaler/releases/tag/v0.9.4) | Checksum-pinned per-game installation with collision backups and guarded rollback |
-| BC-250 FSR4 RC8 | [Repository](https://github.com/daniel-h-0/bc250-fsr4-fork) · [release](https://github.com/daniel-h-0/bc250-fsr4-fork/releases/tag/v4.0.0-rc8) | Integrity-checked portable FSR 4.1.1 INT8 DLL with per-target rollback; V3 retained as a legacy fallback |
+| BC-250 FSR4 RC9 | [Repository](https://github.com/daniel-h-0/bc250-fsr4-fork) · [release](https://github.com/daniel-h-0/bc250-fsr4-fork/releases/tag/v4.0.0-rc9) | Integrity-checked portable FSR 4.1.1 INT8 DLL with per-target rollback |
+| CachyOS BC-250 GE-Proton and RADV | [Repository](https://github.com/MastaG/linux-cachyos-bc250) · [release assets](https://github.com/MastaG/linux-cachyos-bc250/releases/tag/repo) | Checksum-pinned GE compatibility tool and production FSR4 Mesa patch series adapted for user-local SteamOS installation |
 | BC-250 HDMI AC-3 encoding | [Implementation guide and scripts](https://github.com/rpf16rj/bc250-steamos-real-toolkit/tree/main/extras/hdmi-ac3-encoding) | ALSA `a52` routing and WirePlumber profile behavior adapted by `hdmi-ac3/hdmi-ac3.sh` |
 | Valve kernel mirror | [Repository](https://github.com/Evlav/linux-integration) | `bc250-audio-fix/fetch-sources.sh` |
 | SteamOS package mirror | [Package index](https://steamdeck-packages.steamos.cloud/archlinux-mirror/) | Audio, AIC8800, and NCT6687 build scripts; stable channels are discovered automatically |

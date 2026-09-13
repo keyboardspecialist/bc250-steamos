@@ -17,6 +17,7 @@ AUDIO_SH="${AUDIO_SH:-$SCRIPT_DIR/bc250-audio-fix/patch-driver.sh}"
 AUDIO_CLEAN_SH="${AUDIO_CLEAN_SH:-$SCRIPT_DIR/bc250-audio-fix/clean.sh}"
 HDMI_AC3_SH="${HDMI_AC3_SH:-$SCRIPT_DIR/hdmi-ac3/hdmi-ac3.sh}"
 MESH_SH="${MESH_SH:-$SCRIPT_DIR/bc250-mesh-shader.sh}"
+PROTON_SH="${PROTON_SH:-$SCRIPT_DIR/bc250-proton.sh}"
 DECKY_SH="${DECKY_SH:-$SCRIPT_DIR/decky-plugin/install.sh}"
 DESKTOP_SH="${DESKTOP_SH:-$SCRIPT_DIR/desktop-control/install.sh}"
 TRAINER_SH="${TRAINER_SH:-$SCRIPT_DIR/trainer/install.sh}"
@@ -24,11 +25,13 @@ TRAINER_FLATPAK_SH="${TRAINER_FLATPAK_SH:-$SCRIPT_DIR/trainer/install-flatpak.sh
 COOLERCONTROL_SH="${COOLERCONTROL_SH:-$SCRIPT_DIR/coolercontrol/install.sh}"
 SERVICE_CLIENT_DIR="${BC250_SERVICE_CLIENT_DIR:-/var/lib/bc250-control/service-clients}"
 
-COMPONENTS=(trainer desktop decky coolercontrol cec ac3 power ram swap compute mesh audio fan aic)
-UNINSTALL_ORDER=(trainer desktop decky coolercontrol cec ac3 power ram swap compute mesh audio fan aic)
+COMPONENTS=(trainer desktop decky coolercontrol cec ac3 power ram swap compute proton mesh audio fan aic)
+UNINSTALL_ORDER=(trainer desktop decky coolercontrol cec ac3 power ram swap compute proton mesh audio fan aic)
 MESH_STATE_DIR="${BC250_MESH_STATE_DIR:-$HOME/.local/share/bc250-mesh-shader}"
 MESH_LOCK_FILE="${BC250_MESH_LOCK_FILE:-$HOME/.cache/bc250-mesh-shader.lock}"
 MESH_GENERATOR="${BC250_GFX1013_GENERATOR:-/usr/lib/systemd/user-environment-generators/60-bc250-gfx1013}"
+PROTON_STATE_DIR="${BC250_PROTON_STATE_DIR:-$HOME/.local/share/bc250-proton}"
+PROTON_COMPAT_DIR="${BC250_PROTON_COMPAT_DIR:-$HOME/.local/share/Steam/compatibilitytools.d}"
 
 C0=$'\033[0m'; CB=$'\033[1m'; CD=$'\033[2m'; CI=$'\033[7m'
 CG=$'\033[32m'; CY=$'\033[33m'; CR=$'\033[31m'; CC=$'\033[36m'
@@ -55,6 +58,7 @@ component_label() {
         swap) echo "Compressed swap" ;;
         compute) echo "GPU compute-unit unlock" ;;
         mesh) echo "Mesa / RADV async compute" ;;
+        proton) echo "BC-250 GE-Proton" ;;
         audio) echo "AMDGPU kernel fixes" ;;
         aic) echo "AIC8800 WiFi / Bluetooth" ;;
         fan) echo "NCT6687 fan-control driver" ;;
@@ -76,6 +80,7 @@ component_script() {
         swap) echo "$SWAP_SH" ;;
         compute) echo "$COMPUTE_SH" ;;
         mesh) echo "$MESH_SH" ;;
+        proton) echo "$PROTON_SH" ;;
         audio) echo "$AUDIO_SH" ;;
         aic) echo "$AIC_SH" ;;
         fan) echo "$FAN_SH" ;;
@@ -97,7 +102,7 @@ component_probe() {
             require_script "$TRAINER_FLATPAK_SH"
             bash "$TRAINER_FLATPAK_SH" status >/dev/null 2>&1
             ;;
-        desktop|decky|coolercontrol|mesh|audio|aic|fan|ac3) bash "$script" status >/dev/null 2>&1 ;;
+        desktop|decky|coolercontrol|mesh|proton|audio|aic|fan|ac3) bash "$script" status >/dev/null 2>&1 ;;
         storage) bash "$script" installed >/dev/null 2>&1 ;;
     esac
 }
@@ -182,6 +187,18 @@ component_has_artifacts() {
                 || -e "$MESH_GENERATOR" || -L "$MESH_GENERATOR" \
                 || -e /usr/lib/libvulkan_radeon_driconf.so ]] \
                 || grep -qF '<!-- BEGIN BC250 MESH SHADER MANAGED -->' "$HOME/.drirc" 2>/dev/null
+            ;;
+        proton)
+            [[ -e "$PROTON_COMPAT_DIR/protonge-latest-bc250" \
+                || -L "$PROTON_COMPAT_DIR/protonge-latest-bc250" \
+                || -e "$PROTON_COMPAT_DIR/.protonge-latest-bc250.bc250-backup" \
+                || -L "$PROTON_COMPAT_DIR/.protonge-latest-bc250.bc250-backup" \
+                || -e "$PROTON_COMPAT_DIR/.protonge-latest-bc250.bc250-removing" \
+                || -L "$PROTON_COMPAT_DIR/.protonge-latest-bc250.bc250-removing" \
+                || -e "$PROTON_STATE_DIR/transaction" \
+                || -L "$PROTON_STATE_DIR/transaction" \
+                || -e "$PROTON_STATE_DIR/removal" \
+                || -L "$PROTON_STATE_DIR/removal" ]]
             ;;
         audio)
             compgen -G '/usr/lib/modules/*/updates/amdgpu.ko.zst' >/dev/null \
@@ -303,6 +320,7 @@ plan_component() {
         swap) echo "  Disable toolkit swap boot integration and safely remove its inactive disk swapfile after any required reboot." ;;
         compute) echo "  Restore stock CU dispatch when possible and remove boot integration; preserve the WGP profile and UMR." ;;
         mesh) echo "  Remove the alternate RADV ICD and global user environment generator; preserve build caches." ;;
+        proton) echo "  Remove only BC-250 GE-Proton; preserve Steam prefixes, game saves, and game data." ;;
         audio) echo "  Restore stock AMDGPU modules for every patched kernel; preserve source and build caches." ;;
         aic) echo "  Disable module repair, unload drivers when possible, and remove installed modules, firmware, and device rules." ;;
         fan) echo "  Restore firmware fan control, unload NCT6687, and remove its module and boot repair integration." ;;
@@ -376,7 +394,7 @@ run_component_uninstall() {
             [[ $native -eq 1 || $flatpak_trainer -eq 1 || $legacy_trainer -eq 1 ]] \
                 || bash "$script" uninstall || rc=$?
             ;;
-        desktop|decky|coolercontrol|cec|mesh|audio|ac3) bash "$script" uninstall || rc=$? ;;
+        desktop|decky|coolercontrol|cec|mesh|proton|audio|ac3) bash "$script" uninstall || rc=$? ;;
         power|ram|swap|compute|aic|fan|storage) sudo bash "$script" uninstall || rc=$? ;;
         *) die "Unknown component: $component" ;;
     esac
@@ -485,6 +503,8 @@ purge_preserved_data() {
     bash "$AUDIO_CLEAN_SH" --all
     [[ ! -L "$MESH_STATE_DIR" ]] || die "Refusing symlinked mesh-shader state: $MESH_STATE_DIR"
     rm -rf -- "$MESH_STATE_DIR"
+    [[ ! -L "$PROTON_STATE_DIR" ]] || die "Refusing symlinked GE-Proton state: $PROTON_STATE_DIR"
+    rm -rf -- "$PROTON_STATE_DIR"
     rm -rf -- "$SCRIPT_DIR/decky-plugin/out" "$SCRIPT_DIR/decky-plugin/node_modules"
     log "Preserved BC-250 settings, backing data, and reproducible build caches were purged."
     log "The toolkit checkout and shared pnpm installation were retained."
@@ -582,7 +602,7 @@ cmd_help() {
     cat << EOF
 Usage: $0 {menu|status|status-json|plan [COMPONENT|all]|uninstall COMPONENT|all [--yes]|purge [--yes]|help}
 
-Components: trainer, desktop, decky, coolercontrol, cec, ac3, power, ram, compute, mesh, audio, fan, aic, storage
+Components: trainer, desktop, decky, coolercontrol, cec, ac3, power, ram, compute, proton, mesh, audio, fan, aic, storage
 
   status                 Show lifecycle state for every component.
   status-json            Emit versioned JSON lifecycle state for automation.
@@ -604,6 +624,7 @@ Purge permanently deletes preserved BC-250 data:
   - persistent backing data under /home/.steamos/offload/var/lib/bc250-control
   - reproducible AMDGPU and Decky build caches in this checkout
   - toolkit-created Mesa / RADV build and downloaded upstream patch
+  - GE-Proton transaction metadata (Steam prefixes and saves remain untouched)
 
 The toolkit checkout and shared pnpm installation are retained. Purge is only
 allowed after every installed or partial component has been removed.

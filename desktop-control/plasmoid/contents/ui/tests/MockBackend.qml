@@ -27,7 +27,7 @@ QtObject {
         }
     })
     property var meshStatus: ({
-        scriptAvailable: true, runtimeState: "ready", mesaVersion: "mesa-26.2.0",
+        scriptAvailable: true, runtimeState: "ready", mesaVersion: "mesa-26.2.2",
         icdPath: "/home/deck/radeon_driconf_icd.x86_64.json", configValid: true,
         kernelReady: true, schedulerConfigured: true, schedulerActive: true,
         globalEnabled: true, restartRequired: false, fsr4State: "ready",
@@ -38,7 +38,7 @@ QtObject {
     })
     property var fsr4Inventory: ({
         schemaVersion: 1, available: true, inventoryState: "ready",
-        currentRelease: "v4.0.0-rc8", optiscalerAvailable: true,
+        currentRelease: "v4.0.0-rc9", optiscalerAvailable: true,
         currentOptiscalerRelease: "v0.9.4", errors: [], orphanedTargets: [],
         orphanedOptiscaler: [
             { candidateId: "abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789",
@@ -67,7 +67,7 @@ QtObject {
                     { targetId: "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
                         targetPath: "/mock/GAME/OptiScaler/amd_fidelityfx_upscaler_dx12.dll",
                         relativePath: "OptiScaler/amd_fidelityfx_upscaler_dx12.dll",
-                        state: "ready", release: "v4.0.0-rc8" }
+                        state: "ready", release: "v4.0.0-rc9" }
                 ] },
             { appKey: "730:/mock/Counter-Strike Global Offensive", appId: "730",
                 name: "Counter-Strike 2", installPath: "/mock/Counter-Strike Global Offensive",

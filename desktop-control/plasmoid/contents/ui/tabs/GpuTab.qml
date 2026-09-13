@@ -100,7 +100,7 @@ ColumnLayout {
         }
         Components.StatusRow { label: "RADV runtime"; value: root.mesh.runtimeState || "Unavailable"; health: root.mesh.runtimeState === "ready" ? 1 : -1 }
         Components.StatusRow { label: "Global activation"; value: root.mesh.globalEnabled ? "Enabled" : "Disabled"; health: root.mesh.globalEnabled ? 1 : 0 }
-        Components.StatusRow { label: "FSR4 RC8 game DLLs"; value: (root.mesh.fsr4DllState || "Unavailable") + " (" + (root.mesh.fsr4DllInstallCount || 0) + ")"; health: root.mesh.fsr4DllState === "ready" ? 1 : root.mesh.fsr4DllState === "invalid" ? -1 : 0 }
+        Components.StatusRow { label: "FSR4 RC9 game DLLs"; value: (root.mesh.fsr4DllState || "Unavailable") + " (" + (root.mesh.fsr4DllInstallCount || 0) + ")"; health: root.mesh.fsr4DllState === "ready" ? 1 : root.mesh.fsr4DllState === "invalid" ? -1 : 0 }
         Components.StatusRow { label: "Legacy FSR4 V3 profile"; value: root.mesh.fsr4State || "Unavailable"; health: root.mesh.fsr4State === "ready" ? 1 : root.mesh.fsr4State === "invalid" ? -1 : 0 }
         Components.StatusRow { label: "Legacy FSR4 runner"; value: root.mesh.fsr4RunnerPath || "Unavailable" }
         Kirigami.InlineMessage {
@@ -347,7 +347,7 @@ ColumnLayout {
                         QQC2.Switch {
                             id: targetSwitch
                             Layout.fillWidth: true
-                            text: "FSR4 RC8"
+                            text: "FSR4 RC9"
                             checked: targetDelegate.managed
                             enabled: !root.backend.busy && targetDelegate.gameReady
                                 && !targetDelegate.integrityBlocked && targetDelegate.modelData.state !== "missing"
@@ -356,7 +356,7 @@ ColumnLayout {
                                 var nextEnabled = checked;
                                 var targetId = String(targetDelegate.modelData.targetId);
                                 checked = Qt.binding(function() { return targetDelegate.managed; });
-                                confirmation.ask(nextEnabled ? "Install FSR4 RC8 for this game?" : "Restore the original game DLL?",
+                                confirmation.ask(nextEnabled ? "Install FSR4 RC9 for this game?" : "Restore the original game DLL?",
                                     "Close the game first. The toolkit validates the target again and preserves exact rollback bytes.",
                                     true, function() { root.backend.setFsr4Dll(targetId, nextEnabled); });
                             }
@@ -380,7 +380,7 @@ ColumnLayout {
                                 : !targetDelegate.modelData.discovered ? "The target was not found during the latest scan." : ""
                             onClicked: {
                                 var targetId = String(targetDelegate.modelData.targetId);
-                                confirmation.ask("Update FSR4 RC8 for this game?",
+                                confirmation.ask("Update FSR4 RC9 for this game?",
                                     "Close the game first. The previous managed DLL will be restored before the new pinned release is installed.",
                                     true, function() { root.backend.setFsr4Dll(targetId, true); });
                             }

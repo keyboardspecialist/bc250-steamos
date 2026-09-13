@@ -268,7 +268,7 @@ export function MeshTab({ busy, runMutation }: { busy: boolean; runMutation: Mut
   const toggleTarget = (target: Fsr4Target, enabled: boolean) => {
     const action = enabled ? installFsr4Dll : uninstallFsr4Dll;
     runMutation(
-      enabled ? "FSR4 RC8 installed" : "Original game DLL restored",
+      enabled ? "FSR4 RC9 installed" : "Original game DLL restored",
       async () => {
         try {
           await action(target.targetId);
@@ -277,7 +277,7 @@ export function MeshTab({ busy, runMutation }: { busy: boolean; runMutation: Mut
         }
       },
       {
-        title: enabled ? "Install FSR4 RC8 for this game?" : "Restore the original game DLL?",
+        title: enabled ? "Install FSR4 RC9 for this game?" : "Restore the original game DLL?",
         description: enabled
           ? `Close the game first. The toolkit will replace ${target.relativePath || target.targetPath || "the selected DLL"} and retain an exact rollback copy.`
           : `Close the game first. The toolkit will restore the exact original bytes for ${target.relativePath || target.targetPath || "this target"} and remove its rollback record.`,
@@ -337,7 +337,7 @@ export function MeshTab({ busy, runMutation }: { busy: boolean; runMutation: Mut
 
   const gameManager = (
     <>
-      <PanelSection title="FSR4 RC8 Game Manager">
+      <PanelSection title="FSR4 RC9 Game Manager">
         <TextField
           label="Installed Steam games"
           description={inventory ? `${inventory.games.length} installed games | FSR4 ${inventory.currentRelease ?? "helper unavailable"} | OptiScaler ${inventory.currentOptiscalerRelease ?? "helper unavailable"}` : "Loading Steam inventory"}
@@ -464,7 +464,7 @@ export function MeshTab({ busy, runMutation }: { busy: boolean; runMutation: Mut
         <StatusRow label="Global activation" value={status.globalEnabled ? "Enabled" : "Disabled"} good={status.globalEnabled} />
         <StatusRow label="Mesa" value={status.mesaVersion ?? "Not installed"} />
         <StatusRow label="Alternate ICD" value={status.icdPath || "Unavailable"} good={status.runtimeState === "ready"} />
-        <StatusRow label="FSR4 RC8 game DLLs" value={`${status.fsr4DllState} (${status.fsr4DllInstallCount})`} good={status.fsr4DllState === "ready"} />
+        <StatusRow label="FSR4 RC9 game DLLs" value={`${status.fsr4DllState} (${status.fsr4DllInstallCount})`} good={status.fsr4DllState === "ready"} />
         <StatusRow label="Legacy FSR4 V3 profile" value={status.fsr4State} good={status.fsr4State === "ready"} />
         <StatusRow label="Legacy FSR4 runner" value={status.fsr4RunnerPath} good={status.fsr4State === "ready"} />
       </PanelSection>

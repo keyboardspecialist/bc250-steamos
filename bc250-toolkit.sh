@@ -19,6 +19,7 @@ AUDIO_CLEAN_SH="$SCRIPT_DIR/bc250-audio-fix/clean.sh"
 AMDGPU_BOOT_CONFIG_SH="$SCRIPT_DIR/bc250-audio-fix/boot-config.sh"
 HDMI_AC3_SH="$SCRIPT_DIR/hdmi-ac3/hdmi-ac3.sh"
 MESH_SHADER_SH="$SCRIPT_DIR/bc250-mesh-shader.sh"
+PROTON_SH="${BC250_PROTON_TOOL:-$SCRIPT_DIR/bc250-proton.sh}"
 MEMORY_TEMP_SH="$SCRIPT_DIR/bc250-memory-temperature.sh"
 DECKY_INSTALL_SH="$SCRIPT_DIR/decky-plugin/install.sh"
 DESKTOP_INSTALL_SH="$SCRIPT_DIR/desktop-control/install.sh"
@@ -301,6 +302,45 @@ radv_badge() {
         invalid:*) printf '%s' "${CY}[repair needed]${C0}" ;;
         *) printf '%s' "${CD}[not installed]${C0}" ;;
     esac
+}
+
+proton_badge() {
+    local status=""
+    if [[ ! -f "$PROTON_SH" || -L "$PROTON_SH" ]]; then
+        printf '%s' "${CR}[unavailable]${C0}"
+        return
+    fi
+    status=$(bash "$PROTON_SH" status 2>/dev/null || true)
+    case "$status" in
+        *"state: installed"*) printf '%s' "${CG}[installed]${C0}" ;;
+        *"state: upgrade-required"*) printf '%s' "${CY}[update available]${C0}" ;;
+        *"state: incomplete"*) printf '%s' "${CR}[repair needed]${C0}" ;;
+        *) printf '%s' "${CD}[not installed]${C0}" ;;
+    esac
+}
+
+install_proton() {
+    require_normal_user
+    require_script "$PROTON_SH"
+    confirm_action \
+        "Download and install the pinned BC-250 GE-Proton build for production FSR4?" \
+        bash "$PROTON_SH" install
+}
+
+update_proton() {
+    require_normal_user
+    require_script "$PROTON_SH"
+    confirm_action \
+        "Verify and update the BC-250 GE-Proton compatibility tool?" \
+        bash "$PROTON_SH" update
+}
+
+uninstall_proton() {
+    require_normal_user
+    require_script "$PROTON_SH"
+    confirm_action \
+        "Remove BC-250 GE-Proton while preserving Steam prefixes and saves?" \
+        bash "$PROTON_SH" uninstall
 }
 
 json_field() {
@@ -635,6 +675,7 @@ show_status() {
     local ram_output="" ram_rc=0 swap_output="" swap_rc=0
     local persistence_output="" persistence_rc=0 cpu_output="" cpu_rc=0
     local amdgpu_output="" amdgpu_rc=0 radv_output="" radv_rc=0
+    local proton_output="" proton_rc=0
     local cu_output="" cu_rc=0 cec_output="" cec_rc=0
     local cec_bus_output="" cec_bus_rc=0
     local fan_output="" fan_rc=0
@@ -650,6 +691,7 @@ show_status() {
     status_script_capture cpu_output cpu_rc root "$POWER_SH" cpu-unlock status
     status_script_capture amdgpu_output amdgpu_rc user "$AUDIO_FIX_SH" status-json
     status_script_capture radv_output radv_rc user "$MESH_SHADER_SH" status-json
+    status_script_capture proton_output proton_rc user "$PROTON_SH" status
     status_script_capture cu_output cu_rc root "$CU_STATUS_SH" -q
     status_script_capture cec_output cec_rc user "$CEC_SH" status
     status_script_capture cec_bus_output cec_bus_rc user "$CEC_SH" scan
@@ -825,6 +867,21 @@ show_status() {
         fi
     fi
 
+    state=$(status_value "$proton_output" "state: " || true)
+    case "$state" in
+        installed) status_row "BC-250 GE-Proton" "installed" good "production FSR4 compatibility tool" ;;
+        not-installed) status_row "BC-250 GE-Proton" "not installed" dim "optional integrated FSR4 route" ;;
+        upgrade-required)
+            status_row "BC-250 GE-Proton" "update needed" warn "run proton-update"
+            failed=1; failed_components+=("BC-250 GE-Proton") ;;
+        incomplete)
+            status_row "BC-250 GE-Proton" "incomplete" bad "repair or remove the recorded compatibility tool"
+            failed=1; failed_components+=("BC-250 GE-Proton") ;;
+        *)
+            status_row "BC-250 GE-Proton" "unavailable" bad "status probe failed (exit $proton_rc)"
+            failed=1; failed_components+=("BC-250 GE-Proton") ;;
+    esac
+
     if [[ $cu_rc -ne 0 ]]; then
         status_row "GPU compute-unit unlock" "unavailable" bad "${cu_output:-register read failed}"
         failed=1; failed_components+=("GPU compute-unit unlock")
@@ -983,6 +1040,7 @@ show_guided_setup_overview() {
     printf '  %-24s %s\n' "Power foundation" "$(power_foundation_badge)"
     printf '  %-24s %s\n' "RAM / VRAM split" "$(component_badge "$RAM_SPLIT_SH")"
     printf '  %-24s %s\n' "Mesa / RADV async compute" "$(radv_badge)"
+    printf '  %-24s %s\n' "BC-250 GE-Proton" "$(proton_badge)"
     printf '  %-24s %s\n' "Compressed swap" "$(component_badge "$SWAP_SH")"
     echo
     printf '  %-24s %s\n' "Persistent storage" "$(component_badge "$STORAGE_SH")"
@@ -1149,7 +1207,8 @@ cmd_performance_menu() {
     while true; do
         local items=(
             "Install / resume async-compute stack|$(radv_badge)|Automatically install AMDGPU first when needed, then resume Mesa / RADV after reboot."
-            "GPU driver & FSR4 options|${CG}[menu]${C0}|Manage global Mesa / RADV, FSR4 RC8 game DLLs, legacy FSR4, or cleanup."
+            "GPU driver & FSR4 options|${CG}[menu]${C0}|Manage production Mesa / RADV, portable FSR4 RC9 game DLLs, or cleanup."
+            "GE-Proton for production FSR4|$(proton_badge)|Install the pinned BC-250 GE build after production RADV is active; Steam prefixes and saves remain separate."
             "GPU / CPU tuning|${CG}[menu]${C0}|Adjust GPU clocks, load response, ramp behavior, and CPU undervolt/overclock."
             "GDDR6 memory temperature|${CY}[experimental]${C0}|Prepare, apply, read, or restore the P3.0-only live SMU temperature payload."
         )
@@ -1157,8 +1216,29 @@ cmd_performance_menu() {
         case $MENU_CHOICE in
             0) run_menu_action graphics-setup ;;
             1) run_menu_child radv ;;
-            2) run_menu_child power ;;
-            3) cmd_memory_temperature_menu ;;
+            2) cmd_proton_menu ;;
+            3) run_menu_child power ;;
+            4) cmd_memory_temperature_menu ;;
+        esac
+    done
+}
+
+cmd_proton_menu() {
+    require_terminal
+    require_normal_user
+    while true; do
+        local items=(
+            "Status|$(proton_badge)|Verify the pinned compatibility-tool version and required files."
+            "Install|${CY}[731 MB download]${C0}|Require active production RADV, then install GE-Proton for the current user."
+            "Update / repair|$(proton_badge)|Transactionally replace a recorded older or incomplete toolkit installation."
+            "Uninstall|${CY}[preserves prefixes]${C0}|Remove only the compatibility tool; keep Steam prefixes, saves, and game data."
+        )
+        menu_select "BC-250 GE-Proton" "${items[@]}" || { echo; break; }
+        case $MENU_CHOICE in
+            0) run_menu_action proton-status ;;
+            1) run_menu_action proton-install ;;
+            2) run_menu_action proton-update ;;
+            3) run_menu_action proton-uninstall ;;
         esac
     done
 }
@@ -1276,7 +1356,7 @@ cmd_menu() {
 
 cmd_help() {
     cat << EOF
-Usage: $0 [menu|setup|auto-base-installation|graphics-setup|status|inventory-json|action OPERATION_ID|drivers|unlocks|storage-updates|interfaces|power|ram|swap|compute|cpu-unlock|cec|audio-output|hdmi-ac3-enable|hdmi-ac3-revert|storage|persistence|wifi|fan-driver|memory-temperature|amdgpu|amdgpu-clean|scheduler-policy|kfd-runlist|radv|decky|desktop|coolercontrol|trainer|manage|help]
+Usage: $0 [menu|setup|auto-base-installation|graphics-setup|status|inventory-json|action OPERATION_ID|drivers|unlocks|storage-updates|interfaces|power|ram|swap|compute|cpu-unlock|cec|audio-output|hdmi-ac3-enable|hdmi-ac3-revert|storage|persistence|wifi|fan-driver|memory-temperature|amdgpu|amdgpu-clean|scheduler-policy|kfd-runlist|radv|proton|proton-install|proton-update|proton-status|proton-uninstall|decky|desktop|coolercontrol|trainer|manage|help]
 
 Run without arguments in a terminal to open the unified toolkit menu.
 Run the toolkit as the logged-in Deck user, not with sudo; child tools request
@@ -1312,6 +1392,11 @@ Commands:
   scheduler-policy       Advanced: toggle policy only after RADV is installed
   kfd-runlist            Experimental: toggle the KFD HWS TLB-flush workaround
   radv                   Open the global Mesa / RADV async-compute patch
+  proton                 Open BC-250 GE-Proton installation and cleanup
+  proton-install         Confirm and install the pinned GE-Proton build
+  proton-update          Confirm and update or repair GE-Proton
+  proton-status          Verify the installed GE-Proton compatibility tool
+  proton-uninstall       Confirm and remove GE-Proton; preserve prefixes/saves
   decky                  Confirm and run the Decky plugin installer
   desktop                Confirm and run the Plasma desktop-control installer
   coolercontrol          Install the CoolerControl daemon and local Web UI
@@ -1385,6 +1470,11 @@ case "$command_name" in
     scheduler-policy) (($# == 0)) || die "Usage: $0 scheduler-policy"; toggle_scheduler_policy ;;
     kfd-runlist) (($# == 0)) || die "Usage: $0 kfd-runlist"; toggle_kfd_runlist ;;
     radv|mesh) (($# == 0)) || die "Usage: $0 radv"; require_normal_user; run_script "$MESH_SHADER_SH" menu ;;
+    proton) (($# == 0)) || die "Usage: $0 proton"; cmd_proton_menu ;;
+    proton-install) (($# == 0)) || die "Usage: $0 proton-install"; install_proton ;;
+    proton-update) (($# == 0)) || die "Usage: $0 proton-update"; update_proton ;;
+    proton-status) (($# == 0)) || die "Usage: $0 proton-status"; require_normal_user; run_script "$PROTON_SH" status ;;
+    proton-uninstall) (($# == 0)) || die "Usage: $0 proton-uninstall"; uninstall_proton ;;
     decky) (($# == 0)) || die "Usage: $0 decky"; install_decky ;;
     desktop) (($# == 0)) || die "Usage: $0 desktop"; install_desktop ;;
     coolercontrol) (($# == 0)) || die "Usage: $0 coolercontrol"; install_coolercontrol ;;

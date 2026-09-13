@@ -405,7 +405,7 @@ class Fsr4InventoryTests(unittest.IsolatedAsyncioTestCase):
     def records(*items):
         return {
             "schemaVersion": 1,
-            "currentRelease": "v4.0.0-rc8",
+            "currentRelease": "v4.0.0-rc9",
             "currentDllSha256": "a" * 64,
             "state": "ready" if items else "not-installed",
             "invalidRecordCount": 0,
@@ -506,7 +506,7 @@ class Fsr4InventoryTests(unittest.IsolatedAsyncioTestCase):
         record = {
             "targetId": target_id,
             "targetPath": str(target.resolve()),
-            "release": "v4.0.0-rc8",
+            "release": "v4.0.0-rc9",
             "state": "missing",
             "currentRelease": True,
         }
@@ -823,7 +823,7 @@ class Fsr4InventoryTests(unittest.IsolatedAsyncioTestCase):
         fsr4_record = {
             "targetId": hashlib.sha256(str(fsr4_path).encode()).hexdigest(),
             "targetPath": str(fsr4_path),
-            "release": "v4.0.0-rc8",
+            "release": "v4.0.0-rc9",
             "state": "missing",
             "currentRelease": True,
         }
@@ -1417,7 +1417,7 @@ class BackendMutationTests(unittest.IsolatedAsyncioTestCase):
                 {
                     "scriptAvailable": True,
                     "runtimeState": "ready",
-                    "mesaVersion": "mesa-26.2.0",
+                    "mesaVersion": "mesa-26.2.2",
                     "icdPath": "/home/deck/radeon_driconf_icd.x86_64.json",
                     "configValid": True,
                     "kernelReady": True,

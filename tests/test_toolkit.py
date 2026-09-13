@@ -47,6 +47,11 @@ class ToolkitTests(unittest.TestCase):
             "scheduler-policy",
             "kfd-runlist",
             "radv",
+            "proton",
+            "proton-install",
+            "proton-update",
+            "proton-status",
+            "proton-uninstall",
             "audio",
             "mesh",
             "decky",
@@ -76,6 +81,9 @@ class ToolkitTests(unittest.TestCase):
         ]
         guided_overview = source[
             source.index("show_guided_setup_overview() {") : source.index("cmd_guided_setup_menu() {")
+        ]
+        performance_menu = source[
+            source.index("cmd_performance_menu() {") : source.index("cmd_devices_menu() {")
         ]
 
         for label in (
@@ -139,6 +147,10 @@ class ToolkitTests(unittest.TestCase):
         self.assertIn("2) run_menu_action scheduler-policy", drivers_menu)
         self.assertIn("3) run_menu_action kfd-runlist", drivers_menu)
         self.assertIn("4) run_menu_action graphics-setup", drivers_menu)
+        self.assertIn("GE-Proton for production FSR4", performance_menu)
+        self.assertIn("portable FSR4 RC9 game DLLs", performance_menu)
+        self.assertIn("2) cmd_proton_menu", performance_menu)
+        self.assertIn("bc250-proton.sh", source)
         self.assertIn("GPU compute-unit unlock", unlocks_menu)
         self.assertIn("CPU core unlock", unlocks_menu)
         self.assertIn(
@@ -430,6 +442,7 @@ class ToolkitTests(unittest.TestCase):
             "bc250-cec.sh": ("installed", 1),
             "bc250-storage.sh": ("installed", 0),
             "bc250-mesh-shader.sh": ("status", 0),
+            "bc250-proton.sh": ("status", 0),
             "aic8800/steamdeck-setup.sh": ("status", 0),
             "nct6687d/steamdeck-setup.sh": ("status", 0),
             "bc250-audio-fix/patch-driver.sh": ("status", 0),
@@ -532,6 +545,11 @@ class ToolkitTests(unittest.TestCase):
             "printf '%s\\n' '{\"runtimeState\":\"not-installed\",\"kernelReady\":false,\"schedulerConfigured\":false,\"schedulerActive\":false,\"globalEnabled\":false}'\n",
             encoding="utf-8",
         )
+        proton = root / "bc250-proton.sh"
+        proton.write_text(
+            "#!/usr/bin/env bash\nprintf '%s\\n' '[bc250-proton] state: not-installed'\nexit 1\n",
+            encoding="utf-8",
+        )
         fan = root / "nct6687d/steamdeck-setup.sh"
         fan.parent.mkdir(parents=True, exist_ok=True)
         fan.write_text(
@@ -574,6 +592,7 @@ class ToolkitTests(unittest.TestCase):
                 self.assertIn("CPU core unlock", result.stdout)
                 self.assertIn("6 cores / 12 threads (locked)", result.stdout)
                 self.assertIn("GPU compute-unit unlock", result.stdout)
+                self.assertIn("BC-250 GE-Proton", result.stdout)
                 self.assertIn("[38/40]", result.stdout)
                 self.assertIn("CEC setup & automation", result.stdout)
                 self.assertIn("[configured]", result.stdout)
@@ -982,6 +1001,7 @@ class ToolkitTests(unittest.TestCase):
                     "ram",
                     "swap",
                     "compute",
+                    "proton",
                     "mesh",
                     "audio",
                     "fan",

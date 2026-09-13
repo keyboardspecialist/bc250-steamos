@@ -661,7 +661,7 @@ void Bc250Bridge::makeMockSnapshot()
     m_meshStatus = {
         {QStringLiteral("scriptAvailable"), true},
         {QStringLiteral("runtimeState"), QStringLiteral("ready")},
-        {QStringLiteral("mesaVersion"), QStringLiteral("mesa-26.2.0")},
+        {QStringLiteral("mesaVersion"), QStringLiteral("mesa-26.2.2")},
         {QStringLiteral("kernelReady"), true},
         {QStringLiteral("schedulerConfigured"), true},
         {QStringLiteral("schedulerActive"), true},
