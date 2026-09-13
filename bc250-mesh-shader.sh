@@ -1315,9 +1315,9 @@ with Path(sys.argv[1]).open("rb") as stream:
     valid = stream.read(5) == b"\x7fELF\x02"
 raise SystemExit(0 if valid else 1)
 PY
-    readelf -h "$output" | grep -Eq 'Class:[[:space:]]+ELF64' \
+    LC_ALL=C readelf -h "$output" | grep -Eq 'Class:[[:space:]]+ELF64' \
         || die "Mesa build did not produce a valid 64-bit ELF driver"
-    linkage=$(ldd -r "$output" 2>&1) \
+    linkage=$(LC_ALL=C ldd -r "$output" 2>&1) \
         || die "Built RADV driver failed dynamic-link validation: $linkage"
     ! grep -Eq 'not found|undefined symbol:' <<< "$linkage" \
         || die "Built RADV driver has unresolved dynamic dependencies: $linkage"
