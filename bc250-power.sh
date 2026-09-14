@@ -1534,15 +1534,17 @@ def parse_config(content):
     return points
 
 
-def validate_points(points):
+def validate_points(points, minimum=None):
+    if minimum is None:
+        minimum = frequency_min
     if len(points) < 2:
         raise CurveError("The voltage curve must contain at least two points.")
     previous_frequency = None
     previous_voltage = None
     for frequency, voltage in points:
-        if not frequency_min <= frequency <= frequency_max:
+        if not minimum <= frequency <= frequency_max:
             raise CurveError(
-                f"Frequency {frequency} is outside {frequency_min}-{frequency_max} MHz."
+                f"Frequency {frequency} is outside {minimum}-{frequency_max} MHz."
             )
         if not voltage_min <= voltage <= voltage_max:
             raise CurveError(
@@ -1573,7 +1575,16 @@ def mutate_points(points, operation, values):
         if len(values) != 1:
             raise CurveError("floor needs one frequency value.")
         floor = integer(values[0], "Frequency floor")
-        validate_points(points)
+        # Releases before v0.27.5 allowed 300-349 MHz. Accept only that legacy
+        # range here so upgrades can clamp it before strict validation.
+        validate_points(points, minimum=300)
+        legacy_points = [point for point in points if point[0] < frequency_min]
+        if legacy_points:
+            retained = [point for point in points if point[0] >= frequency_min]
+            if not any(frequency == frequency_min for frequency, _ in retained):
+                retained.append((frequency_min, legacy_points[-1][1]))
+            points = sorted(retained)
+            validate_points(points)
         if points[0][0] <= floor:
             return points
         return [(floor, voltage_min), *points]
@@ -1629,10 +1640,10 @@ def mutate_points(points, operation, values):
     raise CurveError(f"Unknown voltage-curve operation: {operation}")
 
 
-def validate_frequency_state(points):
+def validate_frequency_state(points, migrate_legacy=False):
     if not state_path.exists():
-        return False
-    content, _ = read_regular(state_path, trusted=True)
+        return False, None, None, None
+    content, metadata = read_regular(state_path, trusted=True)
     values = {}
     for line in content.splitlines():
         if "=" in line:
@@ -1641,23 +1652,31 @@ def validate_frequency_state(points):
                 values[key] = value
     state_mode = values.get("MODE", "")
     if state_mode == "adaptive":
-        return False
+        return False, content, metadata, content
     if state_mode == "max":
-        return True
+        return True, content, metadata, content
     low, high = points[0][0], points[-1][0]
     if state_mode == "pin":
         frequency = integer(values.get("A", ""), "Saved pinned frequency")
+        if migrate_legacy and 300 <= frequency < frequency_min:
+            frequency = frequency_min
         if not low <= frequency <= high:
             raise CurveError("Saved pinned frequency falls outside the candidate curve.")
-        return True
+        candidate = f"MODE=pin\nA={frequency}\nB=\n"
+        return True, content, metadata, candidate
     if state_mode == "range":
         minimum = integer(values.get("A", ""), "Saved minimum frequency")
         maximum = integer(values.get("B", ""), "Saved maximum frequency")
+        if migrate_legacy and 300 <= minimum < frequency_min:
+            minimum = frequency_min
+        if migrate_legacy and 300 <= maximum < frequency_min:
+            maximum = frequency_min
         if (minimum != 0 and not low <= minimum <= high) or not low <= maximum <= high:
             raise CurveError("Saved frequency range falls outside the candidate curve.")
         if minimum and minimum > maximum:
             raise CurveError("Saved frequency range is inverted.")
-        return True
+        candidate = f"MODE=range\nA={minimum}\nB={maximum}\n"
+        return True, content, metadata, candidate
     raise CurveError("Saved GPU frequency state is invalid.")
 
 
@@ -1889,6 +1908,10 @@ def main():
         for frequency, voltage in points:
             print(f"{frequency} {voltage}")
         return
+    if mode == "validate-state":
+        validate_points(points)
+        validate_frequency_state(points)
+        return
     if mode != "mutate" or not arguments:
         raise CurveError("Internal voltage-curve helper usage error.")
 
@@ -1897,15 +1920,27 @@ def main():
         acquire_lock(descriptor)
         original, metadata = read_regular(config_path, trusted=True)
         points = parse_config(original)
-        candidate_points = mutate_points(points, arguments[0], arguments[1:])
+        operation = arguments[0]
+        legacy_curve = operation == "floor" and any(
+            frequency < frequency_min for frequency, _ in points
+        )
+        candidate_points = mutate_points(points, operation, arguments[1:])
         validate_points(candidate_points)
-        has_state = validate_frequency_state(candidate_points)
+        has_state, state_original, state_metadata, state_candidate = (
+            validate_frequency_state(
+                candidate_points,
+                migrate_legacy=operation == "floor",
+            )
+        )
+        state_changed = state_candidate is not None and state_candidate != state_original
+        defer_runtime = legacy_curve or state_changed
         candidate = render_config(original, candidate_points)
         active = service_active()
-        if has_state and not trusted_executable(restore_path):
+        if has_state and not defer_runtime and not trusted_executable(restore_path):
             raise CurveError(f"Saved frequency restore helper is unavailable: {restore_path}")
 
         written = False
+        state_written = False
         runtime_active = active
         try:
             try:
@@ -1914,9 +1949,16 @@ def main():
             except BaseException as error:
                 written = getattr(error, "replacement_done", False)
                 raise
-            if active:
+            if state_changed:
+                try:
+                    atomic_write(state_path, state_candidate, state_metadata)
+                    state_written = True
+                except BaseException as error:
+                    state_written = getattr(error, "replacement_done", False)
+                    raise
+            if active and not defer_runtime:
                 apply_runtime(has_state)
-            else:
+            elif not active and not defer_runtime:
                 try:
                     became_active = service_active()
                 except TransitionalServiceError:
@@ -1926,14 +1968,20 @@ def main():
                     runtime_active = True
                     apply_runtime(has_state)
         except BaseException as error:
-            if not written:
+            if not written and not state_written:
                 raise
             rollback_errors = []
+            if state_written:
+                try:
+                    atomic_write(state_path, state_original, state_metadata)
+                except Exception as rollback_error:
+                    rollback_errors.append(f"frequency state restore failed: {rollback_error}")
             try:
-                atomic_write(config_path, original, metadata)
+                if written:
+                    atomic_write(config_path, original, metadata)
             except Exception as rollback_error:
                 rollback_errors.append(f"config restore failed: {rollback_error}")
-            if runtime_active:
+            if runtime_active and not defer_runtime:
                 try:
                     apply_runtime(has_state)
                 except Exception as rollback_error:
@@ -1959,11 +2007,15 @@ volt_points() {
 }
 
 governor_frequency_floor_ready() {
-    local target="${1:-$GPU_FREQ_MIN}" points first
+    local target="${1:-$GPU_FREQ_MIN}" points first configured_min
+    configured_min=$(toml_get frequency-range min)
     points=$(volt_curve_helper list 2>/dev/null) || return 1
+    volt_curve_helper validate-state >/dev/null 2>&1 || return 1
     read -r first _ <<< "$points"
-    [[ "$target" =~ ^[0-9]+$ && "$first" =~ ^[0-9]+$ ]] \
-        && (( first >= GPU_FREQ_MIN && first <= target ))
+    [[ "$target" =~ ^[0-9]+$ && "$first" =~ ^[0-9]+$ \
+        && "$configured_min" =~ ^[0-9]+$ ]] \
+        && (( configured_min >= GPU_FREQ_MIN \
+            && first >= GPU_FREQ_MIN && first <= target ))
 }
 
 ensure_governor_frequency_floor() {

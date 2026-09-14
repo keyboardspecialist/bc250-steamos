@@ -445,6 +445,118 @@ governor_frequency_floor_ready
             self.assertEqual(parsed["frequency-range"], {"min": 350, "max": 1500})
             self.assertEqual(parsed["load-target"], {"upper": 0.8, "lower": 0.65})
 
+    def test_legacy_300_mhz_governor_install_is_migrated(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            config = root / "config.toml"
+            config.write_text(
+                "[frequency-range]\nmin = 300\nmax = 1800\n\n"
+                "[[safe-points]]\nfrequency = 300\nvoltage = 700\n\n"
+                "[[safe-points]]\nfrequency = 1000\nvoltage = 800\n\n"
+                "[[safe-points]]\nfrequency = 2230\nvoltage = 1000\n",
+                encoding="utf-8",
+            )
+            state = root / "freq-state"
+            state.write_text("MODE=range\nA=300\nB=1800\n", encoding="ascii")
+            systemctl = root / "systemctl"
+            systemctl.write_text(
+                "#!/bin/sh\n"
+                "if [ \"$1\" = is-active ]; then exit 3; fi\n"
+                "if [ \"$1\" = show ]; then printf 'inactive\\n'; exit 0; fi\n"
+                "exit 3\n",
+                encoding="ascii",
+            )
+            systemctl.chmod(0o755)
+            result = subprocess.run(
+                [
+                    "bash",
+                    "-c",
+                    r'''
+script=$1; base=$2; systemctl_bin=$3
+set -- help
+source "$script" >/dev/null
+GOV_CONF="$base/config.toml"
+FREQ_STATE="$base/freq-state"
+RESTORE_BIN="$base/restore"
+GPU_CONTROL_LOCK="$base/lock/backend.lock"
+SYSTEMCTL_BIN="$systemctl_bin"
+if governor_frequency_floor_ready; then exit 20; fi
+ensure_governor_frequency_floor
+governor_frequency_floor_ready
+printf 'MODE=pin\nA=325\nB=\n' > "$FREQ_STATE"
+if governor_frequency_floor_ready; then exit 21; fi
+ensure_governor_frequency_floor
+governor_frequency_floor_ready
+''',
+                    "_",
+                    str(POWER),
+                    directory,
+                    str(systemctl),
+                ],
+                capture_output=True,
+                text=True,
+                env=script_env(directory),
+            )
+
+            self.assertEqual(result.returncode, 0, result.stderr)
+            parsed = tomllib.loads(config.read_text(encoding="utf-8"))
+            self.assertEqual(parsed["frequency-range"], {"min": 350, "max": 1800})
+            self.assertEqual(
+                parsed["safe-points"][0], {"frequency": 350, "voltage": 700}
+            )
+            self.assertEqual(state.read_text(encoding="ascii"), "MODE=pin\nA=350\nB=\n")
+
+    def test_legacy_range_without_explicit_floor_preserves_zero_sentinel(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "config.toml").write_text(
+                "[frequency-range]\nmin = 300\nmax = 1800\n\n"
+                "[[safe-points]]\nfrequency = 300\nvoltage = 700\n\n"
+                "[[safe-points]]\nfrequency = 2230\nvoltage = 1000\n",
+                encoding="utf-8",
+            )
+            state = root / "freq-state"
+            state.write_text("MODE=range\nA=0\nB=1800\n", encoding="ascii")
+            systemctl = root / "systemctl"
+            systemctl.write_text(
+                "#!/bin/sh\n"
+                "if [ \"$1\" = is-active ]; then exit 3; fi\n"
+                "if [ \"$1\" = show ]; then printf 'inactive\\n'; exit 0; fi\n"
+                "exit 3\n",
+                encoding="ascii",
+            )
+            systemctl.chmod(0o755)
+            result = subprocess.run(
+                [
+                    "bash",
+                    "-c",
+                    r'''
+script=$1; base=$2; systemctl_bin=$3
+set -- help
+source "$script" >/dev/null
+GOV_CONF="$base/config.toml"
+FREQ_STATE="$base/freq-state"
+RESTORE_BIN="$base/restore"
+GPU_CONTROL_LOCK="$base/lock/backend.lock"
+SYSTEMCTL_BIN="$systemctl_bin"
+ensure_governor_frequency_floor
+governor_frequency_floor_ready
+''',
+                    "_",
+                    str(POWER),
+                    directory,
+                    str(systemctl),
+                ],
+                capture_output=True,
+                text=True,
+                env=script_env(directory),
+            )
+
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual(
+                state.read_text(encoding="ascii"), "MODE=range\nA=0\nB=1800\n"
+            )
+
     def test_zero_minimum_uses_350_mhz_runtime_floor(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

@@ -315,6 +315,10 @@ shared_service_install() {
     shared_acquire_unlock_lifecycle
     systemctl stop bc250-control.service >/dev/null 2>&1 || true
     shared_replace_payload
+    if systemctl is-enabled --quiet cyan-skillfish-governor-smu.service; then
+        shared_log "Refreshing GPU governor boot integration."
+        "$SHARED_PAYLOAD_DIR/bc250-power.sh" enable
+    fi
     "$SHARED_PAYLOAD_DIR/bc250-desktop-control-repair" repair
     systemctl restart bc250-desktop-control-repair.service
     systemctl restart bc250-control.service

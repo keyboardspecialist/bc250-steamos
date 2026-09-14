@@ -309,6 +309,11 @@ class TrainerReleaseTests(unittest.TestCase):
             source.index("shared_acquire_unlock_lifecycle\n    systemctl stop"),
             source.index("shared_replace_payload", source.index("shared_service_install()")),
         )
+        self.assertIn(
+            'systemctl is-enabled --quiet cyan-skillfish-governor-smu.service',
+            source,
+        )
+        self.assertIn('"$SHARED_PAYLOAD_DIR/bc250-power.sh" enable', source)
         release = source[source.index("shared_service_release()") :]
         self.assertLess(release.index("remaining=$((SHARED_CLIENT_COUNT - 1))"), release.index("shared_remove_service"))
         self.assertIn("if [[ $remaining -gt 0 ]]", release)
