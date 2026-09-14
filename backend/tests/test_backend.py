@@ -219,6 +219,14 @@ class BackendParsingTests(unittest.TestCase):
 
         self.assertFalse(ToolkitBackend._trusted_root_file(path))
 
+    def test_bounded_read_ignores_sysfs_nominal_size(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "online"
+            path.write_text("1\n", encoding="ascii")
+            metadata = SimpleNamespace(st_mode=stat.S_IFREG, st_size=4096)
+            with patch("bc250_control.backend.os.fstat", return_value=metadata):
+                self.assertEqual(ToolkitBackend._read_bounded(path, 8), "1")
+
     def test_cpu_topology_reports_core_thread_and_ccx_groups(self):
         backend = object.__new__(ToolkitBackend)
         with tempfile.TemporaryDirectory() as directory:

@@ -11,15 +11,28 @@ ColumnLayout {
     readonly property var gpu: snap.gpu || ({})
     readonly property var mesh: backend.meshStatus || ({})
     readonly property bool enabledControls: Boolean(gpu.controllable) && !backend.busy
-    property string mode: gpu.mode || "adaptive"
-    property int minimum: gpu.minimum ?? 350
-    property int maximum: gpu.maximum ?? 1500
-    property int loadMinimum: Math.round((gpu.loadLower ?? 0.65) * 100)
-    property int loadMaximum: Math.round((gpu.loadUpper ?? 0.80) * 100)
-    property int temperatureTarget: gpu.temperatureTarget ?? 85
-    property int ramp: gpu.climbMs ?? 500
+    property string mode: "adaptive"
+    property int minimum: 350
+    property int maximum: 1500
+    property int loadMinimum: 65
+    property int loadMaximum: 80
+    property int temperatureTarget: 85
+    property int ramp: 500
     readonly property bool frequencyValid: root.mode !== "range"
         || ((root.minimum === 0 || root.minimum >= 350) && root.minimum <= root.maximum)
+
+    function syncFromSnapshot() {
+        mode = gpu.mode || "adaptive"
+        minimum = gpu.minimum ?? 350
+        maximum = gpu.maximum ?? gpu.configuredMax ?? 1500
+        loadMinimum = Math.round((gpu.loadLower ?? 0.65) * 100)
+        loadMaximum = Math.round((gpu.loadUpper ?? 0.80) * 100)
+        temperatureTarget = gpu.temperatureTarget ?? 85
+        ramp = gpu.climbMs ?? 500
+    }
+
+    onGpuChanged: if (!backend.busy) syncFromSnapshot()
+    Component.onCompleted: syncFromSnapshot()
 
     C.ConfirmDialog { id: confirm }
     C.SectionHeader { text: "Mesa / RADV and compute queues" }
@@ -36,6 +49,7 @@ ColumnLayout {
 
     C.NeonComboBox {
         id: modeBox
+        objectName: "gpuModeBox"
         Layout.fillWidth: true
         enabled: root.enabledControls
         model: ["Adaptive", "Custom range", "Pinned frequency", "Maximum curve point"]
@@ -45,20 +59,33 @@ ColumnLayout {
     RowLayout {
         Layout.fillWidth: true
         C.NeonSpinBox {
+            objectName: "gpuMinimum"
             from: 0; to: 2230; stepSize: 50; value: root.minimum; editable: true
             enabled: root.enabledControls && (root.mode === "adaptive" || root.mode === "range")
-            Layout.fillWidth: true; onValueModified: root.minimum = value
+            Layout.fillWidth: true
+            onValueModified: {
+                root.minimum = value
+                if (root.mode === "adaptive")
+                    root.mode = "range"
+            }
             textFromValue: function(value) { return "MIN " + value + " MHz" }
             valueFromText: function(text) { return parseInt(text) || 0 }
         }
         C.NeonSpinBox {
+            objectName: "gpuMaximum"
             from: 350; to: 2230; stepSize: 50; value: root.maximum; editable: true
             enabled: root.enabledControls && root.mode !== "max"
-            Layout.fillWidth: true; onValueModified: root.maximum = value
+            Layout.fillWidth: true
+            onValueModified: {
+                root.maximum = value
+                if (root.mode === "adaptive")
+                    root.mode = "range"
+            }
             textFromValue: function(value) { return "MAX " + value + " MHz" }
             valueFromText: function(text) { return parseInt(text) || 350 }
         }
         C.NeonButton {
+            objectName: "gpuFrequencyApply"
             text: "APPLY"; enabled: root.enabledControls && root.frequencyValid
             onClicked: {
                 var run = function() { root.backend.setGpuFrequency(root.mode, root.minimum, root.maximum) }
@@ -72,31 +99,31 @@ ColumnLayout {
     C.SectionHeader { text: "Load response" }
     RowLayout {
         Layout.fillWidth: true
-        C.NeonButton { text: "EAGER 40/10"; enabled: root.enabledControls; Layout.fillWidth: true; onClicked: root.backend.setLoadTarget("eager") }
-        C.NeonButton { text: "BALANCED 80/65"; enabled: root.enabledControls; Layout.fillWidth: true; onClicked: root.backend.setLoadTarget("reset") }
+        C.NeonButton { objectName: "gpuLoadEager"; text: "EAGER 40/10"; enabled: root.enabledControls; Layout.fillWidth: true; onClicked: root.backend.setLoadTarget("eager") }
+        C.NeonButton { objectName: "gpuLoadBalanced"; text: "BALANCED 80/65"; enabled: root.enabledControls; Layout.fillWidth: true; onClicked: root.backend.setLoadTarget("reset") }
     }
     Text { text: "CUSTOM: down < " + root.loadMinimum + "%   up > " + root.loadMaximum + "%"; color: "#b7cbd4"; font.family: "monospace"; font.pixelSize: 9 }
     RowLayout {
         Layout.fillWidth: true
-        Slider { from: 1; to: 98; stepSize: 1; value: root.loadMinimum; enabled: root.enabledControls; Layout.fillWidth: true; onMoved: root.loadMinimum = Math.round(value) }
-        Slider { from: 2; to: 99; stepSize: 1; value: root.loadMaximum; enabled: root.enabledControls; Layout.fillWidth: true; onMoved: root.loadMaximum = Math.round(value) }
-        C.NeonButton { text: "SET"; enabled: root.enabledControls && root.loadMinimum < root.loadMaximum; onClicked: root.backend.setCustomLoadTarget(root.loadMinimum, root.loadMaximum) }
+        Slider { objectName: "gpuLoadMinimum"; from: 1; to: 98; stepSize: 1; value: root.loadMinimum; enabled: root.enabledControls; Layout.fillWidth: true; onMoved: root.loadMinimum = Math.round(value) }
+        Slider { objectName: "gpuLoadMaximum"; from: 2; to: 99; stepSize: 1; value: root.loadMaximum; enabled: root.enabledControls; Layout.fillWidth: true; onMoved: root.loadMaximum = Math.round(value) }
+        C.NeonButton { objectName: "gpuLoadSet"; text: "SET"; enabled: root.enabledControls && root.loadMinimum < root.loadMaximum; onClicked: root.backend.setCustomLoadTarget(root.loadMinimum, root.loadMaximum) }
     }
 
     C.SectionHeader { text: "Thermal target" }
     RowLayout {
         Layout.fillWidth: true
         Text { text: root.temperatureTarget + " C / recover " + (root.temperatureTarget - 10) + " C"; color: "#22e7f2"; font.family: "monospace"; font.pixelSize: 10 }
-        Slider { from: 50; to: 100; stepSize: 1; value: root.temperatureTarget; enabled: root.enabledControls; Layout.fillWidth: true; onMoved: root.temperatureTarget = Math.round(value) }
-        C.NeonButton { text: "SET TEMP"; enabled: root.enabledControls; onClicked: root.backend.setTemperatureTarget(root.temperatureTarget) }
+        Slider { objectName: "gpuTemperature"; from: 50; to: 100; stepSize: 1; value: root.temperatureTarget; enabled: root.enabledControls; Layout.fillWidth: true; onMoved: root.temperatureTarget = Math.round(value) }
+        C.NeonButton { objectName: "gpuTemperatureSet"; text: "SET TEMP"; enabled: root.enabledControls; onClicked: root.backend.setTemperatureTarget(root.temperatureTarget) }
     }
 
     C.SectionHeader { text: "Ramp and voltage curve" }
     RowLayout {
         Layout.fillWidth: true
         Text { text: root.ramp + " ms"; color: "#22e7f2"; font.family: "monospace"; font.pixelSize: 10 }
-        Slider { from: 200; to: 5000; stepSize: 100; value: root.ramp; enabled: root.enabledControls; Layout.fillWidth: true; onMoved: root.ramp = Math.round(value / 100) * 100 }
-        C.NeonButton { text: "SET RAMP"; enabled: root.enabledControls; onClicked: root.backend.setRamp(root.ramp) }
+        Slider { objectName: "gpuRamp"; from: 200; to: 5000; stepSize: 100; value: root.ramp; enabled: root.enabledControls; Layout.fillWidth: true; onMoved: root.ramp = Math.round(value / 100) * 100 }
+        C.NeonButton { objectName: "gpuRampSet"; text: "SET RAMP"; enabled: root.enabledControls; onClicked: root.backend.setRamp(root.ramp) }
     }
     Repeater {
         model: root.gpu.safePoints || []

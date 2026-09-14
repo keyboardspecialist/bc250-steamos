@@ -81,6 +81,82 @@ private slots:
         QVERIFY(!bridge.busy());
     }
 
+    void telemetryOnlyPollsOnVisibleStatusPage()
+    {
+        Bc250Bridge bridge(true);
+        QVERIFY(!bridge.statusPageActive());
+        QVERIFY(bridge.telemetryHistory().isEmpty());
+
+        bridge.setStatusPageActive(true);
+        QCOMPARE(bridge.telemetryHistory().size(), 1);
+        bridge.setStatusPageActive(false);
+        QTest::qWait(1100);
+        QCOMPARE(bridge.telemetryHistory().size(), 1);
+
+        bridge.setVisible(false);
+        bridge.setStatusPageActive(true);
+        QCOMPARE(bridge.telemetryHistory().size(), 1);
+        bridge.setVisible(true);
+        QCOMPARE(bridge.telemetryHistory().size(), 2);
+    }
+
+    void mockGpuMutationsUpdateSnapshot()
+    {
+        Bc250Bridge bridge(true);
+
+        bridge.setGpuFrequency(QStringLiteral("range"), 500, 1400);
+        QTRY_VERIFY_WITH_TIMEOUT(!bridge.busy(), 2000);
+        QVariantMap gpu = bridge.snapshot().value(QStringLiteral("gpu")).toMap();
+        QCOMPARE(gpu.value(QStringLiteral("mode")).toString(), QStringLiteral("range"));
+        QCOMPARE(gpu.value(QStringLiteral("minimum")).toInt(), 500);
+        QCOMPARE(gpu.value(QStringLiteral("maximum")).toInt(), 1400);
+
+        bridge.setGpuFrequency(QStringLiteral("adaptive"), -1, -1);
+        QTRY_VERIFY_WITH_TIMEOUT(!bridge.busy(), 2000);
+        gpu = bridge.snapshot().value(QStringLiteral("gpu")).toMap();
+        QCOMPARE(gpu.value(QStringLiteral("mode")).toString(), QStringLiteral("adaptive"));
+        QCOMPARE(gpu.value(QStringLiteral("minimum")).toInt(), 350);
+        QCOMPARE(gpu.value(QStringLiteral("maximum")).toInt(), 1500);
+
+        bridge.setLoadTarget(QStringLiteral("eager"));
+        QTRY_VERIFY_WITH_TIMEOUT(!bridge.busy(), 2000);
+        gpu = bridge.snapshot().value(QStringLiteral("gpu")).toMap();
+        QCOMPARE(gpu.value(QStringLiteral("loadLower")).toDouble(), 0.10);
+        QCOMPARE(gpu.value(QStringLiteral("loadUpper")).toDouble(), 0.40);
+
+        bridge.setCustomLoadTarget(25, 70);
+        QTRY_VERIFY_WITH_TIMEOUT(!bridge.busy(), 2000);
+        gpu = bridge.snapshot().value(QStringLiteral("gpu")).toMap();
+        QCOMPARE(gpu.value(QStringLiteral("loadLower")).toDouble(), 0.25);
+        QCOMPARE(gpu.value(QStringLiteral("loadUpper")).toDouble(), 0.70);
+
+        bridge.setTemperatureTarget(90);
+        QTRY_VERIFY_WITH_TIMEOUT(!bridge.busy(), 2000);
+        gpu = bridge.snapshot().value(QStringLiteral("gpu")).toMap();
+        QCOMPARE(gpu.value(QStringLiteral("temperatureTarget")).toInt(), 90);
+        QCOMPARE(gpu.value(QStringLiteral("temperatureRecovery")).toInt(), 80);
+
+        bridge.setRamp(1200);
+        QTRY_VERIFY_WITH_TIMEOUT(!bridge.busy(), 2000);
+        gpu = bridge.snapshot().value(QStringLiteral("gpu")).toMap();
+        QCOMPARE(gpu.value(QStringLiteral("climbMs")).toInt(), 1200);
+    }
+
+    void cancelledMockMutationPreservesStateAndError()
+    {
+        Bc250Bridge bridge(true);
+        const QVariantMap before = bridge.snapshot().value(QStringLiteral("gpu")).toMap();
+        bridge.setGpuFrequency(QStringLiteral("pin"), 0, 1200);
+        QVERIFY(bridge.busy());
+        bridge.cancelOperation();
+
+        QVERIFY(!bridge.busy());
+        QCOMPARE(bridge.operation().value(QStringLiteral("status")).toString(),
+                 QStringLiteral("cancelled"));
+        QCOMPARE(bridge.snapshot().value(QStringLiteral("gpu")).toMap(), before);
+        QVERIFY(bridge.error().contains(QStringLiteral("cancelled")));
+    }
+
     void mockUnlockSchemaMatchesService()
     {
         Bc250Bridge bridge(true);
@@ -97,6 +173,12 @@ private slots:
         const QVariantMap efi = unlock.value(QStringLiteral("efi")).toMap();
         QVERIFY(!efi.value(QStringLiteral("installed")).toBool());
         QVERIFY(!efi.value(QStringLiteral("partial")).toBool());
+        QVERIFY(!efi.value(QStringLiteral("stateInstalled")).toBool());
+        QVERIFY(!efi.value(QStringLiteral("stateValid")).toBool());
+        QVERIFY(!efi.value(QStringLiteral("licenseInstalled")).toBool());
+        QVERIFY(!efi.value(QStringLiteral("headersLicenseInstalled")).toBool());
+        QVERIFY(!efi.value(QStringLiteral("recoveryStatePresent")).toBool());
+        QVERIFY(!efi.value(QStringLiteral("recoverable")).toBool());
         QVERIFY(!efi.value(QStringLiteral("bootEntryConfigured")).toBool());
         QVERIFY(!efi.value(QStringLiteral("bootEntry")).toMap()
                      .value(QStringLiteral("present")).toBool());

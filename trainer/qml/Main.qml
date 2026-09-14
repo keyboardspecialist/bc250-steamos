@@ -51,7 +51,10 @@ ApplicationWindow {
     onVisibilityChanged: function(visibility) {
         bridge.visible = visibility !== Window.Hidden && visibility !== Window.Minimized
     }
-    onCurrentPageChanged: bridge.statusPageActive = currentPage === 1
+    onCurrentPageChanged: {
+        bridge.statusPageActive = currentPage === 1
+        refreshCurrentPage()
+    }
 
     function refreshCurrentPage() {
         if (bridge.busy || toolkitController.running)
@@ -373,7 +376,7 @@ ApplicationWindow {
             && (toolkitController.resultStatus === "failed"
                 || toolkitController.resultStatus === "error"
                 || toolkitController.resultStatus === "signaled"
-                || toolkitController.error.length > 0)
+                || (toolkitController.available && toolkitController.error.length > 0))
 
         C.NeonPanel { anchors.fill: parent; accent: bridge.error || mediaController.error || controlDeck.toolkitFailed ? "#ff4d8d" : "#22e7f2" }
 
@@ -423,7 +426,10 @@ ApplicationWindow {
                     : bridge.busy ? "WORKING: " + bridge.busyLabel
                     : bridge.error ? "ERROR: " + bridge.error
                     : mediaController.error ? "AUDIO: " + mediaController.error
-                    : root.currentPage === 0 && toolkitController.error ? "TOOLKIT: " + toolkitController.error
+                    : root.currentPage === 0 && toolkitController.available && toolkitController.error
+                        ? "TOOLKIT: " + toolkitController.error
+                    : root.currentPage === 0 && !toolkitController.available && bridge.serviceAvailable
+                        ? "SERVICE: online // native maintenance checkout unavailable"
                     : controlDeck.toolkitFailed ? "TOOLKIT: operation " + toolkitController.resultStatus
                     : bridge.notice ? bridge.notice : "READY // read-only polling active"
                 textFormat: Text.PlainText

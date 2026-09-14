@@ -3,6 +3,7 @@
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
+#include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QJsonParseError>
@@ -78,16 +79,10 @@ constexpr OperationDefinition Operations[] = {
      "Install dependencies and build UMR only. Live routing, stability testing, saving the table, and boot replay remain separate steps.", false, false},
     {"compute-remove", "Remove GPU CU unlock integration", "compute", "REMOVE",
      "Restore stock GPU routing where possible and remove CU replay integration.", false, true},
-    {"cec-setup", "Install CEC integration", "cec", "SET UP",
-     "Install the recommended HDMI-CEC behavior and power integration.", false, false},
-    {"cec-repair", "Repair CEC integration", "cec", "REPAIR",
-     "Recheck adapters, services, permissions, and session integration.", false, false},
-    {"cec-remove", "Remove CEC integration", "cec", "REMOVE",
-     "Remove toolkit-managed CEC user and system integration.", false, true},
-    {"persistence-install", "Protect components across updates", "persistence", "INSTALL",
-     "Install SteamOS update retention for every supported component.", false, false},
-    {"persistence-remove", "Remove update persistence", "persistence", "REMOVE",
-     "Remove all toolkit update-retention entries.", false, true},
+    {"ac3-install", "Enable HDMI AC-3 surround", "ac3", "ENABLE",
+     "Install the managed HDMI/DisplayPort AC-3 profile and select real-time Dolby Digital 5.1 output.", false, false},
+    {"ac3-remove", "Restore HDMI stereo", "ac3", "REMOVE",
+     "Remove toolkit-managed AC-3 configuration and restore the default HDMI stereo profile.", false, true},
     {"aic-install", "Build AIC8800 drivers", "aic", "BUILD + INSTALL",
      "Build and install the matching WiFi and Bluetooth kernel modules.", false, false},
     {"aic-remove", "Remove AIC8800 drivers", "aic", "REMOVE",
@@ -100,8 +95,14 @@ constexpr OperationDefinition Operations[] = {
      "Install kernel-specific telemetry and GFX1013 fixes, plus display/audio corrections where required, without enabling sched_policy=2. Reboot before RADV setup.", false, false},
     {"audio-remove", "Remove AMDGPU kernel fixes", "audio", "REMOVE",
      "Restore stock AMDGPU module overrides and preserve build caches.", false, true},
-    {"mesh-setup", "Build Mesa / RADV async-compute runtime", "mesh", "BUILD + INSTALL",
-     "Install AMDGPU first when needed, then resume the 3-5 minute GFX1013 RADV build after reboot.", false, false},
+    {"proton-install", "Install BC-250 GE-Proton", "proton", "INSTALL",
+     "Download, verify, and install the pinned BC-250 GE-Proton build with FSR4 support.", false, false},
+    {"proton-update", "Update BC-250 GE-Proton", "proton", "UPDATE",
+     "Verify and update the managed BC-250 GE-Proton compatibility tool.", false, false},
+    {"proton-remove", "Remove BC-250 GE-Proton", "proton", "REMOVE",
+     "Remove only the managed compatibility tool while preserving Steam prefixes, saves, and game data.", false, true},
+    {"graphics-setup", "Install async-compute graphics stack", "mesh", "INSTALL / RESUME",
+     "Install or repair AMDGPU kernel fixes, Mesa / RADV async compute, and the scheduler policy through the resumable graphics workflow.", false, false},
     {"mesh-remove", "Remove Mesa / RADV async-compute runtime", "mesh", "REMOVE",
      "Remove the global alternate runtime and activation while preserving build caches.", false, true},
     {"decky-install", "Install Decky plugin", "decky", "INSTALL",
@@ -267,6 +268,10 @@ void ToolkitController::refreshInventory()
     setToolkitPath(canonicalDirectory);
     setAvailable(true);
     setError(QString());
+    if (!m_inventory.isEmpty()) {
+        m_inventory.clear();
+        emit inventoryChanged();
+    }
     m_inventoryStdout.clear();
     m_inventoryStderr.clear();
     m_inventoryFailure.clear();
@@ -374,6 +379,16 @@ bool ToolkitController::start(const QString &operationId)
         m_exitCode = -1;
         m_resultStatus = QStringLiteral("error");
         setError(QStringLiteral("Unknown toolkit operation"));
+        emit resultChanged();
+        return false;
+    }
+
+    if (m_inventory.value(QStringLiteral("schemaVersion")).toInt() != 1
+        || !m_inventory.value(QStringLiteral("components")).canConvert<QVariantList>()) {
+        m_exitCode = -1;
+        m_resultStatus = QStringLiteral("error");
+        setError(QStringLiteral(
+            "Toolkit inventory is unavailable; scan successfully before starting an operation"));
         emit resultChanged();
         return false;
     }
@@ -933,7 +948,36 @@ QVariantMap ToolkitController::parseInventoryJson(const QByteArray &json, QStrin
         }
         return {};
     }
-    return document.object().toVariantMap();
+    const QJsonObject object = document.object();
+    if (object.value(QStringLiteral("schemaVersion")).toInt(-1) != 1
+        || !object.value(QStringLiteral("components")).isArray()) {
+        if (error)
+            *error = QStringLiteral("Toolkit inventory uses an unsupported schema");
+        return {};
+    }
+
+    static const QStringList states = {QStringLiteral("installed"),
+                                       QStringLiteral("partial"),
+                                       QStringLiteral("data-preserved"),
+                                       QStringLiteral("not-installed")};
+    const QJsonArray components = object.value(QStringLiteral("components")).toArray();
+    for (const QJsonValue &value : components) {
+        if (!value.isObject()) {
+            if (error)
+                *error = QStringLiteral("Toolkit inventory contains an invalid component");
+            return {};
+        }
+        const QJsonObject component = value.toObject();
+        if (!component.value(QStringLiteral("id")).isString()
+            || !component.value(QStringLiteral("label")).isString()
+            || !component.value(QStringLiteral("state")).isString()
+            || !states.contains(component.value(QStringLiteral("state")).toString())) {
+            if (error)
+                *error = QStringLiteral("Toolkit inventory contains an invalid component");
+            return {};
+        }
+    }
+    return object.toVariantMap();
 }
 
 QByteArray ToolkitController::stripTerminalControls(const QByteArray &input, EscapeState *state)
@@ -1028,14 +1072,13 @@ QString ToolkitController::cleanError(const QString &error)
 QVariantMap ToolkitController::mockInventory() const
 {
     const QStringList ids = {QStringLiteral("trainer"), QStringLiteral("desktop"),
-                             QStringLiteral("decky"), QStringLiteral("coolercontrol"),
-                             QStringLiteral("cec"),
+                              QStringLiteral("decky"), QStringLiteral("coolercontrol"),
+                              QStringLiteral("cec"), QStringLiteral("ac3"),
                               QStringLiteral("power"), QStringLiteral("ram"),
-                              QStringLiteral("swap"),
-                              QStringLiteral("compute"), QStringLiteral("mesh"),
-                             QStringLiteral("audio"), QStringLiteral("fan"),
-                             QStringLiteral("aic"),
-                             QStringLiteral("storage")};
+                              QStringLiteral("swap"), QStringLiteral("compute"),
+                              QStringLiteral("proton"), QStringLiteral("mesh"),
+                              QStringLiteral("audio"), QStringLiteral("fan"),
+                              QStringLiteral("aic"), QStringLiteral("storage")};
     QVariantList components;
     for (const QString &id : ids) {
         components.append(QVariantMap{{QStringLiteral("id"), id},

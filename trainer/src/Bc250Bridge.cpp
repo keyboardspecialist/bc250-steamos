@@ -1,11 +1,10 @@
 #include "Bc250Bridge.h"
 
-#include <QDBusConnectionInterface>
 #include <QDBusError>
 #include <QDBusInterface>
+#include <QDBusMessage>
 #include <QDBusPendingCallWatcher>
 #include <QDBusPendingReply>
-#include <QDBusReply>
 #include <QDBusServiceWatcher>
 #include <QJsonDocument>
 #include <QJsonObject>
@@ -16,6 +15,7 @@ namespace {
 constexpr auto Service = "io.github.keyboardspecialist.BC250Control1";
 constexpr auto ObjectPath = "/io/github/keyboardspecialist/BC250Control1";
 constexpr auto Interface = "io.github.keyboardspecialist.BC250Control1";
+constexpr int PrivilegedCallTimeoutMs = 130000;
 
 QString replyError(const QDBusError &error)
 {
@@ -42,6 +42,9 @@ Bc250Bridge::Bc250Bridge(bool mockMode, QObject *parent)
     connect(&m_noticeTimer, &QTimer::timeout, this, [this] { setNotice({}); });
     connect(&m_mockFinishTimer, &QTimer::timeout, this, [this] {
         const QString message = m_busyLabel + QStringLiteral(" completed (mock; no hardware call). ");
+        applyMockMutation();
+        m_mockMethod.clear();
+        m_mockArguments.clear();
         m_operation.insert(QStringLiteral("status"), QStringLiteral("succeeded"));
         m_operation.insert(QStringLiteral("cancellable"), false);
         emit operationChanged();
@@ -54,20 +57,21 @@ Bc250Bridge::Bc250Bridge(bool mockMode, QObject *parent)
         setLoading(false);
         setNotice(QStringLiteral("MOCK MODE: all hardware mutations are simulated."));
         m_snapshotTimer.start();
-        m_telemetryTimer.start();
-        QTimer::singleShot(0, this, &Bc250Bridge::sampleTelemetry);
         return;
     }
 
-    m_interface = new QDBusInterface(QString::fromLatin1(Service), QString::fromLatin1(ObjectPath),
-                                      QString::fromLatin1(Interface), m_bus, this);
     m_serviceWatcher = new QDBusServiceWatcher(QString::fromLatin1(Service), m_bus,
         QDBusServiceWatcher::WatchForRegistration | QDBusServiceWatcher::WatchForUnregistration, this);
     connect(m_serviceWatcher, &QDBusServiceWatcher::serviceRegistered, this, [this] {
-        setServiceAvailable(true);
-        refresh();
+        rebuildServiceInterface();
+        if (m_serviceAvailable)
+            refresh();
     });
     connect(m_serviceWatcher, &QDBusServiceWatcher::serviceUnregistered, this, [this] {
+        if (m_interface) {
+            m_interface->deleteLater();
+            m_interface = nullptr;
+        }
         setServiceAvailable(false);
         setLoading(false);
         if (m_busy)
@@ -76,16 +80,9 @@ Bc250Bridge::Bc250Bridge(bool mockMode, QObject *parent)
             setError(QStringLiteral("The BC-250 system service is unavailable."));
     });
 
-    bool registered = false;
-    if (m_bus.isConnected() && m_bus.interface()) {
-        const QDBusReply<bool> registration =
-            m_bus.interface()->isServiceRegistered(QString::fromLatin1(Service));
-        registered = registration.isValid() && registration.value();
-    }
-    setServiceAvailable(registered);
+    rebuildServiceInterface();
     m_snapshotTimer.start();
-    m_telemetryTimer.start();
-    if (registered)
+    if (m_serviceAvailable)
         QTimer::singleShot(0, this, &Bc250Bridge::refresh);
     else {
         setLoading(false);
@@ -108,6 +105,7 @@ void Bc250Bridge::setVisible(bool visible)
     } else {
         m_snapshotTimer.stop();
     }
+    updateTelemetryPolling();
 }
 
 void Bc250Bridge::setStatusPageActive(bool active)
@@ -116,8 +114,7 @@ void Bc250Bridge::setStatusPageActive(bool active)
         return;
     m_statusPageActive = active;
     emit statusPageActiveChanged();
-    if (active && m_visible)
-        sampleTelemetry();
+    updateTelemetryPolling();
 }
 
 void Bc250Bridge::refresh()
@@ -237,7 +234,12 @@ void Bc250Bridge::handleJsonReply(JsonRequest request, QDBusPendingCallWatcher *
         } else if (request == JsonRequest::Snapshot) {
             m_snapshot = value;
             emit snapshotChanged();
-            setError({});
+            if (m_preserveErrorOnRefresh) {
+                if (!m_snapshotAgain)
+                    m_preserveErrorOnRefresh = false;
+            } else {
+                setError({});
+            }
             setLoading(false);
         } else if (request == JsonRequest::Telemetry) {
             m_telemetry = value;
@@ -340,8 +342,12 @@ void Bc250Bridge::setGpuFrequency(const QString &mode, int minimum, int maximum)
         reject(QStringLiteral("GPU frequency range is invalid.")); return;
     }
     if (!ensureReady()) return;
+    const int effectiveMinimum = mode == QStringLiteral("range") ? minimum : 0;
+    const int effectiveMaximum = mode == QStringLiteral("range") || mode == QStringLiteral("pin")
+        ? maximum : 0;
     startMutation(QStringLiteral("SetGpuFrequency"),
-        {mode, QVariant::fromValue<uint>(minimum), QVariant::fromValue<uint>(maximum)},
+        {mode, QVariant::fromValue<uint>(effectiveMinimum),
+         QVariant::fromValue<uint>(effectiveMaximum)},
         QStringLiteral("Applying GPU frequency mode"));
 }
 
@@ -460,6 +466,7 @@ void Bc250Bridge::setHdmiSurround(bool enabled)
 void Bc250Bridge::startMutation(const QString &method, const QVariantList &arguments,
                                 const QString &label, bool cancellable)
 {
+    m_preserveErrorOnRefresh = false;
     setError({});
     setNotice({});
     m_busy = true;
@@ -469,10 +476,15 @@ void Bc250Bridge::startMutation(const QString &method, const QVariantList &argum
     emit busyChanged();
     emit operationChanged();
     if (m_mockMode) {
-        startMockMutation(label, cancellable);
+        startMockMutation(method, arguments, label, cancellable);
         return;
     }
-    auto *watcher = new QDBusPendingCallWatcher(m_interface->asyncCallWithArgumentList(method, arguments), this);
+    QDBusMessage message = QDBusMessage::createMethodCall(
+        QString::fromLatin1(Service), QString::fromLatin1(ObjectPath),
+        QString::fromLatin1(Interface), method);
+    message.setArguments(arguments);
+    auto *watcher = new QDBusPendingCallWatcher(
+        m_bus.asyncCall(message, PrivilegedCallTimeoutMs), this);
     connect(watcher, &QDBusPendingCallWatcher::finished, this, &Bc250Bridge::handleMutationReply);
 }
 
@@ -513,6 +525,11 @@ void Bc250Bridge::cancelOperation()
     }
     if (m_mockMode) {
         m_mockFinishTimer.stop();
+        m_mockMethod.clear();
+        m_mockArguments.clear();
+        m_operation.insert(QStringLiteral("status"), QStringLiteral("cancelled"));
+        m_operation.insert(QStringLiteral("cancellable"), false);
+        emit operationChanged();
         completeOperation(false, QStringLiteral("Operation cancelled (mock)."));
         return;
     }
@@ -539,9 +556,11 @@ void Bc250Bridge::completeOperation(bool success, const QString &message)
     emit busyChanged();
     emit operationChanged();
     if (success) {
+        m_preserveErrorOnRefresh = false;
         setError({});
         setNotice(sanitizeError(message));
     } else {
+        m_preserveErrorOnRefresh = true;
         setError(sanitizeError(message));
     }
     emit operationFinished(success, sanitizeError(message));
@@ -559,12 +578,14 @@ void Bc250Bridge::fail(const QString &message, bool finishOperation)
         emit busyChanged();
         emit operationChanged();
         emit operationFinished(false, sanitizeError(message));
+        m_preserveErrorOnRefresh = true;
     }
     setError(message);
 }
 
 void Bc250Bridge::clearMessage()
 {
+    m_preserveErrorOnRefresh = false;
     setError({});
     setNotice({});
 }
@@ -575,6 +596,32 @@ void Bc250Bridge::setServiceAvailable(bool available)
         return;
     m_serviceAvailable = available;
     emit serviceAvailableChanged();
+}
+
+void Bc250Bridge::rebuildServiceInterface()
+{
+    if (m_interface) {
+        delete m_interface;
+        m_interface = nullptr;
+    }
+    if (!m_bus.isConnected()) {
+        setServiceAvailable(false);
+        return;
+    }
+    m_interface = new QDBusInterface(QString::fromLatin1(Service),
+                                     QString::fromLatin1(ObjectPath),
+                                     QString::fromLatin1(Interface), m_bus, this);
+    setServiceAvailable(m_interface->isValid());
+}
+
+void Bc250Bridge::updateTelemetryPolling()
+{
+    if (m_visible && m_statusPageActive) {
+        m_telemetryTimer.start();
+        sampleTelemetry();
+    } else {
+        m_telemetryTimer.stop();
+    }
 }
 
 void Bc250Bridge::setError(const QString &message)
@@ -651,13 +698,16 @@ void Bc250Bridge::makeMockSnapshot()
         {"se":1,"sh":0,"wgps":[true,true,true,false,false],"factoryWgps":[true,true,true,false,false],"cus":6},
         {"se":1,"sh":1,"wgps":[true,true,true,false,false],"factoryWgps":[true,true,true,false,false],"cus":6}]},
       "power":{"acpiActive":true,"cStates":3,"cpuGovernor":"schedutil","cpuCurrentMhz":3650,"governor":{"enabled":"enabled","active":"active"},"frequencyRestore":{"enabled":"enabled","active":"exited"},"temperatures":[{"device":"amdgpu","label":"edge","celsius":57}]},
-      "gpu":{"available":true,"controllable":true,"dbusReady":true,"mode":"adaptive","requestedMode":"adaptive","minimum":350,"maximum":1500,"liveMinimum":350,"liveMaximum":1500,"activeMhz":1120,"allowedMinimum":350,"allowedMaximum":2230,"climbMs":500,"loadUpper":0.80,"loadLower":0.65,"temperatureTarget":85,"temperatureRecovery":75,"configuredMax":1500,"persistent":true,"replayApplied":true,"governorService":{"enabled":"enabled","active":"active"},"safePoints":[{"frequency":350,"voltage":700},{"frequency":1500,"voltage":975}]},
+      "gpu":{"available":true,"controllable":true,"dbusReady":true,"mode":"adaptive","requestedMode":"adaptive","requestedMinimum":null,"requestedMaximum":null,"minimum":350,"maximum":1500,"liveMinimum":350,"liveMaximum":1500,"initialMinimum":350,"initialMaximum":1500,"activeMhz":1120,"allowedMinimum":350,"allowedMaximum":2230,"climbMs":500,"loadUpper":0.80,"loadLower":0.65,"temperatureTarget":85,"temperatureRecovery":75,"configuredMax":1500,"persistent":true,"replayApplied":true,"governorService":{"enabled":"enabled","active":"active"},"safePoints":[{"frequency":350,"voltage":700},{"frequency":1500,"voltage":975}]},
       "cpu":{"service":{"enabled":"enabled","active":"active"},"installed":{"values":{"frequency":"4000","voltage":"1275"},"detected":"4000 MHz @ 1275 mV"},"staged":null,"toolAvailable":true,"mitigations":{"schemaVersion":1,"available":true,"state":"enabled","configuredEnabled":true,"bootEnabled":true,"rebootRequired":false,"protected":true}},
       "ram":{"schemaVersion":1,"available":true,"toolState":"verified","toolVersion":"v0.1","umaLastRequestedMiB":512,"ttmState":"configured","ttmConfiguredPages":3014656,"ttmBootPages":3014656,"ttmLivePages":3014656,"rebootRequired":false,"protected":true},
       "audio":{"available":true,"controllable":true,"state":"active","enabled":true,"active":true,"udevState":"installed","wireplumberState":"installed","persistenceState":"installed","activeProfile":"output:hdmi-ac3-surround"}
     })json";
-    QString parseError;
-    m_snapshot = parseJsonObject(json, &parseError);
+    if (!m_mockSnapshotInitialized) {
+        QString parseError;
+        m_snapshot = parseJsonObject(json, &parseError);
+        m_mockSnapshotInitialized = true;
+    }
     m_meshStatus = {
         {QStringLiteral("scriptAvailable"), true},
         {QStringLiteral("runtimeState"), QStringLiteral("ready")},
@@ -709,6 +759,12 @@ void Bc250Bridge::makeMockSnapshot()
             {QStringLiteral("installed"), false},
             {QStringLiteral("partial"), false},
             {QStringLiteral("masterInstalled"), false},
+            {QStringLiteral("stateInstalled"), false},
+            {QStringLiteral("stateValid"), false},
+            {QStringLiteral("licenseInstalled"), false},
+            {QStringLiteral("headerLicenseInstalled"), false},
+            {QStringLiteral("headersLicenseInstalled"), false},
+            {QStringLiteral("licensesInstalled"), false},
             {QStringLiteral("imageInstalled"), false},
             {QStringLiteral("espImageInstalled"), false},
             {QStringLiteral("imagesMatch"), false},
@@ -727,7 +783,9 @@ void Bc250Bridge::makeMockSnapshot()
             {QStringLiteral("unrecordedMatchingEntries"), false},
             {QStringLiteral("imageHashPresent"), false},
             {QStringLiteral("imageHashStateInstalled"), false},
-            {QStringLiteral("imageHashValid"), QVariant{}}}},
+            {QStringLiteral("imageHashValid"), QVariant{}},
+            {QStringLiteral("recoveryStatePresent"), false},
+            {QStringLiteral("recoverable"), false}}},
         {QStringLiteral("guard"), QVariantMap{{QStringLiteral("state"), QStringLiteral("clear")},
                                                {QStringLiteral("active"), false},
                                                {QStringLiteral("currentBoot"), false}}},
@@ -742,8 +800,11 @@ void Bc250Bridge::makeMockSnapshot()
     emit meshStatusChanged();
 }
 
-void Bc250Bridge::startMockMutation(const QString &label, bool cancellable)
+void Bc250Bridge::startMockMutation(const QString &method, const QVariantList &arguments,
+                                    const QString &label, bool cancellable)
 {
+    m_mockMethod = method;
+    m_mockArguments = arguments;
     m_operationId = QUuid::createUuid().toString(QUuid::Id128);
     m_operationCancellable = cancellable;
     m_operation = {
@@ -754,4 +815,66 @@ void Bc250Bridge::startMockMutation(const QString &label, bool cancellable)
     };
     emit operationChanged();
     m_mockFinishTimer.start();
+}
+
+void Bc250Bridge::applyMockMutation()
+{
+    QVariantMap gpu = m_snapshot.value(QStringLiteral("gpu")).toMap();
+    if (m_mockMethod == QStringLiteral("SetGpuFrequency") && m_mockArguments.size() == 3) {
+        const QString mode = m_mockArguments.at(0).toString();
+        const int minimum = m_mockArguments.at(1).toInt();
+        const int maximum = m_mockArguments.at(2).toInt();
+        const int initialMinimum = gpu.value(QStringLiteral("initialMinimum"), 350).toInt();
+        const int initialMaximum = gpu.value(QStringLiteral("initialMaximum"), 1500).toInt();
+        gpu.insert(QStringLiteral("mode"), mode);
+        gpu.insert(QStringLiteral("requestedMode"), mode);
+        if (mode == QStringLiteral("range")) {
+            const int liveMinimum = minimum == 0 ? initialMinimum : minimum;
+            gpu.insert(QStringLiteral("requestedMinimum"), minimum);
+            gpu.insert(QStringLiteral("requestedMaximum"), maximum);
+            gpu.insert(QStringLiteral("minimum"), liveMinimum);
+            gpu.insert(QStringLiteral("maximum"), maximum);
+            gpu.insert(QStringLiteral("liveMinimum"), liveMinimum);
+            gpu.insert(QStringLiteral("liveMaximum"), maximum);
+        } else if (mode == QStringLiteral("pin")) {
+            gpu.insert(QStringLiteral("requestedMinimum"), QVariant{});
+            gpu.insert(QStringLiteral("requestedMaximum"), maximum);
+            gpu.insert(QStringLiteral("minimum"), maximum);
+            gpu.insert(QStringLiteral("maximum"), maximum);
+            gpu.insert(QStringLiteral("liveMinimum"), maximum);
+            gpu.insert(QStringLiteral("liveMaximum"), maximum);
+        } else if (mode == QStringLiteral("max")) {
+            gpu.insert(QStringLiteral("requestedMinimum"), QVariant{});
+            gpu.insert(QStringLiteral("requestedMaximum"), QVariant{});
+            gpu.insert(QStringLiteral("minimum"), initialMaximum);
+            gpu.insert(QStringLiteral("maximum"), initialMaximum);
+            gpu.insert(QStringLiteral("liveMinimum"), initialMaximum);
+            gpu.insert(QStringLiteral("liveMaximum"), initialMaximum);
+        } else {
+            gpu.insert(QStringLiteral("requestedMinimum"), QVariant{});
+            gpu.insert(QStringLiteral("requestedMaximum"), QVariant{});
+            gpu.insert(QStringLiteral("minimum"), initialMinimum);
+            gpu.insert(QStringLiteral("maximum"), initialMaximum);
+            gpu.insert(QStringLiteral("liveMinimum"), initialMinimum);
+            gpu.insert(QStringLiteral("liveMaximum"), initialMaximum);
+        }
+    } else if (m_mockMethod == QStringLiteral("SetLoadTarget") && !m_mockArguments.isEmpty()) {
+        const bool eager = m_mockArguments.constFirst().toString() == QStringLiteral("eager");
+        gpu.insert(QStringLiteral("loadLower"), eager ? 0.10 : 0.65);
+        gpu.insert(QStringLiteral("loadUpper"), eager ? 0.40 : 0.80);
+    } else if (m_mockMethod == QStringLiteral("SetCustomLoadTarget")
+               && m_mockArguments.size() == 2) {
+        gpu.insert(QStringLiteral("loadLower"), m_mockArguments.at(0).toDouble() / 100.0);
+        gpu.insert(QStringLiteral("loadUpper"), m_mockArguments.at(1).toDouble() / 100.0);
+    } else if (m_mockMethod == QStringLiteral("SetTemperatureTarget")
+               && !m_mockArguments.isEmpty()) {
+        const int target = m_mockArguments.constFirst().toInt();
+        gpu.insert(QStringLiteral("temperatureTarget"), target);
+        gpu.insert(QStringLiteral("temperatureRecovery"), target - 10);
+    } else if (m_mockMethod == QStringLiteral("SetRamp") && !m_mockArguments.isEmpty()) {
+        gpu.insert(QStringLiteral("climbMs"), m_mockArguments.constFirst().toInt());
+    } else {
+        return;
+    }
+    m_snapshot.insert(QStringLiteral("gpu"), gpu);
 }

@@ -97,6 +97,8 @@ private:
     enum class JsonRequest { Snapshot, Telemetry, CpuUnlock, Mesh, Operation };
 
     void setServiceAvailable(bool available);
+    void rebuildServiceInterface();
+    void updateTelemetryPolling();
     void requestJson(JsonRequest request, const QString &method, const QVariantList &arguments = {});
     void handleJsonReply(JsonRequest request, QDBusPendingCallWatcher *watcher);
     void startMutation(const QString &method, const QVariantList &arguments, const QString &label,
@@ -109,7 +111,9 @@ private:
     void setNotice(const QString &message);
     void setLoading(bool loading);
     void makeMockSnapshot();
-    void startMockMutation(const QString &label, bool cancellable);
+    void startMockMutation(const QString &method, const QVariantList &arguments,
+                           const QString &label, bool cancellable);
+    void applyMockMutation();
     bool ensureReady();
     bool reject(const QString &message);
 
@@ -125,7 +129,7 @@ private:
 
     bool m_serviceAvailable = false;
     bool m_visible = true;
-    bool m_statusPageActive = true;
+    bool m_statusPageActive = false;
     bool m_loading = true;
     bool m_busy = false;
     bool m_snapshotPending = false;
@@ -135,9 +139,13 @@ private:
     bool m_meshPending = false;
     bool m_operationPending = false;
     bool m_operationCancellable = false;
+    bool m_preserveErrorOnRefresh = false;
+    bool m_mockSnapshotInitialized = false;
     int m_operationPollFailures = 0;
     QString m_busyLabel;
     QString m_operationId;
+    QString m_mockMethod;
+    QVariantList m_mockArguments;
     QVariantMap m_operation;
     QVariantMap m_snapshot;
     QVariantMap m_telemetry;

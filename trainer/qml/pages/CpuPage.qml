@@ -69,8 +69,45 @@ ColumnLayout {
         return String(value)
     }
 
+    function efiPartialReason() {
+        var entry = efi.bootEntry
+        if (efi.recoveryStatePresent === true) return "recovery transaction pending"
+        if (efi.efiGuardPresent === true) return "EFI reboot guard present"
+        if (efi.matchingEntryCount > 1) return "duplicate firmware entries"
+        if (efi.unrecordedMatchingEntries === true) return "firmware entry ownership mismatch"
+        if (entry && typeof entry === "object" && entry.queryAvailable === false)
+            return efi.uefiRuntimeAvailable === false
+                ? "UEFI runtime unavailable" : "firmware entry query unavailable"
+        if (efi.masterInstalled === false) return "master image missing or untrusted"
+        if (firstValue(efi, ["imageInstalled", "espImageInstalled"]) === false)
+            return "ESP image missing or untrusted"
+        if (efi.stateInstalled === false) return "state file missing or untrusted"
+        if (efi.bootnumStateInstalled === false) return "boot-number state missing or untrusted"
+        if (efi.stateValid === false) return "state metadata invalid"
+        if (efi.licenseInstalled === false) return "EFI license missing or untrusted"
+        if (firstValue(efi, ["headersLicenseInstalled", "headerLicenseInstalled"]) === false)
+            return "EFI header license missing or untrusted"
+        if (efi.imagesMatch === false) return "master and ESP images differ"
+        if (efi.imageHashPresent === false) return "image hash state missing"
+        if (efi.imageHashStateInstalled === false) return "image hash state untrusted"
+        if (efi.imageHashValid === false) return "image hash verification failed"
+        if (efi.espIdentityValid === null) return "ESP identity query unavailable"
+        if (efi.espIdentityValid === false) return "ESP identity validation failed"
+        if (entry && typeof entry === "object") {
+            if (entry.present === false) return "firmware entry missing"
+            if (entry.active === false) return "firmware entry inactive"
+            if (entry.matching === false) return "firmware entry mismatched"
+            if (entry.firstInBootOrder === false) return "firmware entry reordered"
+            if (entry.effective === false) return "firmware entry ineffective"
+        }
+        return ""
+    }
+
     function efiInstalledLabel() {
-        if (efi.partial === true) return "Partial"
+        if (efi.partial === true) {
+            var reason = efiPartialReason()
+            return reason ? "Partial: " + reason : "Partial"
+        }
         return stateLabel(firstValue(efi, ["installed", "imageInstalled", "espImageInstalled"]))
     }
 

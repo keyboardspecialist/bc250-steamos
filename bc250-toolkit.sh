@@ -594,6 +594,8 @@ run_machine_action() {
         swap-zram-install) run_sudo_script "$SWAP_SH" install zram ;;
         swap-zswap-install) run_sudo_script "$SWAP_SH" install zswap ;;
         compute-build) run_sudo_script "$COMPUTE_SH" prep ;;
+        ac3-install) run_script "$HDMI_AC3_SH" install ;;
+        proton-install|proton-update) run_script "$PROTON_SH" "${operation#proton-}" ;;
         cec-setup) run_script "$CEC_SH" setup ;;
         cec-repair) run_script "$CEC_SH" repair ;;
         persistence-install) run_sudo_script "$PERSISTENCE_SH" install all ;;
@@ -605,7 +607,7 @@ run_machine_action() {
         desktop-install) run_script "$DESKTOP_INSTALL_SH" install ;;
         coolercontrol-install) run_script "$COOLERCONTROL_INSTALL_SH" install ;;
         persistence-remove) run_sudo_script "$PERSISTENCE_SH" remove all ;;
-        storage-remove|power-remove|ram-remove|swap-remove|compute-remove|cec-remove|aic-remove|fan-remove|audio-remove|mesh-remove|decky-remove|desktop-remove|coolercontrol-remove)
+        storage-remove|power-remove|ram-remove|swap-remove|compute-remove|cec-remove|ac3-remove|proton-remove|aic-remove|fan-remove|audio-remove|mesh-remove|decky-remove|desktop-remove|coolercontrol-remove)
             require_script "$MAINTENANCE_SH"
             bash "$MAINTENANCE_SH" uninstall "${operation%-remove}" --yes
             ;;

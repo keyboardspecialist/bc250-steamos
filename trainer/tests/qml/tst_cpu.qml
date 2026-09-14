@@ -215,6 +215,44 @@ TestCase {
         compare(partialStatus.health, -1)
     }
 
+    function test_efiPartialPredicateLabels() {
+        var partialStatus = findChild(page, "efiInstallStatus")
+        verify(partialStatus !== null)
+        var cases = [
+            {"efi": {"partial": true, "recoveryStatePresent": true}, "reason": "recovery transaction pending"},
+            {"efi": {"partial": true, "efiGuardPresent": true}, "reason": "EFI reboot guard present"},
+            {"efi": {"partial": true, "matchingEntryCount": 2}, "reason": "duplicate firmware entries"},
+            {"efi": {"partial": true, "unrecordedMatchingEntries": true}, "reason": "firmware entry ownership mismatch"},
+            {"efi": {"partial": true, "uefiRuntimeAvailable": false, "bootEntry": {"queryAvailable": false}}, "reason": "UEFI runtime unavailable"},
+            {"efi": {"partial": true, "uefiRuntimeAvailable": true, "bootEntry": {"queryAvailable": false}}, "reason": "firmware entry query unavailable"},
+            {"efi": {"partial": true, "masterInstalled": false}, "reason": "master image missing or untrusted"},
+            {"efi": {"partial": true, "imageInstalled": false}, "reason": "ESP image missing or untrusted"},
+            {"efi": {"partial": true, "stateInstalled": false}, "reason": "state file missing or untrusted"},
+            {"efi": {"partial": true, "bootnumStateInstalled": false}, "reason": "boot-number state missing or untrusted"},
+            {"efi": {"partial": true, "stateValid": false}, "reason": "state metadata invalid"},
+            {"efi": {"partial": true, "licenseInstalled": false}, "reason": "EFI license missing or untrusted"},
+            {"efi": {"partial": true, "headersLicenseInstalled": false}, "reason": "EFI header license missing or untrusted"},
+            {"efi": {"partial": true, "imagesMatch": false}, "reason": "master and ESP images differ"},
+            {"efi": {"partial": true, "imageHashPresent": false}, "reason": "image hash state missing"},
+            {"efi": {"partial": true, "imageHashStateInstalled": false}, "reason": "image hash state untrusted"},
+            {"efi": {"partial": true, "imageHashValid": false}, "reason": "image hash verification failed"},
+            {"efi": {"partial": true, "espIdentityValid": null}, "reason": "ESP identity query unavailable"},
+            {"efi": {"partial": true, "espIdentityValid": false}, "reason": "ESP identity validation failed"},
+            {"efi": {"partial": true, "bootEntry": {"queryAvailable": true, "present": false}}, "reason": "firmware entry missing"},
+            {"efi": {"partial": true, "bootEntry": {"queryAvailable": true, "active": false}}, "reason": "firmware entry inactive"},
+            {"efi": {"partial": true, "bootEntry": {"queryAvailable": true, "matching": false}}, "reason": "firmware entry mismatched"},
+            {"efi": {"partial": true, "bootEntry": {"queryAvailable": true, "firstInBootOrder": false}}, "reason": "firmware entry reordered"},
+            {"efi": {"partial": true, "bootEntry": {"queryAvailable": true, "effective": false}}, "reason": "firmware entry ineffective"}
+        ]
+        for (var index = 0; index < cases.length; ++index) {
+            backend.cpuUnlockStatus = status({}, "partial", cases[index].efi)
+            compare(partialStatus.value, "Partial: " + cases[index].reason)
+        }
+
+        backend.cpuUnlockStatus = status({}, "partial", {"installed": false, "partial": true})
+        compare(partialStatus.value, "Partial")
+    }
+
     function test_oldSchemaFallbackDoesNotClaimEffectiveEfi() {
         var entryStatus = findChild(page, "efiBootEntryStatus")
         var modeTile = findChild(page, "cpuUnlockModeTile")

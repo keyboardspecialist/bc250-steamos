@@ -30,19 +30,27 @@ private slots:
             QStringLiteral("ram-remove"), QStringLiteral("swap-zram-install"),
             QStringLiteral("swap-zswap-install"), QStringLiteral("swap-remove"),
             QStringLiteral("compute-build"),
-            QStringLiteral("compute-remove"), QStringLiteral("cec-setup"),
-            QStringLiteral("cec-repair"), QStringLiteral("cec-remove"),
-            QStringLiteral("persistence-install"), QStringLiteral("persistence-remove"),
+            QStringLiteral("compute-remove"), QStringLiteral("ac3-install"),
+            QStringLiteral("ac3-remove"),
             QStringLiteral("aic-install"), QStringLiteral("aic-remove"),
             QStringLiteral("fan-install"), QStringLiteral("fan-remove"),
             QStringLiteral("audio-build"), QStringLiteral("audio-remove"),
-            QStringLiteral("mesh-setup"), QStringLiteral("mesh-remove"),
+            QStringLiteral("proton-install"), QStringLiteral("proton-update"),
+            QStringLiteral("proton-remove"), QStringLiteral("graphics-setup"),
+            QStringLiteral("mesh-remove"),
             QStringLiteral("decky-install"), QStringLiteral("decky-remove"),
             QStringLiteral("desktop-install"), QStringLiteral("desktop-remove"),
             QStringLiteral("coolercontrol-install"),
             QStringLiteral("coolercontrol-remove")};
         for (const QString &id : expectedIds)
             QCOMPARE(ToolkitController::operationMetadata(id).value(QStringLiteral("id")), id);
+        for (const QString &removed : {QStringLiteral("cec-setup"),
+                                      QStringLiteral("cec-repair"),
+                                      QStringLiteral("cec-remove"),
+                                      QStringLiteral("persistence-install"),
+                                      QStringLiteral("persistence-remove"),
+                                      QStringLiteral("mesh-setup")})
+            QVERIFY(ToolkitController::operationMetadata(removed).isEmpty());
 
         const QVariantMap autoBase =
             ToolkitController::operationMetadata(QStringLiteral("auto-base-installation"));
@@ -73,6 +81,19 @@ private slots:
                  QStringLiteral("swap"));
         QVERIFY(ToolkitController::operationMetadata(QStringLiteral("swap-remove"))
                     .value(QStringLiteral("destructive")).toBool());
+        QCOMPARE(ToolkitController::operationMetadata(QStringLiteral("graphics-setup"))
+                     .value(QStringLiteral("component")).toString(),
+                 QStringLiteral("mesh"));
+        QCOMPARE(ToolkitController::operationMetadata(QStringLiteral("ac3-install"))
+                     .value(QStringLiteral("component")).toString(),
+                 QStringLiteral("ac3"));
+        QCOMPARE(ToolkitController::operationMetadata(QStringLiteral("proton-update"))
+                     .value(QStringLiteral("component")).toString(),
+                 QStringLiteral("proton"));
+        QVERIFY(ToolkitController::operationMetadata(QStringLiteral("ac3-remove"))
+                    .value(QStringLiteral("destructive")).toBool());
+        QVERIFY(ToolkitController::operationMetadata(QStringLiteral("proton-remove"))
+                    .value(QStringLiteral("destructive")).toBool());
         QCOMPARE(ToolkitController::operationMetadata(QStringLiteral("coolercontrol-install"))
                      .value(QStringLiteral("component")).toString(),
                  QStringLiteral("coolercontrol"));
@@ -96,12 +117,18 @@ private slots:
     {
         QString error;
         const QVariantMap inventory = ToolkitController::parseInventoryJson(
-            QByteArrayLiteral("{\"version\":1,\"operations\":[{\"id\":\"status\"}]}"), &error);
+            QByteArrayLiteral("{\"schemaVersion\":1,\"components\":[{\"id\":\"power\",\"label\":\"Power\",\"state\":\"installed\"}]}"), &error);
         QVERIFY(error.isEmpty());
-        QCOMPARE(inventory.value(QStringLiteral("version")).toInt(), 1);
-        QCOMPARE(inventory.value(QStringLiteral("operations")).toList().size(), 1);
+        QCOMPARE(inventory.value(QStringLiteral("schemaVersion")).toInt(), 1);
+        QCOMPARE(inventory.value(QStringLiteral("components")).toList().size(), 1);
 
         QVERIFY(ToolkitController::parseInventoryJson(QByteArrayLiteral("[]"), &error).isEmpty());
+        QVERIFY(!error.isEmpty());
+        QVERIFY(ToolkitController::parseInventoryJson(
+                    QByteArrayLiteral("{\"schemaVersion\":2,\"components\":[]}"), &error).isEmpty());
+        QVERIFY(!error.isEmpty());
+        QVERIFY(ToolkitController::parseInventoryJson(
+                    QByteArrayLiteral("{\"schemaVersion\":1,\"components\":{}}"), &error).isEmpty());
         QVERIFY(!error.isEmpty());
         QVERIFY(ToolkitController::parseInventoryJson(QByteArray(1024 * 1024 + 1, 'x'), &error).isEmpty());
         QVERIFY(error.contains(QStringLiteral("1 MiB")));
@@ -113,7 +140,7 @@ private slots:
         QVERIFY(directory.isValid());
         writeLauncher(directory.path(), QByteArrayLiteral(
             "case \"$1\" in\n"
-            "  inventory-json) printf '%s\\n' '{\"source\":\"fake\",\"count\":2}' ;;\n"
+            "  inventory-json) printf '%s\\n' '{\"schemaVersion\":1,\"source\":\"fake\",\"components\":[]}' ;;\n"
             "  *) exit 90 ;;\n"
             "esac\n"));
 
@@ -141,6 +168,35 @@ private slots:
         QVERIFY(controller.error().contains(QStringLiteral("still being refreshed")));
         QVERIFY(!QFileInfo::exists(directory.filePath(QStringLiteral("unexpected"))));
         QTRY_VERIFY_WITH_TIMEOUT(!controller.refreshing(), 3000);
+    }
+
+    void failedRefreshInvalidatesInventoryAndBlocksActions()
+    {
+        QTemporaryDir directory;
+        QVERIFY(directory.isValid());
+        writeLauncher(directory.path(), QByteArrayLiteral(
+            "case \"$1\" in\n"
+            "  inventory-json)\n"
+            "    [[ ! -f \"$(dirname \"$0\")/fail\" ]] || exit 92\n"
+            "    printf '%s\\n' '{\"schemaVersion\":1,\"components\":[{\"id\":\"power\",\"label\":\"Power\",\"state\":\"installed\"}]}'\n"
+            "    ;;\n"
+            "  action) touch \"$(dirname \"$0\")/unexpected\" ;;\n"
+            "esac\n"));
+
+        ToolkitController controller(false, directory.path());
+        QTRY_COMPARE_WITH_TIMEOUT(
+            controller.inventory().value(QStringLiteral("components")).toList().size(), 1, 3000);
+        QFile fail(directory.filePath(QStringLiteral("fail")));
+        QVERIFY(fail.open(QIODevice::WriteOnly));
+        fail.close();
+
+        controller.refreshInventory();
+        QVERIFY(controller.inventory().isEmpty());
+        QTRY_VERIFY_WITH_TIMEOUT(!controller.refreshing(), 3000);
+        QVERIFY(!controller.error().isEmpty());
+        QVERIFY(!controller.start(QStringLiteral("power-install")));
+        QVERIFY(controller.error().contains(QStringLiteral("inventory is unavailable")));
+        QVERIFY(!QFileInfo::exists(directory.filePath(QStringLiteral("unexpected"))));
     }
 
     void refreshesInventoryAfterOperationFinishes()
@@ -220,6 +276,18 @@ private slots:
         ToolkitController controller(true, directory.path());
         QVERIFY(controller.available());
         QVERIFY(controller.inventory().value(QStringLiteral("mock")).toBool());
+        QStringList componentIds;
+        for (const QVariant &component : controller.inventory().value(QStringLiteral("components")).toList())
+            componentIds.append(component.toMap().value(QStringLiteral("id")).toString());
+        QCOMPARE(componentIds,
+                 QStringList({QStringLiteral("trainer"), QStringLiteral("desktop"),
+                              QStringLiteral("decky"), QStringLiteral("coolercontrol"),
+                              QStringLiteral("cec"), QStringLiteral("ac3"),
+                              QStringLiteral("power"), QStringLiteral("ram"),
+                              QStringLiteral("swap"), QStringLiteral("compute"),
+                              QStringLiteral("proton"), QStringLiteral("mesh"),
+                              QStringLiteral("audio"), QStringLiteral("fan"),
+                              QStringLiteral("aic"), QStringLiteral("storage")}));
         QVERIFY(controller.start(QStringLiteral("power-install")));
         QTRY_VERIFY_WITH_TIMEOUT(!controller.running(), 1000);
         QCOMPARE(controller.resultStatus(), QStringLiteral("succeeded"));
@@ -239,7 +307,7 @@ private slots:
     {
         QTemporaryDir directory;
         writeLauncher(directory.path(), QByteArrayLiteral(
-            "if [[ $1 == inventory-json ]]; then printf '%s\\n' '{}'; else touch unexpected; fi\n"));
+            "if [[ $1 == inventory-json ]]; then printf '%s\\n' '{\"schemaVersion\":1,\"components\":[]}'; else touch unexpected; fi\n"));
         ToolkitController controller(false, directory.path());
         QTRY_VERIFY_WITH_TIMEOUT(controller.available() && !controller.refreshing()
                                      && controller.error().isEmpty(), 3000);
@@ -257,7 +325,7 @@ private slots:
         QTemporaryDir directory;
         writeLauncher(directory.path(), QByteArrayLiteral(
             "case \"$1\" in\n"
-            " inventory-json) printf '%s\\n' '{\"ready\":true}' ;;\n"
+            " inventory-json) printf '%s\\n' '{\"schemaVersion\":1,\"ready\":true,\"components\":[]}' ;;\n"
              " action)\n"
              "   [[ $2 == power-install ]] || exit 91\n"
             "   printf '\033[32mstart\033[0m\r\n'\n"

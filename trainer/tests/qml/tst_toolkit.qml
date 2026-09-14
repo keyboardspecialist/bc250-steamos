@@ -14,7 +14,6 @@ TestCase {
         property bool busy: false
         property bool serviceAvailable: true
         property var snapshot: ({"toolkit": {"available": true}})
-        property var cpuUnlockStatus: ({"updatePersistence": true})
         property int refreshCalls: 0
         function refresh() { refreshCalls += 1 }
     }
@@ -29,7 +28,10 @@ TestCase {
                 {"id": "storage", "state": "installed"},
                 {"id": "power", "state": "partial"},
                 {"id": "ram", "state": "not-installed"},
-                {"id": "swap", "state": "installed"}
+                {"id": "swap", "state": "installed"},
+                {"id": "ac3", "state": "installed"},
+                {"id": "proton", "state": "not-installed"},
+                {"id": "mesh", "state": "partial"}
             ]
         })
         property var operations: [
@@ -39,7 +41,14 @@ TestCase {
             {"id": "storage-remove", "title": "Remove storage", "verb": "REMOVE", "description": "Remove storage.", "destructive": true},
             {"id": "swap-zram-install", "title": "Use zram", "verb": "USE ZRAM", "description": "Use zram.", "destructive": false},
             {"id": "swap-zswap-install", "title": "Use zswap", "verb": "USE ZSWAP", "description": "Use zswap.", "destructive": false},
-            {"id": "swap-remove", "title": "Remove swap", "verb": "REMOVE", "description": "Remove swap.", "destructive": true}
+            {"id": "swap-remove", "title": "Remove swap", "verb": "REMOVE", "description": "Remove swap.", "destructive": true},
+            {"id": "ac3-install", "title": "Enable AC-3", "verb": "ENABLE", "description": "Enable surround.", "destructive": false},
+            {"id": "ac3-remove", "title": "Restore stereo", "verb": "REMOVE", "description": "Restore stereo.", "destructive": true},
+            {"id": "proton-install", "title": "Install Proton", "verb": "INSTALL", "description": "Install Proton.", "destructive": false},
+            {"id": "proton-update", "title": "Update Proton", "verb": "UPDATE", "description": "Update Proton.", "destructive": false},
+            {"id": "proton-remove", "title": "Remove Proton", "verb": "REMOVE", "description": "Remove Proton.", "destructive": true},
+            {"id": "graphics-setup", "title": "Install graphics stack", "verb": "INSTALL / RESUME", "description": "Install graphics.", "destructive": false},
+            {"id": "mesh-remove", "title": "Remove RADV", "verb": "REMOVE", "description": "Remove RADV.", "destructive": true}
         ]
         property bool refreshing: false
         property bool running: false
@@ -86,7 +95,6 @@ TestCase {
     function test_inventoryStatesAndBusyInterlock() {
         compare(page.componentState("storage"), "installed")
         compare(page.componentState("power"), "partial")
-        compare(page.componentState("persistence"), "installed")
         compare(page.componentState("swap"), "installed")
 
         var storage = findChild(page, "toolkitCard-storage")
@@ -99,6 +107,9 @@ TestCase {
         tryCompare(storage, "actionEnabled", false)
         backend.busy = false
         controller.refreshing = true
+        tryCompare(storage, "actionEnabled", false)
+        controller.refreshing = false
+        controller.error = "inventory failed"
         tryCompare(storage, "actionEnabled", false)
     }
 
@@ -138,42 +149,50 @@ TestCase {
     function test_missingToolkitDisablesActions() {
         controller.available = false
         var storage = findChild(page, "toolkitCard-storage")
+        var status = findChild(page, "toolkitAvailabilityStatus")
+        verify(status !== null)
         tryCompare(storage, "actionEnabled", false)
+        compare(status.text, "CONTROL SERVICE READY // NATIVE MAINTENANCE UNAVAILABLE")
     }
 
     function test_semanticCategoryVisibility() {
         var storage = findChild(page, "toolkitCard-storage")
         var ram = findChild(page, "toolkitCard-ram")
         var swap = findChild(page, "toolkitCard-swap")
-        var cec = findChild(page, "toolkitCard-cec")
+        var ac3 = findChild(page, "toolkitCard-ac3")
+        var proton = findChild(page, "toolkitCard-proton")
         var coolercontrol = findChild(page, "toolkitCard-coolercontrol")
         verify(storage !== null)
         verify(ram !== null)
         verify(swap !== null)
-        verify(cec !== null)
+        verify(ac3 !== null)
+        verify(proton !== null)
+        verify(findChild(page, "toolkitCard-cec") === null)
+        verify(findChild(page, "toolkitCard-persistence") === null)
         verify(coolercontrol !== null)
         compare(storage.categoryName, "FOUNDATION")
         compare(ram.categoryName, "PERFORMANCE")
         compare(swap.categoryName, "PERFORMANCE")
-        compare(cec.categoryName, "DEVICES")
+        compare(ac3.categoryName, "DEVICES")
+        compare(proton.categoryName, "PERFORMANCE")
         compare(coolercontrol.categoryName, "INTERFACES")
         compare(page.showsCategory(storage.categoryName), true)
         compare(page.showsCategory(ram.categoryName), false)
-        compare(page.showsCategory(cec.categoryName), false)
+        compare(page.showsCategory(ac3.categoryName), false)
 
         page.category = "PERFORMANCE"
         compare(page.showsCategory(storage.categoryName), false)
         compare(page.showsCategory(ram.categoryName), true)
-        compare(page.showsCategory(cec.categoryName), false)
+        compare(page.showsCategory(ac3.categoryName), false)
 
         page.category = "DEVICES"
         compare(page.showsCategory(ram.categoryName), false)
-        compare(page.showsCategory(cec.categoryName), true)
+        compare(page.showsCategory(ac3.categoryName), true)
 
         page.category = "ALL"
         compare(page.showsCategory(storage.categoryName), true)
         compare(page.showsCategory(ram.categoryName), true)
-        compare(page.showsCategory(cec.categoryName), true)
+        compare(page.showsCategory(ac3.categoryName), true)
         page.category = "FOUNDATION"
     }
 

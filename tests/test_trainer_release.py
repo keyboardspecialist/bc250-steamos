@@ -251,6 +251,7 @@ class TrainerReleaseTests(unittest.TestCase):
             / "trainer/packaging/io.github.keyboardspecialist.bc250trainer.yml"
         ).read_text(encoding="utf-8")
         cmake = (ROOT / "trainer/CMakeLists.txt").read_text(encoding="utf-8")
+        bridge = (ROOT / "trainer/src/Bc250Bridge.cpp").read_text(encoding="utf-8")
         for expected in (
             "runtime: org.kde.Platform",
             "runtime-version: '6.10'",
@@ -264,6 +265,8 @@ class TrainerReleaseTests(unittest.TestCase):
         self.assertIn("share/applications", cmake)
         self.assertIn("share/metainfo", cmake)
         self.assertIn("share/bc250-trainer", cmake)
+        self.assertIn("m_interface->isValid()", bridge)
+        self.assertNotIn("isServiceRegistered", bridge)
 
     def test_shared_payload_and_client_registry_contract(self):
         source = SHARED.read_text(encoding="utf-8")

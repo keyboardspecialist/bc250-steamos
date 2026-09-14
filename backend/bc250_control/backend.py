@@ -649,8 +649,6 @@ class ToolkitBackend:
             metadata = os.fstat(descriptor)
             if not stat.S_ISREG(metadata.st_mode):
                 return None
-            if metadata.st_size > limit:
-                return None
             content = bytearray()
             while len(content) <= limit:
                 chunk = os.read(descriptor, min(65536, limit + 1 - len(content)))
