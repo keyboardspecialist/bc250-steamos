@@ -28,8 +28,8 @@ diff --git a/drivers/gpu/drm/amd/pm/swsmu/smu11/cyan_skillfish_ppt.c b/drivers/g
  		SMU_FEATURE_BIT_INIT(FEATURE_FCLK_DPM_BIT),
 @@ -102,2 +120,3 @@ static struct cmn2asic_msg_mapping cyan_skillfish_message_map[SMU_MSG_MAX_COUNT]
 +	MSG_MAP(GetGfxclkFrequency,             PPSMC_MSG_GetGfxFrequency,		0),
-	MSG_MAP(RequestGfxclk,                  PPSMC_MSG_RequestGfxclk,		0),
-	MSG_MAP(ForceGfxVid,                    PPSMC_MSG_ForceGfxVid,			0),
+ 	MSG_MAP(RequestGfxclk,                  PPSMC_MSG_RequestGfxclk,		0),
+ 	MSG_MAP(ForceGfxVid,                    PPSMC_MSG_ForceGfxVid,			0),
 @@ -166,7 +185,7 @@ cyan_skillfish_get_smu_metrics_data(struct smu_context *smu,
  
  	switch (member) {

@@ -758,7 +758,7 @@ class DriverLifecycleTests(unittest.TestCase):
         self.assertIn("CYAN_SKILLFISH_SCLK_MAX\t\t\t2230", sclk_patch)
         for final_hash in (
             "9e6dfc7e46177925a6492bd72baf4c1de80146036eee63ebf3a0f8703bef4006",
-            "a6503e9e915959ef0f5f366912e163f05130f60ac26caa653cd97f8c270dfee9",
+            "4eb9a1e6b0647a4afaa405e95ee8f7df87cb09fffe13da9ca539261bc19afc7c",
             "30aa04491228eec97d4c9e0811342fb754ee4991a432fc527bf819bc25be8255",
         ):
             self.assertIn(final_hash, builder)
@@ -779,6 +779,26 @@ class DriverLifecycleTests(unittest.TestCase):
         self.assertIn(".bc250-gfx1013-fix", rollback)
         self.assertIn("amdgpu.gfx1013.attestation", builder)
         self.assertIn("amdgpu.gfx1013.attestation", installer)
+
+    def test_tracked_amdgpu_patches_are_well_formed(self):
+        tracked = subprocess.run(
+            ["git", "ls-files", "bc250-audio-fix/*.patch"],
+            cwd=ROOT,
+            check=True,
+            capture_output=True,
+            text=True,
+        ).stdout.splitlines()
+
+        self.assertTrue(tracked)
+        for patch in tracked:
+            with self.subTest(patch=patch):
+                result = subprocess.run(
+                    ["git", "apply", "--numstat", patch],
+                    cwd=ROOT,
+                    capture_output=True,
+                    text=True,
+                )
+                self.assertEqual(result.returncode, 0, result.stderr)
 
     def test_amdgpu_build_integrates_guarded_kfd_runlist_workaround(self):
         builder = (ROOT / "bc250-audio-fix/build.sh").read_text(encoding="utf-8")

@@ -44,7 +44,7 @@ index 8bd054d55179..7771ec17d1f3 100644
  		break;
  	case METRICS_CURR_SOCCLK:
  		*value = metrics->Current.SocclkFrequency;
-@@ -417,7 +436,11 @@ static ssize_t cyan_skillfish_get_gpu_metrics(struct smu_context *smu,
+@@ -417,9 +436,13 @@ static ssize_t cyan_skillfish_get_gpu_metrics(struct smu_context *smu,
  	SmuMetrics_t metrics;
 +	uint32_t gfxclk;
  	int i, ret = 0;
