@@ -486,6 +486,7 @@ class TrainerReleaseTests(unittest.TestCase):
             "must be an annotated tag",
             "--prerelease",
             "flatpak-builder",
+            "libarchive-tools",
             'TRAINER_PROJECT_VERSION="$VERSION"',
             "-flatpak-installer.zip",
         ):
