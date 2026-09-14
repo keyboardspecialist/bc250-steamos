@@ -320,17 +320,17 @@ case "$BASE" in
     6.16.*)
         TELEMETRY_SOURCE_SHA=ab86a4598bf907c6963c0a9b4c43f7a50727ce11993833a0b307d9ae0ae0e017
         GFXCLK_SOURCE_SHA=572014e03cff22fb57f21121e8e8722f11d3d99822ee86e60fbfe50ed6e76f30
-        SCLK_SOURCE_SHA=fdb9c3fff8a9ff813cdc37907dace041f89f6db15158c56a4bd8f238352b6e42
+        SCLK_SOURCE_SHA=9e6dfc7e46177925a6492bd72baf4c1de80146036eee63ebf3a0f8703bef4006
         ;;
     6.18.*)
         TELEMETRY_SOURCE_SHA=014893afe640644c17bdab24737a35207a18666ae20bbfa7aa42188948b49c6b
         GFXCLK_SOURCE_SHA=d03f716c621b76533761c09eaffa9911c696c30c1604d61072152e02d8d14ba5
-        SCLK_SOURCE_SHA=3b99663fc90a031e30bca0cf76ce869885f058d3acb6089ff68dad07114d3a97
+        SCLK_SOURCE_SHA=a6503e9e915959ef0f5f366912e163f05130f60ac26caa653cd97f8c270dfee9
         ;;
     7.2.*)
         TELEMETRY_SOURCE_SHA=75ed9922d4f7358f19ea685e85ab1840a7cfa60d2c0fa57008f40bda3a5cc186
         GFXCLK_SOURCE_SHA=6d9acefc8ce3cd29d358618bc791449ce76eddac1b6cd0dad309bb7a2977120f
-        SCLK_SOURCE_SHA=717b7821864eb5907d0f55f605164f1eabf61b6b1a00e53ea9c08546c5be7efe
+        SCLK_SOURCE_SHA=30aa04491228eec97d4c9e0811342fb754ee4991a432fc527bf819bc25be8255
         ;;
 esac
 
@@ -363,7 +363,7 @@ if [ "$METRICS_SOURCE_SHA" = "$SCLK_SOURCE_SHA" ]; then
     echo "Cyan Skillfish SCLK range patch already applied"
 elif patch -p1 --dry-run -s -f < "$SCLK_PATCH" >/dev/null 2>&1; then
     patch -p1 -s < "$SCLK_PATCH"
-    echo "Cyan Skillfish SCLK range widened to 300-2230 MHz"
+    echo "Cyan Skillfish SCLK range widened to 350-2230 MHz"
 else
     die_tree_drift "Cyan Skillfish SCLK range patch neither applies nor reverses cleanly — tree has drifted"
 fi

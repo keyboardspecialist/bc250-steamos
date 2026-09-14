@@ -369,10 +369,11 @@ must have increasing frequencies with nondecreasing voltages. Curve updates
 are atomic and restore the prior config/runtime if governor reload or saved
 frequency replay fails. The guided TUI can list, add, edit, and remove points.
 
-`[frequency-range] max` in `config.toml` is the adaptive ceiling, not a fixed
-clock. The active clock rises toward that ceiling only when GPU load exceeds
-the configured upper load target. `freq 1800` pins 1800 MHz, while
-`freq 0 1800` keeps adaptive scaling with an 1800 MHz ceiling.
+`[frequency-range] min` keeps adaptive scaling at or above the toolkit's
+350 MHz floor. `max` is the adaptive ceiling, not a fixed clock. The active
+clock rises toward that ceiling only when GPU load exceeds the configured
+upper load target. `freq 1800` pins 1800 MHz, while `freq 0 1800` keeps
+adaptive scaling between 350 and 1800 MHz.
 
 ### CPU Tuning
 

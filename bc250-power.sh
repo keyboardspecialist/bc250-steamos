@@ -1076,15 +1076,15 @@ EOF
 
     if [[ -f "$GOV_CONF" ]]; then
         warn "Existing config kept at $GOV_CONF"
-        volt_curve_helper mutate floor "$GPU_FREQ_MIN"
-        log "Verified the existing curve supports the ${GPU_FREQ_MIN} MHz control floor."
+        ensure_governor_frequency_floor
+        log "Enforced the ${GPU_FREQ_MIN} MHz governor and voltage-curve floor."
     else
         log "Writing tuned config (38/40 CU, docs-schema) -> $GOV_CONF"
         cat > "$GOV_CONF" << 'EOF'
 # BC-250 SMU governor -- tuned for the 38/40 CU unlock on stock-class cooling.
 # Full community voltage curve; operating range capped at 1500 MHz (the
 # unlock sweet spot). Raise live without restart when cooling allows:
-#   cyan-skillfish-performance-mode --range 0 2000
+#   cyan-skillfish-performance-mode --range 350 2000
 # Thermal throttling applies regardless of range.
 
 [timing.intervals]
@@ -1118,6 +1118,7 @@ upper = 0.80
 lower = 0.65
 
 [frequency-range]
+min = 350                   # conservative BC-250 control floor
 max = 1500                  # sustained-safe with 38 CUs routed
 
 [temperature]
@@ -1196,8 +1197,18 @@ while IFS='=' read -r key value; do
 done < "\$STATE"
 case "\$MODE" in
     max) A= B= ;;
-    pin) [[ "\$A" =~ ^[0-9]+$ ]] || exit 1; B= ;;
-    range) [[ "\$A" =~ ^[0-9]+$ && "\$B" =~ ^[0-9]+$ ]] || exit 1 ;;
+    pin)
+        [[ "\$A" =~ ^[0-9]+$ ]] || exit 1
+        (( A >= $GPU_FREQ_MIN && A <= $GPU_FREQ_MAX )) || exit 1
+        B=
+        ;;
+    range)
+        [[ "\$A" =~ ^[0-9]+$ && "\$B" =~ ^[0-9]+$ ]] || exit 1
+        (( A == 0 )) && A=$GPU_FREQ_MIN
+        (( A >= $GPU_FREQ_MIN && A <= $GPU_FREQ_MAX )) || exit 1
+        (( B >= $GPU_FREQ_MIN && B <= $GPU_FREQ_MAX )) || exit 1
+        (( A <= B )) || exit 1
+        ;;
     *) exit 1 ;;
 esac
 # governor registers its bus name shortly after start; give it up to 30 s
@@ -1352,14 +1363,16 @@ validate_gpu_frequency_request() {
 
 cmd_freq() {
     require_root
-    local a="${1:-}" b="${2:-}"
+    local a="${1:-}" b="${2:-}" runtime_min
     validate_gpu_frequency_request "$a" "$b"
     systemctl is-active "$GOV_SVC" >/dev/null 2>&1 \
         || die "Governor not running -- freq control goes through it."
-    if [[ "$a" =~ ^[0-9]+$ && "$a" != 0 ]] \
-       && ! governor_frequency_floor_ready "$a"; then
-        log "Extending the governor curve to cover the requested ${a} MHz floor."
-        volt_curve_helper mutate floor "$a"
+    runtime_min="$a"
+    [[ -n "$b" && "$runtime_min" == 0 ]] && runtime_min=$GPU_FREQ_MIN
+    if [[ "$runtime_min" =~ ^[0-9]+$ && "$runtime_min" != 0 ]] \
+       && ! governor_frequency_floor_ready "$runtime_min"; then
+        log "Extending the governor curve to cover the requested ${runtime_min} MHz floor."
+        volt_curve_helper mutate floor "$runtime_min"
     fi
 
     gpu_control_lock || return $?
@@ -1373,7 +1386,7 @@ cmd_freq() {
             auto|off)      "$PERF_BIN" --off && clear_freq_state ;;
             max|on)        "$PERF_BIN" --on  && save_freq_state max ;;
             [0-9]*)
-                if [[ -n "$b" ]]; then "$PERF_BIN" --range "$a" "$b" && save_freq_state range "$a" "$b"
+                if [[ -n "$b" ]]; then "$PERF_BIN" --range "$runtime_min" "$b" && save_freq_state range "$a" "$b"
                 else                   "$PERF_BIN" --fixed-frequency "$a" && save_freq_state pin "$a"; fi ;;
             *) die "Usage: $0 freq [status|auto|max|<MHz>|<min> <max>]" ;;
         esac
@@ -1394,7 +1407,7 @@ cmd_freq() {
                        && save_freq_state max ;;
         [0-9]*)
             if [[ -n "$b" ]]; then
-                gov_dbus SetRange uu "$a" "$b" && log "Range set: ${a}-${b} MHz (0 = no limit)." \
+                gov_dbus SetRange uu "$runtime_min" "$b" && log "Range set: ${runtime_min}-${b} MHz." \
                     && save_freq_state range "$a" "$b"
             else
                 gov_dbus SetFixedFrequency u "$a" && log "Pinned at $a MHz ('$0 freq auto' when done)." \
@@ -1949,7 +1962,22 @@ governor_frequency_floor_ready() {
     local target="${1:-$GPU_FREQ_MIN}" points first
     points=$(volt_curve_helper list 2>/dev/null) || return 1
     read -r first _ <<< "$points"
-    [[ "$target" =~ ^[0-9]+$ && "$first" =~ ^[0-9]+$ ]] && (( first <= target ))
+    [[ "$target" =~ ^[0-9]+$ && "$first" =~ ^[0-9]+$ ]] \
+        && (( first >= GPU_FREQ_MIN && first <= target ))
+}
+
+ensure_governor_frequency_floor() {
+    local configured_min
+    GOVERNOR_FLOOR_CHANGED=0
+    configured_min=$(toml_get frequency-range min)
+    if [[ ! "$configured_min" =~ ^[0-9]+$ ]] || (( configured_min < GPU_FREQ_MIN )); then
+        toml_set frequency-range min "$GPU_FREQ_MIN" "$GOV_CONF"
+        GOVERNOR_FLOOR_CHANGED=1
+    fi
+    if ! governor_frequency_floor_ready "$GPU_FREQ_MIN"; then
+        volt_curve_helper mutate floor "$GPU_FREQ_MIN"
+        GOVERNOR_FLOOR_CHANGED=1
+    fi
 }
 
 volt_show() {
@@ -2290,6 +2318,7 @@ ramp_range() {   # "fmin fmax [assumed]" -- config range clamped by hw allowed
     if   [[ -n "$cmin" && -n "$amin" ]]; then fmin=$(( cmin > amin ? cmin : amin ))
     elif [[ -n "$cmin$amin" ]];          then fmin="${cmin:-$amin}"
     else fmin=$RAMP_FALLBACK_MIN; note=assumed; fi
+    (( fmin >= GPU_FREQ_MIN )) || fmin=$GPU_FREQ_MIN
     if   [[ -n "$cmax" && -n "$amax" ]]; then fmax=$(( cmax < amax ? cmax : amax ))
     elif [[ -n "$cmax$amax" ]];          then fmax="${cmax:-$amax}"
     else fmax=$RAMP_FALLBACK_MAX; note=assumed; fi
@@ -2474,12 +2503,17 @@ cmd_enable() {
     migrate_legacy_data
     [[ -x "$GOV_BIN" && -f "$GOV_CONF" ]] \
         || die "Governor is not installed -- run '$0 governor' first."
+    ensure_governor_frequency_floor
     check_conflicts
     write_governor_unit
     install_freq_persistence force
     systemctl daemon-reload
     systemctl enable "$GOV_SVC" "$RESTORE_SVC"
     if systemctl is-active "$GOV_SVC" >/dev/null 2>&1; then
+        if [[ $GOVERNOR_FLOOR_CHANGED -eq 1 ]]; then
+            systemctl restart "$GOV_SVC"
+            sleep 2
+        fi
         systemctl restart "$RESTORE_SVC" \
             || warn "Governor enabled, but the saved frequency range was not restored."
     fi
@@ -4580,7 +4614,7 @@ SETUP COMMANDS (run once, in this order)
   governor    Install cyan-skillfish-governor-smu (filippor): adaptive
               GPU freq/voltage via SMU firmware calls, no kernel patch.
               Downloads the latest release, writes a tuned config
-              (voltage curve from 300 to 2230 MHz, operating cap 1500 MHz,
+              (voltage curve from 350 to 2230 MHz, operating cap 1500 MHz,
               thermal throttle 85C), TEST-STARTS the service but does
               not enable it at boot -- verify under load first.
 
@@ -4764,6 +4798,7 @@ EVERYDAY COMMANDS
 
 PERMANENT TUNING (config file, not this script)
   /etc/cyan-skillfish-governor-smu/config.toml
+    [frequency-range] min = 350      <- permanent toolkit floor
     [frequency-range] max = 1500     <- permanent ceiling
     [[safe-points]]                  <- the freq/voltage curve; anything
                                         you want to run must have a
@@ -4772,7 +4807,7 @@ PERMANENT TUNING (config file, not this script)
 
 STEAM LAUNCH OPTION (per-game max clocks, auto-restores on exit)
   /var/lib/bc250-control/bin/cyan-skillfish-performance-mode %command%
-  /var/lib/bc250-control/bin/cyan-skillfish-performance-mode --range 0 2000 %command%
+  /var/lib/bc250-control/bin/cyan-skillfish-performance-mode --range 350 2000 %command%
 
 FILE MAP
   /var/lib/bc250-control/bin/

@@ -392,6 +392,7 @@ if (validate_gpu_frequency_request 100 1500) >/dev/null 2>&1; then exit 1; fi
             config = root / "config.toml"
             config.write_text(
                 "[load-target]\nupper = 0.80\nlower = 0.65\n\n"
+                "[frequency-range]\nmax = 1500\n\n"
                 "[[safe-points]]\nfrequency = 1000\nvoltage = 800\n\n"
                 "[[safe-points]]\nfrequency = 2230\nvoltage = 1000\n",
                 encoding="utf-8",
@@ -419,7 +420,7 @@ RESTORE_BIN="$base/restore"
 GPU_CONTROL_LOCK="$base/lock/backend.lock"
 SYSTEMCTL_BIN="$systemctl_bin"
 if governor_frequency_floor_ready; then exit 20; fi
-volt_curve_helper mutate floor 350
+ensure_governor_frequency_floor
 governor_frequency_floor_ready
 ''',
                     "_",
@@ -441,9 +442,10 @@ governor_frequency_floor_ready
                     {"frequency": 2230, "voltage": 1000},
                 ],
             )
+            self.assertEqual(parsed["frequency-range"], {"min": 350, "max": 1500})
             self.assertEqual(parsed["load-target"], {"upper": 0.8, "lower": 0.65})
 
-    def test_numeric_frequency_request_repairs_only_the_requested_floor(self):
+    def test_zero_minimum_uses_350_mhz_runtime_floor(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             config = root / "config.toml"
@@ -480,7 +482,7 @@ GOV_SVC=test-governor.service
 GPU_CONTROL_LOCK="$base/lock/backend.lock"
 SYSTEMCTL_BIN="$systemctl_bin"
 PERF_BIN="$performance"
-cmd_freq 350 1850
+cmd_freq 0 1850
 ''',
                     "_",
                     str(POWER),
@@ -496,6 +498,58 @@ cmd_freq 350 1850
             self.assertEqual(calls.read_text(encoding="ascii"), "--range 350 1850\n")
             parsed = tomllib.loads(config.read_text(encoding="utf-8"))
             self.assertEqual(parsed["safe-points"][0], {"frequency": 350, "voltage": 700})
+
+    def test_frequency_restore_enforces_350_mhz_runtime_floor(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            performance = root / "performance-mode"
+            performance.write_text(
+                '#!/bin/sh\nprintf "%s\\n" "$*" >> "$BC250_TEST_CALLS"\n',
+                encoding="ascii",
+            )
+            performance.chmod(0o755)
+            busctl = root / "busctl"
+            busctl.write_text("#!/bin/sh\nexit 0\n", encoding="ascii")
+            busctl.chmod(0o755)
+            calls = root / "calls"
+            result = subprocess.run(
+                [
+                    "bash",
+                    "-c",
+                    r'''
+script=$1; base=$2; performance=$3
+set -- help
+source "$script" >/dev/null
+systemctl() {
+    if [[ "${1:-}" == is-enabled ]]; then printf 'disabled\n'; fi
+    return 0
+}
+BIN_DIR="$base/bin"
+ROOT_DATA_DIR="$base/data"
+FREQ_STATE="$base/data/freq-state"
+RESTORE_BIN="$base/bin/restore"
+RESTORE_UNIT="$base/restore.service"
+PERF_BIN="$performance"
+GOV_SVC=test-governor.service
+RESTORE_SVC=test-restore.service
+install_freq_persistence force >/dev/null
+printf 'MODE=range\nA=0\nB=1850\n' > "$FREQ_STATE"
+PATH="$base:$PATH" "$RESTORE_BIN"
+''',
+                    "_",
+                    str(POWER),
+                    directory,
+                    str(performance),
+                ],
+                capture_output=True,
+                text=True,
+                env={**script_env(directory), "BC250_TEST_CALLS": str(calls)},
+            )
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual(
+                calls.read_text(encoding="ascii"),
+                "--range 350 1850\n",
+            )
 
     def test_voltage_curve_rejects_invalid_candidate_without_writing(self):
         with tempfile.TemporaryDirectory() as directory:

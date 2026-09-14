@@ -754,8 +754,14 @@ class DriverLifecycleTests(unittest.TestCase):
         self.assertIn("gpu_metrics->current_gfxclk = gfxclk", gfxclk_patch)
         self.assertNotIn("smu_table->gpu_metrics_table", gfxclk_patch)
         self.assertIn("static const struct smu_feature_bits", gfxclk_72_patch)
-        self.assertIn("CYAN_SKILLFISH_SCLK_MIN\t\t\t300", sclk_patch)
+        self.assertIn("CYAN_SKILLFISH_SCLK_MIN\t\t\t350", sclk_patch)
         self.assertIn("CYAN_SKILLFISH_SCLK_MAX\t\t\t2230", sclk_patch)
+        for final_hash in (
+            "9e6dfc7e46177925a6492bd72baf4c1de80146036eee63ebf3a0f8703bef4006",
+            "a6503e9e915959ef0f5f366912e163f05130f60ac26caa653cd97f8c270dfee9",
+            "30aa04491228eec97d4c9e0811342fb754ee4991a432fc527bf819bc25be8255",
+        ):
+            self.assertIn(final_hash, builder)
         self.assertIn("if (ttm->pages[i])", ttm_patch)
         for name in (
             "0001-gfx1013-mmio-pasid-route.patch",

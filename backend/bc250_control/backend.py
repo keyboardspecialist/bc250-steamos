@@ -34,6 +34,8 @@ PYTHON3 = "/usr/bin/python3"
 SYSTEMCTL = "/usr/bin/systemctl"
 GPU_CONFIG_PATH = Path("/etc/cyan-skillfish-governor-smu/config.toml")
 GPU_STATE_PATH = Path("/var/lib/bc250-control/governor/freq-state")
+GPU_FREQUENCY_MIN = 350
+GPU_FREQUENCY_MAX = 2230
 CPU_HELPER_PATH = Path("/var/lib/bc250-control/helper/bc250-power.sh")
 DESKTOP_HELPER_PATH = Path("/var/lib/bc250-control/desktop/bc250-power.sh")
 OPTISCALER_DESKTOP_HELPER_PATH = Path(
@@ -1912,6 +1914,7 @@ class ToolkitBackend:
             temperature = {}
         return {
             "safePoints": points,
+            "configuredMin": self._number(frequency_range.get("min")),
             "configuredMax": self._number(frequency_range.get("max")),
             "loadUpper": self._number(load.get("upper")),
             "loadLower": self._number(load.get("lower")),
@@ -2069,10 +2072,20 @@ class ToolkitBackend:
             await self._set_gpu_enabled(False)
         elif mode == "max":
             await self._set_gpu_enabled(True)
-        elif mode == "pin" and first:
+        elif mode == "pin" and GPU_FREQUENCY_MIN <= first <= GPU_FREQUENCY_MAX:
             await self._gpu_call("SetFixedFrequency", "u", str(first))
-        elif mode == "range" and second:
-            await self._gpu_call("SetRange", "uu", str(first), str(second))
+        elif (
+            mode == "range"
+            and (first == 0 or GPU_FREQUENCY_MIN <= first <= GPU_FREQUENCY_MAX)
+            and GPU_FREQUENCY_MIN <= second <= GPU_FREQUENCY_MAX
+            and (first == 0 or first <= second)
+        ):
+            await self._gpu_call(
+                "SetRange",
+                "uu",
+                str(first or GPU_FREQUENCY_MIN),
+                str(second),
+            )
         else:
             raise CommandError("Saved GPU frequency state is invalid.")
 
@@ -2164,6 +2177,8 @@ class ToolkitBackend:
         requested_mode = state.get("MODE", "adaptive")
         requested_min = self._safe_int(state.get("A"))
         requested_max = self._safe_int(state.get("B") or state.get("A"))
+        effective_requested_min = requested_min or GPU_FREQUENCY_MIN
+        effective_requested_max = requested_max
         (
             allowed_min,
             allowed_max,
@@ -2214,12 +2229,13 @@ class ToolkitBackend:
         mode = requested_mode
         if dbus_ready and current_min is not None and current_max is not None:
             if requested_mode == "pin" and (
-                current_min == requested_max and current_max == requested_max
+                current_min == effective_requested_max
+                and current_max == effective_requested_max
             ):
                 mode = "pin"
             elif requested_mode == "range" and (
-                current_max == requested_max
-                and (requested_min == 0 or current_min == requested_min)
+                current_max == effective_requested_max
+                and current_min == effective_requested_min
             ):
                 mode = "range"
             elif requested_mode == "max" and enabled is True:
@@ -2233,12 +2249,13 @@ class ToolkitBackend:
         replay_applied = False
         if dbus_ready and requested_mode == "pin":
             replay_applied = (
-                current_min == requested_max and current_max == requested_max
+                current_min == effective_requested_max
+                and current_max == effective_requested_max
             )
         elif dbus_ready and requested_mode == "range":
             replay_applied = (
-                current_max == requested_max
-                and (requested_min == 0 or current_min == requested_min)
+                current_max == effective_requested_max
+                and current_min == effective_requested_min
             )
         elif dbus_ready and requested_mode == "max":
             replay_applied = enabled is True
@@ -2246,7 +2263,10 @@ class ToolkitBackend:
             replay_applied = enabled is False and (
                 current_min == initial_min and current_max == initial_max
             )
-        span_min = allowed_min or 350
+        span_min = max(
+            config.get("configuredMin") or GPU_FREQUENCY_MIN,
+            allowed_min or GPU_FREQUENCY_MIN,
+        )
         span_max = config.get("configuredMax") or allowed_max or 2200
         normal = config.get("rampNormal")
         climb_ms = (
@@ -3893,12 +3913,18 @@ class ToolkitBackend:
             raise CommandError("Unknown GPU frequency mode.")
         if type(minimum) is not int or type(maximum) is not int:
             raise CommandError("GPU frequencies must be whole numbers.")
-        if mode == "pin" and not 350 <= maximum <= 2230:
-            raise CommandError("Pinned frequency must be 350-2230 MHz.")
+        if mode == "pin" and not GPU_FREQUENCY_MIN <= maximum <= GPU_FREQUENCY_MAX:
+            raise CommandError(
+                f"Pinned frequency must be {GPU_FREQUENCY_MIN}-{GPU_FREQUENCY_MAX} MHz."
+            )
         if mode == "range":
-            if (minimum != 0 and not 350 <= minimum <= 2230) or not 350 <= maximum <= 2230:
+            if (
+                minimum != 0
+                and not GPU_FREQUENCY_MIN <= minimum <= GPU_FREQUENCY_MAX
+            ) or not GPU_FREQUENCY_MIN <= maximum <= GPU_FREQUENCY_MAX:
                 raise CommandError(
-                    "Frequency range must use 0 for no floor or stay within 350-2230 MHz."
+                    "Frequency range must use 0 for no floor or stay within "
+                    f"{GPU_FREQUENCY_MIN}-{GPU_FREQUENCY_MAX} MHz."
                 )
             if minimum and minimum > maximum:
                 raise CommandError("Minimum frequency exceeds maximum frequency.")
@@ -4041,7 +4067,11 @@ class ToolkitBackend:
                 if isinstance(frequency, dict)
                 else None
             )
-            minimum = max(configured_min or allowed_min or 500, allowed_min or 0)
+            minimum = max(
+                configured_min or GPU_FREQUENCY_MIN,
+                allowed_min or GPU_FREQUENCY_MIN,
+                GPU_FREQUENCY_MIN,
+            )
             maximum = min(configured_max or allowed_max or 2200, allowed_max or 9999)
             if maximum <= minimum:
                 raise CommandError("GPU operating range is invalid.")
