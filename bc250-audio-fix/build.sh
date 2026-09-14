@@ -5,7 +5,8 @@
 # running kernel, extract the dep packages into deps/); this script verifies
 # their results and refuses to continue on any mismatch.
 #
-#   ./build.sh [--prepare-only] [--allow-missing-symvers] [kernel-tree]
+#   ./build.sh [--prepare-only] [--allow-missing-symvers]
+#              [--acknowledge-dcn201-display-risk] [kernel-tree]
 #
 # --prepare-only stops after producing an exact external-module Kbuild tree;
 # AIC8800 uses this when Valve omitted the matching headers package.
@@ -26,15 +27,17 @@ step() { echo; echo "==> $*"; }
 
 PREPARE_ONLY=0
 ALLOW_MISSING_SYMVERS=0
+ACKNOWLEDGE_DCN201_DISPLAY_RISK=0
 ARGS=()
 for a in "$@"; do
     case "$a" in
         --prepare-only)   PREPARE_ONLY=1 ;;
         --allow-missing-symvers) ALLOW_MISSING_SYMVERS=1 ;;
+        --acknowledge-dcn201-display-risk) ACKNOWLEDGE_DCN201_DISPLAY_RISK=1 ;;
         *)                ARGS+=("$a") ;;
     esac
 done
-[ "${#ARGS[@]}" -le 1 ] || die "usage: $0 [--prepare-only] [--allow-missing-symvers] [kernel-tree]"
+[ "${#ARGS[@]}" -le 1 ] || die "usage: $0 [--prepare-only] [--allow-missing-symvers] [--acknowledge-dcn201-display-risk] [kernel-tree]"
 [ "$ALLOW_MISSING_SYMVERS" = 0 ] || [ "$PREPARE_ONLY" = 1 ] \
     || die "--allow-missing-symvers requires --prepare-only"
 TREE_ARG=${ARGS[0]:-$HERE/valve-kernel}
@@ -242,7 +245,11 @@ step "select kernel patch variants (runbook step 7)"
 # SteamOS 3.8.x needs the DCN 2.01 clock-manager selection backport. Kernel
 # 6.18 needs only the stable-tagged Cyan Skillfish DP-audio quirk. Valve's 7.2
 # tree needs neither audio fix, but retains the 6.18 KFD API and needs metrics
-# patches with context adjusted for its refactored feature table.
+# patches with context adjusted for its refactored feature table. Experimental
+# DCN201 DSC/PCON support is included only after an explicit risk acknowledgement.
+PCON_PATCH=
+DSC_PATCH=
+DISPLAY_COMPOSITION=stable
 case "$BASE" in
     6.16.*)
         CLOCK_PATCH=$HERE/bc250-dp-audio-clock-6.16.patch
@@ -264,8 +271,11 @@ case "$BASE" in
         METRICS_PATCH=$HERE/bc250-cyan-skillfish-gpu-telemetry-7.2.patch
         GFXCLK_PATCH=$HERE/bc250-cyan-skillfish-gfxclk-7.2.patch
         KFD_RUNLIST_PATCH=$HERE/bc250-kfd-flush-by-runlist-6.18.patch
-        PCON_PATCH=$HERE/bc250-dcn201-pcon-hdmi21.patch
-        DSC_PATCH=$HERE/bc250-dcn201-dsc-enable.patch
+        if [ "$ACKNOWLEDGE_DCN201_DISPLAY_RISK" = 1 ]; then
+            PCON_PATCH=$HERE/bc250-dcn201-pcon-hdmi21.patch
+            DSC_PATCH=$HERE/bc250-dcn201-dsc-enable.patch
+            DISPLAY_COMPOSITION=dcn201-display-unstable
+        fi
         ;;
     *)      die "no AMDGPU patch variant for kernel $BASE — check which fixes are already upstream, then add a case above" ;;
 esac
@@ -483,6 +493,10 @@ if [ -n "$PCON_PATCH" ]; then
     else
         die_tree_drift "DCN201 PCON HDMI 2.1 patch does not apply"
     fi
+elif [[ "$BASE" == 7.2.* ]] && grep -qF 'dp_hdmi21_pcon_support = true' "$PCON_SOURCE"; then
+    die_tree_drift "DCN201 PCON HDMI 2.1 support is present without --acknowledge-dcn201-display-risk; clean the tree before a stable build"
+else
+    echo "unstable DCN201 DP-HDMI 2.1 PCON support not selected"
 fi
 
 step "apply DCN201 DSC enablement (4K@120Hz via HDMI 2.1 PCON)"
@@ -496,6 +510,10 @@ if [ -n "$DSC_PATCH" ]; then
     else
         die_tree_drift "DCN201 DSC patch does not apply"
     fi
+elif [[ "$BASE" == 7.2.* ]] && grep -qF 'dcn20_dsc_create' "$DSC_SOURCE"; then
+    die_tree_drift "DCN201 DSC support is present without --acknowledge-dcn201-display-risk; clean the tree before a stable build"
+else
+    echo "unstable DCN201 DSC support not selected"
 fi
 
 step "modules_prepare + config re-verify (runbook step 7)"
@@ -528,7 +546,7 @@ zstd -19 -q -f "$OUT/amdgpu.ko" -o "$OUT/amdgpu.ko.zst"
     || die "module failed guard checks — NOT replacing $HERE/amdgpu.ko.zst"
 
 MODULE_SHA=$(sha256sum "$OUT/amdgpu.ko.zst" | awk '{print $1}')
-printf '%s %s\n' "$GFX1013_COMMIT" "$MODULE_SHA" > "$OUT/amdgpu.gfx1013.attestation"
+printf '%s %s %s\n' "$GFX1013_COMMIT" "$MODULE_SHA" "$DISPLAY_COMPOSITION" > "$OUT/amdgpu.gfx1013.attestation"
 mv -f "$OUT/amdgpu.ko.zst" "$HERE/amdgpu.ko.zst"
 mv -f "$OUT/amdgpu.gfx1013.attestation" "$HERE/amdgpu.gfx1013.attestation"
 echo

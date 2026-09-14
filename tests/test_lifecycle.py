@@ -443,6 +443,60 @@ governor_frequency_floor_ready
             )
             self.assertEqual(parsed["load-target"], {"upper": 0.8, "lower": 0.65})
 
+    def test_numeric_frequency_request_repairs_only_the_requested_floor(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            config = root / "config.toml"
+            config.write_text(
+                "[[safe-points]]\nfrequency = 1000\nvoltage = 800\n\n"
+                "[[safe-points]]\nfrequency = 2230\nvoltage = 1000\n",
+                encoding="utf-8",
+            )
+            systemctl = root / "systemctl"
+            systemctl.write_text("#!/bin/sh\nexit 0\n", encoding="ascii")
+            systemctl.chmod(0o755)
+            performance = root / "performance-mode"
+            performance.write_text(
+                '#!/bin/sh\nprintf "%s\\n" "$*" > "$BC250_TEST_CALLS"\n',
+                encoding="ascii",
+            )
+            performance.chmod(0o755)
+            calls = root / "calls"
+            result = subprocess.run(
+                [
+                    "bash",
+                    "-c",
+                    r'''
+script=$1; base=$2; systemctl_bin=$3; performance=$4
+set -- help
+source "$script" >/dev/null
+require_root() { :; }
+systemctl() { "$systemctl_bin" "$@"; }
+save_freq_state() { :; }
+GOV_CONF="$base/config.toml"
+FREQ_STATE="$base/freq-state"
+RESTORE_BIN="$base/restore"
+GOV_SVC=test-governor.service
+GPU_CONTROL_LOCK="$base/lock/backend.lock"
+SYSTEMCTL_BIN="$systemctl_bin"
+PERF_BIN="$performance"
+cmd_freq 350 1850
+''',
+                    "_",
+                    str(POWER),
+                    directory,
+                    str(systemctl),
+                    str(performance),
+                ],
+                capture_output=True,
+                text=True,
+                env={**script_env(directory), "BC250_TEST_CALLS": str(calls)},
+            )
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual(calls.read_text(encoding="ascii"), "--range 350 1850\n")
+            parsed = tomllib.loads(config.read_text(encoding="utf-8"))
+            self.assertEqual(parsed["safe-points"][0], {"frequency": 350, "voltage": 700})
+
     def test_voltage_curve_rejects_invalid_candidate_without_writing(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

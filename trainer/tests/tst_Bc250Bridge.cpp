@@ -104,11 +104,11 @@ private slots:
     {
         Bc250Bridge bridge(true);
 
-        bridge.setGpuFrequency(QStringLiteral("range"), 500, 1400);
+        bridge.setGpuFrequency(QStringLiteral("range"), 350, 1400);
         QTRY_VERIFY_WITH_TIMEOUT(!bridge.busy(), 2000);
         QVariantMap gpu = bridge.snapshot().value(QStringLiteral("gpu")).toMap();
         QCOMPARE(gpu.value(QStringLiteral("mode")).toString(), QStringLiteral("range"));
-        QCOMPARE(gpu.value(QStringLiteral("minimum")).toInt(), 500);
+        QCOMPARE(gpu.value(QStringLiteral("minimum")).toInt(), 350);
         QCOMPARE(gpu.value(QStringLiteral("maximum")).toInt(), 1400);
 
         bridge.setGpuFrequency(QStringLiteral("adaptive"), -1, -1);

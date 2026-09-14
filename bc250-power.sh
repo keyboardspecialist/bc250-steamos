@@ -1352,12 +1352,19 @@ validate_gpu_frequency_request() {
 
 cmd_freq() {
     require_root
-    gpu_control_lock || return $?
-    systemctl is-active "$GOV_SVC" >/dev/null 2>&1 \
-        || die "Governor not running -- freq control goes through it."
-
     local a="${1:-}" b="${2:-}"
     validate_gpu_frequency_request "$a" "$b"
+    systemctl is-active "$GOV_SVC" >/dev/null 2>&1 \
+        || die "Governor not running -- freq control goes through it."
+    if [[ "$a" =~ ^[0-9]+$ && "$a" != 0 ]] \
+       && ! governor_frequency_floor_ready "$a"; then
+        log "Extending the governor curve to cover the requested ${a} MHz floor."
+        volt_curve_helper mutate floor "$a"
+    fi
+
+    gpu_control_lock || return $?
+    systemctl is-active "$GOV_SVC" >/dev/null 2>&1 \
+        || die "Governor stopped while preparing frequency control."
     # Helper handles everything including status; use it when available.
     if [[ -x "$PERF_BIN" ]]; then
         case "$a" in
@@ -1404,7 +1411,7 @@ cmd_freq() {
 # These commands edit the curve in config.toml, restart the governor, and
 # reapply the saved freq setting (a restart otherwise drops runtime state).
 GPU_FREQ_MIN=350
-GPU_CURVE_FREQ_MIN=300
+GPU_CURVE_FREQ_MIN=350
 GPU_FREQ_MAX=2230
 VOLT_MIN=700    # below: artifact/crash territory even at low clocks
 VOLT_MAX=1050   # above the community flat-1000 ceiling + small margin
@@ -1939,10 +1946,10 @@ volt_points() {
 }
 
 governor_frequency_floor_ready() {
-    local points first
+    local target="${1:-$GPU_FREQ_MIN}" points first
     points=$(volt_curve_helper list 2>/dev/null) || return 1
     read -r first _ <<< "$points"
-    [[ "$first" =~ ^[0-9]+$ ]] && (( first <= GPU_FREQ_MIN ))
+    [[ "$target" =~ ^[0-9]+$ && "$first" =~ ^[0-9]+$ ]] && (( first <= target ))
 }
 
 volt_show() {

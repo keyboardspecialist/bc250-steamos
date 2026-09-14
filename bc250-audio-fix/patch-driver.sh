@@ -3,7 +3,8 @@
 # SteamOS update. Run as the normal user; sudo is invoked for missing build
 # prerequisites and installation.
 #
-#   ./patch-driver.sh [kernel-tree]  (default: ./valve-kernel)
+#   ./patch-driver.sh [--acknowledge-dcn201-display-risk] [kernel-tree]
+#                     (default tree: ./valve-kernel)
 #   ./patch-driver.sh status
 #   ./patch-driver.sh status-json
 #   ./patch-driver.sh uninstall
@@ -15,7 +16,7 @@ GFX1013_COMMIT=d3e6dc062c34d2523db0abe5741d1f5b0dea00d9
 
 usage() {
     cat <<EOF
-Usage: $0 [kernel-tree]
+Usage: $0 [--acknowledge-dcn201-display-risk] [kernel-tree]
        $0 status
        $0 status-json
        $0 uninstall
@@ -23,8 +24,21 @@ Usage: $0 [kernel-tree]
 Run as the logged-in user. The build requests sudo if a SteamOS update removed
 its host toolchain. Install and uninstall also request sudo for privileged
 steps. Uninstall preserves source, downloads, and build output.
+
+The acknowledgement option adds experimental DCN201 DSC and HDMI 2.1 PCON
+support on kernel 7.2. It may cause display instability and is omitted by default.
 EOF
 }
+
+ACKNOWLEDGE_DCN201_DISPLAY_RISK=0
+ARGS=()
+for argument in "$@"; do
+    case "$argument" in
+        --acknowledge-dcn201-display-risk) ACKNOWLEDGE_DCN201_DISPLAY_RISK=1 ;;
+        *) ARGS+=("$argument") ;;
+    esac
+done
+set -- "${ARGS[@]}"
 
 show_status_json() {
     local rel updates default_module default_audio_marker default_metrics_marker
@@ -270,7 +284,11 @@ flock 9
 
 "$HERE/fetch-sources.sh" "$@"
 build_rc=0
-"$HERE/build.sh" "$@" || build_rc=$?
+BUILD_ARGS=("$@")
+if [ "$ACKNOWLEDGE_DCN201_DISPLAY_RISK" = 1 ]; then
+    BUILD_ARGS=(--acknowledge-dcn201-display-risk "${BUILD_ARGS[@]}")
+fi
+"$HERE/build.sh" "${BUILD_ARGS[@]}" || build_rc=$?
 if [ "$build_rc" = "$TREE_DRIFT_EXIT" ]; then
     echo "[bc250-amdgpu] The kernel source tree diverged from the expected patched state." >&2
     if [ -t 0 ] && [ -t 1 ]; then
@@ -280,7 +298,7 @@ if [ "$build_rc" = "$TREE_DRIFT_EXIT" ]; then
             y|Y|yes|YES)
                 "$HERE/clean.sh" "$@"
                 "$HERE/fetch-sources.sh" "$@"
-                "$HERE/build.sh" "$@"
+                "$HERE/build.sh" "${BUILD_ARGS[@]}"
                 ;;
             *) exit "$build_rc" ;;
         esac
@@ -291,4 +309,8 @@ if [ "$build_rc" = "$TREE_DRIFT_EXIT" ]; then
 elif [ "$build_rc" != 0 ]; then
     exit "$build_rc"
 fi
-sudo "$HERE/install.sh"
+INSTALL_ARGS=()
+if [ "$ACKNOWLEDGE_DCN201_DISPLAY_RISK" = 1 ]; then
+    INSTALL_ARGS=(--acknowledge-dcn201-display-risk)
+fi
+sudo "$HERE/install.sh" "${INSTALL_ARGS[@]}"

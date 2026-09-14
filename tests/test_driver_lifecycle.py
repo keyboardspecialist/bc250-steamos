@@ -42,6 +42,8 @@ DP_CLOCK_616_PATCH = ROOT / "bc250-audio-fix/bc250-dp-audio-clock-6.16.patch"
 GFX1013_ATTESTATION_PATCH = (
     ROOT / "bc250-audio-fix/bc250-gfx1013-attestation.patch"
 )
+DCN201_PCON_PATCH = ROOT / "bc250-audio-fix/bc250-dcn201-pcon-hdmi21.patch"
+DCN201_DSC_PATCH = ROOT / "bc250-audio-fix/bc250-dcn201-dsc-enable.patch"
 
 
 class DriverLifecycleTests(unittest.TestCase):
@@ -694,6 +696,26 @@ class DriverLifecycleTests(unittest.TestCase):
         self.assertIn("AUDIO_PATCH=", kernel_72)
         self.assertNotIn("0002-bc250-audio.patch", kernel_72)
         self.assertNotIn("bc250-dp-audio-clock", kernel_72)
+
+    def test_dcn201_dsc_and_pcon_require_explicit_risk_acknowledgement(self):
+        driver = AUDIO_INSTALLER.read_text(encoding="utf-8")
+        builder = (ROOT / "bc250-audio-fix/build.sh").read_text(encoding="utf-8")
+        installer = (ROOT / "bc250-audio-fix/install.sh").read_text(encoding="utf-8")
+        toolkit = (ROOT / "bc250-toolkit.sh").read_text(encoding="utf-8")
+
+        acknowledgement = "--acknowledge-dcn201-display-risk"
+        self.assertTrue(DCN201_PCON_PATCH.is_file())
+        self.assertTrue(DCN201_DSC_PATCH.is_file())
+        self.assertIn(acknowledgement, driver)
+        self.assertIn(acknowledgement, builder)
+        self.assertIn(acknowledgement, installer)
+        self.assertIn(acknowledgement, toolkit)
+        self.assertIn("DISPLAY_COMPOSITION=stable", builder)
+        self.assertIn("DISPLAY_COMPOSITION=dcn201-display-unstable", builder)
+        self.assertIn("ATTESTED_COMPOSITION", installer)
+        self.assertIn("may cause display instability", toolkit)
+        self.assertIn("Building without the experimental DSC/PCON patches.", toolkit)
+        self.assertIn('bash "$AUDIO_FIX_SH"\n', toolkit)
 
     def test_amdgpu_build_integrates_cyan_skillfish_metrics_patches(self):
         builder = (ROOT / "bc250-audio-fix/build.sh").read_text(encoding="utf-8")

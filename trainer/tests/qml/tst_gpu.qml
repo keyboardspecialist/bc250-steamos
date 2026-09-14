@@ -110,11 +110,12 @@ TestCase {
 
     function test_allActionsDispatchCurrentValues() {
         page.mode = "range"
-        page.minimum = 500
+        page.minimum = 350
         page.maximum = 1400
+        verify(page.frequencyValid)
         findChild(page, "gpuFrequencyApply").clicked()
         compare(backend.calledMethod, "frequency")
-        compare(backend.calledArguments, ["range", 500, 1400])
+        compare(backend.calledArguments, ["range", 350, 1400])
 
         findChild(page, "gpuLoadEager").clicked()
         compare(backend.calledMethod, "loadPreset")
@@ -135,5 +136,12 @@ TestCase {
         findChild(page, "gpuRampSet").clicked()
         compare(backend.calledMethod, "ramp")
         compare(backend.calledArguments, [1200])
+    }
+
+    function test_frequencyRejectsValuesBelow350() {
+        page.mode = "range"
+        page.minimum = 349
+        page.maximum = 1400
+        verify(!page.frequencyValid)
     }
 }

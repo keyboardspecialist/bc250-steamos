@@ -22,13 +22,24 @@ sudo reboot
 
 `patch-driver.sh` restores the SteamOS build toolchain if an OS update removed it, fetches matching sources and kernel-specific dependencies, applies the host-tool compatibility backport needed by GCC 15/C23, builds the module, validates it, and invokes `sudo` for privileged steps. If Valve omitted the exact headers package, it builds the exact kernel source completely to generate the missing symbol inventory. That fallback can take hours and requires about 40 GiB of free temporary space.
 
+Kernel 7.2 can also build experimental DCN201 DSC and HDMI 2.1 PCON support for
+4K at 120 Hz. It is omitted by default because it may cause display instability.
+The exact acknowledgement is required for both build and install:
+
+```bash
+./patch-driver.sh --acknowledge-dcn201-display-risk
+```
+
+The resulting module records its display composition. Installing an experimental
+artifact directly also requires `install.sh --acknowledge-dcn201-display-risk`.
+
 ## Kernel Support
 
 | SteamOS | Kernel | Patch |
 |---|---|---|
 | 3.8.x | `linux-neptune-616` | [`bc250-dp-audio-clock-6.16.patch`](bc250-dp-audio-clock-6.16.patch) and [`0002-bc250-audio.patch`](0002-bc250-audio.patch) |
 | 3.9.x | `linux-neptune-618` | [`0002-bc250-audio.patch`](0002-bc250-audio.patch) |
-| Valve 7.2 integration | `7.2` | No DisplayPort audio patch required |
+| Valve 7.2 integration | `7.2` | No DisplayPort audio patch required; experimental DSC/HDMI 2.1 PCON is opt-in |
 
 All supported versions apply the Cyan Skillfish telemetry patches. They preserve
 the firmware's published metrics-table transfer size, query and validate the
@@ -77,11 +88,13 @@ override.
 | `0003-gfx1013-scoped-pasid-type0.patch` | Scope type-0 invalidation to the GFX1013 PASID path |
 | `bc250-gfx1013-attestation.patch` | Expose the loaded repair commit as a read-only module parameter |
 | `bc250-kfd-flush-by-runlist-6.16.patch` / `6.18.patch` | Add the opt-in BC-250 KFD HWS runlist TLB flush; 7.2 retains the 6.18 patch API |
+| `bc250-dcn201-pcon-hdmi21.patch` | Opt-in DP-to-HDMI 2.1 PCON support on DCN201 for kernel 7.2 |
+| `bc250-dcn201-dsc-enable.patch` | Opt-in DSC resources on DCN201 for kernel 7.2 |
 
 The SCLK and TTM changes are adapted from the stable `linux-cachyos` patch set
 in [`MastaG/linux-cachyos-bc250`](https://github.com/MastaG/linux-cachyos-bc250/tree/main/patches/linux-cachyos).
-The stable SCLK ceiling is retained; its 350 MHz floor is widened to 300 MHz to
-match the toolkit's established governor range.
+The kernel SCLK interface is widened to 300 MHz while the toolkit keeps a
+conservative 350 MHz user-facing governor floor.
 
 The KFD runlist workaround is adapted from the stable `linux-cachyos` patch set
 in the same repository. Separate 6.16 and 6.18 variants account for the KFD TLB

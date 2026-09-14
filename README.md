@@ -626,10 +626,20 @@ cd bc250-audio-fix
 ./patch-driver.sh
 ```
 
+The normal build omits experimental DCN201 DSC and HDMI 2.1 PCON support on
+kernel 7.2. To include it for 4K at 120 Hz, explicitly accept the display
+instability risk:
+
+```bash
+./patch-driver.sh --acknowledge-dcn201-display-risk
+```
+
 The patches preserve the Cyan Skillfish firmware metrics layout, query GFX
 frequency directly from the SMU, add GPU utilization reporting, and repair the
 GFX1013 compute-queue lifecycle. On 6.16 and 6.18 they also apply the required
 DisplayPort audio corrections; Valve 7.2 needs neither legacy audio patch.
+The toolkit's interactive AMDGPU action asks separately whether to include the
+7.2-only DSC/PCON pair. Declining that opt-in continues with the stable build.
 Builds are matched to the running kernel and checked for vermagic and ABI compatibility
 before installation. If Valve omitted the matching headers, the toolkit can
 generate the required symbols with a complete exact-source kernel build.

@@ -279,6 +279,15 @@ class ControlServiceTests(unittest.IsolatedAsyncioTestCase):
         )
         self.assertEqual(self.backends[0].calls, [("set_hdmi_surround", (True,))])
 
+    async def test_gpu_frequency_accepts_350_mhz_floor(self):
+        operation_id = await self.service.set_gpu_frequency(":1.1", "range", 350, 1500)
+        operation = await self.wait_for_status(":1.1", operation_id, "succeeded")
+
+        self.assertEqual(operation["method"], "SetGpuFrequency")
+        self.assertEqual(
+            self.backends[0].calls, [("set_gpu_frequency", ("range", 350, 1500))]
+        )
+
     async def test_fsr4_mutations_use_opaque_ids_and_are_non_cancellable(self):
         target_id = "a" * 64
         operation_id = await self.service.install_fsr4_dll(":1.1", target_id)
@@ -322,7 +331,7 @@ class ControlServiceTests(unittest.IsolatedAsyncioTestCase):
         with self.assertRaises(InvalidArguments):
             await self.service.set_gpu_frequency(":1.1", "pin", 0, 2231)
         with self.assertRaises(InvalidArguments):
-            await self.service.set_gpu_frequency(":1.1", "pin", 0, 299)
+            await self.service.set_gpu_frequency(":1.1", "pin", 0, 349)
         with self.assertRaises(InvalidArguments):
             await self.service.set_gpu_frequency(":1.1", "range", 100, 1500)
         with self.assertRaises(InvalidArguments):

@@ -133,7 +133,23 @@ install_audio_fix() {
     require_script "$AUDIO_FIX_SH"
     confirm_action \
         "Build and install the matching AMDGPU kernel fixes?" \
-        bash "$AUDIO_FIX_SH"
+        choose_dcn201_display_patches
+}
+
+choose_dcn201_display_patches() {
+    local answer
+    require_terminal
+    printf '%s' "${CB}Include experimental DSC and HDMI 2.1 PCON support on kernel 7.2? This may cause display instability. [y/N] ${C0}"
+    IFS= read -r answer
+    case "$answer" in
+        y|Y|yes|YES)
+            bash "$AUDIO_FIX_SH" --acknowledge-dcn201-display-risk
+            ;;
+        *)
+            log "Building without the experimental DSC/PCON patches."
+            bash "$AUDIO_FIX_SH"
+            ;;
+    esac
 }
 
 clean_audio_fix() {

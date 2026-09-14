@@ -3,6 +3,14 @@
 # modules updates/ override. Run as: sudo ./install.sh
 set -euo pipefail
 
+ACKNOWLEDGE_DCN201_DISPLAY_RISK=0
+case "${1:-}" in
+    "") ;;
+    --acknowledge-dcn201-display-risk) ACKNOWLEDGE_DCN201_DISPLAY_RISK=1 ;;
+    *) echo "usage: $0 [--acknowledge-dcn201-display-risk]" >&2; exit 2 ;;
+esac
+[ "$#" -le 1 ] || { echo "usage: $0 [--acknowledge-dcn201-display-risk]" >&2; exit 2; }
+
 REL=$(uname -r)
 HERE=$(cd "$(dirname "$0")" && pwd)
 SRC=$HERE/amdgpu.ko.zst
@@ -19,13 +27,20 @@ MKINITCPIO=$HERE/mkinitcpio-compat.sh
     || { echo "missing GFX1013 build attestation — rebuild with ./build.sh"; exit 1; }
 [ "$(id -u)" = 0 ] || { echo "run with sudo"; exit 1; }
 
-read -r ATTESTED_COMMIT ATTESTED_SHA < "$ATTESTATION" \
+read -r ATTESTED_COMMIT ATTESTED_SHA ATTESTED_COMPOSITION < "$ATTESTATION" \
     || { echo "invalid GFX1013 build attestation — rebuild with ./build.sh"; exit 1; }
 ACTUAL_SHA=$(sha256sum "$SRC" | awk '{print $1}')
 [ "$ATTESTED_COMMIT" = d3e6dc062c34d2523db0abe5741d1f5b0dea00d9 ] \
     && [[ "$ATTESTED_SHA" =~ ^[0-9a-f]{64}$ ]] \
     && [ "$ATTESTED_SHA" = "$ACTUAL_SHA" ] \
+    && [[ "$ATTESTED_COMPOSITION" == stable || "$ATTESTED_COMPOSITION" == dcn201-display-unstable ]] \
     || { echo "GFX1013 build attestation does not match amdgpu.ko.zst — rebuild with ./build.sh"; exit 1; }
+if [ "$ATTESTED_COMPOSITION" = dcn201-display-unstable ] \
+   && [ "$ACKNOWLEDGE_DCN201_DISPLAY_RISK" != 1 ]; then
+    echo "This module enables experimental DCN201 DSC and HDMI 2.1 PCON support." >&2
+    echo "Re-run with --acknowledge-dcn201-display-risk only if you accept display instability." >&2
+    exit 1
+fi
 
 [[ "$REL" =~ neptune-[0-9]+ ]] && PRESET=linux-${BASH_REMATCH[0]} || PRESET=
 [ -n "$PRESET" ] && [ -f "/etc/mkinitcpio.d/$PRESET.preset" ] || {
