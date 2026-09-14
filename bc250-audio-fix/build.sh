@@ -264,6 +264,8 @@ case "$BASE" in
         METRICS_PATCH=$HERE/bc250-cyan-skillfish-gpu-telemetry-7.2.patch
         GFXCLK_PATCH=$HERE/bc250-cyan-skillfish-gfxclk-7.2.patch
         KFD_RUNLIST_PATCH=$HERE/bc250-kfd-flush-by-runlist-6.18.patch
+        PCON_PATCH=$HERE/bc250-dcn201-pcon-hdmi21.patch
+        DSC_PATCH=$HERE/bc250-dcn201-dsc-enable.patch
         ;;
     *)      die "no AMDGPU patch variant for kernel $BASE — check which fixes are already upstream, then add a case above" ;;
 esac
@@ -469,6 +471,32 @@ grep -qF "module_param(bc250_flush_by_runlist" "$KFD_DQM" \
     && grep -qF "kfd_bc250_flush_tlb_by_runlist(peer_pdd->dev)" "$KFD_CHARDEV" \
     && grep -qF "int kfd_bc250_flush_tlb_by_runlist" "$KFD_DQM_HEADER" \
     || die "BC-250 KFD runlist TLB-flush patch postcondition failed"
+
+step "apply DCN201 DP-HDMI 2.1 PCON support"
+PCON_SOURCE=drivers/gpu/drm/amd/display/dc/resource/dcn201/dcn201_resource.c
+if [ -n "$PCON_PATCH" ]; then
+    if grep -qF 'dp_hdmi21_pcon_support = true' "$PCON_SOURCE"; then
+        echo "DCN201 DP-HDMI 2.1 PCON support already enabled"
+    elif patch -p1 --dry-run -s -f < "$PCON_PATCH" >/dev/null 2>&1; then
+        patch -p1 -s < "$PCON_PATCH"
+        echo "DCN201 DP-HDMI 2.1 PCON support enabled"
+    else
+        die_tree_drift "DCN201 PCON HDMI 2.1 patch does not apply"
+    fi
+fi
+
+step "apply DCN201 DSC enablement (4K@120Hz via HDMI 2.1 PCON)"
+DSC_SOURCE=drivers/gpu/drm/amd/display/dc/resource/dcn201/dcn201_resource.c
+if [ -n "$DSC_PATCH" ]; then
+    if grep -qF 'dcn20_dsc_create' "$DSC_SOURCE"; then
+        echo "DCN201 DSC already enabled"
+    elif patch -p1 --dry-run -s -f < "$DSC_PATCH" >/dev/null 2>&1; then
+        patch -p1 -s < "$DSC_PATCH"
+        echo "DCN201 DSC enabled (4K@120Hz via HDMI 2.1 PCON)"
+    else
+        die_tree_drift "DCN201 DSC patch does not apply"
+    fi
+fi
 
 step "modules_prepare + config re-verify (runbook step 7)"
 make -j"$(nproc)" modules_prepare

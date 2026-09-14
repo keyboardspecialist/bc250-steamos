@@ -1,0 +1,79 @@
+From: Anonymous
+Subject: [PATCH] drm/amd/display: Enable DSC on DCN201 (AMD Cyan Skillfish / BC-250)
+
+AMD Cyan Skillfish (gfx1013, BC-250) shares the same display controller
+silicon as DCN200. The PS5 system software confirms two DSC engines
+(DSCC0, DSCC1) are present on-die. DCN200 and DCN201 share the same
+DMU_BASE__INST0_SEG2 = 0x34C0, so DCN200's register tables are
+physically correct for DCN201.
+
+The Linux DCN201 driver shipped with num_dsc = 0 and no DSC resource
+allocation. Two fixes are needed:
+
+1. num_dsc = 2 in res_cap + DSC object create/destroy (hardware objects)
+2. dcn201_ip.num_dsc = 2 before dml_init_instance (DML mode validation)
+
+Without fix 2, the DML reads NumberOfDSC = 0 and fails every DSC-requiring
+mode with "Not enough DSC Units" even though the hardware objects exist.
+
+Prerequisite for 4K@120Hz 4:4:4 output via DSC over DP 1.4 + HDMI 2.1 PCON.
+
+Signed-off-by: Anonymous
+--- a/drivers/gpu/drm/amd/display/dc/resource/dcn201/dcn201_resource.c	2026-09-12 21:49:12.151127181 -0700
++++ b/drivers/gpu/drm/amd/display/dc/resource/dcn201/dcn201_resource.c	2026-09-13 00:49:11.513500322 -0700
+@@ -568,7 +568,7 @@
+ 		.num_stream_encoder = 2,
+ 		.num_pll = 2,
+ 		.num_dwb = 0,
+-		.num_dsc = 0,
++		.num_dsc = 2,
+ 		.num_ddc = 2,
+ };
+ 
+@@ -940,6 +940,11 @@
+ {
+ 	unsigned int i;
+ 
++	for (i = 0; i < pool->base.res_cap->num_dsc; i++) {
++		if (pool->base.dscs[i])
++			dcn20_dsc_destroy(&pool->base.dscs[i]);
++	}
++
+ 	for (i = 0; i < pool->base.stream_enc_count; i++) {
+ 		if (pool->base.stream_enc[i] != NULL) {
+ 			kfree(DCN10STRENC_FROM_STRENC(pool->base.stream_enc[i]));
+@@ -1106,7 +1111,7 @@
+ 	.validate_bandwidth = dcn20_validate_bandwidth,
+ 	.populate_dml_pipes = dcn20_populate_dml_pipes_from_context,
+ 	.add_stream_to_ctx = dcn20_add_stream_to_ctx,
+-	.add_dsc_to_stream_resource = NULL,
++	.add_dsc_to_stream_resource = dcn20_add_dsc_to_stream_resource,
+ 	.remove_stream_from_ctx = dcn20_remove_stream_from_ctx,
+ 	.acquire_free_pipe_as_secondary_dpp_pipe = dcn201_acquire_free_pipe_for_layer,
+ 	.release_pipe = dcn20_release_pipe,
+@@ -1229,6 +1234,7 @@
+ 
+ 	dcn201_ip.max_num_otg = pool->base.res_cap->num_timing_generator;
+ 	dcn201_ip.max_num_dpp = pool->base.pipe_count;
++	dcn201_ip.num_dsc = pool->base.res_cap->num_dsc;
+ 	dml_init_instance(&dc->dml, &dcn201_soc, &dcn201_ip, DML_PROJECT_DCN201);
+ 	{
+ 		struct irq_service_init_data init_data;
+@@ -1318,6 +1324,17 @@
+ 		goto create_fail;
+ 	}
+ 
++
++	/* DSC compression engines (2 on Cyan Skillfish, same silicon as DCN200) */
++	for (i = 0; i < pool->base.res_cap->num_dsc; i++) {
++		pool->base.dscs[i] = dcn20_dsc_create(ctx, i);
++		if (!pool->base.dscs[i]) {
++			BREAK_TO_DEBUGGER();
++			dm_error("DC: failed to create dsc id=%d!\n", i);
++			goto create_fail;
++		}
++	}
++
+ 	if (!resource_construct(num_virtual_links, dc, &pool->base,
+ 			&res_create_funcs))
+ 		goto create_fail;

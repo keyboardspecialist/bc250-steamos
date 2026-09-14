@@ -1,0 +1,11 @@
+--- a/drivers/gpu/drm/amd/display/dc/resource/dcn201/dcn201_resource.c
++++ b/drivers/gpu/drm/amd/display/dc/resource/dcn201/dcn201_resource.c
+@@ -1330,6 +1330,8 @@ static bool dcn201_resource_construct(
+ 
+ 	dc->caps.max_odm_combine_factor = 2;
+ 
++	dc->caps.dp_hdmi21_pcon_support = true;
++
+ 	dc->cap_funcs = cap_funcs;
+ 
+ 	return true;
