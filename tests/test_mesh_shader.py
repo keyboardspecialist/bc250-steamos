@@ -583,6 +583,55 @@ class MeshShaderTests(unittest.TestCase):
             self.assertNotEqual(result.returncode, 0)
             self.assertIn("not a recorded toolkit install", result.stderr)
 
+    def test_unmanaged_runtime_requires_explicit_safe_override(self):
+        with tempfile.TemporaryDirectory() as directory:
+            env = self.environment(Path(directory))
+            driver = Path(env["BC250_MESH_DRIVER"])
+            driver.write_bytes(b"unmanaged driver\n")
+            command = (
+                'script=$1; override=$2; set -- help; source "$script" >/dev/null; '
+                'preflight_runtime_ownership "$override"'
+            )
+            refused = subprocess.run(
+                ["bash", "-c", command, "_", str(MESH), "0"],
+                capture_output=True,
+                text=True,
+                env=env,
+            )
+            allowed = subprocess.run(
+                ["bash", "-c", command, "_", str(MESH), "1"],
+                capture_output=True,
+                text=True,
+                env=env,
+            )
+
+            self.assertNotEqual(refused.returncode, 0)
+            self.assertIn("install manifest is missing", refused.stderr)
+            self.assertIn("setup --replace-unmanaged", refused.stderr)
+            self.assertEqual(allowed.returncode, 0, allowed.stderr)
+            self.assertIn("Replacing unmanaged alternate runtime", allowed.stdout)
+
+    def test_unmanaged_runtime_override_rejects_symlink(self):
+        with tempfile.TemporaryDirectory() as directory:
+            env = self.environment(Path(directory))
+            driver = Path(env["BC250_MESH_DRIVER"])
+            target = driver.with_name("foreign-driver")
+            target.write_bytes(b"foreign driver\n")
+            driver.symlink_to(target)
+            command = (
+                'script=$1; set -- help; source "$script" >/dev/null; '
+                "preflight_runtime_ownership 1"
+            )
+            result = subprocess.run(
+                ["bash", "-c", command, "_", str(MESH)],
+                capture_output=True,
+                text=True,
+                env=env,
+            )
+
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("Refusing to replace an unmanaged symlink", result.stderr)
+
     def test_tampered_generator_invalidates_runtime(self):
         with tempfile.TemporaryDirectory() as directory:
             env = self.environment(Path(directory))

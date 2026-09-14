@@ -1086,14 +1086,84 @@ verify_recorded_parts() {
     fi
 }
 
-preflight_runtime_ownership() {
-    if [[ -e "$DRIVER" || -L "$DRIVER" || -e "$ICD" || -L "$ICD" \
-        || -e "$GENERATOR" || -L "$GENERATOR" ]]; then
-        verify_recorded_parts \
-            || die "Existing alternate driver/ICD is not a recorded toolkit install; refusing replacement."
-    elif [[ -e "$MANIFEST" || -L "$MANIFEST" ]]; then
-        read_manifest || die "Install manifest is malformed; refusing replacement."
+runtime_ownership_failure() {
+    local actual
+    if [[ ! -e "$MANIFEST" && ! -L "$MANIFEST" ]]; then
+        printf 'install manifest is missing: %s' "$MANIFEST"
+        return
     fi
+    if ! read_manifest; then
+        printf 'install manifest is malformed or unrecognized: %s' "$MANIFEST"
+        return
+    fi
+    if [[ -e "$DRIVER" || -L "$DRIVER" ]]; then
+        if [[ ! -f "$DRIVER" || -L "$DRIVER" ]]; then
+            printf 'driver path is not a regular file: %s' "$DRIVER"
+            return
+        fi
+        actual=$(sha256_file "$DRIVER")
+        if [[ "$actual" != "$STORED_DRIVER_SHA" ]]; then
+            printf 'driver hash does not match the install manifest: %s' "$DRIVER"
+            return
+        fi
+    fi
+    if [[ -e "$ICD" || -L "$ICD" ]]; then
+        if [[ ! -f "$ICD" || -L "$ICD" ]]; then
+            printf 'ICD path is not a regular file: %s' "$ICD"
+            return
+        fi
+        actual=$(sha256_file "$ICD")
+        if [[ "$actual" != "$STORED_ICD_SHA" ]]; then
+            printf 'ICD hash does not match the install manifest: %s' "$ICD"
+            return
+        fi
+    fi
+    if [[ -e "$GENERATOR" || -L "$GENERATOR" ]] && ! generator_recorded; then
+        printf 'environment generator is unrecognized: %s' "$GENERATOR"
+        return
+    fi
+    printf 'recorded runtime validation failed'
+}
+
+unmanaged_runtime_is_replaceable() {
+    local path
+    for path in "$DRIVER" "$ICD" "$GENERATOR" "$MANIFEST"; do
+        if [[ -e "$path" || -L "$path" ]]; then
+            [[ -f "$path" && ! -L "$path" ]] || return 1
+        fi
+    done
+}
+
+preflight_runtime_ownership() {
+    local replace_unmanaged="${1:-0}" reason answer
+    [[ "$replace_unmanaged" == 0 || "$replace_unmanaged" == 1 ]] \
+        || die "Invalid runtime-ownership override."
+    if [[ "${RUNTIME_REPLACE_APPROVED:-0}" == 1 ]]; then
+        replace_unmanaged=1
+    fi
+    if [[ ! -e "$DRIVER" && ! -L "$DRIVER" && ! -e "$ICD" && ! -L "$ICD" \
+        && ! -e "$GENERATOR" && ! -L "$GENERATOR" \
+        && ! -e "$MANIFEST" && ! -L "$MANIFEST" ]]; then
+        return
+    fi
+    verify_recorded_parts && return
+    reason=$(runtime_ownership_failure)
+    unmanaged_runtime_is_replaceable \
+        || die "Refusing to replace an unmanaged symlink, directory, or special file ($reason)."
+    if [[ "$replace_unmanaged" == 0 && -t 0 && -t 1 ]]; then
+        printf 'Existing alternate runtime is not a recorded toolkit install (%s). Replace these regular files? [y/N] ' "$reason"
+        IFS= read -r answer || answer=""
+        case "$answer" in
+            y|Y|yes|YES)
+                replace_unmanaged=1
+                RUNTIME_REPLACE_APPROVED=1
+                ;;
+        esac
+    fi
+    if [[ "$replace_unmanaged" == 0 ]]; then
+        die "Existing alternate runtime is not a recorded toolkit install ($reason). Rerun with 'setup --replace-unmanaged' to replace regular files explicitly."
+    fi
+    log "Replacing unmanaged alternate runtime by explicit request ($reason)."
 }
 
 recover_install_transaction() (
@@ -1363,7 +1433,7 @@ PY
 
 cmd_setup() (
     require_normal_user
-    local profile="${1:-default}" mesa_tag="$DEFAULT_MESA_TAG"
+    local profile="${1:-default}" replace_unmanaged="${2:-0}" mesa_tag="$DEFAULT_MESA_TAG"
     local work source build output staged_driver base_output base_driver_sha
     local cache_profile="" expected_sha="" committed=0 default_ready=0 default_bootstrapped=0
     local ro_was_enabled=0 root_unlocked=0 need_packages=0
@@ -1377,7 +1447,7 @@ cmd_setup() (
     fi
     if [[ ! -e "$TRANSACTION_DIR" && ! -L "$TRANSACTION_DIR" \
         && ! -e "$FSR4_TRANSACTION_DIR" && ! -L "$FSR4_TRANSACTION_DIR" ]]; then
-        preflight_runtime_ownership
+        preflight_runtime_ownership "$replace_unmanaged"
         if [[ -e "$FSR4_DIR" || -L "$FSR4_DIR" ]]; then
             verify_owned_fsr4_runtime \
                 || die "Existing legacy FSR4 V3 profile is incomplete or not a recorded toolkit install."
@@ -1390,12 +1460,12 @@ cmd_setup() (
     recover_install_transaction
     recover_fsr4_install_transaction
     if [[ "$profile" == default ]]; then
-        preflight_runtime_ownership
+        preflight_runtime_ownership "$replace_unmanaged"
     else
         if verify_current_runtime; then
             default_ready=1
         else
-            preflight_runtime_ownership
+            preflight_runtime_ownership "$replace_unmanaged"
             log "The async-compute RADV prerequisite is missing or stale; legacy FSR4 V3 setup will install it first."
         fi
         if [[ -e "$FSR4_DIR" || -L "$FSR4_DIR" ]]; then
@@ -2272,7 +2342,7 @@ cmd_menu() {
 
 cmd_help() {
     cat <<EOF
-Usage: $0 [menu|setup [--fsr4 TARGET_DLL|--fsr4-legacy]|status|status-json|legacy-clear|uninstall [--fsr4 TARGET_DLL|--fsr4-legacy]|purge|help]
+Usage: $0 [menu|setup [--replace-unmanaged|--fsr4 TARGET_DLL|--fsr4-legacy]|status|status-json|legacy-clear|uninstall [--fsr4 TARGET_DLL|--fsr4-legacy]|purge|help]
 
   setup                        Fetch the verified upstream series, build the
                                audited Mesa RADV driver with GFX1013 async
@@ -2280,6 +2350,9 @@ Usage: $0 [menu|setup [--fsr4 TARGET_DLL|--fsr4-legacy]|status|status-json|legac
                                safe global activation. The default profile includes
                                the FSR4 v4 patches required by BC-250 GE
                                Proton. Usually takes 3-5 minutes.
+  setup --replace-unmanaged    Explicitly replace existing regular driver, ICD,
+                               generator, and manifest files that cannot be
+                               verified as a toolkit-owned installation.
   setup --fsr4 TARGET_DLL      Recommended FSR4 route. Replace one exact existing
                                game or OptiScaler DLL, retaining the original.
                                Absolute paths are recommended; quote spaces at the shell.
@@ -2318,10 +2391,12 @@ case "${1:-menu}" in
     menu) (($# <= 1)) || die "Usage: $0 menu"; cmd_menu ;;
     setup)
         if (($# == 1)); then cmd_setup default
+        elif (($# == 2)) && [[ "$2" == --replace-unmanaged ]]; then
+            cmd_setup default 1
         elif (($# == 3)) && [[ "$2" == --fsr4 ]]; then cmd_setup_fsr4_dll "$3"
         elif (($# == 2)) && [[ "$2" == --fsr4-legacy ]]; then
             die "Legacy FSR4 V3 builds are retired; use FSR4 RADV or the portable RC9 DLL."
-        else die "Usage: $0 setup [--fsr4 TARGET_DLL|--fsr4-legacy]"
+        else die "Usage: $0 setup [--replace-unmanaged|--fsr4 TARGET_DLL|--fsr4-legacy]"
         fi ;;
     status) (($# == 1)) || die "Usage: $0 status"; cmd_status ;;
     status-json) (($# == 1)) || die "Usage: $0 status-json"; cmd_status_json ;;

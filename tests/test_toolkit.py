@@ -63,6 +63,18 @@ class ToolkitTests(unittest.TestCase):
             self.assertIn(command, result.stdout)
         self.assertIn("logged-in Deck user, not with sudo", result.stdout)
         self.assertIn("Compatibility aliases: audio (amdgpu), mesh (radv)", result.stdout)
+        self.assertIn("graphics-setup [--replace-unmanaged]", result.stdout)
+
+    def test_graphics_setup_without_option_does_not_expand_missing_argument(self):
+        result = subprocess.run(
+            ["bash", str(TOOLKIT), "graphics-setup"],
+            capture_output=True,
+            text=True,
+        )
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertNotIn("unbound variable", result.stderr)
+        self.assertIn("requires an interactive terminal", result.stderr)
 
     def test_main_menu_groups_related_workflows(self):
         source = TOOLKIT.read_text(encoding="utf-8")
@@ -924,7 +936,7 @@ class ToolkitTests(unittest.TestCase):
             "    *) printf '%s\\n' '{\"runtimeState\":\"not-installed\",\"kernelReady\":false,\"schedulerConfigured\":false,\"schedulerActive\":false,\"globalEnabled\":false}' ;;\n"
             "  esac\n"
             "elif [[ \"${1:-}\" == setup ]]; then\n"
-            "  printf 'mesh|setup\\n' >> \"$CALL_LOG\"\n"
+            "  printf 'mesh|%s\\n' \"$*\" >> \"$CALL_LOG\"\n"
             "  printf 'reboot-required\\n' > \"$RADV_STATE_FILE\"\n"
             "else exit 2\n"
             "fi\n",
@@ -979,6 +991,32 @@ class ToolkitTests(unittest.TestCase):
             )
             self.assertEqual(call_log.read_text(encoding="utf-8").strip(), "mesh|setup")
             self.assertIn("Reboot to activate the scheduler policy", result.stdout)
+
+    def test_graphics_setup_forwards_unmanaged_runtime_override(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            toolkit, call_log, _, env = self.make_auto_base_installation_environment(
+                root, audio_state="ready"
+            )
+            result = subprocess.run(
+                [
+                    "bash",
+                    "-c",
+                    'script=$1; set -- help; source "$script" >/dev/null; '
+                    "run_graphics_setup --replace-unmanaged",
+                    "_",
+                    str(toolkit),
+                ],
+                capture_output=True,
+                text=True,
+                env=env,
+            )
+
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual(
+                call_log.read_text(encoding="utf-8").strip(),
+                "mesh|setup --replace-unmanaged",
+            )
 
     def test_auto_base_installation_rejects_invalid_state_before_mutation(self):
         with tempfile.TemporaryDirectory() as directory:

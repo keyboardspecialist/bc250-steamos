@@ -428,7 +428,7 @@ run_graphics_setup() {
 
     # Setup is idempotent and performs ownership checks before mutation. Let it
     # repair python and other prerequisites before asking it for JSON status.
-    bash "$MESH_SHADER_SH" setup
+    bash "$MESH_SHADER_SH" setup "$@"
     radv_json=$(bash "$MESH_SHADER_SH" status-json 2>/dev/null) \
         || die "Mesa / RADV setup completed, but its state could not be verified."
 
@@ -1392,7 +1392,8 @@ administrator access when needed.
 Commands:
   setup                  Open the status-aware guided setup checklist
   auto-base-installation Run Auto Base Toolkit Installation
-  graphics-setup         Install or resume AMDGPU and Mesa / RADV in order
+  graphics-setup [--replace-unmanaged]
+                         Install or resume AMDGPU and Mesa / RADV in order
   status                 Show read-only system health
   inventory-json         Emit versioned JSON component inventory for automation
   action OPERATION_ID    Run one fixed, noninteractive dashboard operation
@@ -1465,7 +1466,23 @@ case "$command_name" in
     menu) (($# == 0)) || die "Usage: $0 menu"; cmd_menu ;;
     setup) (($# == 0)) || die "Usage: $0 setup"; cmd_guided_setup_menu ;;
     auto-base-installation) (($# == 0)) || die "Usage: $0 auto-base-installation"; install_auto_base_installation ;;
-    graphics-setup) (($# == 0)) || die "Usage: $0 graphics-setup"; show_graphics_setup_plan; echo; confirm_action "Install or resume the async-compute graphics stack?" run_graphics_setup ;;
+    graphics-setup)
+        if (($# == 1)); then
+            [[ "$1" == --replace-unmanaged ]] \
+                || die "Usage: $0 graphics-setup [--replace-unmanaged]"
+        else
+            (($# == 0)) || die "Usage: $0 graphics-setup [--replace-unmanaged]"
+        fi
+        show_graphics_setup_plan
+        echo
+        if [[ "${1:-}" == --replace-unmanaged ]]; then
+            confirm_action "Replace any unverified regular async-compute runtime files?" \
+                run_graphics_setup --replace-unmanaged
+        else
+            confirm_action "Install or resume the async-compute graphics stack?" \
+                run_graphics_setup
+        fi
+        ;;
     status) (($# == 0)) || die "Usage: $0 status"; show_status ;;
     inventory-json) (($# == 0)) || die "Usage: $0 inventory-json"; show_inventory_json ;;
     action) run_machine_action "$@" ;;
