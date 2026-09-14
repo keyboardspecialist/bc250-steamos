@@ -941,10 +941,10 @@ EOF
 # restored by 'gpu-volt reset'.
 default_safe_points() {
     cat << 'EOF'
-# Voltage curve: 300 MHz floor with a flat 1000 mV ceiling (2026 community
+# Voltage curve: 350 MHz floor with a flat 1000 mV ceiling (2026 community
 # finding: most boards hold it; bump the TOP point +15-25 mV only if unstable)
 [[safe-points]]
-frequency = 300
+frequency = 350
 voltage = 700
 
 [[safe-points]]
@@ -1076,6 +1076,8 @@ EOF
 
     if [[ -f "$GOV_CONF" ]]; then
         warn "Existing config kept at $GOV_CONF"
+        volt_curve_helper mutate floor "$GPU_FREQ_MIN"
+        log "Verified the existing curve supports the ${GPU_FREQ_MIN} MHz control floor."
     else
         log "Writing tuned config (38/40 CU, docs-schema) -> $GOV_CONF"
         cat > "$GOV_CONF" << 'EOF'
@@ -1401,7 +1403,8 @@ cmd_freq() {
 # frequency continuously); forcing vid directly over SMU would fight it.
 # These commands edit the curve in config.toml, restart the governor, and
 # reapply the saved freq setting (a restart otherwise drops runtime state).
-GPU_FREQ_MIN=300
+GPU_FREQ_MIN=350
+GPU_CURVE_FREQ_MIN=300
 GPU_FREQ_MAX=2230
 VOLT_MIN=700    # below: artifact/crash territory even at low clocks
 VOLT_MAX=1050   # above the community flat-1000 ceiling + small margin
@@ -1421,7 +1424,7 @@ volt_curve_helper() {
     command -v python3 >/dev/null 2>&1 \
         || die "python3 is required for safe voltage-curve updates."
     python3 - "$mode" "$GOV_CONF" "$FREQ_STATE" "$RESTORE_BIN" "$GOV_SVC" \
-        "$GPU_CONTROL_LOCK" "$SYSTEMCTL_BIN" "$GPU_FREQ_MIN" "$GPU_FREQ_MAX" \
+        "$GPU_CONTROL_LOCK" "$SYSTEMCTL_BIN" "$GPU_CURVE_FREQ_MIN" "$GPU_FREQ_MAX" \
         "$VOLT_MIN" "$VOLT_MAX" "$SCRIPT_DIR/backend/vendor" "$@" <<'PY'
 import fcntl
 import os
@@ -1544,7 +1547,16 @@ def mutate_points(points, operation, values):
     if operation == "reset":
         if values:
             raise CurveError("reset takes no values.")
-        return [(300, 700), (1000, 800), (1500, 900), (2000, 1000), (2230, 1000)]
+        return [(350, 700), (1000, 800), (1500, 900), (2000, 1000), (2230, 1000)]
+
+    if operation == "floor":
+        if len(values) != 1:
+            raise CurveError("floor needs one frequency value.")
+        floor = integer(values[0], "Frequency floor")
+        validate_points(points)
+        if points[0][0] <= floor:
+            return points
+        return [(floor, voltage_min), *points]
 
     validate_points(points)
     if operation == "offset":
@@ -1924,6 +1936,13 @@ PY
 volt_points() {
     [[ -f "$GOV_CONF" ]] || die "No governor config at $GOV_CONF -- run '$0 governor' first."
     volt_curve_helper list
+}
+
+governor_frequency_floor_ready() {
+    local points first
+    points=$(volt_curve_helper list 2>/dev/null) || return 1
+    read -r first _ <<< "$points"
+    [[ "$first" =~ ^[0-9]+$ ]] && (( first <= GPU_FREQ_MIN ))
 }
 
 volt_show() {
@@ -2863,7 +2882,8 @@ power_foundation_ready() {
         "$RESTORE_BIN" "$RESTORE_UNIT" "$POWER_KEEP_FILE"; do
         foundation_file_trusted "$path" || return 1
     done
-    [[ -x "$HEAL_HELPER" && -x "$GOV_BIN" && -x "$RESTORE_BIN" ]]
+    [[ -x "$HEAL_HELPER" && -x "$GOV_BIN" && -x "$RESTORE_BIN" ]] \
+        && governor_frequency_floor_ready
 }
 
 cmd_installed() {
@@ -3524,9 +3544,12 @@ core_unlock_status() {
     if [[ -x "$CORE_UNLOCK_BIN" ]]; then
         BC250_CORE_UNLOCK_STATE_DIR="$CORE_UNLOCK_STATE_DIR" \
             python3 -I "$CORE_UNLOCK_BIN" status
+    elif [[ -f "$CORE_UNLOCK_SOURCE" && ! -L "$CORE_UNLOCK_SOURCE" ]]; then
+        BC250_CORE_UNLOCK_STATE_DIR="$CORE_UNLOCK_STATE_DIR" \
+            python3 -I "$CORE_UNLOCK_SOURCE" status
     else
         cores=$(awk -F: '/^core id/ { seen[$2]=1 } END { print length(seen) }' /proc/cpuinfo)
-        echo "  detected physical cores: ${cores:-unknown}; helper not installed"
+        echo "  CPU topology: ${cores:-unknown} physical cores; helper unavailable"
     fi
     cores=${cores:-$(awk -F: '/^core id/ { seen[$2]=1 } END { print length(seen) }' /proc/cpuinfo)}
     metrics_state=$(core_unlock_metrics_state) || true
@@ -4294,7 +4317,7 @@ menu_voltage_curve() {
         items+=(
             "Add curve point||Insert a sorted frequency/voltage point."
             "Offset whole curve||Shift every voltage by the same signed mV amount."
-            "Reset tuned defaults||Restore the 300-2230 MHz, 700-1000 mV default curve."
+            "Reset tuned defaults||Restore the 350-2230 MHz, 700-1000 mV default curve."
         )
         menu_select "GPU frequency / voltage curve  ${CD}(atomic + rollback protected)${C0}" "${items[@]}" || return 0
         if (( MENU_CHOICE < count )); then
@@ -4691,7 +4714,7 @@ EVERYDAY COMMANDS
                           change a point's frequency and voltage
     gpu-volt remove 1250  remove a point (at least two must remain)
     gpu-volt reset        restore the tuned default curve
-              Bounds 300-2230 MHz and 700-1050 mV are enforced, with
+              Bounds 350-2230 MHz and 700-1050 mV are enforced, with
               sorted unique frequencies and nondecreasing voltages. Updates
               are atomic and rollback config/runtime after reload failure.
               Small steps (10-25 mV) and stress test after -- undervolts

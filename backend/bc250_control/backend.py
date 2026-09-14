@@ -2248,7 +2248,7 @@ class ToolkitBackend:
             replay_applied = enabled is False and (
                 current_min == initial_min and current_max == initial_max
             )
-        span_min = allowed_min or 300
+        span_min = allowed_min or 350
         span_max = config.get("configuredMax") or allowed_max or 2200
         normal = config.get("rampNormal")
         climb_ms = (
@@ -3895,12 +3895,12 @@ class ToolkitBackend:
             raise CommandError("Unknown GPU frequency mode.")
         if type(minimum) is not int or type(maximum) is not int:
             raise CommandError("GPU frequencies must be whole numbers.")
-        if mode == "pin" and not 300 <= maximum <= 2230:
-            raise CommandError("Pinned frequency must be 300-2230 MHz.")
+        if mode == "pin" and not 350 <= maximum <= 2230:
+            raise CommandError("Pinned frequency must be 350-2230 MHz.")
         if mode == "range":
-            if (minimum != 0 and not 300 <= minimum <= 2230) or not 300 <= maximum <= 2230:
+            if (minimum != 0 and not 350 <= minimum <= 2230) or not 350 <= maximum <= 2230:
                 raise CommandError(
-                    "Frequency range must use 0 for no floor or stay within 300-2230 MHz."
+                    "Frequency range must use 0 for no floor or stay within 350-2230 MHz."
                 )
             if minimum and minimum > maximum:
                 raise CommandError("Minimum frequency exceeds maximum frequency.")

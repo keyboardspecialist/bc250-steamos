@@ -36,7 +36,7 @@ export function GpuTab({ snapshot, busy, runMutation }: TabProps) {
   );
   const frequencyDisabled = busy || !gpu.controllable;
   const frequencyMaximum = Math.min(gpu.allowedMaximum || 2230, 2230);
-  const frequencyMinimum = Math.max(gpu.allowedMinimum || 300, 300);
+  const frequencyMinimum = Math.max(gpu.allowedMinimum || 350, 350);
   const frequencyValid =
     mode !== "range" ||
     ((minimum === 0 || minimum >= frequencyMinimum) && minimum <= maximum);

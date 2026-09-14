@@ -12,14 +12,14 @@ ColumnLayout {
     readonly property var mesh: backend.meshStatus || ({})
     readonly property bool enabledControls: Boolean(gpu.controllable) && !backend.busy
     property string mode: gpu.mode || "adaptive"
-    property int minimum: gpu.minimum ?? 300
+    property int minimum: gpu.minimum ?? 350
     property int maximum: gpu.maximum ?? 1500
     property int loadMinimum: Math.round((gpu.loadLower ?? 0.65) * 100)
     property int loadMaximum: Math.round((gpu.loadUpper ?? 0.80) * 100)
     property int temperatureTarget: gpu.temperatureTarget ?? 85
     property int ramp: gpu.climbMs ?? 500
     readonly property bool frequencyValid: root.mode !== "range"
-        || ((root.minimum === 0 || root.minimum >= 300) && root.minimum <= root.maximum)
+        || ((root.minimum === 0 || root.minimum >= 350) && root.minimum <= root.maximum)
 
     C.ConfirmDialog { id: confirm }
     C.SectionHeader { text: "Mesa / RADV and compute queues" }
@@ -52,11 +52,11 @@ ColumnLayout {
             valueFromText: function(text) { return parseInt(text) || 0 }
         }
         C.NeonSpinBox {
-            from: 300; to: 2230; stepSize: 50; value: root.maximum; editable: true
+            from: 350; to: 2230; stepSize: 50; value: root.maximum; editable: true
             enabled: root.enabledControls && root.mode !== "max"
             Layout.fillWidth: true; onValueModified: root.maximum = value
             textFromValue: function(value) { return "MAX " + value + " MHz" }
-            valueFromText: function(text) { return parseInt(text) || 300 }
+            valueFromText: function(text) { return parseInt(text) || 350 }
         }
         C.NeonButton {
             text: "APPLY"; enabled: root.enabledControls && root.frequencyValid

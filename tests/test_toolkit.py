@@ -503,6 +503,7 @@ class ToolkitTests(unittest.TestCase):
                     "  printf '%s\\n' 'CPU topology: 6 cores / 12 threads (locked)'\n"
                     "  printf '%s\\n' 'unlock attempt/reboot guard: clear'\n"
                     "else\n"
+                    "  printf '%s\\n' '  saved freq setting (reapplied at boot): MODE=range A=1000 B=1850 '\n"
                     "  printf '%s\\n' '  max MHz: config=1500 initial=1500 current=1500'\n"
                     "  printf '%s\\n' '  governor: schedutil'\n"
                     "fi\n"
@@ -589,6 +590,8 @@ class ToolkitTests(unittest.TestCase):
                 )
                 self.assertEqual(result.returncode, expected)
                 self.assertIn("BC-250 system health", result.stdout)
+                self.assertIn("1000-1850 MHz saved range", result.stdout)
+                self.assertNotIn("config=1500", result.stdout)
                 self.assertIn("CPU core unlock", result.stdout)
                 self.assertIn("6 cores / 12 threads (locked)", result.stdout)
                 self.assertIn("GPU compute-unit unlock", result.stdout)

@@ -752,7 +752,16 @@ show_status() {
     status_heading "POWER FOUNDATION"
     enabled=$(systemctl is-enabled cyan-skillfish-governor-smu.service 2>/dev/null || true)
     active=$(systemctl is-active cyan-skillfish-governor-smu.service 2>/dev/null || true)
-    detail=$(status_value "$power_output" "max MHz: " || true)
+    detail=$(status_value "$power_output" "saved freq setting (reapplied at boot): " || true)
+    if [[ "$detail" =~ ^MODE=range[[:space:]]+A=([0-9]+)[[:space:]]+B=([0-9]+)$ ]]; then
+        detail="${BASH_REMATCH[1]}-${BASH_REMATCH[2]} MHz saved range"
+    elif [[ "$detail" =~ ^MODE=pin[[:space:]]+A=([0-9]+)[[:space:]]+B=$ ]]; then
+        detail="${BASH_REMATCH[1]} MHz saved pin"
+    elif [[ "$detail" =~ ^MODE=max[[:space:]]+A=[[:space:]]+B=$ ]]; then
+        detail="saved maximum-frequency mode"
+    else
+        detail=$(status_value "$power_output" "max MHz: " || true)
+    fi
     if [[ "$enabled" == enabled && "$active" == active ]]; then
         status_row "GPU governor" "active" good "${detail:-enabled at boot}"
     elif [[ -n "$enabled$active" && "$enabled$active" != not-foundinactive ]]; then

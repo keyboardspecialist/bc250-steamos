@@ -1039,12 +1039,25 @@ generator_owned() {
         && cmp -s "$GENERATOR" <(render_generator)
 }
 
+normalize_generator_kernel_paths() {
+    LC_ALL=C sed -E \
+        's#/usr/lib/modules/[0-9A-Za-z._+-]+/updates#/usr/lib/modules/@KERNEL@/updates#g'
+}
+
+generator_matches_recorded_template() {
+    local renderer="$1"
+    cmp -s \
+        <(normalize_generator_kernel_paths < "$GENERATOR") \
+        <("$renderer" | normalize_generator_kernel_paths)
+}
+
 generator_recorded() {
     generator_owned || {
         [[ -f "$GENERATOR" && ! -L "$GENERATOR" && -x "$GENERATOR" ]] \
-            && { cmp -s "$GENERATOR" <(render_previous_generator) \
-                || cmp -s "$GENERATOR" <(render_pre_policy_generator) \
-                || cmp -s "$GENERATOR" <(render_legacy_generator); }
+            && { generator_matches_recorded_template render_generator \
+                || generator_matches_recorded_template render_previous_generator \
+                || generator_matches_recorded_template render_pre_policy_generator \
+                || generator_matches_recorded_template render_legacy_generator; }
     }
 }
 

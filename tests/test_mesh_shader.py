@@ -502,6 +502,62 @@ class MeshShaderTests(unittest.TestCase):
             )
             self.assertEqual(result.returncode, 0, result.stderr)
 
+    def test_prior_kernel_generator_passes_setup_ownership_preflight(self):
+        with tempfile.TemporaryDirectory() as directory:
+            env = self.environment(Path(directory))
+            self.install_runtime(env)
+            old_env = {
+                **env,
+                "BC250_GFX1013_MODULE": "/usr/lib/modules/6.16.12-valve24.5-1-neptune-616/updates/amdgpu.ko.zst",
+                "BC250_GFX1013_MARKER": "/usr/lib/modules/6.16.12-valve24.5-1-neptune-616/updates/.bc250-gfx1013-fix",
+                "BC250_AUDIO_MARKER": "/usr/lib/modules/6.16.12-valve24.5-1-neptune-616/updates/.bc250-audio-fix",
+                "BC250_METRICS_MARKER": "/usr/lib/modules/6.16.12-valve24.5-1-neptune-616/updates/.bc250-metrics-fix",
+            }
+            subprocess.run(
+                [
+                    "bash",
+                    "-c",
+                    'script=$1; output=$2; set -- help; source "$script" >/dev/null; '
+                    'render_generator > "$output"; chmod 755 "$output"',
+                    "_",
+                    str(MESH),
+                    env["BC250_GFX1013_GENERATOR"],
+                ],
+                check=True,
+                env=old_env,
+            )
+            current_env = {
+                **env,
+                "BC250_GFX1013_MODULE": "/usr/lib/modules/7.2.0-valve1-1-neptune-72/updates/amdgpu.ko.zst",
+                "BC250_GFX1013_MARKER": "/usr/lib/modules/7.2.0-valve1-1-neptune-72/updates/.bc250-gfx1013-fix",
+                "BC250_AUDIO_MARKER": "/usr/lib/modules/7.2.0-valve1-1-neptune-72/updates/.bc250-audio-fix",
+                "BC250_METRICS_MARKER": "/usr/lib/modules/7.2.0-valve1-1-neptune-72/updates/.bc250-metrics-fix",
+            }
+            command = (
+                'script=$1; set -- help; source "$script" >/dev/null; '
+                "preflight_runtime_ownership"
+            )
+            result = subprocess.run(
+                ["bash", "-c", command, "_", str(MESH)],
+                capture_output=True,
+                text=True,
+                env=current_env,
+            )
+            self.assertEqual(result.returncode, 0, result.stderr)
+
+            with Path(env["BC250_GFX1013_GENERATOR"]).open(
+                "a", encoding="utf-8"
+            ) as generator:
+                generator.write("echo tampered\n")
+            result = subprocess.run(
+                ["bash", "-c", command, "_", str(MESH)],
+                capture_output=True,
+                text=True,
+                env=current_env,
+            )
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("not a recorded toolkit install", result.stderr)
+
     def test_tampered_previous_generator_still_fails_ownership(self):
         with tempfile.TemporaryDirectory() as directory:
             env = self.environment(Path(directory))

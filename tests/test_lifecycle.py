@@ -306,7 +306,7 @@ temperature_set 80 >/dev/null
             config = root / "config.toml"
             config.write_text(
                 "[load-target]\nupper = 0.80\nlower = 0.65\n\n"
-                "[[safe-points]]\nfrequency = 300\nvoltage = 700\n\n"
+                "[[safe-points]]\nfrequency = 350\nvoltage = 700\n\n"
                 "[[safe-points]]\nfrequency = 1000\nvoltage = 800\n\n"
                 "[[safe-points]]\nfrequency = 2230\nvoltage = 1000\n\n"
                 '["after]curve"]\nkept = true\n',
@@ -353,14 +353,14 @@ volt_remove 1600 >/dev/null
             self.assertEqual(
                 parsed["safe-points"],
                 [
-                    {"frequency": 300, "voltage": 700},
+                    {"frequency": 350, "voltage": 700},
                     {"frequency": 1000, "voltage": 825},
                     {"frequency": 2230, "voltage": 1000},
                 ],
             )
             self.assertEqual(parsed["after]curve"], {"kept": True})
 
-    def test_shell_frequency_validation_uses_300_mhz_floor(self):
+    def test_shell_frequency_validation_uses_350_mhz_floor(self):
         with tempfile.TemporaryDirectory() as directory:
             result = subprocess.run(
                 [
@@ -370,10 +370,10 @@ volt_remove 1600 >/dev/null
 script=$1
 set -- help
 source "$script" >/dev/null
-validate_gpu_frequency_request 300
-validate_gpu_frequency_request 0 300
-validate_gpu_frequency_request 300 2230
-if (validate_gpu_frequency_request 299) >/dev/null 2>&1; then exit 1; fi
+validate_gpu_frequency_request 350
+validate_gpu_frequency_request 0 350
+validate_gpu_frequency_request 350 2230
+if (validate_gpu_frequency_request 349) >/dev/null 2>&1; then exit 1; fi
 if (validate_gpu_frequency_request 2231) >/dev/null 2>&1; then exit 1; fi
 if (validate_gpu_frequency_request 100 1500) >/dev/null 2>&1; then exit 1; fi
 ''',
@@ -386,12 +386,69 @@ if (validate_gpu_frequency_request 100 1500) >/dev/null 2>&1; then exit 1; fi
             )
             self.assertEqual(result.returncode, 0, result.stderr)
 
+    def test_existing_governor_curve_is_extended_to_350_mhz(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            config = root / "config.toml"
+            config.write_text(
+                "[load-target]\nupper = 0.80\nlower = 0.65\n\n"
+                "[[safe-points]]\nfrequency = 1000\nvoltage = 800\n\n"
+                "[[safe-points]]\nfrequency = 2230\nvoltage = 1000\n",
+                encoding="utf-8",
+            )
+            systemctl = root / "systemctl"
+            systemctl.write_text(
+                "#!/bin/sh\n"
+                "if [ \"$1\" = is-active ]; then exit 3; fi\n"
+                "if [ \"$1\" = show ]; then printf 'inactive\\n'; exit 0; fi\n"
+                "exit 3\n",
+                encoding="ascii",
+            )
+            systemctl.chmod(0o755)
+            result = subprocess.run(
+                [
+                    "bash",
+                    "-c",
+                    r'''
+script=$1; base=$2; systemctl_bin=$3
+set -- help
+source "$script" >/dev/null
+GOV_CONF="$base/config.toml"
+FREQ_STATE="$base/freq-state"
+RESTORE_BIN="$base/restore"
+GPU_CONTROL_LOCK="$base/lock/backend.lock"
+SYSTEMCTL_BIN="$systemctl_bin"
+if governor_frequency_floor_ready; then exit 20; fi
+volt_curve_helper mutate floor 350
+governor_frequency_floor_ready
+''',
+                    "_",
+                    str(POWER),
+                    directory,
+                    str(systemctl),
+                ],
+                capture_output=True,
+                text=True,
+                env=script_env(directory),
+            )
+            self.assertEqual(result.returncode, 0, result.stderr)
+            parsed = tomllib.loads(config.read_text(encoding="utf-8"))
+            self.assertEqual(
+                parsed["safe-points"],
+                [
+                    {"frequency": 350, "voltage": 700},
+                    {"frequency": 1000, "voltage": 800},
+                    {"frequency": 2230, "voltage": 1000},
+                ],
+            )
+            self.assertEqual(parsed["load-target"], {"upper": 0.8, "lower": 0.65})
+
     def test_voltage_curve_rejects_invalid_candidate_without_writing(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             config = root / "config.toml"
             original = (
-                "[[safe-points]]\nfrequency = 300\nvoltage = 700\n\n"
+                "[[safe-points]]\nfrequency = 350\nvoltage = 700\n\n"
                 "[[safe-points]]\nfrequency = 1000\nvoltage = 800\n\n"
                 "[[safe-points]]\nfrequency = 2150\nvoltage = 1000\n"
             )
@@ -433,7 +490,7 @@ volt_add 1500 750
             root = Path(directory)
             config = root / "config.toml"
             original = (
-                "[[safe-points]]\nfrequency = 300\nvoltage = 700\n\n"
+                "[[safe-points]]\nfrequency = 350\nvoltage = 700\n\n"
                 "[[ safe-points ]]\nfrequency = 1000\nvoltage = 800\n\n"
                 "[[safe-points]]\nfrequency = 2150\nvoltage = 1000\n"
             )
@@ -471,7 +528,7 @@ volt_set 1000 825
             root = Path(directory)
             config = root / "config.toml"
             original = (
-                "[[safe-points]]\nfrequency = 300\nvoltage = 700\n\n"
+                "[[safe-points]]\nfrequency = 350\nvoltage = 700\n\n"
                 "[[safe-points]]\nfrequency = 1000\nvoltage = 800\n\n"
                 "[[safe-points]]\nfrequency = 2150\nvoltage = 1000\n"
             )
@@ -525,7 +582,7 @@ volt_set 1000 825
             root = Path(directory)
             config = root / "config.toml"
             original = (
-                "[[safe-points]]\nfrequency = 300\nvoltage = 700\n\n"
+                "[[safe-points]]\nfrequency = 350\nvoltage = 700\n\n"
                 "[[safe-points]]\nfrequency = 1000\nvoltage = 800\n\n"
                 "[[safe-points]]\nfrequency = 2150\nvoltage = 1000\n"
             )
@@ -586,7 +643,7 @@ volt_set 1000 825
             root = Path(directory)
             config = root / "config.toml"
             original = (
-                "[[safe-points]]\nfrequency = 300\nvoltage = 700\n\n"
+                "[[safe-points]]\nfrequency = 350\nvoltage = 700\n\n"
                 "[[safe-points]]\nfrequency = 1000\nvoltage = 800\n\n"
                 "[[safe-points]]\nfrequency = 2150\nvoltage = 1000\n"
             )

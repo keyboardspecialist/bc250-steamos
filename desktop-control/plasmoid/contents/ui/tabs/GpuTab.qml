@@ -23,7 +23,7 @@ ColumnLayout {
     property int loadMaximum: Math.round((gpu.loadUpper === null ? 0.80 : gpu.loadUpper) * 100)
     property int temperatureTarget: gpu.temperatureTarget || 85
     property int rampMs: gpu.climbMs || 500
-    readonly property int frequencyMinimum: Math.max(root.gpu.allowedMinimum || 300, 300)
+    readonly property int frequencyMinimum: Math.max(root.gpu.allowedMinimum || 350, 350)
     readonly property bool frequencyValid: root.mode !== "range"
         || ((root.minimum === 0 || root.minimum >= root.frequencyMinimum) && root.minimum <= root.maximum)
     readonly property bool controllable: gpu.controllable && !backend.busy

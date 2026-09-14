@@ -1191,19 +1191,19 @@ class BackendMutationTests(unittest.IsolatedAsyncioTestCase):
         with self.assertRaises(CommandError):
             await backend.set_gpu_frequency("pin", 0, True)
 
-    async def test_gpu_frequency_enforces_300_mhz_floor(self):
+    async def test_gpu_frequency_enforces_350_mhz_floor(self):
         backend = object.__new__(ToolkitBackend)
         backend._mutate = AsyncMock(return_value=None)
 
-        await backend.set_gpu_frequency("pin", 0, 300)
-        await backend.set_gpu_frequency("range", 0, 300)
-        await backend.set_gpu_frequency("range", 300, 2230)
+        await backend.set_gpu_frequency("pin", 0, 350)
+        await backend.set_gpu_frequency("range", 0, 350)
+        await backend.set_gpu_frequency("range", 350, 2230)
         for mode, minimum, maximum in (
-            ("pin", 0, 299),
-            ("range", 0, 299),
+            ("pin", 0, 349),
+            ("range", 0, 349),
             ("range", 100, 1500),
             ("pin", 0, 2231),
-            ("range", 300, 2231),
+            ("range", 350, 2231),
         ):
             with self.subTest(mode=mode, minimum=minimum, maximum=maximum):
                 with self.assertRaises(CommandError):

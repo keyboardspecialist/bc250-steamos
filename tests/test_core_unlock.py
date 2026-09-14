@@ -102,6 +102,30 @@ class CoreUnlockTests(unittest.TestCase):
         self.assertIn("AMDGPU telemetry patch", power)
         self.assertIn("GPU-utilization correction", power)
 
+    def test_shell_status_uses_bundled_helper_before_installation(self):
+        with tempfile.TemporaryDirectory() as directory:
+            result = self.run_power_shell(
+                r'''
+core_unlock_mode() { printf none; }
+core_unlock_metrics_state() { printf compatible; }
+systemctl() { return 1; }
+CORE_UNLOCK_BIN="$base/missing-installed-helper"
+CORE_UNLOCK_SOURCE="$base/bundled-helper.py"
+cat > "$CORE_UNLOCK_SOURCE" <<'PY'
+import sys
+assert sys.argv == [sys.argv[0], "status"]
+print("BC-250 PCI identity: detected")
+print("CPU topology: 8 cores / 16 threads (unlocked)")
+print("unlock attempt/reboot guard: clear")
+PY
+core_unlock_status
+''',
+                directory,
+            )
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertIn("CPU topology: 8 cores / 16 threads (unlocked)", result.stdout)
+            self.assertIn("AMDGPU telemetry patch: compatible", result.stdout)
+
     def test_boot_clears_guard_when_eight_cores_are_present(self):
         helper = load_helper()
         with tempfile.TemporaryDirectory() as directory:
