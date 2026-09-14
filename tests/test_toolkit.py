@@ -486,6 +486,17 @@ class ToolkitTests(unittest.TestCase):
             encoding="utf-8",
         )
         sudo.chmod(0o755)
+        systemctl = bindir / "systemctl"
+        systemctl.write_text(
+            "#!/usr/bin/env bash\n"
+            "case \"$*\" in\n"
+            "  'is-enabled cyan-skillfish-governor-smu.service') printf '%s\\n' enabled ;;\n"
+            "  'is-active cyan-skillfish-governor-smu.service') printf '%s\\n' active ;;\n"
+            "  *) printf '%s\\n' inactive; exit 3 ;;\n"
+            "esac\n",
+            encoding="utf-8",
+        )
+        systemctl.chmod(0o755)
         scripts = (
             "bc250-storage.sh",
             "bc250-power.sh",
