@@ -3159,16 +3159,17 @@ core_unlock_topology() {
 }
 
 core_unlock_metrics_state() {
-    local rel module marker expected actual resolved
+    local rel module marker expected expected_revision actual resolved
     rel=$(uname -r)
     module="$AMDGPU_MODULES_ROOT/$rel/updates/amdgpu.ko.zst"
     marker="$AMDGPU_MODULES_ROOT/$rel/updates/.bc250-metrics-fix"
 
     if [[ -f "$marker" && ! -L "$marker" && -f "$module" && ! -L "$module" ]]; then
-        read -r expected < "$marker" || expected=
+        read -r expected expected_revision < "$marker" || expected=
         actual=$(sha256sum "$module" 2>/dev/null | awk '{print $1}')
         resolved=$(modinfo -k "$rel" -F filename amdgpu 2>/dev/null || true)
         if [[ "$expected" =~ ^[0-9a-f]{64}$ && "$actual" == "$expected" \
+            && "$expected_revision" == legacy-telemetry-r1 \
             && "$resolved" == */updates/amdgpu.ko* ]]; then
             echo compatible
             return 0

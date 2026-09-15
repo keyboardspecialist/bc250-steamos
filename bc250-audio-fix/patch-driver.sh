@@ -13,7 +13,7 @@ set -euo pipefail
 HERE=$(cd "$(dirname "$0")" && pwd)
 TREE_DRIFT_EXIT=75
 GFX1013_COMMIT=d3e6dc062c34d2523db0abe5741d1f5b0dea00d9
-AMDGPU_REVISION=mastag-8core-622ed9e-r1
+AMDGPU_REVISION=legacy-telemetry-r1
 
 usage() {
     cat <<EOF
@@ -44,7 +44,7 @@ set -- "${ARGS[@]}"
 show_status_json() {
     local rel updates default_module default_audio_marker default_metrics_marker
     local default_gfx1013_marker default_active module audio_marker metrics_marker
-    local gfx1013_marker active revision_active resolved selected_path module_path actual expected active_revision
+    local gfx1013_marker active revision_active resolved selected_path module_path actual expected active_revision marker_revision
     local default_revision_active
     local owner mode state artifact_present=0 override_installed=1
     local override_selected=0 active_ready=0 boot_present=0 marker path
@@ -80,8 +80,9 @@ show_status_json() {
                 override_installed=0
                 continue
             fi
-            read -r expected < "$marker" || expected=
-            [[ "$expected" =~ ^[0-9a-f]{64}$ && "$expected" == "$actual" ]] \
+            read -r expected marker_revision < "$marker" || expected=
+            [[ "$expected" =~ ^[0-9a-f]{64}$ && "$expected" == "$actual" \
+                && "$marker_revision" == "$AMDGPU_REVISION" ]] \
                 || override_installed=0
         done
 
@@ -147,7 +148,8 @@ show_status_json() {
 }
 
 show_status() {
-    local module rel resolved marker metrics_marker gfx1013_marker expected gfx1013_expected actual found=0 failed=0 module_found=0
+    local module rel resolved marker metrics_marker gfx1013_marker expected expected_revision
+    local gfx1013_expected gfx1013_revision actual found=0 failed=0 module_found=0
 
     for module in /usr/lib/modules/*/updates/amdgpu.ko.zst; do
         [ -e "$module" ] || [ -L "$module" ] || continue
@@ -172,11 +174,13 @@ show_status() {
            && [[ "$resolved" == */updates/amdgpu.ko* ]]; then
             if [ -f "$metrics_marker" ] && [ ! -L "$metrics_marker" ] \
                && [ -f "$gfx1013_marker" ] && [ ! -L "$gfx1013_marker" ]; then
-                read -r expected < "$metrics_marker" || expected=
+                read -r expected expected_revision < "$metrics_marker" || expected=
                 actual=$(sha256sum "$module" | awk '{print $1}')
-                read -r gfx1013_expected < "$gfx1013_marker" || gfx1013_expected=
+                read -r gfx1013_expected gfx1013_revision < "$gfx1013_marker" || gfx1013_expected=
                 if [[ "$expected" =~ ^[0-9a-f]{64}$ ]] && [ "$actual" = "$expected" ] \
-                   && [ "$gfx1013_expected" = "$actual" ]; then
+                   && [ "$expected_revision" = "$AMDGPU_REVISION" ] \
+                   && [ "$gfx1013_expected" = "$actual" ] \
+                   && [ "$gfx1013_revision" = "$AMDGPU_REVISION" ]; then
                     echo "[bc250-amdgpu] $rel: installed, metrics and compute aware ($resolved)"
                 else
                     echo "[bc250-amdgpu] $rel: invalid metrics or compute marker"

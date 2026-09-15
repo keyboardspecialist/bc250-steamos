@@ -23,6 +23,12 @@ AUDIO_CLEAN = ROOT / "bc250-audio-fix/clean.sh"
 AUDIO_PREREQS = ROOT / "bc250-audio-fix/ensure-build-prereqs.sh"
 AUDIO_MKINITCPIO = ROOT / "bc250-audio-fix/mkinitcpio-compat.sh"
 HDMI_AC3 = ROOT / "hdmi-ac3/hdmi-ac3.sh"
+METRICS_PATCH = ROOT / "bc250-audio-fix/bc250-cyan-skillfish-gpu-telemetry.patch"
+GFXCLK_PATCH = ROOT / "bc250-audio-fix/bc250-cyan-skillfish-gfxclk.patch"
+METRICS_72_PATCH = (
+    ROOT / "bc250-audio-fix/bc250-cyan-skillfish-gpu-telemetry-7.2.patch"
+)
+GFXCLK_72_PATCH = ROOT / "bc250-audio-fix/bc250-cyan-skillfish-gfxclk-7.2.patch"
 SCLK_PATCH = ROOT / "bc250-audio-fix/bc250-cyan-skillfish-sclk-range.patch"
 TTM_PATCH = ROOT / "bc250-audio-fix/bc250-amdgpu-ttm-null-page-guard.patch"
 KFD_RUNLIST_616_PATCH = (
@@ -38,7 +44,6 @@ GFX1013_ATTESTATION_PATCH = (
 )
 DCN201_PCON_PATCH = ROOT / "bc250-audio-fix/bc250-dcn201-pcon-hdmi21.patch"
 DCN201_DSC_PATCH = ROOT / "bc250-audio-fix/bc250-dcn201-dsc-enable.patch"
-TELEMETRY_NORMALIZER = ROOT / "bc250-audio-fix/normalize-telemetry-patch.awk"
 
 
 class DriverLifecycleTests(unittest.TestCase):
@@ -76,13 +81,15 @@ class DriverLifecycleTests(unittest.TestCase):
         module = Path(env["BC250_GFX1013_MODULE"])
         module.parent.mkdir(parents=True, exist_ok=True)
         module.write_bytes(b"patched amdgpu\n")
-        digest = hashlib.sha256(module.read_bytes()).hexdigest() + "\n"
+        digest = hashlib.sha256(module.read_bytes()).hexdigest()
         for key in (
             "BC250_AUDIO_MARKER",
             "BC250_METRICS_MARKER",
             "BC250_GFX1013_MARKER",
         ):
-            Path(env[key]).write_text(digest, encoding="ascii")
+            Path(env[key]).write_text(
+                f"{digest} legacy-telemetry-r1\n", encoding="ascii"
+            )
 
     def audio_status_json(self, env):
         result = subprocess.run(
@@ -137,7 +144,7 @@ class DriverLifecycleTests(unittest.TestCase):
 
             revision_active = Path(env["BC250_AMDGPU_REVISION_ACTIVE"])
             revision_active.write_text(
-                "mastag-8core-622ed9e-r1\n", encoding="ascii"
+                "legacy-telemetry-r1\n", encoding="ascii"
             )
             status = self.audio_status_json(env)
             self.assertEqual(status["state"], "ready")
@@ -727,35 +734,47 @@ class DriverLifecycleTests(unittest.TestCase):
         builder = (ROOT / "bc250-audio-fix/build.sh").read_text(encoding="utf-8")
         installer = (ROOT / "bc250-audio-fix/install.sh").read_text(encoding="utf-8")
         rollback = AUDIO_ROLLBACK.read_text(encoding="utf-8")
+        patch = METRICS_PATCH.read_text(encoding="utf-8")
+        gfxclk_patch = GFXCLK_PATCH.read_text(encoding="utf-8")
+        metrics_72_patch = METRICS_72_PATCH.read_text(encoding="utf-8")
+        gfxclk_72_patch = GFXCLK_72_PATCH.read_text(encoding="utf-8")
         sclk_patch = SCLK_PATCH.read_text(encoding="utf-8")
         ttm_patch = TTM_PATCH.read_text(encoding="utf-8")
         gfx1013_attestation_patch = GFX1013_ATTESTATION_PATCH.read_text(
             encoding="utf-8"
         )
-        self.assertIn("0001-bc250-8core-telemetry-gpu-activity.patch", builder)
-        self.assertIn("622ed9e56107f8d13a19848ed06b7a7241ff6cd3", builder)
-        self.assertIn(
-            "c6b930593e35e4d774f7da65fc8d0312d80f7c5c646aab7bee711b0447206f8b",
-            builder,
+        self.assertIn("bc250-cyan-skillfish-gpu-telemetry.patch", builder)
+        self.assertIn("bc250-cyan-skillfish-gfxclk.patch", builder)
+        self.assertIn(METRICS_72_PATCH.name, builder)
+        self.assertIn(GFXCLK_72_PATCH.name, builder)
+        self.assertLess(
+            builder.index(str(METRICS_PATCH.name)),
+            builder.index(str(GFXCLK_PATCH.name)),
         )
         self.assertIn("bc250-cyan-skillfish-sclk-range.patch", builder)
         self.assertIn("bc250-amdgpu-ttm-null-page-guard.patch", builder)
-        self.assertNotIn("bc250-cyan-skillfish-gpu-telemetry", builder)
-        self.assertNotIn("bc250-cyan-skillfish-gfxclk", builder)
-        self.assertIn("amdgpu_fence_count_emitted", builder)
-        self.assertIn("SmuMetrics_8core_t", builder)
-        self.assertIn("cs_legacy_8core_metrics", builder)
-        self.assertIn("PPSMC_MSG_GetGfxFrequency", builder)
-        self.assertIn("normalize-telemetry-patch.awk", builder)
-        self.assertIn("LEGACY_GPU_TABLES", builder)
-        telemetry_block = builder[
-            builder.index('step "apply consolidated Cyan Skillfish') :
-            builder.index("SCLK_PATCH=")
-        ]
-        self.assertIn("patch -p1 --fuzz=0 --dry-run", telemetry_block)
-        self.assertIn("patch -p1 --fuzz=0 -s", telemetry_block)
+        self.assertNotIn("TELEMETRY_COMMIT", builder)
+        self.assertIn("METRICS_SOURCE_SHA", builder)
+        self.assertIn("SCLK_SOURCE_SHA", builder)
+        self.assertIn("GRBM_STATUS__GUI_ACTIVE_MASK", patch)
+        self.assertIn("AMDGPU_PP_SENSOR_GPU_LOAD", patch)
+        self.assertIn("average_gfx_activity", patch)
+        self.assertIn("static const struct smu_feature_bits", metrics_72_patch)
+        self.assertIn("PPSMC_MSG_GetGfxFrequency", gfxclk_patch)
+        self.assertIn("SMU_MSG_GetGfxclkFrequency", gfxclk_patch)
+        self.assertIn("cyan_skillfish_get_gfxclk_frequency", gfxclk_patch)
+        self.assertIn("return -ERANGE", gfxclk_patch)
+        self.assertIn("gpu_metrics->current_gfxclk = gfxclk", gfxclk_patch)
+        self.assertNotIn("smu_table->gpu_metrics_table", gfxclk_patch)
+        self.assertIn("static const struct smu_feature_bits", gfxclk_72_patch)
         self.assertIn("CYAN_SKILLFISH_SCLK_MIN\t\t\t350", sclk_patch)
         self.assertIn("CYAN_SKILLFISH_SCLK_MAX\t\t\t2230", sclk_patch)
+        for final_hash in (
+            "9e6dfc7e46177925a6492bd72baf4c1de80146036eee63ebf3a0f8703bef4006",
+            "4eb9a1e6b0647a4afaa405e95ee8f7df87cb09fffe13da9ca539261bc19afc7c",
+            "30aa04491228eec97d4c9e0811342fb754ee4991a432fc527bf819bc25be8255",
+        ):
+            self.assertIn(final_hash, builder)
         self.assertIn("if (ttm->pages[i])", ttm_patch)
         for name in (
             "0001-gfx1013-mmio-pasid-route.patch",
@@ -768,8 +787,8 @@ class DriverLifecycleTests(unittest.TestCase):
         self.assertIn("bc250-gfx1013-attestation.patch", builder)
         self.assertIn("bc250_gfx1013_fix", gfx1013_attestation_patch)
         self.assertIn("bc250_amdgpu_revision", gfx1013_attestation_patch)
-        self.assertIn("mastag-8core-622ed9e-r1", builder)
-        self.assertIn("mastag-8core-622ed9e-r1", installer)
+        self.assertIn("legacy-telemetry-r1", builder)
+        self.assertIn("legacy-telemetry-r1", installer)
         self.assertIn(
             "BC250_AMDGPU_REVISION_ACTIVE",
             AUDIO_INSTALLER.read_text(encoding="utf-8"),
@@ -780,66 +799,6 @@ class DriverLifecycleTests(unittest.TestCase):
         self.assertIn(".bc250-gfx1013-fix", rollback)
         self.assertIn("amdgpu.gfx1013.attestation", builder)
         self.assertIn("amdgpu.gfx1013.attestation", installer)
-
-    def test_telemetry_normalizer_supports_both_gpu_table_apis(self):
-        patch = """\
-@@ -90,17 +450,24 @@ static int cyan_skillfish_tables_init(struct smu_context *smu)
- \tstruct smu_table_context *smu_table = &smu->smu_table;
- \tstruct smu_table *tables = smu_table->tables;
-+\tstruct cyan_skillfish_metrics_cache *metrics_cache;
- \tint ret;
--\tsmu_table->metrics_table = kzalloc_obj(SmuMetrics_t);
-+\tsmu_table->metrics_table =
-+\t\tkzalloc_obj(struct cyan_skillfish_metrics_cache);
- \tret = smu_driver_table_init(smu, SMU_DRIVER_TABLE_GPU_METRICS,
- \t\t\t\t    sizeof(struct gpu_metrics_v2_2),
- \t\t\t\t    SMU_GPU_METRICS_CACHE_INTERVAL);
-+static bool cs_legacy_8core_metrics;
-@@ -382,54 +909,114 @@ static bool cyan_skillfish_is_dpm_running(struct smu_context *smu)
- static ssize_t cyan_skillfish_get_gpu_metrics(struct smu_context *smu,
- \t\t\t\t\t\tvoid **table)
- {
- \tstruct gpu_metrics_v2_2 *gpu_metrics =
- \t\t(struct gpu_metrics_v2_2 *)smu_driver_table_ptr(
- \t\t\tsmu, SMU_DRIVER_TABLE_GPU_METRICS);
-"""
-
-        with tempfile.TemporaryDirectory() as td:
-            patch_path = Path(td) / "telemetry.patch"
-            patch_path.write_text(patch, encoding="utf-8")
-
-            def normalize(legacy):
-                return subprocess.run(
-                    [
-                        "awk",
-                        "-v",
-                        f"legacy_gpu_tables={int(legacy)}",
-                        "-f",
-                        str(TELEMETRY_NORMALIZER),
-                        str(patch_path),
-                    ],
-                    check=True,
-                    capture_output=True,
-                    text=True,
-                ).stdout
-
-            modern = normalize(False)
-            self.assertIn("@@ -90,17 +450,24 @@", modern)
-            self.assertIn("int ret;", modern)
-            self.assertIn("smu_driver_table_init", modern)
-            self.assertIn("smu_driver_table_ptr", modern)
-            self.assertIn("static bool cs_legacy_8core_metrics = true;", modern)
-
-            legacy = normalize(True)
-            self.assertIn("@@ -90,16 +450,23 @@", legacy)
-            self.assertNotIn("int ret;", legacy)
-            self.assertIn("smu_table->gpu_metrics_table_size", legacy)
-            self.assertIn("smu_table->gpu_metrics_table = kzalloc", legacy)
-            self.assertIn("smu_table->gpu_metrics_table;", legacy)
-            self.assertNotIn("smu_driver_table_init", legacy)
-            self.assertNotIn("smu_driver_table_ptr", legacy)
-            self.assertIn("static bool cs_legacy_8core_metrics = true;", legacy)
-            self.assertIn("@@ -382,53 +909,113 @@", legacy)
 
     def test_tracked_amdgpu_patches_are_well_formed(self):
         tracked = subprocess.run(
@@ -937,6 +896,7 @@ class DriverLifecycleTests(unittest.TestCase):
                     "GRUB_DEFAULT": str(root / "default-grub"),
                     "GRUB_CFG": str(grub),
                     "PROC_CMDLINE": str(cmdline),
+                    "SCHED_POLICY_PARAM": str(root / "sched-policy"),
                     "AMDGPU_KEEP_FILE": str(keep),
                     "PATH": f"{bindir}:{env['PATH']}",
                 }

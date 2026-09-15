@@ -3,9 +3,9 @@ Subject: [PATCH] amdgpu: expose BC-250 module composition attestation
 
 Expose the pinned upstream repair commit through a read-only module parameter
 so userspace can prove that the currently loaded module carries the kernel half
-before globally enabling the matching RADV driver. Also expose the consolidated
-telemetry revision so an older loaded module cannot attest a newly installed
-composition after an upgrade.
+before globally enabling the matching RADV driver. Also expose the telemetry
+revision so an older loaded module cannot attest a newly installed composition
+after an upgrade.
 
 This patch modifies GPL-2.0-only Linux kernel source and is distributed under
 GPL-2.0-only.
@@ -22,7 +22,7 @@ GPL-2.0-only.
 +module_param_string(bc250_gfx1013_fix, bc250_gfx1013_fix,
 +		    sizeof(bc250_gfx1013_fix), 0444);
 +
-+static char bc250_amdgpu_revision[] = "mastag-8core-622ed9e-r1";
++static char bc250_amdgpu_revision[] = "legacy-telemetry-r1";
 +MODULE_PARM_DESC(bc250_amdgpu_revision,
 +		 "BC-250 AMDGPU telemetry composition revision");
 +module_param_string(bc250_amdgpu_revision, bc250_amdgpu_revision,

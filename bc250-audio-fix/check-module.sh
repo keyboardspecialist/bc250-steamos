@@ -26,7 +26,7 @@ case "$MOD" in
 esac
 
 # Guard 1: require both the disabled-by-default KFD workaround and the current
-# consolidated telemetry composition revision.
+# telemetry composition revision.
 modinfo -p "$TMPD/new.ko" | grep -q '^bc250_flush_by_runlist:' \
     || { echo "ERROR: module lacks the BC-250 KFD runlist workaround — rebuild it"; exit 1; }
 echo "KFD runlist workaround present (disabled by default)"

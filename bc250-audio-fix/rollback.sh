@@ -31,10 +31,10 @@ add_target() {
 }
 
 module_owned() {
-    local module="$1" marker="$2" expected actual artifact
+    local module="$1" marker="$2" expected marker_revision actual artifact
     if [ -e "$marker" ] || [ -L "$marker" ]; then
         [ -f "$marker" ] && [ ! -L "$marker" ] || return 1
-        read -r expected < "$marker" || return 1
+        read -r expected marker_revision < "$marker" || return 1
         [[ "$expected" =~ ^[0-9a-f]{64}$ ]] || return 1
         actual=$(sha256sum "$module" | awk '{print $1}')
         [ "$actual" = "$expected" ]
@@ -157,7 +157,7 @@ for rel in "${TARGETS[@]}"; do
         [ -e "$rollback_marker" ] || rollback_marker=$gfx1013_marker
         [ -f "$rollback_marker" ] && [ ! -L "$rollback_marker" ] \
             || { echo "ERROR: refusing unsafe rollback marker: $rollback_marker" >&2; exit 1; }
-        read -r expected < "$rollback_marker" || { echo "ERROR: unreadable rollback marker: $rollback_marker" >&2; exit 1; }
+        read -r expected marker_revision < "$rollback_marker" || { echo "ERROR: unreadable rollback marker: $rollback_marker" >&2; exit 1; }
         [[ "$expected" =~ ^[0-9a-f]{64}$ ]] \
             || { echo "ERROR: invalid rollback marker: $rollback_marker" >&2; exit 1; }
         echo "$rel: resuming an interrupted rollback"

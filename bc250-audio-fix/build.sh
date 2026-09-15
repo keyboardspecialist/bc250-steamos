@@ -244,9 +244,8 @@ fi
 step "select kernel patch variants (runbook step 7)"
 # SteamOS 3.8.x needs the DCN 2.01 clock-manager selection backport. Kernel
 # 6.18 needs only the stable-tagged Cyan Skillfish DP-audio quirk. Valve's 7.2
-# tree needs neither audio fix, but retains the 6.18 KFD API. The consolidated
-# telemetry patch is normalized below to apply across both feature-table forms.
-# Experimental
+# tree needs neither audio fix, but retains the 6.18 KFD API and needs metrics
+# patches with context adjusted for its refactored feature table. Experimental
 # DCN201 DSC/PCON support is included only after an explicit risk acknowledgement.
 PCON_PATCH=
 DSC_PATCH=
@@ -255,16 +254,22 @@ case "$BASE" in
     6.16.*)
         CLOCK_PATCH=$HERE/bc250-dp-audio-clock-6.16.patch
         AUDIO_PATCH=$HERE/0002-bc250-audio.patch
+        METRICS_PATCH=$HERE/bc250-cyan-skillfish-gpu-telemetry.patch
+        GFXCLK_PATCH=$HERE/bc250-cyan-skillfish-gfxclk.patch
         KFD_RUNLIST_PATCH=$HERE/bc250-kfd-flush-by-runlist-6.16.patch
         ;;
     6.18.*)
         CLOCK_PATCH=
         AUDIO_PATCH=$HERE/0002-bc250-audio.patch
+        METRICS_PATCH=$HERE/bc250-cyan-skillfish-gpu-telemetry.patch
+        GFXCLK_PATCH=$HERE/bc250-cyan-skillfish-gfxclk.patch
         KFD_RUNLIST_PATCH=$HERE/bc250-kfd-flush-by-runlist-6.18.patch
         ;;
     7.2.*)
         CLOCK_PATCH=
         AUDIO_PATCH=
+        METRICS_PATCH=$HERE/bc250-cyan-skillfish-gpu-telemetry-7.2.patch
+        GFXCLK_PATCH=$HERE/bc250-cyan-skillfish-gfxclk-7.2.patch
         KFD_RUNLIST_PATCH=$HERE/bc250-kfd-flush-by-runlist-6.18.patch
         if [ "$ACKNOWLEDGE_DCN201_DISPLAY_RISK" = 1 ]; then
             PCON_PATCH=$HERE/bc250-dcn201-pcon-hdmi21.patch
@@ -307,76 +312,55 @@ else
     echo "kernel $BASE needs no display/audio clock patches"
 fi
 
-step "apply consolidated Cyan Skillfish 8-core telemetry and GPU activity"
+step "apply Cyan Skillfish GPU metrics patches"
 
-TELEMETRY_COMMIT=622ed9e56107f8d13a19848ed06b7a7241ff6cd3
-TELEMETRY_REVISION=mastag-8core-622ed9e-r1
-TELEMETRY_NAME=0001-bc250-8core-telemetry-gpu-activity.patch
-TELEMETRY_SHA=c6b930593e35e4d774f7da65fc8d0312d80f7c5c646aab7bee711b0447206f8b
-TELEMETRY_CACHE=$HERE/downloads/telemetry-$TELEMETRY_COMMIT
-TELEMETRY_PATCH=$TELEMETRY_CACHE/$TELEMETRY_NAME
+TELEMETRY_REVISION=legacy-telemetry-r1
 METRICS_SOURCE=drivers/gpu/drm/amd/pm/swsmu/smu11/cyan_skillfish_ppt.c
-METRICS_HEADER=drivers/gpu/drm/amd/pm/swsmu/inc/pmfw_if/smu11_driver_if_cyan_skillfish.h
-mkdir -p "$TELEMETRY_CACHE"
-[ ! -L "$TELEMETRY_CACHE" ] || die "refusing symlinked telemetry patch cache: $TELEMETRY_CACHE"
-if [ -f "$TELEMETRY_PATCH" ] && [ ! -L "$TELEMETRY_PATCH" ]; then
-    TELEMETRY_ACTUAL_SHA=$(sha256sum "$TELEMETRY_PATCH" | awk '{print $1}')
+
+case "$BASE" in
+    6.16.*)
+        TELEMETRY_SOURCE_SHA=ab86a4598bf907c6963c0a9b4c43f7a50727ce11993833a0b307d9ae0ae0e017
+        GFXCLK_SOURCE_SHA=572014e03cff22fb57f21121e8e8722f11d3d99822ee86e60fbfe50ed6e76f30
+        SCLK_SOURCE_SHA=9e6dfc7e46177925a6492bd72baf4c1de80146036eee63ebf3a0f8703bef4006
+        ;;
+    6.18.*)
+        TELEMETRY_SOURCE_SHA=014893afe640644c17bdab24737a35207a18666ae20bbfa7aa42188948b49c6b
+        GFXCLK_SOURCE_SHA=ceea0e99e1439077dde4abe28308c0191ef6ccf43ec3eb5663a7762c830ab4c4
+        SCLK_SOURCE_SHA=4eb9a1e6b0647a4afaa405e95ee8f7df87cb09fffe13da9ca539261bc19afc7c
+        ;;
+    7.2.*)
+        TELEMETRY_SOURCE_SHA=75ed9922d4f7358f19ea685e85ab1840a7cfa60d2c0fa57008f40bda3a5cc186
+        GFXCLK_SOURCE_SHA=6d9acefc8ce3cd29d358618bc791449ce76eddac1b6cd0dad309bb7a2977120f
+        SCLK_SOURCE_SHA=30aa04491228eec97d4c9e0811342fb754ee4991a432fc527bf819bc25be8255
+        ;;
+esac
+
+METRICS_SOURCE_SHA=$(sha256sum "$METRICS_SOURCE" | cut -d' ' -f1)
+if [ "$METRICS_SOURCE_SHA" = "$TELEMETRY_SOURCE_SHA" ] \
+   || [ "$METRICS_SOURCE_SHA" = "$GFXCLK_SOURCE_SHA" ] \
+   || [ "$METRICS_SOURCE_SHA" = "$SCLK_SOURCE_SHA" ]; then
+    echo "GPU telemetry patch already applied"
+elif patch -p1 --dry-run -s -f < "$METRICS_PATCH" >/dev/null 2>&1; then
+    patch -p1 -s < "$METRICS_PATCH"
+    echo "GPU telemetry patch applied"
 else
-    TELEMETRY_ACTUAL_SHA=
-fi
-if [ "$TELEMETRY_ACTUAL_SHA" != "$TELEMETRY_SHA" ]; then
-    TELEMETRY_TMP=$(mktemp "$TELEMETRY_CACHE/.${TELEMETRY_NAME}.XXXXXX")
-    curl --retry 3 --retry-all-errors -fsSL \
-        "https://raw.githubusercontent.com/MastaG/linux-cachyos-bc250/$TELEMETRY_COMMIT/patches/linux-cachyos/$TELEMETRY_NAME" \
-        -o "$TELEMETRY_TMP" \
-        || { rm -f "$TELEMETRY_TMP"; die "could not fetch consolidated telemetry patch"; }
-    TELEMETRY_ACTUAL_SHA=$(sha256sum "$TELEMETRY_TMP" | awk '{print $1}')
-    [ "$TELEMETRY_ACTUAL_SHA" = "$TELEMETRY_SHA" ] \
-        || { rm -f "$TELEMETRY_TMP"; die "checksum mismatch for consolidated telemetry patch"; }
-    chmod 0644 "$TELEMETRY_TMP"
-    mv -f "$TELEMETRY_TMP" "$TELEMETRY_PATCH"
-fi
-
-# Rewrite the kernel API/context deltas and preserve the older Valve kernels'
-# stock-BIOS metrics-layout default. The 7.2 path uses the pinned patch as-is.
-normalized_telemetry_patch() {
-    if [[ "$BASE" == 7.2.* ]]; then
-        cat "$TELEMETRY_PATCH"
-        return
-    fi
-
-    awk -v legacy_gpu_tables="$LEGACY_GPU_TABLES" \
-        -f "$HERE/normalize-telemetry-patch.awk" "$TELEMETRY_PATCH"
-}
-
-if grep -qF "smu_driver_table_init(smu, SMU_DRIVER_TABLE_GPU_METRICS" \
-    "$METRICS_SOURCE"; then
-    LEGACY_GPU_TABLES=0
-elif grep -qF "smu_table->gpu_metrics_table_size = sizeof(struct gpu_metrics_v2_2)" \
-    "$METRICS_SOURCE" \
-    && grep -qF "smu_table->gpu_metrics_table = kzalloc" "$METRICS_SOURCE"; then
-    LEGACY_GPU_TABLES=1
-else
-    die_tree_drift "unrecognized Cyan Skillfish GPU metrics table API"
+    die_tree_drift "GPU telemetry patch neither applies nor reverses cleanly — tree has drifted"
 fi
 
-if grep -qF "cs_legacy_8core_metrics" "$METRICS_SOURCE" \
-   && grep -qF "SmuMetrics_8core_t" "$METRICS_HEADER"; then
-    echo "consolidated 8-core telemetry patch already applied"
-elif grep -qF "cs_legacy_8core_metrics" "$METRICS_SOURCE" \
-     || grep -qF "SmuMetrics_8core_t" "$METRICS_HEADER"; then
-    die_tree_drift "consolidated 8-core telemetry patch is only partially applied"
-elif normalized_telemetry_patch | patch -p1 --fuzz=0 --dry-run -s -f >/dev/null 2>&1; then
-    normalized_telemetry_patch | patch -p1 --fuzz=0 -s
-    rm -f "$METRICS_SOURCE.orig" "$METRICS_HEADER.orig"
-    echo "consolidated 8-core telemetry patch applied ($TELEMETRY_COMMIT)"
+METRICS_SOURCE_SHA=$(sha256sum "$METRICS_SOURCE" | cut -d' ' -f1)
+if [ "$METRICS_SOURCE_SHA" = "$GFXCLK_SOURCE_SHA" ] \
+   || [ "$METRICS_SOURCE_SHA" = "$SCLK_SOURCE_SHA" ]; then
+    echo "GPU clock query patch already applied"
+elif patch -p1 --dry-run -s -f < "$GFXCLK_PATCH" >/dev/null 2>&1; then
+    patch -p1 -s < "$GFXCLK_PATCH"
+    echo "GPU clock query patch applied"
 else
-    die_tree_drift "consolidated 8-core telemetry patch does not apply exactly — tree has drifted"
+    die_tree_drift "GPU clock query patch neither applies nor reverses cleanly — tree has drifted"
 fi
 
 SCLK_PATCH=$HERE/bc250-cyan-skillfish-sclk-range.patch
-if grep -q $'^#define CYAN_SKILLFISH_SCLK_MIN\t\t\t350$' "$METRICS_SOURCE" \
-   && grep -q $'^#define CYAN_SKILLFISH_SCLK_MAX\t\t\t2230$' "$METRICS_SOURCE"; then
+METRICS_SOURCE_SHA=$(sha256sum "$METRICS_SOURCE" | cut -d' ' -f1)
+if [ "$METRICS_SOURCE_SHA" = "$SCLK_SOURCE_SHA" ]; then
     echo "Cyan Skillfish SCLK range patch already applied"
 elif patch -p1 --dry-run -s -f < "$SCLK_PATCH" >/dev/null 2>&1; then
     patch -p1 -s < "$SCLK_PATCH"
@@ -385,11 +369,9 @@ else
     die_tree_drift "Cyan Skillfish SCLK range patch neither applies nor reverses cleanly — tree has drifted"
 fi
 
-grep -qF "cs_legacy_8core_metrics" "$METRICS_SOURCE" \
-    && grep -qF "amdgpu_fence_count_emitted" "$METRICS_SOURCE" \
-    && grep -qF "PPSMC_MSG_GetGfxFrequency" "$METRICS_SOURCE" \
-    && grep -qF "SmuMetrics_8core_t" "$METRICS_HEADER" \
-    || die "Cyan Skillfish consolidated telemetry postcondition failed"
+METRICS_SOURCE_SHA=$(sha256sum "$METRICS_SOURCE" | cut -d' ' -f1)
+[ "$METRICS_SOURCE_SHA" = "$SCLK_SOURCE_SHA" ] \
+    || die "Cyan Skillfish metrics source does not match the expected final composition"
 
 step "apply AMDGPU TTM cleanup guard"
 TTM_PATCH=$HERE/bc250-amdgpu-ttm-null-page-guard.patch

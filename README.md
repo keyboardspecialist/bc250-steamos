@@ -635,9 +635,8 @@ instability risk:
 ./patch-driver.sh --acknowledge-dcn201-display-risk
 ```
 
-The pinned consolidated telemetry patch decodes stock and widened 8-core Cyan
-Skillfish firmware layouts, queries GFX frequency directly from the SMU, derives
-GPU utilization from GFX-ring fences, and repairs the
+The patches preserve the Cyan Skillfish firmware metrics layout, query GFX
+frequency directly from the SMU, add GPU utilization reporting, and repair the
 GFX1013 compute-queue lifecycle. On 6.16 and 6.18 they also apply the required
 DisplayPort audio corrections; Valve 7.2 needs neither legacy audio patch.
 The toolkit's interactive AMDGPU action asks separately whether to include the
@@ -667,8 +666,8 @@ This optional but highly recommended patch builds the Mesa/RADV half of
 as a separate Vulkan ICD to enable GFX1013 asynchronous compute. The matching
 `bc250-audio-fix` AMDGPU kernel module must be built, installed, selected, and
 active first. Driver readiness refuses to pass unless all installed module
-markers, the selected `modinfo` path, and both the loaded compute and telemetry
-composition attestations agree. Use
+markers, the selected `modinfo` path, and the loaded module composition
+attestations agree. Use
 **Auto Base Toolkit Installation** for the complete foundation, or choose **Install / resume
 async-compute stack** under Performance tuning. The toolkit installs AMDGPU
 first, pauses for reboot, and resumes RADV when the same option is selected

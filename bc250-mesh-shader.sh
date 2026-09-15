@@ -6,7 +6,7 @@ set -euo pipefail
 SELF="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/$(basename "${BASH_SOURCE[0]}")"
 UPSTREAM_REPO="https://github.com/DryhoppedIPA/bc250-gfx1013-fix"
 UPSTREAM_COMMIT="d3e6dc062c34d2523db0abe5741d1f5b0dea00d9"
-AMDGPU_REVISION="mastag-8core-622ed9e-r1"
+AMDGPU_REVISION="legacy-telemetry-r1"
 LEGACY_UPSTREAM_COMMIT="b66203e012594204e5e3049856b28a2681112985"
 RADV_PROFILE_REVISION="production-fsr4-v4"
 RAW_BASE="https://raw.githubusercontent.com/DryhoppedIPA/bc250-gfx1013-fix/$UPSTREAM_COMMIT"
@@ -427,15 +427,16 @@ verify_fsr4_patch() {
 }
 
 verify_compute_kernel() {
-    local expected actual active active_revision marker resolved owner mode
+    local expected marker_revision actual active active_revision marker resolved owner mode
     [[ -f "$COMPUTE_MODULE" && ! -L "$COMPUTE_MODULE" ]] || return 1
     actual=$(sha256_file "$COMPUTE_MODULE")
     for marker in "$COMPUTE_MARKER" "$AUDIO_MARKER" "$METRICS_MARKER"; do
         [[ -f "$marker" && ! -L "$marker" ]] || return 1
-        read -r expected < "$marker" || return 1
-        [[ "$expected" =~ ^[0-9a-f]{64}$ && "$actual" == "$expected" ]] || return 1
+        read -r expected marker_revision < "$marker" || return 1
+        [[ "$expected" =~ ^[0-9a-f]{64}$ && "$actual" == "$expected" \
+            && "$marker_revision" == "$AMDGPU_REVISION" ]] || return 1
     done
-    read -r expected < "$COMPUTE_MARKER" || return 1
+    read -r expected marker_revision < "$COMPUTE_MARKER" || return 1
     [[ -r "$COMPUTE_ACTIVE" && ! -L "$COMPUTE_ACTIVE" ]] || return 1
     active=$(<"$COMPUTE_ACTIVE")
     [[ "$active" == "$UPSTREAM_COMMIT" ]] || return 1
@@ -771,8 +772,9 @@ MANIFEST="\$HOME/.local/share/bc250-mesh-shader/install.conf"
     && [ -r "\$SCHED_POLICY" ] && [ ! -L "\$SCHED_POLICY" ] || exit 0
 actual=\$(sha256sum "\$MODULE" | awk '{print \$1}')
 for marker in "\$MARKER" "\$AUDIO_MARKER" "\$METRICS_MARKER"; do
-    read -r expected < "\$marker" || exit 0
-    [[ "\$expected" =~ ^[0-9a-f]{64}\$ ]] && [ "\$actual" = "\$expected" ] || exit 0
+    read -r expected marker_revision < "\$marker" || exit 0
+    [[ "\$expected" =~ ^[0-9a-f]{64}\$ ]] && [ "\$actual" = "\$expected" ] \
+        && [ "\$marker_revision" = "\$REVISION" ] || exit 0
 done
 resolved=\$(modinfo -k "\$(uname -r)" -F filename amdgpu 2>/dev/null) || exit 0
 [ "\$(readlink -f "\$resolved")" = "\$(readlink -f "\$MODULE")" ] || exit 0
@@ -842,8 +844,9 @@ MANIFEST="\$HOME/.local/share/bc250-mesh-shader/install.conf"
     && [ -r "\$SCHED_POLICY" ] && [ ! -L "\$SCHED_POLICY" ] || exit 0
 actual=\$(sha256sum "\$MODULE" | awk '{print \$1}')
 for marker in "\$MARKER" "\$AUDIO_MARKER" "\$METRICS_MARKER"; do
-    read -r expected < "\$marker" || exit 0
-    [[ "\$expected" =~ ^[0-9a-f]{64}\$ ]] && [ "\$actual" = "\$expected" ] || exit 0
+    read -r expected marker_revision < "\$marker" || exit 0
+    [[ "\$expected" =~ ^[0-9a-f]{64}\$ ]] && [ "\$actual" = "\$expected" ] \
+        && [ "\$marker_revision" = "\$REVISION" ] || exit 0
 done
 resolved=\$(modinfo -k "\$(uname -r)" -F filename amdgpu 2>/dev/null) || exit 0
 [ "\$(readlink -f "\$resolved")" = "\$(readlink -f "\$MODULE")" ] || exit 0
@@ -899,8 +902,8 @@ MANIFEST="\$HOME/.local/share/bc250-mesh-shader/install.conf"
     && [ -f "\$MANIFEST" ] && [ ! -L "\$MANIFEST" ] \
     && [ -r "\$ACTIVE" ] && [ ! -L "\$ACTIVE" ] \
     && [ -r "\$REVISION_ACTIVE" ] && [ ! -L "\$REVISION_ACTIVE" ] || exit 0
-read -r expected < "\$MARKER" || exit 0
-[[ "\$expected" =~ ^[0-9a-f]{64}\$ ]] || exit 0
+read -r expected marker_revision < "\$MARKER" || exit 0
+[[ "\$expected" =~ ^[0-9a-f]{64}\$ && "\$marker_revision" = "\$REVISION" ]] || exit 0
 actual=\$(sha256sum "\$MODULE" | awk '{print \$1}')
 [ "\$actual" = "\$expected" ] || exit 0
 [ "\$(cat "\$ACTIVE")" = "\$COMMIT" ] || exit 0
@@ -945,8 +948,8 @@ MANIFEST="\$HOME/.local/share/bc250-mesh-shader/install.conf"
     && [ -f "\$MANIFEST" ] && [ ! -L "\$MANIFEST" ] \
     && [ -r "\$ACTIVE" ] && [ ! -L "\$ACTIVE" ] \
     && [ -r "\$REVISION_ACTIVE" ] && [ ! -L "\$REVISION_ACTIVE" ] || exit 0
-read -r expected < "\$MARKER" || exit 0
-[[ "\$expected" =~ ^[0-9a-f]{64}\$ ]] || exit 0
+read -r expected marker_revision < "\$MARKER" || exit 0
+[[ "\$expected" =~ ^[0-9a-f]{64}\$ && "\$marker_revision" = "\$REVISION" ]] || exit 0
 actual=\$(sha256sum "\$MODULE" | awk '{print \$1}')
 [ "\$actual" = "\$expected" ] || exit 0
 [ "\$(cat "\$ACTIVE")" = "\$COMMIT" ] || exit 0
@@ -1010,8 +1013,9 @@ done
     || fail "The patched AMDGPU runtime is not active."
 actual=\$(sha256sum "\$MODULE" | awk '{print \$1}')
 for marker in "\$MARKER" "\$AUDIO_MARKER" "\$METRICS_MARKER"; do
-    read -r expected < "\$marker" || fail "Could not read \$marker"
-    [[ "\$expected" =~ ^[0-9a-f]{64}\$ && "\$actual" == "\$expected" ]] \
+    read -r expected marker_revision < "\$marker" || fail "Could not read \$marker"
+    [[ "\$expected" =~ ^[0-9a-f]{64}\$ && "\$actual" == "\$expected" \
+        && "\$marker_revision" == "\$REVISION" ]] \
         || fail "The selected AMDGPU module does not match its attestations."
 done
 resolved=\$(modinfo -k "\$(uname -r)" -F filename amdgpu 2>/dev/null) \
@@ -1144,8 +1148,9 @@ done
     || fail "The patched AMDGPU runtime is not active."
 actual=\$(sha256sum "\$MODULE" | awk '{print \$1}')
 for marker in "\$MARKER" "\$AUDIO_MARKER" "\$METRICS_MARKER"; do
-    read -r expected < "\$marker" || fail "Could not read \$marker"
-    [[ "\$expected" =~ ^[0-9a-f]{64}\$ && "\$actual" == "\$expected" ]] \
+    read -r expected marker_revision < "\$marker" || fail "Could not read \$marker"
+    [[ "\$expected" =~ ^[0-9a-f]{64}\$ && "\$actual" == "\$expected" \
+        && "\$marker_revision" == "\$REVISION" ]] \
         || fail "The selected AMDGPU module does not match its attestations."
 done
 resolved=\$(modinfo -k "\$(uname -r)" -F filename amdgpu 2>/dev/null) \

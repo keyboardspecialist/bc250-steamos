@@ -13,7 +13,7 @@ ROOT = Path(__file__).resolve().parents[1]
 MESH = ROOT / "bc250-mesh-shader.sh"
 FSR4 = ROOT / "bc250-fsr4.sh"
 UPSTREAM_COMMIT = "d3e6dc062c34d2523db0abe5741d1f5b0dea00d9"
-AMDGPU_REVISION = "mastag-8core-622ed9e-r1"
+AMDGPU_REVISION = "legacy-telemetry-r1"
 MESA_TAG = "mesa-26.2.2"
 RADV_PROFILE_REVISION = "production-fsr4-v4"
 NATIVE_MESH_COMMIT = "d67c00d4aad5797364abc3401d419e76afb04edd"
@@ -128,9 +128,11 @@ class MeshShaderTests(unittest.TestCase):
             path.parent.mkdir(parents=True, exist_ok=True)
         state.mkdir(parents=True, exist_ok=True)
         module.write_bytes(b"patched amdgpu\n")
-        module_hash = hashlib.sha256(module.read_bytes()).hexdigest() + "\n"
+        module_hash = hashlib.sha256(module.read_bytes()).hexdigest()
         for path in (marker, audio_marker, metrics_marker):
-            path.write_text(module_hash, encoding="ascii")
+            path.write_text(
+                f"{module_hash} {AMDGPU_REVISION}\n", encoding="ascii"
+            )
         active.write_text(UPSTREAM_COMMIT + "\n", encoding="ascii")
         revision_active.write_text(AMDGPU_REVISION + "\n", encoding="ascii")
         policy.write_text("2\n", encoding="ascii")
