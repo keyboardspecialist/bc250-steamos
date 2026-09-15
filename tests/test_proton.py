@@ -81,6 +81,23 @@ class ProtonManagerTests(unittest.TestCase):
         self.assertTrue(os.access(PROTON, os.X_OK))
         self.assertIn("cp README.md bc250-*.sh", workflow)
 
+    def test_default_package_pin_matches_available_upstream_asset(self):
+        source = PROTON.read_text(encoding="ascii")
+        self.assertIn(
+            'PACKAGE_VERSION="${BC250_PROTON_PACKAGE_VERSION:-11.6-166}"', source
+        )
+        self.assertIn(
+            "protonge-latest-bc250-11.6-166-x86_64.pkg.tar.zst", source
+        )
+        self.assertIn(
+            "https://github.com/MastaG/linux-cachyos-bc250/releases/download/repo/",
+            source,
+        )
+        self.assertIn(
+            "193e0e3b275024231bce8c0b01ed4220507257f86befc7c6fbb940e55a035640",
+            source,
+        )
+
     def tearDown(self):
         self.temporary.cleanup()
 

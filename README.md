@@ -877,9 +877,9 @@ logged-in Deck user:
 ```
 
 The manager downloads
-`protonge-latest-bc250-11.6-155-x86_64.pkg.tar.zst` from the pinned upstream
+`protonge-latest-bc250-11.6-166-x86_64.pkg.tar.zst` from the pinned upstream
 release and requires SHA-256
-`f2b4b30c5fcd73756906e6ce452b9cfbb38ab87eadc3de645bf92eb7b36e1cd7`.
+`193e0e3b275024231bce8c0b01ed4220507257f86befc7c6fbb940e55a035640`.
 It extracts only the compatibility tool and license payload. CachyOS package
 metadata, pacman hooks, kernel modules, and host integration are not installed.
 The resulting tool lives at

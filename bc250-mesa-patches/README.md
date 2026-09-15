@@ -75,8 +75,8 @@ exported to the user session.
 ## GE-Proton Package
 
 `bc250-proton.sh` consumes only the compatibility tool and license directories
-from `protonge-latest-bc250-11.6-155-x86_64.pkg.tar.zst`, SHA-256
-`f2b4b30c5fcd73756906e6ce452b9cfbb38ab87eadc3de645bf92eb7b36e1cd7`.
+from `protonge-latest-bc250-11.6-166-x86_64.pkg.tar.zst`, SHA-256
+`193e0e3b275024231bce8c0b01ed4220507257f86befc7c6fbb940e55a035640`.
 It does not install CachyOS package metadata, hooks, modules, or host
 dependencies. The GE build uses Steam Linux Runtime and is installed beneath
 the current user's Steam compatibility-tools directory.
