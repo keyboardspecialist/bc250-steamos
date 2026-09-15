@@ -142,12 +142,15 @@ use their lower-power and overclocking ranges through the frequency interface.
 
 ### 8-Core Layouts
 
-Physical-core detection selects the stock 6-core or current widened 8-core
-layout automatically. `amdgpu.cs_legacy_8core_metrics=1` selects the partial
-116-byte mapping used by older core-unlock BIOS builds; missing fields remain
-unsupported rather than being decoded from unrelated offsets. Diagnostic full
-telemetry through `pp_dpm_socclk` is opt-in with
-`amdgpu.cs_full_telemetry=1`.
+Physical-core detection selects the stock 6-core or an 8-core layout
+automatically. Builds for older Valve 6.16/6.18 kernels preserve their
+stock-BIOS behavior by defaulting to the partial 116-byte 8-core mapping; set
+`amdgpu.cs_legacy_8core_metrics=0` when using one of those kernels with the
+current SMU-patched community BIOS. Valve 7.2 builds default to the widened
+mapping; set `amdgpu.cs_legacy_8core_metrics=1` there for an older core-unlock
+BIOS. Missing fields remain unsupported rather than being decoded from
+unrelated offsets. Diagnostic full telemetry through `pp_dpm_socclk` is opt-in
+with `amdgpu.cs_full_telemetry=1`.
 
 ### Compute Queues
 

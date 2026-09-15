@@ -337,8 +337,8 @@ if [ "$TELEMETRY_ACTUAL_SHA" != "$TELEMETRY_SHA" ]; then
     mv -f "$TELEMETRY_TMP" "$TELEMETRY_PATCH"
 fi
 
-# Rewrite only the kernel API/context deltas; the added telemetry code remains
-# byte-for-byte identical to MastaG's pinned 7.2 payload.
+# Rewrite the kernel API/context deltas and preserve the older Valve kernels'
+# stock-BIOS metrics-layout default. The 7.2 path uses the pinned patch as-is.
 normalized_telemetry_patch() {
     if [[ "$BASE" == 7.2.* ]]; then
         cat "$TELEMETRY_PATCH"

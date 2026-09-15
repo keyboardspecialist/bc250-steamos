@@ -55,6 +55,12 @@ $0 == " \t\t(struct gpu_metrics_v2_2 *)smu_driver_table_ptr(" {
 gpu_metrics_hunk && legacy_gpu_tables &&
 $0 == " \t\t\tsmu, SMU_DRIVER_TABLE_GPU_METRICS);" { next }
 
+# build.sh uses this normalizer only for older Valve kernels.
+$0 == "+static bool cs_legacy_8core_metrics;" {
+	print "+static bool cs_legacy_8core_metrics = true;"
+	next
+}
+
 $0 == " static const struct smu_feature_bits cyan_skillfish_dpm_features = {" {
 	print " #define FEATURE_MASK(feature) (1ULL << feature)"
 	next

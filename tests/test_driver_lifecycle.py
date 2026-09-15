@@ -794,6 +794,7 @@ class DriverLifecycleTests(unittest.TestCase):
  \tret = smu_driver_table_init(smu, SMU_DRIVER_TABLE_GPU_METRICS,
  \t\t\t\t    sizeof(struct gpu_metrics_v2_2),
  \t\t\t\t    SMU_GPU_METRICS_CACHE_INTERVAL);
++static bool cs_legacy_8core_metrics;
 @@ -382,54 +909,114 @@ static bool cyan_skillfish_is_dpm_running(struct smu_context *smu)
  static ssize_t cyan_skillfish_get_gpu_metrics(struct smu_context *smu,
  \t\t\t\t\t\tvoid **table)
@@ -827,6 +828,7 @@ class DriverLifecycleTests(unittest.TestCase):
             self.assertIn("int ret;", modern)
             self.assertIn("smu_driver_table_init", modern)
             self.assertIn("smu_driver_table_ptr", modern)
+            self.assertIn("static bool cs_legacy_8core_metrics = true;", modern)
 
             legacy = normalize(True)
             self.assertIn("@@ -90,16 +450,23 @@", legacy)
@@ -836,6 +838,7 @@ class DriverLifecycleTests(unittest.TestCase):
             self.assertIn("smu_table->gpu_metrics_table;", legacy)
             self.assertNotIn("smu_driver_table_init", legacy)
             self.assertNotIn("smu_driver_table_ptr", legacy)
+            self.assertIn("static bool cs_legacy_8core_metrics = true;", legacy)
             self.assertIn("@@ -382,53 +909,113 @@", legacy)
 
     def test_tracked_amdgpu_patches_are_well_formed(self):
