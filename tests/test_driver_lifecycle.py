@@ -38,6 +38,7 @@ GFX1013_ATTESTATION_PATCH = (
 )
 DCN201_PCON_PATCH = ROOT / "bc250-audio-fix/bc250-dcn201-pcon-hdmi21.patch"
 DCN201_DSC_PATCH = ROOT / "bc250-audio-fix/bc250-dcn201-dsc-enable.patch"
+TELEMETRY_NORMALIZER = ROOT / "bc250-audio-fix/normalize-telemetry-patch.awk"
 
 
 class DriverLifecycleTests(unittest.TestCase):
@@ -745,6 +746,14 @@ class DriverLifecycleTests(unittest.TestCase):
         self.assertIn("SmuMetrics_8core_t", builder)
         self.assertIn("cs_legacy_8core_metrics", builder)
         self.assertIn("PPSMC_MSG_GetGfxFrequency", builder)
+        self.assertIn("normalize-telemetry-patch.awk", builder)
+        self.assertIn("LEGACY_GPU_TABLES", builder)
+        telemetry_block = builder[
+            builder.index('step "apply consolidated Cyan Skillfish') :
+            builder.index("SCLK_PATCH=")
+        ]
+        self.assertIn("patch -p1 --fuzz=0 --dry-run", telemetry_block)
+        self.assertIn("patch -p1 --fuzz=0 -s", telemetry_block)
         self.assertIn("CYAN_SKILLFISH_SCLK_MIN\t\t\t350", sclk_patch)
         self.assertIn("CYAN_SKILLFISH_SCLK_MAX\t\t\t2230", sclk_patch)
         self.assertIn("if (ttm->pages[i])", ttm_patch)
@@ -771,6 +780,63 @@ class DriverLifecycleTests(unittest.TestCase):
         self.assertIn(".bc250-gfx1013-fix", rollback)
         self.assertIn("amdgpu.gfx1013.attestation", builder)
         self.assertIn("amdgpu.gfx1013.attestation", installer)
+
+    def test_telemetry_normalizer_supports_both_gpu_table_apis(self):
+        patch = """\
+@@ -90,17 +450,24 @@ static int cyan_skillfish_tables_init(struct smu_context *smu)
+ \tstruct smu_table_context *smu_table = &smu->smu_table;
+ \tstruct smu_table *tables = smu_table->tables;
++\tstruct cyan_skillfish_metrics_cache *metrics_cache;
+ \tint ret;
+-\tsmu_table->metrics_table = kzalloc_obj(SmuMetrics_t);
++\tsmu_table->metrics_table =
++\t\tkzalloc_obj(struct cyan_skillfish_metrics_cache);
+ \tret = smu_driver_table_init(smu, SMU_DRIVER_TABLE_GPU_METRICS,
+ \t\t\t\t    sizeof(struct gpu_metrics_v2_2),
+ \t\t\t\t    SMU_GPU_METRICS_CACHE_INTERVAL);
+@@ -382,54 +909,114 @@ static bool cyan_skillfish_is_dpm_running(struct smu_context *smu)
+ static ssize_t cyan_skillfish_get_gpu_metrics(struct smu_context *smu,
+ \t\t\t\t\t\tvoid **table)
+ {
+ \tstruct gpu_metrics_v2_2 *gpu_metrics =
+ \t\t(struct gpu_metrics_v2_2 *)smu_driver_table_ptr(
+ \t\t\tsmu, SMU_DRIVER_TABLE_GPU_METRICS);
+"""
+
+        with tempfile.TemporaryDirectory() as td:
+            patch_path = Path(td) / "telemetry.patch"
+            patch_path.write_text(patch, encoding="utf-8")
+
+            def normalize(legacy):
+                return subprocess.run(
+                    [
+                        "awk",
+                        "-v",
+                        f"legacy_gpu_tables={int(legacy)}",
+                        "-f",
+                        str(TELEMETRY_NORMALIZER),
+                        str(patch_path),
+                    ],
+                    check=True,
+                    capture_output=True,
+                    text=True,
+                ).stdout
+
+            modern = normalize(False)
+            self.assertIn("@@ -90,17 +450,24 @@", modern)
+            self.assertIn("int ret;", modern)
+            self.assertIn("smu_driver_table_init", modern)
+            self.assertIn("smu_driver_table_ptr", modern)
+
+            legacy = normalize(True)
+            self.assertIn("@@ -90,16 +450,23 @@", legacy)
+            self.assertNotIn("int ret;", legacy)
+            self.assertIn("smu_table->gpu_metrics_table_size", legacy)
+            self.assertIn("smu_table->gpu_metrics_table = kzalloc", legacy)
+            self.assertIn("smu_table->gpu_metrics_table;", legacy)
+            self.assertNotIn("smu_driver_table_init", legacy)
+            self.assertNotIn("smu_driver_table_ptr", legacy)
+            self.assertIn("@@ -382,53 +909,113 @@", legacy)
 
     def test_tracked_amdgpu_patches_are_well_formed(self):
         tracked = subprocess.run(
