@@ -4,8 +4,10 @@ import {
   getFsr4Inventory,
   getMeshStatus,
   installFsr4Dll,
+  installNativeMesh,
   installOptiscaler,
   uninstallFsr4Dll,
+  uninstallNativeMesh,
   uninstallOptiscaler,
 } from "../api";
 import { ActionButton, EmptyState, StatusRow } from "../components/Common";
@@ -287,6 +289,25 @@ export function MeshTab({ busy, runMutation }: { busy: boolean; runMutation: Mut
     );
   };
 
+  const toggleNativeMesh = (enabled: boolean) => runMutation(
+    enabled ? "Private native-mesh profile installed" : "Private native-mesh profile removed",
+    async () => {
+      try {
+        await (enabled ? installNativeMesh() : uninstallNativeMesh());
+      } finally {
+        await refresh();
+      }
+    },
+    {
+      title: enabled ? "Install the private native-mesh profile?" : "Remove the private native-mesh profile?",
+      description: enabled
+        ? "Build the experimental combined async-compute, FSR4, and physical-GFX10 native-mesh ICD. It stays private: Steam launch options and global activation are not changed."
+        : "Remove only the private native-mesh profile. The global RADV runtime and Steam configuration are unchanged.",
+      destructive: !enabled,
+    },
+    { refresh: false },
+  );
+
   const restoreOrphanedOptiscaler = (candidate: OptiscalerCandidate) => {
     runMutation(
       "OptiScaler removed and original files restored",
@@ -469,6 +490,19 @@ export function MeshTab({ busy, runMutation }: { busy: boolean; runMutation: Mut
         <StatusRow label="Legacy FSR4 runner" value={status.fsr4RunnerPath} good={status.fsr4State === "ready"} />
       </PanelSection>
 
+      <PanelSection title="Private Native Mesh">
+        <StatusRow label="Native-mesh profile" value={status.nativeMeshState} good={status.nativeMeshState === "ready"} />
+        <StatusRow label="Private ICD" value={status.nativeMeshIcdPath} good={status.nativeMeshState === "ready"} />
+        <StatusRow label="Private runner" value={status.nativeMeshRunnerPath} good={status.nativeMeshState === "ready"} />
+        {status.nativeMeshState === "not-installed" && (
+          <ActionButton label="Install private native mesh" disabled={busy || !status.kernelReady || !status.schedulerActive} onClick={() => toggleNativeMesh(true)} />
+        )}
+        {status.nativeMeshState !== "not-installed" && (
+          <ActionButton label="Remove private native mesh" disabled={busy || status.nativeMeshState === "invalid"} onClick={() => toggleNativeMesh(false)} />
+        )}
+        <EmptyState>This experimental profile is never enabled globally. Add the displayed runner to a game's Steam launch options manually when required.</EmptyState>
+      </PanelSection>
+
       {error && <EmptyState>{error}</EmptyState>}
       {!status.scriptAvailable && <EmptyState>The Mesa / RADV toolkit script is unavailable.</EmptyState>}
       {!status.kernelReady && <EmptyState>Install the AMDGPU kernel fixes and reboot before installing the Mesa / RADV async-compute patch.</EmptyState>}
@@ -476,6 +510,7 @@ export function MeshTab({ busy, runMutation }: { busy: boolean; runMutation: Mut
       {status.runtimeState === "invalid" && <EmptyState>The alternate runtime failed validation or requires migration. Run setup again from the toolkit menu.</EmptyState>}
       {status.fsr4DllState === "invalid" && <EmptyState>A game-local FSR4 DLL failed integrity validation. Restore it with the toolkit before making further changes.</EmptyState>}
       {status.fsr4State === "invalid" && <EmptyState>The legacy private FSR4 runtime failed integrity validation. Reinstall or remove it from the toolkit.</EmptyState>}
+      {status.nativeMeshState === "invalid" && <EmptyState>The private native-mesh profile failed integrity validation. Repair or remove it from the toolkit CLI.</EmptyState>}
       {status.globalEnabled && <EmptyState>The patched RADV ICD is active across this user session.</EmptyState>}
       {status.restartRequired && !status.schedulerActive && <EmptyState>Reboot to activate amdgpu.sched_policy=2 and patched RADV together.</EmptyState>}
       {status.restartRequired && status.schedulerActive && <EmptyState>The global driver is configured but this graphical session has not inherited it. Sign out and back in.</EmptyState>}

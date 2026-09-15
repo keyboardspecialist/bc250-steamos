@@ -154,6 +154,18 @@ class AdapterHandlerTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn('<method name="InstallFsr4Dll">', INTROSPECTION_XML)
         self.assertIn('<method name="UninstallFsr4Dll">', INTROSPECTION_XML)
 
+    def test_native_mesh_dbus_signatures_are_declared(self):
+        self.assertEqual(
+            DbusAdapter._METHODS["InstallNativeMesh"],
+            ("", "s", "install_native_mesh"),
+        )
+        self.assertEqual(
+            DbusAdapter._METHODS["UninstallNativeMesh"],
+            ("", "s", "uninstall_native_mesh"),
+        )
+        self.assertIn('<method name="InstallNativeMesh">', INTROSPECTION_XML)
+        self.assertIn('<method name="UninstallNativeMesh">', INTROSPECTION_XML)
+
     def test_optiscaler_dbus_signatures_are_declared(self):
         self.assertEqual(
             DbusAdapter._METHODS["InstallOptiscaler"],

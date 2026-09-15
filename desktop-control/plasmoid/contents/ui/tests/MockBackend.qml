@@ -34,6 +34,9 @@ QtObject {
         fsr4IcdPath: "/home/deck/.local/share/bc250-mesh-shader/fsr4/radeon_fsr4_icd.x86_64.json",
         fsr4RunnerPath: "/home/deck/.local/share/bc250-mesh-shader/fsr4/bc250-fsr4-run",
         fsr4DllState: "ready", fsr4DllInstallCount: 1,
+        nativeMeshState: "ready",
+        nativeMeshIcdPath: "/home/deck/.local/share/bc250-mesh-shader/native-mesh/radeon_native_mesh_icd.x86_64.json",
+        nativeMeshRunnerPath: "/home/deck/.local/share/bc250-mesh-shader/native-mesh/bc250-native-mesh-run",
         error: null, games: []
     })
     property var fsr4Inventory: ({
@@ -161,6 +164,7 @@ QtObject {
     function setCustomLoadTarget() { start("Applying custom load target"); }
     function setRamp() { start("Applying GPU ramp time"); }
     function setFsr4Dll() { start("Updating FSR4 game DLL"); }
+    function setNativeMeshEnabled(enabled) { start(enabled ? "Installing private native mesh" : "Removing private native mesh"); }
     function installOptiscaler() { start("Installing OptiScaler"); }
     function uninstallOptiscaler() { start("Restoring pre-OptiScaler game files"); }
     function cpuOcAction() { start("Running CPU operation"); }

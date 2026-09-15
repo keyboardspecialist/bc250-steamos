@@ -13,8 +13,13 @@ ROOT = Path(__file__).resolve().parents[1]
 MESH = ROOT / "bc250-mesh-shader.sh"
 FSR4 = ROOT / "bc250-fsr4.sh"
 UPSTREAM_COMMIT = "d3e6dc062c34d2523db0abe5741d1f5b0dea00d9"
+AMDGPU_REVISION = "mastag-8core-622ed9e-r1"
 MESA_TAG = "mesa-26.2.2"
 RADV_PROFILE_REVISION = "production-fsr4-v4"
+NATIVE_MESH_COMMIT = "d67c00d4aad5797364abc3401d419e76afb04edd"
+NATIVE_MESH_REBASE_SHA256 = (
+    "2dabe48622732d9761efefc1a655909ee775cc36efb49deeaccda585d0fab0ea"
+)
 
 
 class MeshShaderTests(unittest.TestCase):
@@ -67,6 +72,7 @@ class MeshShaderTests(unittest.TestCase):
         audio_marker = root / "modules" / ".bc250-audio-fix"
         metrics_marker = root / "modules" / ".bc250-metrics-fix"
         active = root / "modules" / "bc250_gfx1013_fix"
+        revision_active = root / "modules" / "bc250_amdgpu_revision"
         policy = root / "modules" / "sched_policy"
         boot_config = root / "boot-config.sh"
         boot_config.write_text(
@@ -99,6 +105,7 @@ class MeshShaderTests(unittest.TestCase):
             "BC250_AUDIO_MARKER": str(audio_marker),
             "BC250_METRICS_MARKER": str(metrics_marker),
             "BC250_GFX1013_ACTIVE": str(active),
+            "BC250_AMDGPU_REVISION_ACTIVE": str(revision_active),
             "BC250_SCHED_POLICY_PARAM": str(policy),
             "BC250_AMDGPU_BOOT_CONFIG": str(boot_config),
         }
@@ -112,11 +119,12 @@ class MeshShaderTests(unittest.TestCase):
         audio_marker = Path(env["BC250_AUDIO_MARKER"])
         metrics_marker = Path(env["BC250_METRICS_MARKER"])
         active = Path(env["BC250_GFX1013_ACTIVE"])
+        revision_active = Path(env["BC250_AMDGPU_REVISION_ACTIVE"])
         policy = Path(env["BC250_SCHED_POLICY_PARAM"])
         generator = Path(env["BC250_GFX1013_GENERATOR"])
         fallback_icd = Path(env["BC250_MESH_32BIT_ICD"])
         fallback_driver = fallback_icd.parent / "libvulkan_radeon.i686.so"
-        for path in (driver, icd, module, active, policy, generator):
+        for path in (driver, icd, module, active, revision_active, policy, generator):
             path.parent.mkdir(parents=True, exist_ok=True)
         state.mkdir(parents=True, exist_ok=True)
         module.write_bytes(b"patched amdgpu\n")
@@ -124,6 +132,7 @@ class MeshShaderTests(unittest.TestCase):
         for path in (marker, audio_marker, metrics_marker):
             path.write_text(module_hash, encoding="ascii")
         active.write_text(UPSTREAM_COMMIT + "\n", encoding="ascii")
+        revision_active.write_text(AMDGPU_REVISION + "\n", encoding="ascii")
         policy.write_text("2\n", encoding="ascii")
         driver.write_bytes(b"driver\n")
         fallback_elf = bytearray(52 + 2 * 32)
@@ -208,6 +217,48 @@ class MeshShaderTests(unittest.TestCase):
         (profile / "install.conf").write_text(
             f"{digest(driver)} {digest(icd)} {digest(runner)} {MESA_TAG} "
             f"{profile_digest}\n",
+            encoding="ascii",
+        )
+
+    def install_native_mesh_runtime(self, env):
+        state = Path(env["BC250_MESH_STATE_DIR"])
+        profile = state / "native-mesh"
+        profile.mkdir(parents=True)
+        driver = profile / "libvulkan_radeon.so"
+        icd = profile / "radeon_native_mesh_icd.x86_64.json"
+        runner = profile / "bc250-native-mesh-run"
+        license_file = profile / "LONEWOLF-LICENSE.md"
+        readme = profile / "LONEWOLF-README.md"
+        limitations = profile / "LONEWOLF-KNOWN_LIMITATIONS.md"
+        driver.write_bytes(b"native mesh driver\n")
+        icd.write_text(
+            '{"file_format_version":"1.0.1","ICD":'
+            '{"library_path": "%s", "library_arch": "64"}}\n' % driver,
+            encoding="utf-8",
+        )
+        subprocess.run(
+            [
+                "bash",
+                "-c",
+                'script=$1; output=$2; set -- help; source "$script" >/dev/null; '
+                'render_native_mesh_runner > "$output"',
+                "_",
+                str(MESH),
+                str(runner),
+            ],
+            check=True,
+            env=env,
+        )
+        runner.chmod(0o755)
+        license_file.write_text("LoneWolf license\n", encoding="utf-8")
+        readme.write_text("LoneWolf README\n", encoding="utf-8")
+        limitations.write_text("LoneWolf limitations\n", encoding="utf-8")
+        digest = lambda path: hashlib.sha256(path.read_bytes()).hexdigest()
+        (profile / "install.conf").write_text(
+            f"{digest(driver)} {digest(icd)} {digest(runner)} "
+            f"{digest(license_file)} {digest(readme)} {digest(limitations)} {MESA_TAG} "
+            f"3281a69a8bfd9f997e91c15ed0e6290cae12dd32 {NATIVE_MESH_COMMIT} "
+            f"{NATIVE_MESH_REBASE_SHA256}\n",
             encoding="ascii",
         )
 
@@ -375,6 +426,30 @@ class MeshShaderTests(unittest.TestCase):
                 env = self.environment(Path(directory))
                 self.install_runtime(env)
                 Path(env[key]).unlink()
+                status = self.run_status_json(env)
+                self.assertFalse(status["kernelReady"])
+                generated = subprocess.run(
+                    ["bash", env["BC250_GFX1013_GENERATOR"]],
+                    check=True,
+                    capture_output=True,
+                    text=True,
+                    env=env,
+                )
+                self.assertEqual(generated.stdout, "")
+
+    def test_global_activation_requires_active_amdgpu_revision(self):
+        for target in ("mismatch", "symlink"):
+            with self.subTest(target=target), tempfile.TemporaryDirectory() as directory:
+                env = self.environment(Path(directory))
+                self.install_runtime(env)
+                revision = Path(env["BC250_AMDGPU_REVISION_ACTIVE"])
+                if target == "mismatch":
+                    revision.write_text("wrong-revision\n", encoding="ascii")
+                else:
+                    replacement = revision.with_name("revision-target")
+                    replacement.write_text(AMDGPU_REVISION + "\n", encoding="ascii")
+                    revision.unlink()
+                    revision.symlink_to(replacement)
                 status = self.run_status_json(env)
                 self.assertFalse(status["kernelReady"])
                 generated = subprocess.run(
@@ -642,7 +717,7 @@ class MeshShaderTests(unittest.TestCase):
             self.assertEqual(self.run_status_json(env)["runtimeState"], "invalid")
 
     def test_generator_rejects_tampered_runtime_attestations(self):
-        for target in ("driver", "icd", "manifest", "active"):
+        for target in ("driver", "icd", "manifest", "active", "revision"):
             with self.subTest(target=target), tempfile.TemporaryDirectory() as directory:
                 env = self.environment(Path(directory))
                 self.install_runtime(env)
@@ -651,6 +726,7 @@ class MeshShaderTests(unittest.TestCase):
                     "icd": Path(env["BC250_MESH_ICD"]),
                     "manifest": Path(env["BC250_MESH_STATE_DIR"]) / "install.conf",
                     "active": Path(env["BC250_GFX1013_ACTIVE"]),
+                    "revision": Path(env["BC250_AMDGPU_REVISION_ACTIVE"]),
                 }
                 paths[target].write_text("tampered\n", encoding="utf-8")
                 generated = subprocess.run(
@@ -722,18 +798,194 @@ class MeshShaderTests(unittest.TestCase):
             (state / "fsr4/libvulkan_radeon.so").write_bytes(b"tampered\n")
             self.assertEqual(self.run_status_json(env)["fsr4State"], "invalid")
 
-    def test_fsr4_runner_refuses_inactive_scheduler(self):
+    def test_fsr4_runner_refuses_inactive_scheduler_or_wrong_revision(self):
+        for target in ("policy", "revision"):
+            with self.subTest(target=target), tempfile.TemporaryDirectory() as directory:
+                env = self.environment(Path(directory))
+                self.install_runtime(env)
+                self.install_fsr4_runtime(env)
+                if target == "policy":
+                    Path(env["BC250_SCHED_POLICY_PARAM"]).write_text(
+                        "0\n", encoding="ascii"
+                    )
+                else:
+                    Path(env["BC250_AMDGPU_REVISION_ACTIVE"]).write_text(
+                        "wrong-revision\n", encoding="ascii"
+                    )
+                runner = Path(env["BC250_MESH_STATE_DIR"]) / "fsr4/bc250-fsr4-run"
+                result = subprocess.run(
+                    [str(runner), "true"], capture_output=True, text=True, env=env
+                )
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn(
+                    "sched_policy=2" if target == "policy" else "AMDGPU revision",
+                    result.stderr,
+                )
+
+    def test_native_mesh_runner_is_private_attested_and_uses_exact_flags(self):
         with tempfile.TemporaryDirectory() as directory:
             env = self.environment(Path(directory))
             self.install_runtime(env)
-            self.install_fsr4_runtime(env)
-            Path(env["BC250_SCHED_POLICY_PARAM"]).write_text("0\n", encoding="ascii")
-            runner = Path(env["BC250_MESH_STATE_DIR"]) / "fsr4/bc250-fsr4-run"
-            result = subprocess.run(
-                [str(runner), "true"], capture_output=True, text=True, env=env
+            self.install_native_mesh_runtime(env)
+            status = self.run_status_json(env)
+            self.assertEqual(status["nativeMeshState"], "ready")
+            self.assertNotIn(status["nativeMeshIcdPath"], env["VK_DRIVER_FILES"])
+
+            command = "printf '%s|%s|%s|%s' \"$RADV_EXPERIMENTAL\" \"${RADV_BC250_ADVERTISE_TASK-unset}\" \"${RADV_BC250_EXPOSE_FSR-unset}\" \"$VK_DRIVER_FILES\""
+            inherited = {
+                **env,
+                "RADV_EXPERIMENTAL": "foreign,flags",
+                "RADV_BC250_ADVERTISE_TASK": "9",
+                "RADV_BC250_EXPOSE_FSR": "9",
+            }
+            default = subprocess.run(
+                [status["nativeMeshRunnerPath"], "sh", "-c", command],
+                check=True,
+                capture_output=True,
+                text=True,
+                env=inherited,
             )
-            self.assertNotEqual(result.returncode, 0)
-            self.assertIn("sched_policy=2", result.stderr)
+            fields = default.stdout.split("|")
+            self.assertEqual(fields[:3], ["bc250_mesh", "unset", "unset"])
+            self.assertIn(status["nativeMeshIcdPath"], fields[3])
+            self.assertIn(env["BC250_MESH_32BIT_ICD"], fields[3])
+
+            ff7 = subprocess.run(
+                [
+                    status["nativeMeshRunnerPath"],
+                    "--ff7-capabilities",
+                    "sh",
+                    "-c",
+                    command,
+                ],
+                check=True,
+                capture_output=True,
+                text=True,
+                env=inherited,
+            )
+            self.assertEqual(ff7.stdout.split("|")[:3], ["bc250_mesh", "1", "1"])
+
+    def test_native_mesh_runner_requires_current_kernel_and_scheduler(self):
+        for target in ("active", "revision", "policy"):
+            with self.subTest(target=target), tempfile.TemporaryDirectory() as directory:
+                env = self.environment(Path(directory))
+                self.install_runtime(env)
+                self.install_native_mesh_runtime(env)
+                state = Path(env["BC250_MESH_STATE_DIR"])
+                if target == "active":
+                    Path(env["BC250_GFX1013_ACTIVE"]).write_text(
+                        "wrong\n", encoding="ascii"
+                    )
+                elif target == "revision":
+                    Path(env["BC250_AMDGPU_REVISION_ACTIVE"]).write_text(
+                        "wrong-revision\n", encoding="ascii"
+                    )
+                else:
+                    Path(env["BC250_SCHED_POLICY_PARAM"]).write_text(
+                        "0\n", encoding="ascii"
+                    )
+                result = subprocess.run(
+                    [str(state / "native-mesh/bc250-native-mesh-run"), "true"],
+                    capture_output=True,
+                    text=True,
+                    env=env,
+                )
+                self.assertNotEqual(result.returncode, 0)
+
+    def test_native_mesh_notices_are_attested_by_status_and_runner(self):
+        for name in (
+            "LONEWOLF-LICENSE.md",
+            "LONEWOLF-README.md",
+            "LONEWOLF-KNOWN_LIMITATIONS.md",
+        ):
+            with self.subTest(name=name), tempfile.TemporaryDirectory() as directory:
+                env = self.environment(Path(directory))
+                self.install_runtime(env)
+                self.install_native_mesh_runtime(env)
+                profile = Path(env["BC250_MESH_STATE_DIR"]) / "native-mesh"
+                (profile / name).write_text("tampered\n", encoding="utf-8")
+                self.assertEqual(self.run_status_json(env)["nativeMeshState"], "invalid")
+                result = subprocess.run(
+                    [str(profile / "bc250-native-mesh-run"), "true"],
+                    capture_output=True,
+                    text=True,
+                    env=env,
+                )
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn("failed hash verification", result.stderr)
+
+    def test_uninstall_native_mesh_preserves_global_profile(self):
+        with tempfile.TemporaryDirectory() as directory:
+            env = self.environment(Path(directory))
+            self.install_runtime(env)
+            self.install_native_mesh_runtime(env)
+            preserved = {
+                path: hashlib.sha256(path.read_bytes()).hexdigest()
+                for path in (
+                    Path(env["BC250_MESH_DRIVER"]),
+                    Path(env["BC250_MESH_ICD"]),
+                    Path(env["BC250_GFX1013_GENERATOR"]),
+                    Path(env["BC250_MESH_STATE_DIR"]) / "install.conf",
+                )
+            }
+            subprocess.run(
+                ["bash", str(MESH), "uninstall", "--native-mesh"],
+                check=True,
+                capture_output=True,
+                text=True,
+                env=env,
+            )
+            self.assertEqual(self.run_status_json(env)["nativeMeshState"], "not-installed")
+            for path, expected in preserved.items():
+                self.assertEqual(hashlib.sha256(path.read_bytes()).hexdigest(), expected)
+
+    def test_native_mesh_rebase_is_pinned_and_never_uses_fuzzy_setup(self):
+        script = MESH.read_text(encoding="utf-8")
+        setup = script.split("cmd_setup_native_mesh() (", 1)[1].split(
+            "\n)\n\nmanage_games", 1
+        )[0]
+        patch = ROOT / "bc250-mesa-patches/0010-lonewolf-native-mesh-mesa-26.2.2-rebase.patch"
+        self.assertEqual(hashlib.sha256(patch.read_bytes()).hexdigest(), NATIVE_MESH_REBASE_SHA256)
+        self.assertIn(f'NATIVE_MESH_COMMIT="{NATIVE_MESH_COMMIT}"', script)
+        self.assertIn("0001-gfx1013-compute-queue-fix.patch", setup)
+        for number in range(5, 10):
+            self.assertIn(f"000{number}-", setup)
+        self.assertIn('git -C "$source" apply --check "$NATIVE_MESH_REBASE"', setup)
+        self.assertNotIn("--3way", setup)
+        self.assertNotIn("--3-way", setup)
+        self.assertNotIn("--fuzz", setup[setup.index('git -C "$source" apply --check'):])
+        runner = script.split("render_native_mesh_runner() {", 1)[1].split(
+            "\n}\n\nread_native_mesh_manifest", 1
+        )[0]
+        self.assertNotIn("GENERATOR", runner)
+        self.assertIn("export RADV_EXPERIMENTAL=bc250_mesh", runner)
+        for notice in (
+            "LONEWOLF-LICENSE.md",
+            "LONEWOLF-README.md",
+            "LONEWOLF-KNOWN_LIMITATIONS.md",
+        ):
+            self.assertIn(f'sha256_file "$profile_stage/{notice}"', setup)
+
+    def test_all_generated_activation_scripts_attest_amdgpu_revision(self):
+        script = MESH.read_text(encoding="utf-8")
+        for renderer in (
+            "render_previous_generator",
+            "render_generator",
+            "render_pre_policy_generator",
+            "render_legacy_generator",
+            "render_fsr4_runner",
+            "render_native_mesh_runner",
+        ):
+            body = script.split(f"{renderer}() {{", 1)[1].split("\nEOF\n}", 1)[0]
+            with self.subTest(renderer=renderer):
+                self.assertIn('shell_word "$AMDGPU_REVISION_ACTIVE"', body)
+                self.assertIn('shell_word "$AMDGPU_REVISION"', body)
+                self.assertIn('! -L "\\$REVISION_ACTIVE"', body)
+                self.assertIn('cat "\\$REVISION_ACTIVE"', body)
+        production_paths = script.split("require_production_kernel_paths() {", 1)[
+            1
+        ].split("\n}", 1)[0]
+        self.assertIn("DEFAULT_AMDGPU_REVISION_ACTIVE", production_paths)
 
     def test_uninstall_fsr4_preserves_default_runtime(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -769,7 +1021,7 @@ class MeshShaderTests(unittest.TestCase):
     def test_fsr4_setup_bootstraps_and_incrementally_reuses_base_build(self):
         source = MESH.read_text(encoding="utf-8")
         setup = source.split("cmd_setup() (", 1)[1].split(
-            "\n)\n\nmanage_games", 1
+            "\n)\n\ncmd_setup_native_mesh", 1
         )[0]
         ninja = 'ninja -C "$build" src/amd/vulkan/libvulkan_radeon.so'
         first_ninja = setup.index(ninja)
@@ -802,7 +1054,7 @@ class MeshShaderTests(unittest.TestCase):
     def test_async_setup_reuses_verified_fsr4_bootstrap_without_building(self):
         source = MESH.read_text(encoding="utf-8")
         setup = source.split("cmd_setup() (", 1)[1].split(
-            "\n)\n\nmanage_games", 1
+            "\n)\n\ncmd_setup_native_mesh", 1
         )[0]
         guard = 'if [[ "$profile" == default ]] && verify_current_runtime; then'
         guard_index = setup.index(guard)
@@ -1111,6 +1363,96 @@ class MeshShaderTests(unittest.TestCase):
             self.assertFalse(transaction.exists())
             self.assertEqual(self.run_status_json(env)["fsr4State"], "ready")
 
+    def test_interrupted_native_mesh_replacement_restores_attested_notices(self):
+        with tempfile.TemporaryDirectory() as directory:
+            env = self.environment(Path(directory))
+            self.install_runtime(env)
+            self.install_native_mesh_runtime(env)
+            state = Path(env["BC250_MESH_STATE_DIR"])
+            profile = state / "native-mesh"
+            transaction = state / "native-mesh-install-transaction"
+            previous = transaction / "previous"
+            previous.mkdir(parents=True)
+            expected = {}
+            for source in profile.iterdir():
+                backup = previous / source.name
+                backup.write_bytes(source.read_bytes())
+                backup.chmod(source.stat().st_mode)
+                expected[source.name] = hashlib.sha256(source.read_bytes()).hexdigest()
+            (transaction / "transaction.conf").write_text(
+                "swapping 1\n", encoding="ascii"
+            )
+            (profile / "LONEWOLF-README.md").write_text(
+                "interrupted\n", encoding="utf-8"
+            )
+
+            subprocess.run(
+                [
+                    "bash",
+                    "-c",
+                    'script=$1; set -- help; source "$script" >/dev/null; '
+                    "recover_native_mesh_install_transaction",
+                    "_",
+                    str(MESH),
+                ],
+                check=True,
+                capture_output=True,
+                text=True,
+                env=env,
+            )
+
+            self.assertFalse(transaction.exists())
+            self.assertEqual(self.run_status_json(env)["nativeMeshState"], "ready")
+            self.assertEqual(
+                {
+                    path.name: hashlib.sha256(path.read_bytes()).hexdigest()
+                    for path in profile.iterdir()
+                },
+                expected,
+            )
+
+    def test_native_mesh_recovery_rejects_tampered_notice_backup(self):
+        with tempfile.TemporaryDirectory() as directory:
+            env = self.environment(Path(directory))
+            self.install_runtime(env)
+            self.install_native_mesh_runtime(env)
+            state = Path(env["BC250_MESH_STATE_DIR"])
+            profile = state / "native-mesh"
+            transaction = state / "native-mesh-install-transaction"
+            previous = transaction / "previous"
+            previous.mkdir(parents=True)
+            for source in profile.iterdir():
+                backup = previous / source.name
+                backup.write_bytes(source.read_bytes())
+                backup.chmod(source.stat().st_mode)
+            (transaction / "transaction.conf").write_text(
+                "swapping 1\n", encoding="ascii"
+            )
+            (previous / "LONEWOLF-KNOWN_LIMITATIONS.md").write_text(
+                "tampered backup\n", encoding="utf-8"
+            )
+            current = profile / "libvulkan_radeon.so"
+            current.write_bytes(b"interrupted current profile\n")
+
+            result = subprocess.run(
+                [
+                    "bash",
+                    "-c",
+                    'script=$1; set -- help; source "$script" >/dev/null; '
+                    "recover_native_mesh_install_transaction",
+                    "_",
+                    str(MESH),
+                ],
+                capture_output=True,
+                text=True,
+                env=env,
+            )
+
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("backup failed attestation", result.stderr)
+            self.assertEqual(current.read_bytes(), b"interrupted current profile\n")
+            self.assertTrue(transaction.exists())
+
     def test_uninstall_removes_global_runtime_and_legacy_entries(self):
         with tempfile.TemporaryDirectory() as directory:
             env = self.environment(Path(directory))
@@ -1248,7 +1590,7 @@ class MeshShaderTests(unittest.TestCase):
     def test_radv_prerequisite_repair_follows_active_kernel_gate(self):
         source = MESH.read_text(encoding="utf-8")
         setup = source.split("cmd_setup() (", 1)[1].split(
-            "\n)\n\nmanage_games", 1
+            "\n)\n\ncmd_setup_native_mesh", 1
         )[0]
         kernel_gate = setup.index("ensure_compute_kernel_prerequisite")
         core_tools = setup.index("ensure_radv_core_tools")
@@ -1501,6 +1843,12 @@ ensure_radv_prerequisites
         self.assertIn('exec 8> "$FSR4_DLL_LOCK"', purge)
         self.assertIn('flock 8', purge)
         self.assertIn('FSR4 DLL rollback state exists but its helper is unavailable', purge)
+
+    def test_interactive_menu_can_remove_only_native_mesh(self):
+        script = MESH.read_text(encoding="utf-8")
+        menu = script[script.index("cmd_menu() {") : script.index("\n}\n\ncmd_help()")]
+        self.assertIn("Remove private LoneWolf native mesh", menu)
+        self.assertIn("uninstall --native-mesh", menu)
 
     def test_rc9_helper_is_executable_and_in_toolkit_release_glob(self):
         workflow = (ROOT / ".github/workflows/release-artifacts.yml").read_text(

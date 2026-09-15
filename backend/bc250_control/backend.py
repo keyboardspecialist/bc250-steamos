@@ -3489,6 +3489,15 @@ class ToolkitBackend:
                 ),
                 "fsr4DllState": "not-installed",
                 "fsr4DllInstallCount": 0,
+                "nativeMeshState": "not-installed",
+                "nativeMeshIcdPath": str(
+                    self.user_home
+                    / ".local/share/bc250-mesh-shader/native-mesh/radeon_native_mesh_icd.x86_64.json"
+                ),
+                "nativeMeshRunnerPath": str(
+                    self.user_home
+                    / ".local/share/bc250-mesh-shader/native-mesh/bc250-native-mesh-run"
+                ),
                 "error": None,
                 "games": [],
             }
@@ -3539,6 +3548,15 @@ class ToolkitBackend:
         fsr4_runner_path = status.get(
             "fsr4RunnerPath", str(fsr4_root / "bc250-fsr4-run")
         )
+        native_mesh_state = status.get("nativeMeshState", "not-installed")
+        native_mesh_root = self.user_home / ".local/share/bc250-mesh-shader/native-mesh"
+        native_mesh_icd_path = status.get(
+            "nativeMeshIcdPath",
+            str(native_mesh_root / "radeon_native_mesh_icd.x86_64.json"),
+        )
+        native_mesh_runner_path = status.get(
+            "nativeMeshRunnerPath", str(native_mesh_root / "bc250-native-mesh-run")
+        )
         status_error = status.get("error")
         if mesa_version is not None and not isinstance(mesa_version, str):
             raise CommandError("Mesa / RADV status returned an invalid Mesa version.")
@@ -3565,7 +3583,14 @@ class ToolkitBackend:
             raise CommandError("Mesa / RADV status returned invalid FSR4 DLL state.")
         if type(fsr4_dll_install_count) is not int or fsr4_dll_install_count < 0:
             raise CommandError("Mesa / RADV status returned an invalid FSR4 install count.")
-        for path in (fsr4_icd_path, fsr4_runner_path):
+        if native_mesh_state not in {"ready", "not-installed", "invalid"}:
+            raise CommandError("Mesa / RADV status returned invalid native-mesh state.")
+        for path in (
+            fsr4_icd_path,
+            fsr4_runner_path,
+            native_mesh_icd_path,
+            native_mesh_runner_path,
+        ):
             if (
                 not isinstance(path, str)
                 or not path.startswith("/")
@@ -3591,6 +3616,9 @@ class ToolkitBackend:
             "fsr4RunnerPath": fsr4_runner_path,
             "fsr4DllState": fsr4_dll_state,
             "fsr4DllInstallCount": fsr4_dll_install_count,
+            "nativeMeshState": native_mesh_state,
+            "nativeMeshIcdPath": native_mesh_icd_path,
+            "nativeMeshRunnerPath": native_mesh_runner_path,
             "error": status_error,
             "games": normalized_games,
         }
@@ -3599,6 +3627,28 @@ class ToolkitBackend:
         async with self._mutation_lock:
             async with self._process_lock():
                 return await callback()
+
+    async def install_native_mesh(self) -> dict[str, str]:
+        async def action() -> dict[str, str]:
+            await self._user_tool(
+                "bc250-mesh-shader.sh", "setup", "--native-mesh", timeout=3600
+            )
+            return {
+                "message": "The private native-mesh profile was installed. Steam launch options were not changed."
+            }
+
+        return await self._mutate(action)
+
+    async def uninstall_native_mesh(self) -> dict[str, str]:
+        async def action() -> dict[str, str]:
+            await self._user_tool(
+                "bc250-mesh-shader.sh", "uninstall", "--native-mesh", timeout=120
+            )
+            return {
+                "message": "The private native-mesh profile was removed. The global RADV runtime was unchanged."
+            }
+
+        return await self._mutate(action)
 
     @staticmethod
     def _validate_fsr4_target_id(target_id: str) -> None:

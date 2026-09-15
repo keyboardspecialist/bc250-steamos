@@ -54,6 +54,7 @@ class ToolkitTests(unittest.TestCase):
             "proton-uninstall",
             "audio",
             "mesh",
+            "native-mesh-install",
             "decky",
             "coolercontrol",
             "manage",
@@ -64,6 +65,7 @@ class ToolkitTests(unittest.TestCase):
         self.assertIn("logged-in Deck user, not with sudo", result.stdout)
         self.assertIn("Compatibility aliases: audio (amdgpu), mesh (radv)", result.stdout)
         self.assertIn("graphics-setup [--replace-unmanaged]", result.stdout)
+        self.assertIn("native-mesh-remove", result.stdout)
 
     def test_graphics_setup_without_option_does_not_expand_missing_argument(self):
         result = subprocess.run(
@@ -160,8 +162,10 @@ class ToolkitTests(unittest.TestCase):
         self.assertIn("3) run_menu_action kfd-runlist", drivers_menu)
         self.assertIn("4) run_menu_action graphics-setup", drivers_menu)
         self.assertIn("GE-Proton with FSR4", performance_menu)
+        self.assertIn("Private native-mesh profile", performance_menu)
         self.assertIn("portable FSR4 RC9 game DLLs", performance_menu)
-        self.assertIn("2) cmd_proton_menu", performance_menu)
+        self.assertIn("2) run_menu_child radv", performance_menu)
+        self.assertIn("3) cmd_proton_menu", performance_menu)
         self.assertIn("bc250-proton.sh", source)
         self.assertIn("GPU compute-unit unlock", unlocks_menu)
         self.assertIn("CPU core unlock", unlocks_menu)
@@ -567,7 +571,7 @@ class ToolkitTests(unittest.TestCase):
         mesh.write_text(
             "#!/usr/bin/env bash\n"
             "[[ \"${1:-}\" == status-json ]] || exit 2\n"
-            "printf '%s\\n' '{\"runtimeState\":\"not-installed\",\"kernelReady\":false,\"schedulerConfigured\":false,\"schedulerActive\":false,\"globalEnabled\":false}'\n",
+            "printf '%s\\n' '{\"runtimeState\":\"not-installed\",\"kernelReady\":false,\"schedulerConfigured\":false,\"schedulerActive\":false,\"globalEnabled\":false,\"nativeMeshState\":\"not-installed\",\"nativeMeshRunnerPath\":\"/tmp/bc250-native-mesh-run\"}'\n",
             encoding="utf-8",
         )
         proton = root / "bc250-proton.sh"
@@ -799,6 +803,8 @@ class ToolkitTests(unittest.TestCase):
                 "fan-install": ("sudo", "nct6687d/steamdeck-setup.sh", "install"),
                 "audio-build": ("direct", "bc250-audio-fix/patch-driver.sh"),
                 "mesh-setup": ("direct", "bc250-mesh-shader.sh", "setup"),
+                "native-mesh-install": ("direct", "bc250-mesh-shader.sh", "setup", "--native-mesh"),
+                "native-mesh-remove": ("direct", "bc250-mesh-shader.sh", "uninstall", "--native-mesh"),
                 "decky-install": ("direct", "decky-plugin/install.sh", "install"),
                 "desktop-install": ("direct", "desktop-control/install.sh", "install"),
                 "coolercontrol-install": ("direct", "coolercontrol/install.sh", "install"),
@@ -1060,6 +1066,7 @@ class ToolkitTests(unittest.TestCase):
                     "swap",
                     "compute",
                     "proton",
+                    "native-mesh",
                     "mesh",
                     "audio",
                     "fan",

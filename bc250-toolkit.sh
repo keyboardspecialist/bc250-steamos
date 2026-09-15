@@ -320,6 +320,22 @@ radv_badge() {
     esac
 }
 
+native_mesh_badge() {
+    local status="" state
+    if [[ ! -f "$MESH_SHADER_SH" || -L "$MESH_SHADER_SH" ]]; then
+        printf '%s' "${CR}[unavailable]${C0}"
+        return
+    fi
+    status=$(bash "$MESH_SHADER_SH" status-json 2>/dev/null || true)
+    state=$(json_field "$status" nativeMeshState || true)
+    case "$state" in
+        ready) printf '%s' "${CG}[installed]${C0}" ;;
+        invalid) printf '%s' "${CY}[repair needed]${C0}" ;;
+        not-installed) printf '%s' "${CD}[not installed]${C0}" ;;
+        *) printf '%s' "${CR}[status unavailable]${C0}" ;;
+    esac
+}
+
 proton_badge() {
     local status=""
     if [[ ! -f "$PROTON_SH" || -L "$PROTON_SH" ]]; then
@@ -385,7 +401,7 @@ show_auto_base_installation_plan() {
     printf '%s\n' "    - AMDGPU kernel fixes"
     printf '%s\n' "    - Mesa / RADV async compute and its scheduler policy"
     printf '%s\n' "    - Required signed packages, storage, and update protection"
-    printf '%s\n' "  Excludes hardware unlocks, tuning, swap, device-specific drivers, interfaces, and FSR4."
+    printf '%s\n' "  Excludes hardware unlocks, tuning, swap, device-specific drivers, interfaces, FSR4, and private native mesh."
     printf '%s\n' "  Re-run this same option after each requested reboot to resume."
 }
 
@@ -619,6 +635,8 @@ run_machine_action() {
         fan-install) run_sudo_script "$FAN_SETUP_SH" install ;;
         audio-build) run_script "$AUDIO_FIX_SH" ;;
         mesh-setup) run_script "$MESH_SHADER_SH" setup ;;
+        native-mesh-install) run_script "$MESH_SHADER_SH" setup --native-mesh ;;
+        native-mesh-remove) run_script "$MESH_SHADER_SH" uninstall --native-mesh ;;
         decky-install) run_script "$DECKY_INSTALL_SH" install ;;
         desktop-install) run_script "$DESKTOP_INSTALL_SH" install ;;
         coolercontrol-install) run_script "$COOLERCONTROL_INSTALL_SH" install ;;
@@ -893,6 +911,19 @@ show_status() {
             failed=1; failed_components+=("Mesa / RADV async compute")
         fi
     fi
+
+    state=$(json_field "$radv_output" nativeMeshState || true)
+    detail=$(json_field "$radv_output" nativeMeshRunnerPath || true)
+    case "$state" in
+        ready) status_row "Private native-mesh profile" "installed" good "manual per-game runner: $detail" ;;
+        not-installed) status_row "Private native-mesh profile" "not installed" dim "optional; never globally enabled or added to Steam" ;;
+        invalid)
+            status_row "Private native-mesh profile" "incomplete" bad "repair or remove the private profile"
+            failed=1; failed_components+=("Private native-mesh profile") ;;
+        *)
+            status_row "Private native-mesh profile" "unavailable" bad "Mesa / RADV status probe failed"
+            failed=1; failed_components+=("Private native-mesh profile") ;;
+    esac
 
     state=$(status_value "$proton_output" "state: " || true)
     case "$state" in
@@ -1235,6 +1266,7 @@ cmd_performance_menu() {
         local items=(
             "Install / resume async-compute stack|$(radv_badge)|Automatically install AMDGPU first when needed, then resume Mesa / RADV after reboot."
             "GPU driver & FSR4 options|${CG}[menu]${C0}|Manage Mesa / RADV, portable FSR4 RC9 game DLLs, or cleanup."
+            "Private native-mesh profile|$(native_mesh_badge)|Experimental combined profile for explicit per-game runner use; never enabled globally and Steam is not edited."
             "GE-Proton with FSR4|$(proton_badge)|Install the pinned BC-250 GE build after FSR4 RADV is active; Steam prefixes and saves remain separate."
             "GPU / CPU tuning|${CG}[menu]${C0}|Adjust GPU clocks, load response, ramp behavior, and CPU undervolt/overclock."
             "GDDR6 memory temperature|${CY}[experimental]${C0}|Prepare, apply, read, or restore the P3.0-only live SMU temperature payload."
@@ -1243,9 +1275,10 @@ cmd_performance_menu() {
         case $MENU_CHOICE in
             0) run_menu_action graphics-setup ;;
             1) run_menu_child radv ;;
-            2) cmd_proton_menu ;;
-            3) run_menu_child power ;;
-            4) cmd_memory_temperature_menu ;;
+            2) run_menu_child radv ;;
+            3) cmd_proton_menu ;;
+            4) run_menu_child power ;;
+            5) cmd_memory_temperature_menu ;;
         esac
     done
 }
@@ -1439,14 +1472,14 @@ Action operation IDs:
   swap-zram-install      swap-zswap-install     compute-build
   cec-setup              persistence-install
   aic-install            fan-install             audio-build
-  mesh-setup
+  mesh-setup             native-mesh-install
   decky-install          desktop-install         coolercontrol-install
   storage-repair         cec-repair
   storage-remove         power-remove           ram-remove
   swap-remove
   compute-remove         cec-remove             persistence-remove
   aic-remove             fan-remove             audio-remove
-  mesh-remove
+  mesh-remove            native-mesh-remove
   decky-remove           desktop-remove          coolercontrol-remove
 EOF
 }

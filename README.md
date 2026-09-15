@@ -635,8 +635,9 @@ instability risk:
 ./patch-driver.sh --acknowledge-dcn201-display-risk
 ```
 
-The patches preserve the Cyan Skillfish firmware metrics layout, query GFX
-frequency directly from the SMU, add GPU utilization reporting, and repair the
+The pinned consolidated telemetry patch decodes stock and widened 8-core Cyan
+Skillfish firmware layouts, queries GFX frequency directly from the SMU, derives
+GPU utilization from GFX-ring fences, and repairs the
 GFX1013 compute-queue lifecycle. On 6.16 and 6.18 they also apply the required
 DisplayPort audio corrections; Valve 7.2 needs neither legacy audio patch.
 The toolkit's interactive AMDGPU action asks separately whether to include the
@@ -665,8 +666,9 @@ This optional but highly recommended patch builds the Mesa/RADV half of
 [`DryhoppedIPA/bc250-gfx1013-fix`](https://github.com/DryhoppedIPA/bc250-gfx1013-fix)
 as a separate Vulkan ICD to enable GFX1013 asynchronous compute. The matching
 `bc250-audio-fix` AMDGPU kernel module must be built, installed, selected, and
-active first. Setup refuses to continue unless all installed module markers,
-the selected `modinfo` path, and the loaded repair attestation agree. Use
+active first. Driver readiness refuses to pass unless all installed module
+markers, the selected `modinfo` path, and both the loaded compute and telemetry
+composition attestations agree. Use
 **Auto Base Toolkit Installation** for the complete foundation, or choose **Install / resume
 async-compute stack** under Performance tuning. The toolkit installs AMDGPU
 first, pauses for reboot, and resumes RADV when the same option is selected
@@ -681,6 +683,15 @@ query patches `0002` through `0004` are not downloaded or applied. Build output
 must contain the FSR4 feature markers and pass ELF, linkage, and
 dependency checks before installation.
 
+A separate, opt-in private profile adds LoneWolf's physical-GFX10 native-mesh
+backend from commit `d67c00d4aad5797364abc3401d419e76afb04edd`. The toolkit
+maintains a deterministic Mesa 26.2.2 rebase on top of the same `0001` and
+`0005`-`0009` composition; this rebase is not represented as an upstream
+LoneWolf release. Setup verifies the original and rebased patch hashes and
+uses strict application without fuzz or 3-way fallback. LoneWolf's license and
+known-limitations notices are retained in `bc250-mesa-patches/` and in the
+installed private profile.
+
 Open the menu as the logged-in user:
 
 ```bash
@@ -691,6 +702,7 @@ Or use the CLI:
 
 ```bash
 ./bc250-mesh-shader.sh setup
+./bc250-mesh-shader.sh setup --native-mesh
 ./bc250-mesh-shader.sh setup --fsr4 "/path/to/OptiScaler/amd_fidelityfx_upscaler_dx12.dll"
 ./bc250-mesh-shader.sh status
 ```
@@ -712,6 +724,26 @@ stock `radeon_icd.i686.json` and `lib32-vulkan-radeon`. Setup installs and
 strictly verifies that signed SteamOS fallback package when needed. This also
 supports games
 that launch a mixture of 64-bit and 32-bit Vulkan processes.
+
+The native-mesh profile has its own x86-64 driver, ICD, attested runner,
+manifest, and transaction. It never references the global environment
+generator and does not change Steam configuration. Its 32-bit fallback remains
+SteamOS's signed stock RADV. The current patched compute kernel and active
+`amdgpu.sched_policy=2` are mandatory because the private profile includes the
+same async-compute changes. After `setup --native-mesh`, use one of these Steam
+launch options manually:
+
+```text
+~/.local/share/bc250-mesh-shader/native-mesh/bc250-native-mesh-run %command%
+~/.local/share/bc250-mesh-shader/native-mesh/bc250-native-mesh-run --ff7-capabilities %command%
+```
+
+The default runner sets `RADV_EXPERIMENTAL` to exactly `bc250_mesh` and clears
+the FF7 capability switches. `--ff7-capabilities` additionally sets
+`RADV_BC250_ADVERTISE_TASK=1` and `RADV_BC250_EXPOSE_FSR=1`. Here `FSR` means
+fragment shading rate, not FidelityFX Super Resolution. Task capability
+advertisement does not implement safe Task execution. Remove only this private
+profile with `./bc250-mesh-shader.sh uninstall --native-mesh`.
 
 Do not use this ICD with the stock kernel module. The alternate driver exposes
 dedicated compute queues that require the kernel lifecycle repair, and upstream
@@ -735,11 +767,15 @@ options. Remove those options, run `./bc250-mesh-shader.sh legacy-clear`, and
 then uninstall; unrelated `~/.drirc` content is preserved. New installations
 do not create per-game records.
 
-The alternate build remains x86-64 only. Its async-compute and FSR4 changes
-therefore does not apply to 32-bit processes; those processes use the stock
-SteamOS RADV fallback instead. The toolkit no longer applies the optional
-GFX1013 mesh/task and query patches: upstream disabled them after mesh/task
-workloads caused an unrecoverable GPU hang.
+The global alternate build remains x86-64 only. Its async-compute and FSR4
+changes therefore do not apply to 32-bit processes; those processes use the
+stock SteamOS RADV fallback instead. The global profile still does not apply
+the old optional GFX1013 mesh/task and query patches, which upstream disabled
+after mesh/task workloads caused an unrecoverable GPU hang. LoneWolf's newer
+private physical-GFX10 implementation is isolated behind explicit runner
+opt-in and retains fail-closed limitations for unsupported Task, CullPrimitive,
+GPL, shader-object, DGC, query, and special-output paths. It remains an
+experimental preview rather than full `VK_EXT_mesh_shader` conformance.
 
 An existing environment generator or legacy V3 runner from an older toolkit
 cannot be deactivated merely by replacing these scripts. After upgrading, run

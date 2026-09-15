@@ -28,6 +28,8 @@ INTROSPECTION_XML = """<node>
     <method name="GetCpuUnlockStatus"><arg name="json" type="s" direction="out"/></method>
     <method name="GetMeshStatus"><arg name="json" type="s" direction="out"/></method>
     <method name="GetFsr4Inventory"><arg name="json" type="s" direction="out"/></method>
+    <method name="InstallNativeMesh"><arg name="operation_id" type="s" direction="out"/></method>
+    <method name="UninstallNativeMesh"><arg name="operation_id" type="s" direction="out"/></method>
     <method name="SetCuWgp"><arg name="se" type="y" direction="in"/><arg name="sh" type="y" direction="in"/><arg name="wgp" type="y" direction="in"/><arg name="enabled" type="b" direction="in"/><arg name="operation_id" type="s" direction="out"/></method>
     <method name="SetGpuFrequency"><arg name="mode" type="s" direction="in"/><arg name="minimum" type="u" direction="in"/><arg name="maximum" type="u" direction="in"/><arg name="operation_id" type="s" direction="out"/></method>
     <method name="SetLoadTarget"><arg name="preset" type="s" direction="in"/><arg name="operation_id" type="s" direction="out"/></method>
@@ -164,6 +166,8 @@ class DbusAdapter:
         "GetCpuUnlockStatus": ("", "s", "get_cpu_unlock_status"),
         "GetMeshStatus": ("", "s", "get_mesh_status"),
         "GetFsr4Inventory": ("", "s", "get_fsr4_inventory"),
+        "InstallNativeMesh": ("", "s", "install_native_mesh"),
+        "UninstallNativeMesh": ("", "s", "uninstall_native_mesh"),
         "SetCuWgp": ("yyyb", "s", "set_cu_wgp"),
         "SetGpuFrequency": ("suu", "s", "set_gpu_frequency"),
         "SetLoadTarget": ("s", "s", "set_load_target"),

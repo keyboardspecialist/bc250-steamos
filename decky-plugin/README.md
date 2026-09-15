@@ -15,6 +15,8 @@ CEC quick controls. Select
 - HDMI-CEC controls
 - HDMI Dolby Digital 5.1 / stereo output toggle
 - Global Mesa / RADV async-compute status and AMDGPU prerequisite
+- Explicit install/remove controls and runner status for the private experimental
+  native-mesh profile; it is never globally enabled and Steam is never edited
 - Installed Steam game discovery with guarded FSR4 RC9 install/restore toggles
 
 GPU voltage editing and saving WGP routing for boot remain in the toolkit CLI.

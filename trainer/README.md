@@ -62,6 +62,8 @@ does not bundle or update the complete toolkit source tree.
 
 - Status dashboard with one-second telemetry while the page is active
 - Native Toolkit task dashboard for component inventory, setup, driver builds, repairs, and per-component removal
+- Separate fixed install/remove actions for the private experimental native-mesh
+  profile; the Trainer never enables it globally or edits Steam launch options
 - Live bounded console output with secure `sudo` prompting and protected process cancellation
 - Adaptive, ranged, pinned, and maximum GPU clock modes
 - GPU load target, thermal target, and ramp controls with service-equivalent client bounds

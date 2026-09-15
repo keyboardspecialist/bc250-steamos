@@ -28,7 +28,8 @@ fi
 TMPD=$(mktemp -d)
 trap 'rm -rf "$TMPD"' EXIT
 cp "$STEAM_DECK_HOOK" "$TMPD/steam-deck"
-sed -i -E 's/^([[:space:]]*)blake2b_generic([[:space:]]*)$/\1blake2b_generic?\2/' \
+sed -i.bak -E 's/^([[:space:]]*)blake2b_generic([[:space:]]*)$/\1blake2b_generic?\2/' \
     "$TMPD/steam-deck"
+rm -f "$TMPD/steam-deck.bak"
 echo "note: ignoring stale SteamOS blake2b_generic request; blake2b is built into $REL"
 MKINITCPIO_INSTALL="$TMPD:$INSTALL_PATH" mkinitcpio "$@"

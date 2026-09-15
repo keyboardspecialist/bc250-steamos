@@ -25,8 +25,8 @@ TRAINER_FLATPAK_SH="${TRAINER_FLATPAK_SH:-$SCRIPT_DIR/trainer/install-flatpak.sh
 COOLERCONTROL_SH="${COOLERCONTROL_SH:-$SCRIPT_DIR/coolercontrol/install.sh}"
 SERVICE_CLIENT_DIR="${BC250_SERVICE_CLIENT_DIR:-/var/lib/bc250-control/service-clients}"
 
-COMPONENTS=(trainer desktop decky coolercontrol cec ac3 power ram swap compute proton mesh audio fan aic)
-UNINSTALL_ORDER=(trainer desktop decky coolercontrol cec ac3 power ram swap compute proton mesh audio fan aic)
+COMPONENTS=(trainer desktop decky coolercontrol cec ac3 power ram swap compute proton native-mesh mesh audio fan aic)
+UNINSTALL_ORDER=(trainer desktop decky coolercontrol cec ac3 power ram swap compute proton native-mesh mesh audio fan aic)
 MESH_STATE_DIR="${BC250_MESH_STATE_DIR:-$HOME/.local/share/bc250-mesh-shader}"
 MESH_LOCK_FILE="${BC250_MESH_LOCK_FILE:-$HOME/.cache/bc250-mesh-shader.lock}"
 MESH_GENERATOR="${BC250_GFX1013_GENERATOR:-/usr/lib/systemd/user-environment-generators/60-bc250-gfx1013}"
@@ -58,6 +58,7 @@ component_label() {
         swap) echo "Compressed swap" ;;
         compute) echo "GPU compute-unit unlock" ;;
         mesh) echo "Mesa / RADV async compute" ;;
+        native-mesh) echo "Private native-mesh profile" ;;
         proton) echo "BC-250 GE-Proton" ;;
         audio) echo "AMDGPU kernel fixes" ;;
         aic) echo "AIC8800 WiFi / Bluetooth" ;;
@@ -79,7 +80,7 @@ component_script() {
         ram) echo "$RAM_SH" ;;
         swap) echo "$SWAP_SH" ;;
         compute) echo "$COMPUTE_SH" ;;
-        mesh) echo "$MESH_SH" ;;
+        mesh|native-mesh) echo "$MESH_SH" ;;
         proton) echo "$PROTON_SH" ;;
         audio) echo "$AUDIO_SH" ;;
         aic) echo "$AIC_SH" ;;
@@ -102,7 +103,9 @@ component_probe() {
             require_script "$TRAINER_FLATPAK_SH"
             bash "$TRAINER_FLATPAK_SH" status >/dev/null 2>&1
             ;;
-        desktop|decky|coolercontrol|mesh|proton|audio|aic|fan|ac3) bash "$script" status >/dev/null 2>&1 ;;
+        native-mesh) bash "$script" status-json 2>/dev/null | grep -qF '"nativeMeshState":"ready"' ;;
+        mesh) bash "$script" status-json 2>/dev/null | grep -qF '"runtimeState":"ready"' ;;
+        desktop|decky|coolercontrol|proton|audio|aic|fan|ac3) bash "$script" status >/dev/null 2>&1 ;;
         storage) bash "$script" installed >/dev/null 2>&1 ;;
     esac
 }
@@ -187,6 +190,11 @@ component_has_artifacts() {
                 || -e "$MESH_GENERATOR" || -L "$MESH_GENERATOR" \
                 || -e /usr/lib/libvulkan_radeon_driconf.so ]] \
                 || grep -qF '<!-- BEGIN BC250 MESH SHADER MANAGED -->' "$HOME/.drirc" 2>/dev/null
+            ;;
+        native-mesh)
+            [[ -e "$MESH_STATE_DIR/native-mesh" || -L "$MESH_STATE_DIR/native-mesh" \
+                || -e "$MESH_STATE_DIR/native-mesh-install-transaction" \
+                || -L "$MESH_STATE_DIR/native-mesh-install-transaction" ]]
             ;;
         proton)
             [[ -e "$PROTON_COMPAT_DIR/protonge-latest-bc250" \
@@ -320,6 +328,7 @@ plan_component() {
         swap) echo "  Disable toolkit swap boot integration and safely remove its inactive disk swapfile after any required reboot." ;;
         compute) echo "  Restore stock CU dispatch when possible and remove boot integration; preserve the WGP profile and UMR." ;;
         mesh) echo "  Remove the alternate RADV ICD and global user environment generator; preserve build caches." ;;
+        native-mesh) echo "  Remove only the private experimental profile; leave global RADV and Steam configuration unchanged." ;;
         proton) echo "  Remove only BC-250 GE-Proton; preserve Steam prefixes, game saves, and game data." ;;
         audio) echo "  Restore stock AMDGPU modules for every patched kernel; preserve source and build caches." ;;
         aic) echo "  Disable module repair, unload drivers when possible, and remove installed modules, firmware, and device rules." ;;
@@ -394,6 +403,7 @@ run_component_uninstall() {
             [[ $native -eq 1 || $flatpak_trainer -eq 1 || $legacy_trainer -eq 1 ]] \
                 || bash "$script" uninstall || rc=$?
             ;;
+        native-mesh) bash "$script" uninstall --native-mesh || rc=$? ;;
         desktop|decky|coolercontrol|cec|mesh|proton|audio|ac3) bash "$script" uninstall || rc=$? ;;
         power|ram|swap|compute|aic|fan|storage) sudo bash "$script" uninstall || rc=$? ;;
         *) die "Unknown component: $component" ;;
@@ -602,7 +612,7 @@ cmd_help() {
     cat << EOF
 Usage: $0 {menu|status|status-json|plan [COMPONENT|all]|uninstall COMPONENT|all [--yes]|purge [--yes]|help}
 
-Components: trainer, desktop, decky, coolercontrol, cec, ac3, power, ram, compute, proton, mesh, audio, fan, aic, storage
+Components: trainer, desktop, decky, coolercontrol, cec, ac3, power, ram, compute, proton, native-mesh, mesh, audio, fan, aic, storage
 
   status                 Show lifecycle state for every component.
   status-json            Emit versioned JSON lifecycle state for automation.

@@ -221,6 +221,24 @@ class ControlService:
             cancellable=False,
         )
 
+    async def install_native_mesh(self, sender: str) -> str:
+        return await self._submit(
+            sender,
+            "gpu",
+            "InstallNativeMesh",
+            lambda backend: backend.install_native_mesh(),
+            cancellable=False,
+        )
+
+    async def uninstall_native_mesh(self, sender: str) -> str:
+        return await self._submit(
+            sender,
+            "gpu",
+            "UninstallNativeMesh",
+            lambda backend: backend.uninstall_native_mesh(),
+            cancellable=False,
+        )
+
     async def uninstall_fsr4_dll(self, sender: str, target_id: str) -> str:
         if type(target_id) is not str or re.fullmatch(r"[0-9a-f]{64}", target_id) is None:
             raise InvalidArguments("FSR4 target ID is invalid.")

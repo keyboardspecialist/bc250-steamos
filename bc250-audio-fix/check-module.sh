@@ -25,11 +25,14 @@ case "$MOD" in
     *)     cp "$MOD" "$TMPD/new.ko" ;;
 esac
 
-# Guard 1: the module must include the disabled-by-default KFD workaround so
-# the toolkit cannot persist an option that the selected module ignores.
+# Guard 1: require both the disabled-by-default KFD workaround and the current
+# consolidated telemetry composition revision.
 modinfo -p "$TMPD/new.ko" | grep -q '^bc250_flush_by_runlist:' \
     || { echo "ERROR: module lacks the BC-250 KFD runlist workaround — rebuild it"; exit 1; }
 echo "KFD runlist workaround present (disabled by default)"
+modinfo -p "$TMPD/new.ko" | grep -q '^bc250_amdgpu_revision:' \
+    || { echo "ERROR: module lacks the BC-250 composition revision — rebuild it"; exit 1; }
+echo "BC-250 composition revision present"
 
 # Guard 2: refuse a module whose vermagic does not match the target kernel —
 # modprobe would reject it at boot and, with the updates/ override baked into

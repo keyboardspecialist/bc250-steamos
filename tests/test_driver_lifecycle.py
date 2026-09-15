@@ -23,12 +23,6 @@ AUDIO_CLEAN = ROOT / "bc250-audio-fix/clean.sh"
 AUDIO_PREREQS = ROOT / "bc250-audio-fix/ensure-build-prereqs.sh"
 AUDIO_MKINITCPIO = ROOT / "bc250-audio-fix/mkinitcpio-compat.sh"
 HDMI_AC3 = ROOT / "hdmi-ac3/hdmi-ac3.sh"
-METRICS_PATCH = ROOT / "bc250-audio-fix/bc250-cyan-skillfish-gpu-telemetry.patch"
-GFXCLK_PATCH = ROOT / "bc250-audio-fix/bc250-cyan-skillfish-gfxclk.patch"
-METRICS_72_PATCH = (
-    ROOT / "bc250-audio-fix/bc250-cyan-skillfish-gpu-telemetry-7.2.patch"
-)
-GFXCLK_72_PATCH = ROOT / "bc250-audio-fix/bc250-cyan-skillfish-gfxclk-7.2.patch"
 SCLK_PATCH = ROOT / "bc250-audio-fix/bc250-cyan-skillfish-sclk-range.patch"
 TTM_PATCH = ROOT / "bc250-audio-fix/bc250-amdgpu-ttm-null-page-guard.patch"
 KFD_RUNLIST_616_PATCH = (
@@ -71,6 +65,9 @@ class DriverLifecycleTests(unittest.TestCase):
             "BC250_METRICS_MARKER": str(module_dir / ".bc250-metrics-fix"),
             "BC250_GFX1013_MARKER": str(module_dir / ".bc250-gfx1013-fix"),
             "BC250_GFX1013_ACTIVE": str(root / "sys" / "bc250_gfx1013_fix"),
+            "BC250_AMDGPU_REVISION_ACTIVE": str(
+                root / "sys" / "bc250_amdgpu_revision"
+            ),
             "BC250_AMDGPU_BOOT_CONFIG": str(boot_config),
         }
 
@@ -132,6 +129,14 @@ class DriverLifecycleTests(unittest.TestCase):
             active.write_text(
                 "d3e6dc062c34d2523db0abe5741d1f5b0dea00d9\n",
                 encoding="ascii",
+            )
+            status = self.audio_status_json(env)
+            self.assertEqual(status["state"], "reboot-required")
+            self.assertFalse(status["activeReady"])
+
+            revision_active = Path(env["BC250_AMDGPU_REVISION_ACTIVE"])
+            revision_active.write_text(
+                "mastag-8core-622ed9e-r1\n", encoding="ascii"
             )
             status = self.audio_status_json(env)
             self.assertEqual(status["state"], "ready")
@@ -721,47 +726,27 @@ class DriverLifecycleTests(unittest.TestCase):
         builder = (ROOT / "bc250-audio-fix/build.sh").read_text(encoding="utf-8")
         installer = (ROOT / "bc250-audio-fix/install.sh").read_text(encoding="utf-8")
         rollback = AUDIO_ROLLBACK.read_text(encoding="utf-8")
-        patch = METRICS_PATCH.read_text(encoding="utf-8")
-        gfxclk_patch = GFXCLK_PATCH.read_text(encoding="utf-8")
-        metrics_72_patch = METRICS_72_PATCH.read_text(encoding="utf-8")
-        gfxclk_72_patch = GFXCLK_72_PATCH.read_text(encoding="utf-8")
         sclk_patch = SCLK_PATCH.read_text(encoding="utf-8")
         ttm_patch = TTM_PATCH.read_text(encoding="utf-8")
         gfx1013_attestation_patch = GFX1013_ATTESTATION_PATCH.read_text(
             encoding="utf-8"
         )
-        self.assertIn("bc250-cyan-skillfish-gpu-telemetry.patch", builder)
-        self.assertIn("bc250-cyan-skillfish-gfxclk.patch", builder)
-        self.assertIn(METRICS_72_PATCH.name, builder)
-        self.assertIn(GFXCLK_72_PATCH.name, builder)
+        self.assertIn("0001-bc250-8core-telemetry-gpu-activity.patch", builder)
+        self.assertIn("622ed9e56107f8d13a19848ed06b7a7241ff6cd3", builder)
+        self.assertIn(
+            "c6b930593e35e4d774f7da65fc8d0312d80f7c5c646aab7bee711b0447206f8b",
+            builder,
+        )
         self.assertIn("bc250-cyan-skillfish-sclk-range.patch", builder)
         self.assertIn("bc250-amdgpu-ttm-null-page-guard.patch", builder)
-        self.assertLess(
-            builder.index(str(METRICS_PATCH.name)),
-            builder.index(str(GFXCLK_PATCH.name)),
-        )
-        self.assertNotIn("LEGACY_", builder)
-        self.assertIn("METRICS_SOURCE_SHA", builder)
-        self.assertIn("SCLK_SOURCE_SHA", builder)
-        self.assertIn("GRBM_STATUS__GUI_ACTIVE_MASK", patch)
-        self.assertIn("AMDGPU_PP_SENSOR_GPU_LOAD", patch)
-        self.assertIn("average_gfx_activity", patch)
-        self.assertIn("static const struct smu_feature_bits", metrics_72_patch)
-        self.assertIn("PPSMC_MSG_GetGfxFrequency", gfxclk_patch)
-        self.assertIn("SMU_MSG_GetGfxclkFrequency", gfxclk_patch)
-        self.assertIn("cyan_skillfish_get_gfxclk_frequency", gfxclk_patch)
-        self.assertIn("return -ERANGE", gfxclk_patch)
-        self.assertIn("gpu_metrics->current_gfxclk = gfxclk", gfxclk_patch)
-        self.assertNotIn("smu_table->gpu_metrics_table", gfxclk_patch)
-        self.assertIn("static const struct smu_feature_bits", gfxclk_72_patch)
+        self.assertNotIn("bc250-cyan-skillfish-gpu-telemetry", builder)
+        self.assertNotIn("bc250-cyan-skillfish-gfxclk", builder)
+        self.assertIn("amdgpu_fence_count_emitted", builder)
+        self.assertIn("SmuMetrics_8core_t", builder)
+        self.assertIn("cs_legacy_8core_metrics", builder)
+        self.assertIn("PPSMC_MSG_GetGfxFrequency", builder)
         self.assertIn("CYAN_SKILLFISH_SCLK_MIN\t\t\t350", sclk_patch)
         self.assertIn("CYAN_SKILLFISH_SCLK_MAX\t\t\t2230", sclk_patch)
-        for final_hash in (
-            "9e6dfc7e46177925a6492bd72baf4c1de80146036eee63ebf3a0f8703bef4006",
-            "4eb9a1e6b0647a4afaa405e95ee8f7df87cb09fffe13da9ca539261bc19afc7c",
-            "30aa04491228eec97d4c9e0811342fb754ee4991a432fc527bf819bc25be8255",
-        ):
-            self.assertIn(final_hash, builder)
         self.assertIn("if (ttm->pages[i])", ttm_patch)
         for name in (
             "0001-gfx1013-mmio-pasid-route.patch",
@@ -773,6 +758,13 @@ class DriverLifecycleTests(unittest.TestCase):
         self.assertIn("DryhoppedIPA/bc250-gfx1013-fix", builder)
         self.assertIn("bc250-gfx1013-attestation.patch", builder)
         self.assertIn("bc250_gfx1013_fix", gfx1013_attestation_patch)
+        self.assertIn("bc250_amdgpu_revision", gfx1013_attestation_patch)
+        self.assertIn("mastag-8core-622ed9e-r1", builder)
+        self.assertIn("mastag-8core-622ed9e-r1", installer)
+        self.assertIn(
+            "BC250_AMDGPU_REVISION_ACTIVE",
+            AUDIO_INSTALLER.read_text(encoding="utf-8"),
+        )
         self.assertIn(".bc250-metrics-fix", installer)
         self.assertIn(".bc250-metrics-fix", rollback)
         self.assertIn(".bc250-gfx1013-fix", installer)
@@ -789,6 +781,7 @@ class DriverLifecycleTests(unittest.TestCase):
             text=True,
         ).stdout.splitlines()
 
+        tracked = [patch for patch in tracked if (ROOT / patch).is_file()]
         self.assertTrue(tracked)
         for patch in tracked:
             with self.subTest(patch=patch):

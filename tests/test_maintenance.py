@@ -44,11 +44,22 @@ class MaintenanceTests(unittest.TestCase):
         }
         for variable, name in scripts.items():
             script = directory / f"{name}.sh"
+            status_json = (
+                "  status-json) echo '{\"runtimeState\":\"ready\",\"nativeMeshState\":\"ready\"}'; exit 0 ;;\n"
+                if name == "mesh"
+                else ""
+            )
+            uninstall_log = (
+                'if [[ "${2:-}" == --native-mesh ]]; then printf "%s\\n" "native-mesh:uninstall" >> "$CALL_LOG"; exit 0; fi; '
+                if name == "mesh"
+                else ""
+            )
             script.write_text(
                 "#!/usr/bin/env bash\n"
                 "case \"${1:-}\" in\n"
                 "  status|installed) echo installed; exit 0 ;;\n"
-                f'  uninstall) printf "%s\\n" "{name}:uninstall" >> "$CALL_LOG"; '
+                f"{status_json}"
+                f'  uninstall) {uninstall_log}printf "%s\\n" "{name}:uninstall" >> "$CALL_LOG"; '
                 f'[ "${{FAIL_COMPONENT:-}}" != "{name}" ] || exit "${{FAIL_CODE:-9}}" ;;\n'
                 f'  uninstall-legacy) printf "%s\\n" "{name}:uninstall-legacy" >> "$CALL_LOG" ;;\n'
                 "  *) exit 2 ;;\n"
@@ -114,7 +125,7 @@ class MaintenanceTests(unittest.TestCase):
                 text=True,
                 env=env,
             )
-            self.assertEqual(status.stdout.count("installed"), 16)
+            self.assertEqual(status.stdout.count("installed"), 17)
             self.assertIn("Saved tuning profiles", plan.stdout)
             self.assertFalse(call_log.exists())
 
@@ -148,6 +159,7 @@ class MaintenanceTests(unittest.TestCase):
                     "compute:uninstall",
                     "persistence:remove compute",
                     "proton:uninstall",
+                    "native-mesh:uninstall",
                     "mesh:uninstall",
                     "audio:uninstall",
                     "fan:uninstall",
@@ -256,6 +268,41 @@ class MaintenanceTests(unittest.TestCase):
             self.assertNotIn("persistence:remove swap", calls)
             self.assertNotIn("persistence:remove all", calls)
             self.assertNotIn("storage:uninstall", calls)
+
+    def test_native_mesh_artifacts_are_detected_and_removed_before_global_radv(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            env, call_log = self.make_environment(root)
+            mesh = root / "mesh.sh"
+            mesh.write_text(
+                "#!/usr/bin/env bash\n"
+                "if [[ \"${1:-}\" == status-json ]]; then printf '%s\\n' '{\"runtimeState\":\"ready\",\"nativeMeshState\":\"invalid\"}'; exit 0; fi\n"
+                "if [[ \"$*\" == \"uninstall --native-mesh\" ]]; then printf '%s\\n' native-mesh:uninstall >> \"$CALL_LOG\"; exit 0; fi\n"
+                "if [[ \"${1:-}\" == uninstall ]]; then printf '%s\\n' mesh:uninstall >> \"$CALL_LOG\"; exit 0; fi\n"
+                "exit 2\n",
+                encoding="utf-8",
+            )
+            profile = Path(env["HOME"]) / ".local/share/bc250-mesh-shader/native-mesh"
+            profile.mkdir(parents=True)
+
+            status = subprocess.run(
+                ["bash", str(MAINTENANCE), "status"],
+                check=True,
+                capture_output=True,
+                text=True,
+                env=env,
+            )
+            self.assertIn("Private native-mesh profile: partial", status.stdout)
+
+            subprocess.run(
+                ["bash", str(MAINTENANCE), "uninstall", "all", "--yes"],
+                check=True,
+                capture_output=True,
+                text=True,
+                env=env,
+            )
+            calls = call_log.read_text(encoding="utf-8").splitlines()
+            self.assertLess(calls.index("native-mesh:uninstall"), calls.index("mesh:uninstall"))
 
     def test_scripts_parse(self):
         subprocess.run(

@@ -6,6 +6,7 @@ set -euo pipefail
 SELF="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/$(basename "${BASH_SOURCE[0]}")"
 UPSTREAM_REPO="https://github.com/DryhoppedIPA/bc250-gfx1013-fix"
 UPSTREAM_COMMIT="d3e6dc062c34d2523db0abe5741d1f5b0dea00d9"
+AMDGPU_REVISION="mastag-8core-622ed9e-r1"
 LEGACY_UPSTREAM_COMMIT="b66203e012594204e5e3049856b28a2681112985"
 RADV_PROFILE_REVISION="production-fsr4-v4"
 RAW_BASE="https://raw.githubusercontent.com/DryhoppedIPA/bc250-gfx1013-fix/$UPSTREAM_COMMIT"
@@ -52,6 +53,27 @@ FSR4_PROFILE_SHA256="835842eb8beccd6e0498a771c5ea4d8c9ac86ee994e4659045e9f3bf432
 FSR4_DLL_TOOL="${BC250_FSR4_TOOL:-${SELF%/*}/bc250-fsr4.sh}"
 FSR4_DLL_STATE="${BC250_FSR4_STATE_DIR:-$STATE_DIR/fsr4-dll}"
 FSR4_DLL_LOCK="${BC250_FSR4_LOCK_FILE:-$HOME/.cache/bc250-fsr4.lock}"
+NATIVE_MESH_REPO="https://github.com/lonewolf0622/BC250-Native-Mesh-Shaders-"
+NATIVE_MESH_COMMIT="d67c00d4aad5797364abc3401d419e76afb04edd"
+NATIVE_MESH_UPSTREAM_BASE="https://raw.githubusercontent.com/lonewolf0622/BC250-Native-Mesh-Shaders-/$NATIVE_MESH_COMMIT"
+NATIVE_MESH_UPSTREAM_PATCH="bc250-radv-mesh-gfx10.patch"
+NATIVE_MESH_UPSTREAM_PATCH_SHA256="bb3561153c97413b9c4a348b09a1219e7971b5f1490963c28a238733cc946fed"
+NATIVE_MESH_REBASE_NAME="0010-lonewolf-native-mesh-mesa-26.2.2-rebase.patch"
+NATIVE_MESH_REBASE="${SELF%/*}/bc250-mesa-patches/$NATIVE_MESH_REBASE_NAME"
+NATIVE_MESH_REBASE_SHA256="2dabe48622732d9761efefc1a655909ee775cc36efb49deeaccda585d0fab0ea"
+NATIVE_MESH_DIR="$STATE_DIR/native-mesh"
+NATIVE_MESH_DRIVER="$NATIVE_MESH_DIR/libvulkan_radeon.so"
+NATIVE_MESH_ICD="$NATIVE_MESH_DIR/radeon_native_mesh_icd.x86_64.json"
+NATIVE_MESH_RUNNER="$NATIVE_MESH_DIR/bc250-native-mesh-run"
+NATIVE_MESH_MANIFEST="$NATIVE_MESH_DIR/install.conf"
+NATIVE_MESH_LICENSE="$NATIVE_MESH_DIR/LONEWOLF-LICENSE.md"
+NATIVE_MESH_README="$NATIVE_MESH_DIR/LONEWOLF-README.md"
+NATIVE_MESH_LIMITATIONS="$NATIVE_MESH_DIR/LONEWOLF-KNOWN_LIMITATIONS.md"
+NATIVE_MESH_TRANSACTION_DIR="$STATE_DIR/native-mesh-install-transaction"
+NATIVE_MESH_BUILD_ROOT="$BUILD_ROOT/native-mesh"
+NATIVE_MESH_SOURCE="$NATIVE_MESH_BUILD_ROOT/$DEFAULT_MESA_TAG"
+NATIVE_MESH_BUILD="$NATIVE_MESH_SOURCE/build"
+NATIVE_MESH_OUTPUT="$NATIVE_MESH_BUILD/src/amd/vulkan/libvulkan_radeon.so"
 LOCK_FILE="${BC250_MESH_LOCK_FILE:-$HOME/.cache/bc250-mesh-shader.lock}"
 MODULE_UPDATES="/usr/lib/modules/$(uname -r)/updates"
 DEFAULT_COMPUTE_MODULE="$MODULE_UPDATES/amdgpu.ko.zst"
@@ -59,6 +81,7 @@ DEFAULT_COMPUTE_MARKER="$MODULE_UPDATES/.bc250-gfx1013-fix"
 DEFAULT_AUDIO_MARKER="$MODULE_UPDATES/.bc250-audio-fix"
 DEFAULT_METRICS_MARKER="$MODULE_UPDATES/.bc250-metrics-fix"
 DEFAULT_COMPUTE_ACTIVE="/sys/module/amdgpu/parameters/bc250_gfx1013_fix"
+DEFAULT_AMDGPU_REVISION_ACTIVE="/sys/module/amdgpu/parameters/bc250_amdgpu_revision"
 DEFAULT_SCHED_POLICY="/sys/module/amdgpu/parameters/sched_policy"
 DEFAULT_BOOT_CONFIG="${SELF%/*}/bc250-audio-fix/boot-config.sh"
 DEFAULT_AMDGPU_INSTALLER="${SELF%/*}/bc250-audio-fix/patch-driver.sh"
@@ -67,6 +90,7 @@ COMPUTE_MARKER="${BC250_GFX1013_MARKER:-$DEFAULT_COMPUTE_MARKER}"
 AUDIO_MARKER="${BC250_AUDIO_MARKER:-$DEFAULT_AUDIO_MARKER}"
 METRICS_MARKER="${BC250_METRICS_MARKER:-$DEFAULT_METRICS_MARKER}"
 COMPUTE_ACTIVE="${BC250_GFX1013_ACTIVE:-$DEFAULT_COMPUTE_ACTIVE}"
+AMDGPU_REVISION_ACTIVE="${BC250_AMDGPU_REVISION_ACTIVE:-$DEFAULT_AMDGPU_REVISION_ACTIVE}"
 SCHED_POLICY="${BC250_SCHED_POLICY_PARAM:-$DEFAULT_SCHED_POLICY}"
 BOOT_CONFIG="${BC250_AMDGPU_BOOT_CONFIG:-$DEFAULT_BOOT_CONFIG}"
 AMDGPU_INSTALLER="${BC250_AMDGPU_INSTALLER:-$DEFAULT_AMDGPU_INSTALLER}"
@@ -380,13 +404,30 @@ stage_upstream() {
         || die "Fetched Mesa source does not match pinned commit $MESA_COMMIT"
 }
 
+stage_native_mesh_upstream() {
+    fetch_verified "$NATIVE_MESH_UPSTREAM_PATCH" "$NATIVE_MESH_UPSTREAM_PATCH_SHA256" \
+        "$NATIVE_MESH_UPSTREAM_BASE/$NATIVE_MESH_UPSTREAM_PATCH"
+    fetch_verified lonewolf-LICENSE.md \
+        86b26b23743f2c047a9a1e53f4b989e7b51d6d7cfceb5eccee69e7c88a27a001 \
+        "$NATIVE_MESH_UPSTREAM_BASE/LICENSE.md"
+    fetch_verified lonewolf-README.md \
+        fd3b30983a61c40ed08feebf26e9139e4765f9bb317fa1799ef55761ad07dae8 \
+        "$NATIVE_MESH_UPSTREAM_BASE/README.md"
+    fetch_verified lonewolf-KNOWN_LIMITATIONS.md \
+        baf8d4c5525cd944588469985242d0f045672e8c01aa2d3222f6014fd9269ae9 \
+        "$NATIVE_MESH_UPSTREAM_BASE/KNOWN_LIMITATIONS.md"
+    [[ -f "$NATIVE_MESH_REBASE" && ! -L "$NATIVE_MESH_REBASE" \
+        && "$(sha256_file "$NATIVE_MESH_REBASE")" == "$NATIVE_MESH_REBASE_SHA256" ]] \
+        || die "The toolkit-maintained LoneWolf Mesa 26.2.2 rebase is missing or invalid."
+}
+
 verify_fsr4_patch() {
     [[ -f "$FSR4_PATCH" && ! -L "$FSR4_PATCH" ]] \
         && [[ "$(sha256_file "$FSR4_PATCH")" == "$FSR4_PATCH_SHA256" ]]
 }
 
 verify_compute_kernel() {
-    local expected actual active marker resolved owner mode
+    local expected actual active active_revision marker resolved owner mode
     [[ -f "$COMPUTE_MODULE" && ! -L "$COMPUTE_MODULE" ]] || return 1
     actual=$(sha256_file "$COMPUTE_MODULE")
     for marker in "$COMPUTE_MARKER" "$AUDIO_MARKER" "$METRICS_MARKER"; do
@@ -398,11 +439,15 @@ verify_compute_kernel() {
     [[ -r "$COMPUTE_ACTIVE" && ! -L "$COMPUTE_ACTIVE" ]] || return 1
     active=$(<"$COMPUTE_ACTIVE")
     [[ "$active" == "$UPSTREAM_COMMIT" ]] || return 1
+    [[ -r "$AMDGPU_REVISION_ACTIVE" && ! -L "$AMDGPU_REVISION_ACTIVE" ]] || return 1
+    active_revision=$(<"$AMDGPU_REVISION_ACTIVE")
+    [[ "$active_revision" == "$AMDGPU_REVISION" ]] || return 1
     if [[ "$COMPUTE_MODULE" == "$DEFAULT_COMPUTE_MODULE" \
         && "$COMPUTE_MARKER" == "$DEFAULT_COMPUTE_MARKER" \
         && "$AUDIO_MARKER" == "$DEFAULT_AUDIO_MARKER" \
         && "$METRICS_MARKER" == "$DEFAULT_METRICS_MARKER" \
-        && "$COMPUTE_ACTIVE" == "$DEFAULT_COMPUTE_ACTIVE" ]]; then
+        && "$COMPUTE_ACTIVE" == "$DEFAULT_COMPUTE_ACTIVE" \
+        && "$AMDGPU_REVISION_ACTIVE" == "$DEFAULT_AMDGPU_REVISION_ACTIVE" ]]; then
         command -v modinfo >/dev/null 2>&1 || return 1
         resolved=$(modinfo -k "$(uname -r)" -F filename amdgpu 2>/dev/null) || return 1
         [[ "$(readlink -f "$resolved")" == "$(readlink -f "$COMPUTE_MODULE")" ]] || return 1
@@ -433,6 +478,7 @@ require_production_kernel_paths() {
         && "$AUDIO_MARKER" == "$DEFAULT_AUDIO_MARKER" \
         && "$METRICS_MARKER" == "$DEFAULT_METRICS_MARKER" \
         && "$COMPUTE_ACTIVE" == "$DEFAULT_COMPUTE_ACTIVE" \
+        && "$AMDGPU_REVISION_ACTIVE" == "$DEFAULT_AMDGPU_REVISION_ACTIVE" \
         && "$SCHED_POLICY" == "$DEFAULT_SCHED_POLICY" \
         && "$BOOT_CONFIG" == "$DEFAULT_BOOT_CONFIG" \
         && "$AMDGPU_INSTALLER" == "$DEFAULT_AMDGPU_INSTALLER" ]] \
@@ -538,6 +584,48 @@ ensure_radv_prerequisites() {
         || die "Signed SteamOS package lib32-vulkan-radeon did not provide a valid 32-bit RADV ICD."
 }
 
+ensure_mesa_build_prerequisites() {
+    local required_commands=(gcc g++ git meson ninja patch pkg-config tar readelf ldd glslangValidator spirv-as)
+    local development_packages=(
+        glibc linux-api-headers libdrm expat libelf zlib zstd wayland wayland-protocols
+        libffi libxau libxdmcp xorgproto libxcb xcb-util xcb-util-wm
+        xcb-util-keysyms xcb-util-renderutil xcb-util-image libx11 libxext
+        libxdamage libxfixes libxrandr libxshmfence libxxf86vm libxrender
+    )
+    local command need_packages=0
+    for command in "${required_commands[@]}"; do
+        command -v "$command" >/dev/null 2>&1 || need_packages=1
+    done
+    printf '#include <stddef.h>\nint main(void) { return 0; }\n' \
+        | gcc -x c -fsyntax-only - >/dev/null 2>&1 || need_packages=1
+    python3 -c '__import__("mako"); __import__("packaging"); __import__("yaml")' \
+        >/dev/null 2>&1 || need_packages=1
+    for command in libdrm_amdgpu expat zlib libzstd libelf wayland-client xcb; do
+        pkg-config --exists "$command" 2>/dev/null || need_packages=1
+    done
+    if [[ $need_packages -eq 1 ]]; then
+        log "Installing signed SteamOS Mesa build prerequisites."
+        install_signed_steamos_packages \
+            base-devel curl git meson ninja python python-mako python-packaging python-yaml \
+            pkgconf glslang spirv-tools util-linux lib32-vulkan-radeon \
+            "${development_packages[@]}"
+    fi
+    for command in "${required_commands[@]}"; do
+        command -v "$command" >/dev/null 2>&1 \
+            || die "Signed SteamOS packages did not provide required tool: $command"
+    done
+    printf '#include <stddef.h>\nint main(void) { return 0; }\n' \
+        | gcc -x c -fsyntax-only - >/dev/null 2>&1 \
+        || die "Signed SteamOS packages did not provide required C development headers"
+    python3 -c '__import__("mako"); __import__("packaging"); __import__("yaml")' \
+        >/dev/null 2>&1 \
+        || die "Signed SteamOS packages did not provide required Python build modules"
+    for command in libdrm_amdgpu expat zlib libzstd libelf wayland-client xcb; do
+        pkg-config --exists "$command" 2>/dev/null \
+            || die "Signed SteamOS packages did not provide development metadata: $command"
+    done
+}
+
 manager_environment_active() {
     local environment
     verify_compute_kernel && verify_scheduler_active && verify_current_runtime || return 1
@@ -641,17 +729,19 @@ verify_owned_runtime() {
 }
 
 render_previous_generator() {
-    local marker_q audio_marker_q metrics_marker_q module_q active_q policy_q
-    local driver_q fallback_icd_q commit_q
+    local marker_q audio_marker_q metrics_marker_q module_q active_q revision_active_q policy_q
+    local driver_q fallback_icd_q commit_q revision_q
     marker_q=$(shell_word "$COMPUTE_MARKER")
     audio_marker_q=$(shell_word "$AUDIO_MARKER")
     metrics_marker_q=$(shell_word "$METRICS_MARKER")
     module_q=$(shell_word "$COMPUTE_MODULE")
     active_q=$(shell_word "$COMPUTE_ACTIVE")
+    revision_active_q=$(shell_word "$AMDGPU_REVISION_ACTIVE")
     policy_q=$(shell_word "$SCHED_POLICY")
     driver_q=$(shell_word "$DRIVER")
     fallback_icd_q=$(shell_word "$FALLBACK_ICD")
     commit_q=$(shell_word "$UPSTREAM_COMMIT")
+    revision_q=$(shell_word "$AMDGPU_REVISION")
     cat <<EOF
 #!/usr/bin/env bash
 set -u
@@ -660,10 +750,12 @@ AUDIO_MARKER=$audio_marker_q
 METRICS_MARKER=$metrics_marker_q
 MODULE=$module_q
 ACTIVE=$active_q
+REVISION_ACTIVE=$revision_active_q
 SCHED_POLICY=$policy_q
 DRIVER=$driver_q
 FALLBACK_ICD=$fallback_icd_q
 COMMIT=$commit_q
+REVISION=$revision_q
 ICD="\$HOME/radeon_driconf_icd.x86_64.json"
 MANIFEST="\$HOME/.local/share/bc250-mesh-shader/install.conf"
 [ -f "\$MARKER" ] && [ ! -L "\$MARKER" ] \
@@ -675,6 +767,7 @@ MANIFEST="\$HOME/.local/share/bc250-mesh-shader/install.conf"
     && [ -f "\$FALLBACK_ICD" ] && [ ! -L "\$FALLBACK_ICD" ] \
     && [ -f "\$MANIFEST" ] && [ ! -L "\$MANIFEST" ] \
     && [ -r "\$ACTIVE" ] && [ ! -L "\$ACTIVE" ] \
+    && [ -r "\$REVISION_ACTIVE" ] && [ ! -L "\$REVISION_ACTIVE" ] \
     && [ -r "\$SCHED_POLICY" ] && [ ! -L "\$SCHED_POLICY" ] || exit 0
 actual=\$(sha256sum "\$MODULE" | awk '{print \$1}')
 for marker in "\$MARKER" "\$AUDIO_MARKER" "\$METRICS_MARKER"; do
@@ -689,6 +782,7 @@ for path in "\$MODULE" "\$MARKER" "\$AUDIO_MARKER" "\$METRICS_MARKER" "\$DRIVER"
     [[ "\$mode" =~ ^[0-7]+\$ ]] && (( (8#\$mode & 8#022) == 0 )) || exit 0
 done
 [ "\$(cat "\$ACTIVE")" = "\$COMMIT" ] || exit 0
+[ "\$(cat "\$REVISION_ACTIVE")" = "\$REVISION" ] || exit 0
 [ "\$(cat "\$SCHED_POLICY")" = 2 ] || exit 0
 read -r driver_sha icd_sha mesa_version commit < "\$MANIFEST" || exit 0
 [[ "\$driver_sha" =~ ^[0-9a-f]{64}\$ && "\$icd_sha" =~ ^[0-9a-f]{64}\$ \
@@ -704,17 +798,19 @@ EOF
 }
 
 render_generator() {
-    local marker_q audio_marker_q metrics_marker_q module_q active_q policy_q
-    local driver_q fallback_icd_q commit_q profile_revision_q
+    local marker_q audio_marker_q metrics_marker_q module_q active_q revision_active_q policy_q
+    local driver_q fallback_icd_q commit_q revision_q profile_revision_q
     marker_q=$(shell_word "$COMPUTE_MARKER")
     audio_marker_q=$(shell_word "$AUDIO_MARKER")
     metrics_marker_q=$(shell_word "$METRICS_MARKER")
     module_q=$(shell_word "$COMPUTE_MODULE")
     active_q=$(shell_word "$COMPUTE_ACTIVE")
+    revision_active_q=$(shell_word "$AMDGPU_REVISION_ACTIVE")
     policy_q=$(shell_word "$SCHED_POLICY")
     driver_q=$(shell_word "$DRIVER")
     fallback_icd_q=$(shell_word "$FALLBACK_ICD")
     commit_q=$(shell_word "$UPSTREAM_COMMIT")
+    revision_q=$(shell_word "$AMDGPU_REVISION")
     profile_revision_q=$(shell_word "$RADV_PROFILE_REVISION")
     cat <<EOF
 #!/usr/bin/env bash
@@ -724,10 +820,12 @@ AUDIO_MARKER=$audio_marker_q
 METRICS_MARKER=$metrics_marker_q
 MODULE=$module_q
 ACTIVE=$active_q
+REVISION_ACTIVE=$revision_active_q
 SCHED_POLICY=$policy_q
 DRIVER=$driver_q
 FALLBACK_ICD=$fallback_icd_q
 COMMIT=$commit_q
+REVISION=$revision_q
 PROFILE_REVISION=$profile_revision_q
 ICD="\$HOME/radeon_driconf_icd.x86_64.json"
 MANIFEST="\$HOME/.local/share/bc250-mesh-shader/install.conf"
@@ -740,6 +838,7 @@ MANIFEST="\$HOME/.local/share/bc250-mesh-shader/install.conf"
     && [ -f "\$FALLBACK_ICD" ] && [ ! -L "\$FALLBACK_ICD" ] \
     && [ -f "\$MANIFEST" ] && [ ! -L "\$MANIFEST" ] \
     && [ -r "\$ACTIVE" ] && [ ! -L "\$ACTIVE" ] \
+    && [ -r "\$REVISION_ACTIVE" ] && [ ! -L "\$REVISION_ACTIVE" ] \
     && [ -r "\$SCHED_POLICY" ] && [ ! -L "\$SCHED_POLICY" ] || exit 0
 actual=\$(sha256sum "\$MODULE" | awk '{print \$1}')
 for marker in "\$MARKER" "\$AUDIO_MARKER" "\$METRICS_MARKER"; do
@@ -754,6 +853,7 @@ for path in "\$MODULE" "\$MARKER" "\$AUDIO_MARKER" "\$METRICS_MARKER" "\$DRIVER"
     [[ "\$mode" =~ ^[0-7]+\$ ]] && (( (8#\$mode & 8#022) == 0 )) || exit 0
 done
 [ "\$(cat "\$ACTIVE")" = "\$COMMIT" ] || exit 0
+[ "\$(cat "\$REVISION_ACTIVE")" = "\$REVISION" ] || exit 0
 [ "\$(cat "\$SCHED_POLICY")" = 2 ] || exit 0
 read -r driver_sha icd_sha mesa_version commit profile_revision extra < "\$MANIFEST" || exit 0
 [[ -z "\${extra:-}" && "\$driver_sha" =~ ^[0-9a-f]{64}\$ \
@@ -770,22 +870,26 @@ EOF
 }
 
 render_pre_policy_generator() {
-    local marker_q module_q active_q driver_q fallback_icd_q commit_q
+    local marker_q module_q active_q revision_active_q driver_q fallback_icd_q commit_q revision_q
     marker_q=$(shell_word "$COMPUTE_MARKER")
     module_q=$(shell_word "$COMPUTE_MODULE")
     active_q=$(shell_word "$COMPUTE_ACTIVE")
+    revision_active_q=$(shell_word "$AMDGPU_REVISION_ACTIVE")
     driver_q=$(shell_word "$DRIVER")
     fallback_icd_q=$(shell_word "$FALLBACK_ICD")
     commit_q=$(shell_word "$UPSTREAM_COMMIT")
+    revision_q=$(shell_word "$AMDGPU_REVISION")
     cat <<EOF
 #!/usr/bin/env bash
 set -u
 MARKER=$marker_q
 MODULE=$module_q
 ACTIVE=$active_q
+REVISION_ACTIVE=$revision_active_q
 DRIVER=$driver_q
 FALLBACK_ICD=$fallback_icd_q
 COMMIT=$commit_q
+REVISION=$revision_q
 ICD="\$HOME/radeon_driconf_icd.x86_64.json"
 MANIFEST="\$HOME/.local/share/bc250-mesh-shader/install.conf"
 [ -f "\$MARKER" ] && [ ! -L "\$MARKER" ] && [ -f "\$MODULE" ] \
@@ -793,12 +897,14 @@ MANIFEST="\$HOME/.local/share/bc250-mesh-shader/install.conf"
     && [ -f "\$ICD" ] && [ ! -L "\$ICD" ] \
     && [ -f "\$FALLBACK_ICD" ] && [ ! -L "\$FALLBACK_ICD" ] \
     && [ -f "\$MANIFEST" ] && [ ! -L "\$MANIFEST" ] \
-    && [ -r "\$ACTIVE" ] && [ ! -L "\$ACTIVE" ] || exit 0
+    && [ -r "\$ACTIVE" ] && [ ! -L "\$ACTIVE" ] \
+    && [ -r "\$REVISION_ACTIVE" ] && [ ! -L "\$REVISION_ACTIVE" ] || exit 0
 read -r expected < "\$MARKER" || exit 0
 [[ "\$expected" =~ ^[0-9a-f]{64}\$ ]] || exit 0
 actual=\$(sha256sum "\$MODULE" | awk '{print \$1}')
 [ "\$actual" = "\$expected" ] || exit 0
 [ "\$(cat "\$ACTIVE")" = "\$COMMIT" ] || exit 0
+[ "\$(cat "\$REVISION_ACTIVE")" = "\$REVISION" ] || exit 0
 read -r driver_sha icd_sha mesa_version commit < "\$MANIFEST" || exit 0
 [[ "\$driver_sha" =~ ^[0-9a-f]{64}\$ && "\$icd_sha" =~ ^[0-9a-f]{64}\$ \
     && "\$commit" = "\$COMMIT" ]] || exit 0
@@ -813,32 +919,38 @@ EOF
 }
 
 render_legacy_generator() {
-    local marker_q module_q active_q driver_q commit_q
+    local marker_q module_q active_q revision_active_q driver_q commit_q revision_q
     marker_q=$(shell_word "$COMPUTE_MARKER")
     module_q=$(shell_word "$COMPUTE_MODULE")
     active_q=$(shell_word "$COMPUTE_ACTIVE")
+    revision_active_q=$(shell_word "$AMDGPU_REVISION_ACTIVE")
     driver_q=$(shell_word "$DRIVER")
     commit_q=$(shell_word "$UPSTREAM_COMMIT")
+    revision_q=$(shell_word "$AMDGPU_REVISION")
     cat <<EOF
 #!/usr/bin/env bash
 set -u
 MARKER=$marker_q
 MODULE=$module_q
 ACTIVE=$active_q
+REVISION_ACTIVE=$revision_active_q
 DRIVER=$driver_q
 COMMIT=$commit_q
+REVISION=$revision_q
 ICD="\$HOME/radeon_driconf_icd.x86_64.json"
 MANIFEST="\$HOME/.local/share/bc250-mesh-shader/install.conf"
 [ -f "\$MARKER" ] && [ ! -L "\$MARKER" ] && [ -f "\$MODULE" ] \
     && [ ! -L "\$MODULE" ] && [ -f "\$DRIVER" ] && [ ! -L "\$DRIVER" ] \
     && [ -f "\$ICD" ] && [ ! -L "\$ICD" ] \
     && [ -f "\$MANIFEST" ] && [ ! -L "\$MANIFEST" ] \
-    && [ -r "\$ACTIVE" ] && [ ! -L "\$ACTIVE" ] || exit 0
+    && [ -r "\$ACTIVE" ] && [ ! -L "\$ACTIVE" ] \
+    && [ -r "\$REVISION_ACTIVE" ] && [ ! -L "\$REVISION_ACTIVE" ] || exit 0
 read -r expected < "\$MARKER" || exit 0
 [[ "\$expected" =~ ^[0-9a-f]{64}\$ ]] || exit 0
 actual=\$(sha256sum "\$MODULE" | awk '{print \$1}')
 [ "\$actual" = "\$expected" ] || exit 0
 [ "\$(cat "\$ACTIVE")" = "\$COMMIT" ] || exit 0
+[ "\$(cat "\$REVISION_ACTIVE")" = "\$REVISION" ] || exit 0
 read -r driver_sha icd_sha mesa_version commit < "\$MANIFEST" || exit 0
 [[ "\$driver_sha" =~ ^[0-9a-f]{64}\$ && "\$icd_sha" =~ ^[0-9a-f]{64}\$ \
     && "\$commit" = "\$COMMIT" ]] || exit 0
@@ -851,13 +963,14 @@ EOF
 }
 
 render_fsr4_runner() {
-    local marker_q audio_marker_q metrics_marker_q module_q active_q policy_q
-    local driver_q icd_q fallback_icd_q manifest_q runner_q commit_q profile_sha_q
+    local marker_q audio_marker_q metrics_marker_q module_q active_q revision_active_q policy_q
+    local driver_q icd_q fallback_icd_q manifest_q runner_q commit_q revision_q profile_sha_q
     marker_q=$(shell_word "$COMPUTE_MARKER")
     audio_marker_q=$(shell_word "$AUDIO_MARKER")
     metrics_marker_q=$(shell_word "$METRICS_MARKER")
     module_q=$(shell_word "$COMPUTE_MODULE")
     active_q=$(shell_word "$COMPUTE_ACTIVE")
+    revision_active_q=$(shell_word "$AMDGPU_REVISION_ACTIVE")
     policy_q=$(shell_word "$SCHED_POLICY")
     driver_q=$(shell_word "$FSR4_DRIVER")
     icd_q=$(shell_word "$FSR4_ICD")
@@ -865,6 +978,7 @@ render_fsr4_runner() {
     manifest_q=$(shell_word "$FSR4_MANIFEST")
     runner_q=$(shell_word "$FSR4_RUNNER")
     commit_q=$(shell_word "$UPSTREAM_COMMIT")
+    revision_q=$(shell_word "$AMDGPU_REVISION")
     profile_sha_q=$(shell_word "$FSR4_PROFILE_SHA256")
     cat <<EOF
 #!/usr/bin/env bash
@@ -874,6 +988,7 @@ AUDIO_MARKER=$audio_marker_q
 METRICS_MARKER=$metrics_marker_q
 MODULE=$module_q
 ACTIVE=$active_q
+REVISION_ACTIVE=$revision_active_q
 SCHED_POLICY=$policy_q
 DRIVER=$driver_q
 ICD=$icd_q
@@ -881,6 +996,7 @@ FALLBACK_ICD=$fallback_icd_q
 MANIFEST=$manifest_q
 RUNNER=$runner_q
 COMMIT=$commit_q
+REVISION=$revision_q
 PROFILE_SHA=$profile_sha_q
 fail() { printf '[bc250-fsr4] %s\n' "\$*" >&2; exit 1; }
 [[ \$# -gt 0 ]] || fail "No game command was provided."
@@ -888,7 +1004,9 @@ for path in "\$MARKER" "\$AUDIO_MARKER" "\$METRICS_MARKER" "\$MODULE" \
     "\$DRIVER" "\$ICD" "\$FALLBACK_ICD" "\$MANIFEST" "\$RUNNER"; do
     [[ -f "\$path" && ! -L "\$path" ]] || fail "Required attested file is missing or unsafe: \$path"
 done
-[[ -r "\$ACTIVE" && ! -L "\$ACTIVE" && -r "\$SCHED_POLICY" && ! -L "\$SCHED_POLICY" ]] \
+[[ -r "\$ACTIVE" && ! -L "\$ACTIVE" \
+    && -r "\$REVISION_ACTIVE" && ! -L "\$REVISION_ACTIVE" \
+    && -r "\$SCHED_POLICY" && ! -L "\$SCHED_POLICY" ]] \
     || fail "The patched AMDGPU runtime is not active."
 actual=\$(sha256sum "\$MODULE" | awk '{print \$1}')
 for marker in "\$MARKER" "\$AUDIO_MARKER" "\$METRICS_MARKER"; do
@@ -901,6 +1019,7 @@ resolved=\$(modinfo -k "\$(uname -r)" -F filename amdgpu 2>/dev/null) \
 [[ "\$(readlink -f "\$resolved")" == "\$(readlink -f "\$MODULE")" ]] \
     || fail "The selected AMDGPU module is not the attested module."
 [[ "\$(cat "\$ACTIVE")" == "\$COMMIT" ]] || fail "The loaded AMDGPU repair does not match RADV."
+[[ "\$(cat "\$REVISION_ACTIVE")" == "\$REVISION" ]] || fail "The loaded AMDGPU revision does not match RADV."
 [[ "\$(cat "\$SCHED_POLICY")" == 2 ]] || fail "amdgpu.sched_policy=2 is not active."
 read -r driver_sha icd_sha runner_sha mesa_version profile_sha extra < "\$MANIFEST" \
     || fail "The FSR4 profile manifest is malformed."
@@ -960,6 +1079,256 @@ export VK_DRIVER_FILES="\$ICD:\$FALLBACK_ICD"
 export VK_ICD_FILENAMES="\$VK_DRIVER_FILES"
 exec "\$@"
 EOF
+}
+
+render_native_mesh_runner() {
+    local marker_q audio_marker_q metrics_marker_q module_q active_q revision_active_q policy_q
+    local driver_q icd_q fallback_icd_q manifest_q runner_q license_q readme_q limitations_q
+    local commit_q revision_q mesh_commit_q rebase_sha_q
+    marker_q=$(shell_word "$COMPUTE_MARKER")
+    audio_marker_q=$(shell_word "$AUDIO_MARKER")
+    metrics_marker_q=$(shell_word "$METRICS_MARKER")
+    module_q=$(shell_word "$COMPUTE_MODULE")
+    active_q=$(shell_word "$COMPUTE_ACTIVE")
+    revision_active_q=$(shell_word "$AMDGPU_REVISION_ACTIVE")
+    policy_q=$(shell_word "$SCHED_POLICY")
+    driver_q=$(shell_word "$NATIVE_MESH_DRIVER")
+    icd_q=$(shell_word "$NATIVE_MESH_ICD")
+    fallback_icd_q=$(shell_word "$FALLBACK_ICD")
+    manifest_q=$(shell_word "$NATIVE_MESH_MANIFEST")
+    runner_q=$(shell_word "$NATIVE_MESH_RUNNER")
+    license_q=$(shell_word "$NATIVE_MESH_LICENSE")
+    readme_q=$(shell_word "$NATIVE_MESH_README")
+    limitations_q=$(shell_word "$NATIVE_MESH_LIMITATIONS")
+    commit_q=$(shell_word "$UPSTREAM_COMMIT")
+    revision_q=$(shell_word "$AMDGPU_REVISION")
+    mesh_commit_q=$(shell_word "$NATIVE_MESH_COMMIT")
+    rebase_sha_q=$(shell_word "$NATIVE_MESH_REBASE_SHA256")
+    cat <<EOF
+#!/usr/bin/env bash
+set -euo pipefail
+MARKER=$marker_q
+AUDIO_MARKER=$audio_marker_q
+METRICS_MARKER=$metrics_marker_q
+MODULE=$module_q
+ACTIVE=$active_q
+REVISION_ACTIVE=$revision_active_q
+SCHED_POLICY=$policy_q
+DRIVER=$driver_q
+ICD=$icd_q
+FALLBACK_ICD=$fallback_icd_q
+MANIFEST=$manifest_q
+RUNNER=$runner_q
+LICENSE=$license_q
+README=$readme_q
+LIMITATIONS=$limitations_q
+COMPUTE_COMMIT=$commit_q
+REVISION=$revision_q
+MESH_COMMIT=$mesh_commit_q
+REBASE_SHA=$rebase_sha_q
+fail() { printf '[bc250-native-mesh] %s\n' "\$*" >&2; exit 1; }
+ff7_capabilities=0
+if [[ \${1:-} == --ff7-capabilities ]]; then
+    ff7_capabilities=1
+    shift
+fi
+[[ \$# -gt 0 ]] || fail "No game command was provided."
+for path in "\$MARKER" "\$AUDIO_MARKER" "\$METRICS_MARKER" "\$MODULE" \
+    "\$DRIVER" "\$ICD" "\$FALLBACK_ICD" "\$MANIFEST" "\$RUNNER" \
+    "\$LICENSE" "\$README" "\$LIMITATIONS"; do
+    [[ -f "\$path" && ! -L "\$path" ]] || fail "Required attested file is missing or unsafe: \$path"
+done
+[[ -r "\$ACTIVE" && ! -L "\$ACTIVE" \
+    && -r "\$REVISION_ACTIVE" && ! -L "\$REVISION_ACTIVE" \
+    && -r "\$SCHED_POLICY" && ! -L "\$SCHED_POLICY" ]] \
+    || fail "The patched AMDGPU runtime is not active."
+actual=\$(sha256sum "\$MODULE" | awk '{print \$1}')
+for marker in "\$MARKER" "\$AUDIO_MARKER" "\$METRICS_MARKER"; do
+    read -r expected < "\$marker" || fail "Could not read \$marker"
+    [[ "\$expected" =~ ^[0-9a-f]{64}\$ && "\$actual" == "\$expected" ]] \
+        || fail "The selected AMDGPU module does not match its attestations."
+done
+resolved=\$(modinfo -k "\$(uname -r)" -F filename amdgpu 2>/dev/null) \
+    || fail "Could not resolve the selected AMDGPU module."
+[[ "\$(readlink -f "\$resolved")" == "\$(readlink -f "\$MODULE")" ]] \
+    || fail "The selected AMDGPU module is not the attested module."
+[[ "\$(cat "\$ACTIVE")" == "\$COMPUTE_COMMIT" ]] || fail "The loaded AMDGPU repair does not match RADV."
+[[ "\$(cat "\$REVISION_ACTIVE")" == "\$REVISION" ]] || fail "The loaded AMDGPU revision does not match RADV."
+[[ "\$(cat "\$SCHED_POLICY")" == 2 ]] || fail "amdgpu.sched_policy=2 is not active."
+read -r driver_sha icd_sha runner_sha license_sha readme_sha limitations_sha \
+    mesa_version mesa_commit mesh_commit rebase_sha extra < "\$MANIFEST" \
+    || fail "The native-mesh profile manifest is malformed."
+[[ -z "\${extra:-}" && "\$driver_sha" =~ ^[0-9a-f]{64}\$ \
+    && "\$icd_sha" =~ ^[0-9a-f]{64}\$ && "\$runner_sha" =~ ^[0-9a-f]{64}\$ \
+    && "\$license_sha" =~ ^[0-9a-f]{64}\$ && "\$readme_sha" =~ ^[0-9a-f]{64}\$ \
+    && "\$limitations_sha" =~ ^[0-9a-f]{64}\$ \
+    && "\$mesa_version" == "$DEFAULT_MESA_TAG" && "\$mesa_commit" == "$MESA_COMMIT" \
+    && "\$mesh_commit" == "\$MESH_COMMIT" && "\$rebase_sha" == "\$REBASE_SHA" ]] \
+    || fail "The native-mesh profile manifest is invalid."
+[[ "\$(sha256sum "\$DRIVER" | awk '{print \$1}')" == "\$driver_sha" \
+    && "\$(sha256sum "\$ICD" | awk '{print \$1}')" == "\$icd_sha" \
+    && "\$(sha256sum "\$RUNNER" | awk '{print \$1}')" == "\$runner_sha" \
+    && "\$(sha256sum "\$LICENSE" | awk '{print \$1}')" == "\$license_sha" \
+    && "\$(sha256sum "\$README" | awk '{print \$1}')" == "\$readme_sha" \
+    && "\$(sha256sum "\$LIMITATIONS" | awk '{print \$1}')" == "\$limitations_sha" ]] \
+    || fail "The native-mesh profile failed hash verification."
+grep -qF "\"library_path\": \"\$DRIVER\"" "\$ICD" \
+    && grep -Eq '"library_arch"[[:space:]]*:[[:space:]]*"64"' "\$ICD" \
+    || fail "The Vulkan ICD architecture routing is invalid."
+python3 - "\$FALLBACK_ICD" <<'PY' || fail "The stock 32-bit Vulkan fallback is invalid."
+import json
+from pathlib import Path
+import struct
+import sys
+
+manifest = Path(sys.argv[1])
+try:
+    data = json.loads(manifest.read_text(encoding="utf-8"))
+    icd = data["ICD"]
+    library = Path(icd["library_path"])
+    if not library.is_absolute():
+        library = manifest.parent / library
+    valid = (
+        data.get("file_format_version") == "1.0.1"
+        and icd.get("library_arch") == "32"
+        and library.is_file()
+        and not library.is_symlink()
+    )
+    if valid:
+        content = library.read_bytes()
+        valid = len(content) >= 52 and content[:7] == b"\x7fELF\x01\x01\x01"
+    if valid:
+        e_type, e_machine, e_version = struct.unpack_from("<HHI", content, 16)
+        e_phoff = struct.unpack_from("<I", content, 28)[0]
+        e_ehsize, e_phentsize, e_phnum = struct.unpack_from("<HHH", content, 40)
+        valid = (
+            e_type == 3 and e_machine == 3 and e_version == 1
+            and e_ehsize >= 52 and e_phentsize >= 32 and e_phnum > 0
+            and e_phoff + e_phentsize * e_phnum <= len(content)
+        )
+    if valid:
+        types = {
+            struct.unpack_from("<I", content, e_phoff + index * e_phentsize)[0]
+            for index in range(e_phnum)
+        }
+        valid = 1 in types and 2 in types
+except (KeyError, OSError, struct.error, TypeError, ValueError):
+    valid = False
+raise SystemExit(0 if valid else 1)
+PY
+export VK_DRIVER_FILES="\$ICD:\$FALLBACK_ICD"
+export VK_ICD_FILENAMES="\$VK_DRIVER_FILES"
+export RADV_EXPERIMENTAL=bc250_mesh
+unset RADV_BC250_ADVERTISE_TASK RADV_BC250_EXPOSE_FSR
+if [[ \$ff7_capabilities == 1 ]]; then
+    export RADV_BC250_ADVERTISE_TASK=1
+    export RADV_BC250_EXPOSE_FSR=1
+fi
+exec "\$@"
+EOF
+}
+
+read_native_mesh_manifest() {
+    local profile="${1:-$NATIVE_MESH_DIR}" manifest extra line
+    manifest="$profile/install.conf"
+    STORED_NATIVE_MESH_DRIVER_SHA="" STORED_NATIVE_MESH_ICD_SHA=""
+    STORED_NATIVE_MESH_RUNNER_SHA="" STORED_NATIVE_MESH_MESA_TAG=""
+    STORED_NATIVE_MESH_LICENSE_SHA="" STORED_NATIVE_MESH_README_SHA=""
+    STORED_NATIVE_MESH_LIMITATIONS_SHA=""
+    STORED_NATIVE_MESH_MESA_COMMIT="" STORED_NATIVE_MESH_COMMIT=""
+    STORED_NATIVE_MESH_REBASE_SHA=""
+    [[ -f "$manifest" && ! -L "$manifest" ]] || return 1
+    IFS= read -r line < "$manifest" || return 1
+    read -r STORED_NATIVE_MESH_DRIVER_SHA STORED_NATIVE_MESH_ICD_SHA \
+        STORED_NATIVE_MESH_RUNNER_SHA STORED_NATIVE_MESH_LICENSE_SHA \
+        STORED_NATIVE_MESH_README_SHA STORED_NATIVE_MESH_LIMITATIONS_SHA \
+        STORED_NATIVE_MESH_MESA_TAG \
+        STORED_NATIVE_MESH_MESA_COMMIT STORED_NATIVE_MESH_COMMIT \
+        STORED_NATIVE_MESH_REBASE_SHA extra <<< "$line"
+    [[ -z "$extra" && "$STORED_NATIVE_MESH_DRIVER_SHA" =~ ^[0-9a-f]{64}$ \
+        && "$STORED_NATIVE_MESH_ICD_SHA" =~ ^[0-9a-f]{64}$ \
+        && "$STORED_NATIVE_MESH_RUNNER_SHA" =~ ^[0-9a-f]{64}$ \
+        && "$STORED_NATIVE_MESH_LICENSE_SHA" =~ ^[0-9a-f]{64}$ \
+        && "$STORED_NATIVE_MESH_README_SHA" =~ ^[0-9a-f]{64}$ \
+        && "$STORED_NATIVE_MESH_LIMITATIONS_SHA" =~ ^[0-9a-f]{64}$ \
+        && "$STORED_NATIVE_MESH_MESA_TAG" == "$DEFAULT_MESA_TAG" \
+        && "$STORED_NATIVE_MESH_MESA_COMMIT" == "$MESA_COMMIT" \
+        && "$STORED_NATIVE_MESH_COMMIT" == "$NATIVE_MESH_COMMIT" \
+        && "$STORED_NATIVE_MESH_REBASE_SHA" == "$NATIVE_MESH_REBASE_SHA256" \
+        && "$(wc -l < "$manifest")" -eq 1 ]]
+}
+
+verify_owned_native_mesh_runtime() {
+    local profile="${1:-$NATIVE_MESH_DIR}" driver icd runner license readme limitations
+    driver="$profile/libvulkan_radeon.so"
+    icd="$profile/radeon_native_mesh_icd.x86_64.json"
+    runner="$profile/bc250-native-mesh-run"
+    license="$profile/LONEWOLF-LICENSE.md"
+    readme="$profile/LONEWOLF-README.md"
+    limitations="$profile/LONEWOLF-KNOWN_LIMITATIONS.md"
+    read_native_mesh_manifest "$profile" || return 1
+    [[ -d "$profile" && ! -L "$profile" \
+        && -f "$driver" && ! -L "$driver" \
+        && -f "$icd" && ! -L "$icd" \
+        && -f "$runner" && ! -L "$runner" && -x "$runner" \
+        && -f "$license" && ! -L "$license" \
+        && -f "$readme" && ! -L "$readme" \
+        && -f "$limitations" && ! -L "$limitations" \
+        && "$(sha256_file "$driver")" == "$STORED_NATIVE_MESH_DRIVER_SHA" \
+        && "$(sha256_file "$icd")" == "$STORED_NATIVE_MESH_ICD_SHA" \
+        && "$(sha256_file "$runner")" == "$STORED_NATIVE_MESH_RUNNER_SHA" \
+        && "$(sha256_file "$license")" == "$STORED_NATIVE_MESH_LICENSE_SHA" \
+        && "$(sha256_file "$readme")" == "$STORED_NATIVE_MESH_README_SHA" \
+        && "$(sha256_file "$limitations")" == "$STORED_NATIVE_MESH_LIMITATIONS_SHA" ]] \
+        || return 1
+    grep -qF "\"library_path\": \"$NATIVE_MESH_DRIVER\"" "$icd" \
+        && grep -Eq '"library_arch"[[:space:]]*:[[:space:]]*"64"' "$icd"
+}
+
+verify_current_native_mesh_runtime() {
+    verify_owned_native_mesh_runtime && verify_32bit_fallback \
+        && cmp -s "$NATIVE_MESH_RUNNER" <(render_native_mesh_runner)
+}
+
+recover_native_mesh_install_transaction() {
+    [[ -e "$NATIVE_MESH_TRANSACTION_DIR" || -L "$NATIVE_MESH_TRANSACTION_DIR" ]] || return 0
+    [[ -d "$NATIVE_MESH_TRANSACTION_DIR" && ! -L "$NATIVE_MESH_TRANSACTION_DIR" \
+        && -f "$NATIVE_MESH_TRANSACTION_DIR/transaction.conf" \
+        && ! -L "$NATIVE_MESH_TRANSACTION_DIR/transaction.conf" ]] \
+        || die "Invalid native-mesh install transaction; manual recovery required."
+    local phase had_previous extra
+    read -r phase had_previous extra < "$NATIVE_MESH_TRANSACTION_DIR/transaction.conf" \
+        || die "Malformed native-mesh install transaction; manual recovery required."
+    [[ ( "$phase" == prepared || "$phase" == swapping ) \
+        && ( "$had_previous" == 0 || "$had_previous" == 1 ) && -z "$extra" ]] \
+        || die "Malformed native-mesh install transaction; manual recovery required."
+    if [[ "$phase" == prepared ]]; then
+        rm -rf "$NATIVE_MESH_TRANSACTION_DIR"
+        fsync_paths "$STATE_DIR"
+        return 0
+    fi
+    if verify_owned_native_mesh_runtime; then
+        rm -rf "$NATIVE_MESH_TRANSACTION_DIR"
+        fsync_paths "$STATE_DIR"
+        log "Completed recovery of an intact native-mesh profile installation."
+        return 0
+    fi
+    if [[ "$had_previous" == 1 ]]; then
+        [[ -d "$NATIVE_MESH_TRANSACTION_DIR/previous" \
+            && ! -L "$NATIVE_MESH_TRANSACTION_DIR/previous" ]] \
+            || die "Native-mesh transaction backup is missing; manual recovery required."
+        verify_owned_native_mesh_runtime "$NATIVE_MESH_TRANSACTION_DIR/previous" \
+            || die "Native-mesh transaction backup failed attestation; manual recovery required."
+    fi
+    rm -rf "$NATIVE_MESH_DIR"
+    if [[ "$had_previous" == 1 ]]; then
+        mv "$NATIVE_MESH_TRANSACTION_DIR/previous" "$NATIVE_MESH_DIR"
+        verify_owned_native_mesh_runtime \
+            || die "Restored native-mesh profile failed attestation; manual recovery required."
+    fi
+    rm -rf "$NATIVE_MESH_TRANSACTION_DIR"
+    fsync_paths "$STATE_DIR"
+    log "Recovered an interrupted native-mesh profile installation."
 }
 
 verify_owned_fsr4_runtime() {
@@ -1431,6 +1800,15 @@ PY
     done
 }
 
+validate_native_mesh_output() {
+    local output="$1" marker
+    validate_mesa_output "$output"
+    for marker in bc250_mesh RADV_BC250_ADVERTISE_TASK RADV_BC250_EXPOSE_FSR; do
+        grep -aqF "$marker" "$output" \
+            || die "Built native-mesh driver is missing LoneWolf marker: $marker"
+    done
+}
+
 cmd_setup() (
     require_normal_user
     local profile="${1:-default}" replace_unmanaged="${2:-0}" mesa_tag="$DEFAULT_MESA_TAG"
@@ -1761,6 +2139,164 @@ EOF
     fi
 )
 
+cmd_setup_native_mesh() (
+    require_normal_user
+    local work source build output profile_stage transaction_stage patch_name
+    local had_previous=0 transaction_tmp committed=0
+    require_production_kernel_paths
+    ensure_radv_core_tools
+    ensure_state_dir
+    exec 9> "$LOCK_FILE"
+    flock 9
+    recover_native_mesh_install_transaction
+    if [[ -e "$NATIVE_MESH_DIR" || -L "$NATIVE_MESH_DIR" ]]; then
+        verify_owned_native_mesh_runtime \
+            || die "Existing native-mesh profile is incomplete or not a recorded toolkit install."
+    fi
+    ensure_radv_prerequisites
+    ensure_mesa_build_prerequisites
+    require_compute_kernel
+    verify_scheduler_active \
+        || die "The combined native-mesh profile requires active amdgpu.sched_policy=2."
+    if verify_current_native_mesh_runtime; then
+        log "The private LoneWolf native-mesh profile is already installed and verified."
+        log "Runner: $NATIVE_MESH_RUNNER"
+        return 0
+    fi
+
+    stage_upstream default
+    stage_native_mesh_upstream
+    work=$(mktemp -d "$STATE_DIR/.native-mesh-setup.XXXXXX")
+    profile_stage="$work/native-mesh"
+    transaction_stage="$work/native-mesh-transaction"
+    source="$NATIVE_MESH_SOURCE"
+    build="$NATIVE_MESH_BUILD"
+    output="$NATIVE_MESH_OUTPUT"
+    cleanup_native_mesh_setup() {
+        local rc=$?
+        trap - EXIT
+        if [[ $committed -eq 0 && $rc -ne 0 ]]; then
+            recover_native_mesh_install_transaction || rc=1
+        fi
+        rm -rf "$work"
+        exit "$rc"
+    }
+    trap cleanup_native_mesh_setup EXIT
+
+    [[ ! -L "$NATIVE_MESH_BUILD_ROOT" ]] || die "Refusing symlinked native-mesh build root."
+    mkdir -p "$NATIVE_MESH_BUILD_ROOT"
+    rm -rf "$source"
+    git clone --no-checkout "$MESA_GIT_CACHE" "$source"
+    git -C "$source" checkout --detach "$MESA_COMMIT"
+    [[ "$(git -C "$source" rev-parse HEAD)" == "$MESA_COMMIT" ]] \
+        || die "Native-mesh Mesa worktree does not match pinned commit $MESA_COMMIT"
+    mkdir -p "$source/subprojects/packagecache"
+    cp "$CACHE_DIR/$LIBDRM_TARBALL" "$source/subprojects/packagecache/"
+    for patch_name in \
+        0001-gfx1013-compute-queue-fix.patch \
+        0005-bc250-fsr4-v3.patch \
+        0006-bc250-fsr4-combined-unroll.patch \
+        0007-bc250-fsr4-imageprep-texture.patch \
+        0008-bc250-fsr4-resolution-variants.patch \
+        0009-bc250-fsr4-production-defaults.patch; do
+        patch -d "$source" -p1 --fuzz=0 --no-backup-if-mismatch \
+            --dry-run -i "$CACHE_DIR/$patch_name"
+        patch -d "$source" -p1 --fuzz=0 --no-backup-if-mismatch \
+            -i "$CACHE_DIR/$patch_name"
+    done
+    git -C "$source" apply --check "$NATIVE_MESH_REBASE"
+    git -C "$source" apply "$NATIVE_MESH_REBASE"
+    grep -qF RADV_EXPERIMENTAL_BC250_MESH "$source/src/amd/vulkan/radv_instance.h" \
+        && grep -qF radv_bc250_mesh_source_provenance_check \
+            "$source/src/amd/vulkan/radv_pipeline_graphics.c" \
+        && grep -qF has_async_compute_threadgroup_bug "$source/src/amd/common/ac_gpu_info.c" \
+        && grep -qF bc250-fsr4-integrated-v3 "$source/src/amd/vulkan/radv_physical_device.c" \
+        || die "Combined Mesa source is missing native-mesh, async-compute, or FSR4 markers."
+
+    meson setup "$build" "$source" \
+        -Dbuildtype=release \
+        -Dvulkan-drivers=amd -Dgallium-drivers= -Dplatforms=x11,wayland \
+        -Dglx=disabled -Degl=disabled -Dgles2=disabled -Dvideo-codecs= \
+        -Dshared-llvm=disabled -Dllvm=disabled -Dxmlconfig=enabled \
+        -Dlmsensors=disabled -Dvalgrind=disabled \
+        -Dallow-fallback-for=libdrm -Dlibdrm:default_library=static
+    ninja -C "$build" src/amd/vulkan/libvulkan_radeon.so
+    validate_native_mesh_output "$output"
+    require_compute_kernel
+    verify_scheduler_active \
+        || die "amdgpu.sched_policy=2 became inactive during the native-mesh build."
+
+    mkdir -m 0700 "$profile_stage"
+    install -m 0755 "$output" "$profile_stage/libvulkan_radeon.so"
+    render_native_mesh_runner > "$profile_stage/bc250-native-mesh-run"
+    chmod 0755 "$profile_stage/bc250-native-mesh-run"
+    cat > "$profile_stage/radeon_native_mesh_icd.x86_64.json" <<EOF
+{
+  "file_format_version": "1.0.1",
+  "ICD": {"library_path": "$NATIVE_MESH_DRIVER", "api_version": "1.4.354", "library_arch": "64"}
+}
+EOF
+    chmod 0644 "$profile_stage/radeon_native_mesh_icd.x86_64.json"
+    install -m 0644 "$CACHE_DIR/lonewolf-LICENSE.md" "$profile_stage/LONEWOLF-LICENSE.md"
+    install -m 0644 "$CACHE_DIR/lonewolf-README.md" "$profile_stage/LONEWOLF-README.md"
+    install -m 0644 "$CACHE_DIR/lonewolf-KNOWN_LIMITATIONS.md" \
+        "$profile_stage/LONEWOLF-KNOWN_LIMITATIONS.md"
+    printf '%s %s %s %s %s %s %s %s %s %s\n' \
+        "$(sha256_file "$profile_stage/libvulkan_radeon.so")" \
+        "$(sha256_file "$profile_stage/radeon_native_mesh_icd.x86_64.json")" \
+        "$(sha256_file "$profile_stage/bc250-native-mesh-run")" \
+        "$(sha256_file "$profile_stage/LONEWOLF-LICENSE.md")" \
+        "$(sha256_file "$profile_stage/LONEWOLF-README.md")" \
+        "$(sha256_file "$profile_stage/LONEWOLF-KNOWN_LIMITATIONS.md")" \
+        "$DEFAULT_MESA_TAG" "$MESA_COMMIT" "$NATIVE_MESH_COMMIT" \
+        "$NATIVE_MESH_REBASE_SHA256" > "$profile_stage/install.conf"
+    chmod 0600 "$profile_stage/install.conf"
+
+    mkdir -m 0700 "$transaction_stage"
+    if [[ -d "$NATIVE_MESH_DIR" ]]; then
+        cp -a "$NATIVE_MESH_DIR" "$transaction_stage/previous"
+        verify_owned_native_mesh_runtime "$transaction_stage/previous" \
+            || die "Could not verify the previous native-mesh profile backup."
+        for patch_name in libvulkan_radeon.so radeon_native_mesh_icd.x86_64.json \
+            bc250-native-mesh-run install.conf LONEWOLF-LICENSE.md LONEWOLF-README.md \
+            LONEWOLF-KNOWN_LIMITATIONS.md; do
+            cmp -s "$NATIVE_MESH_DIR/$patch_name" "$transaction_stage/previous/$patch_name" \
+                || die "Could not verify the previous native-mesh profile backup."
+        done
+        had_previous=1
+    fi
+    printf 'prepared %s\n' "$had_previous" > "$transaction_stage/transaction.conf"
+    if [[ "$had_previous" == 1 ]]; then
+        fsync_paths "$transaction_stage/previous/"* "$transaction_stage/previous"
+    fi
+    fsync_paths "$transaction_stage/transaction.conf" "$transaction_stage"
+    mv "$transaction_stage" "$NATIVE_MESH_TRANSACTION_DIR"
+    fsync_paths "$STATE_DIR"
+    transaction_tmp=$(mktemp "$NATIVE_MESH_TRANSACTION_DIR/.transaction.XXXXXX")
+    printf 'swapping %s\n' "$had_previous" > "$transaction_tmp"
+    fsync_paths "$transaction_tmp"
+    mv -f "$transaction_tmp" "$NATIVE_MESH_TRANSACTION_DIR/transaction.conf"
+    fsync_paths "$NATIVE_MESH_TRANSACTION_DIR/transaction.conf" "$NATIVE_MESH_TRANSACTION_DIR"
+    rm -rf "$NATIVE_MESH_DIR"
+    if ! mv "$profile_stage" "$NATIVE_MESH_DIR"; then
+        recover_native_mesh_install_transaction
+        die "Could not install the private native-mesh profile."
+    fi
+    if ! verify_current_native_mesh_runtime; then
+        recover_native_mesh_install_transaction
+        die "Installed native-mesh profile failed attestation; the previous profile was restored."
+    fi
+    fsync_paths "$NATIVE_MESH_DRIVER" "$NATIVE_MESH_ICD" "$NATIVE_MESH_RUNNER" \
+        "$NATIVE_MESH_LICENSE" "$NATIVE_MESH_README" "$NATIVE_MESH_LIMITATIONS" \
+        "$NATIVE_MESH_MANIFEST" "$NATIVE_MESH_DIR" "$STATE_DIR"
+    rm -rf "$NATIVE_MESH_TRANSACTION_DIR"
+    fsync_paths "$STATE_DIR"
+    committed=1
+    log "Installed LoneWolf's experimental native-mesh profile for private activation."
+    log "Default launch option: $NATIVE_MESH_RUNNER %command%"
+    log "FF7 capability launch option: $NATIVE_MESH_RUNNER --ff7-capabilities %command%"
+)
+
 manage_games() {
     local action="$1" executable="${2:-}" name="${3:-}"
     [[ ! -L "$DRIRC" ]] || die "Refusing symlinked driconf file: $DRIRC"
@@ -1954,6 +2490,21 @@ cmd_status() {
     else
         echo "  legacy FSR4 V3: not installed"
     fi
+    if [[ -e "$NATIVE_MESH_TRANSACTION_DIR" || -L "$NATIVE_MESH_TRANSACTION_DIR" ]]; then
+        echo "  native mesh: interrupted installation requires recovery"
+        failed=2
+    elif verify_current_native_mesh_runtime; then
+        echo "  native mesh: installed (experimental private combined profile)"
+        echo "  mesh runner: $NATIVE_MESH_RUNNER"
+    elif verify_owned_native_mesh_runtime; then
+        echo "  native mesh: recorded profile requires rebuild"
+        failed=2
+    elif [[ -e "$NATIVE_MESH_DIR" || -L "$NATIVE_MESH_DIR" ]]; then
+        echo "  native mesh: incomplete or ownership mismatch"
+        failed=2
+    else
+        echo "  native mesh: not installed"
+    fi
     local legacy_games
     if ! legacy_games=$(manage_games list); then
         echo "  legacy games: configuration invalid"
@@ -1968,7 +2519,8 @@ cmd_status() {
 cmd_status_json() {
     local runtime_state="not-installed" mesa_version="" config_valid=1 error="" games="[]" kernel_ready=0
     local global_enabled=0 restart_required=0 scheduler_configured=0 scheduler_active=0
-    local fsr4_state="not-installed" fsr4_dll_state="not-installed" fsr4_dll_install_count=0 fsr4_dll_rc=0
+    local fsr4_state="not-installed" native_mesh_state="not-installed"
+    local fsr4_dll_state="not-installed" fsr4_dll_install_count=0 fsr4_dll_rc=0
     verify_compute_kernel && kernel_ready=1
     verify_scheduler_configured && scheduler_configured=1
     verify_scheduler_active && scheduler_active=1
@@ -2005,16 +2557,23 @@ cmd_status_json() {
     elif [[ -e "$FSR4_DIR" || -L "$FSR4_DIR" ]]; then
         fsr4_state="invalid"
     fi
+    if [[ -e "$NATIVE_MESH_TRANSACTION_DIR" || -L "$NATIVE_MESH_TRANSACTION_DIR" ]]; then
+        native_mesh_state="invalid"
+    elif verify_current_native_mesh_runtime; then
+        native_mesh_state="ready"
+    elif [[ -e "$NATIVE_MESH_DIR" || -L "$NATIVE_MESH_DIR" ]]; then
+        native_mesh_state="invalid"
+    fi
     if ! games=$(manage_games list-json 2>&1); then
         config_valid=0
         error="$games"
         games="[]"
     fi
-    python3 - "$runtime_state" "$mesa_version" "$ICD" "$config_valid" "$error" "$games" "$kernel_ready" "$global_enabled" "$restart_required" "$scheduler_configured" "$scheduler_active" "$fsr4_state" "$FSR4_ICD" "$FSR4_RUNNER" "$fsr4_dll_state" "$fsr4_dll_install_count" <<'PY'
+    python3 - "$runtime_state" "$mesa_version" "$ICD" "$config_valid" "$error" "$games" "$kernel_ready" "$global_enabled" "$restart_required" "$scheduler_configured" "$scheduler_active" "$fsr4_state" "$FSR4_ICD" "$FSR4_RUNNER" "$fsr4_dll_state" "$fsr4_dll_install_count" "$native_mesh_state" "$NATIVE_MESH_ICD" "$NATIVE_MESH_RUNNER" <<'PY'
 import json
 import sys
 
-runtime_state, mesa_version, icd_path, config_valid, error, games, kernel_ready, global_enabled, restart_required, scheduler_configured, scheduler_active, fsr4_state, fsr4_icd, fsr4_runner, fsr4_dll_state, fsr4_dll_install_count = sys.argv[1:]
+runtime_state, mesa_version, icd_path, config_valid, error, games, kernel_ready, global_enabled, restart_required, scheduler_configured, scheduler_active, fsr4_state, fsr4_icd, fsr4_runner, fsr4_dll_state, fsr4_dll_install_count, native_mesh_state, native_mesh_icd, native_mesh_runner = sys.argv[1:]
 print(json.dumps({
     "scriptAvailable": True,
     "runtimeState": runtime_state,
@@ -2033,6 +2592,9 @@ print(json.dumps({
     "fsr4RunnerPath": fsr4_runner,
     "fsr4DllState": fsr4_dll_state,
     "fsr4DllInstallCount": int(fsr4_dll_install_count),
+    "nativeMeshState": native_mesh_state,
+    "nativeMeshIcdPath": native_mesh_icd,
+    "nativeMeshRunnerPath": native_mesh_runner,
 }, ensure_ascii=True, separators=(",", ":")))
 PY
 }
@@ -2052,6 +2614,24 @@ cmd_uninstall_fsr4() (
         || die "FSR4 profile is not a recorded toolkit install; refusing removal."
     rm -rf "$FSR4_DIR"
     log "Removed the private FSR4 profile. The global RADV runtime was unchanged."
+)
+
+cmd_uninstall_native_mesh() (
+    require_normal_user
+    command -v flock >/dev/null 2>&1 || die "flock is required"
+    ensure_state_dir
+    exec 9> "$LOCK_FILE"
+    flock 9
+    recover_native_mesh_install_transaction
+    if [[ ! -e "$NATIVE_MESH_DIR" && ! -L "$NATIVE_MESH_DIR" ]]; then
+        log "The private native-mesh profile is not installed."
+        return 0
+    fi
+    verify_owned_native_mesh_runtime \
+        || die "Native-mesh profile is not a recorded toolkit install; refusing removal."
+    rm -rf "$NATIVE_MESH_DIR"
+    fsync_paths "$STATE_DIR"
+    log "Removed the private native-mesh profile. The global RADV runtime was unchanged."
 )
 
 cmd_setup_fsr4_dll() {
@@ -2161,7 +2741,9 @@ cmd_purge() (
         && ! -e "$GENERATOR" && ! -L "$GENERATOR" \
         && ! -e "$MANIFEST" && ! -e "$TRANSACTION_DIR" \
         && ! -e "$FSR4_DIR" && ! -L "$FSR4_DIR" \
-        && ! -e "$FSR4_TRANSACTION_DIR" && ! -L "$FSR4_TRANSACTION_DIR" ]] \
+        && ! -e "$FSR4_TRANSACTION_DIR" && ! -L "$FSR4_TRANSACTION_DIR" \
+        && ! -e "$NATIVE_MESH_DIR" && ! -L "$NATIVE_MESH_DIR" \
+        && ! -e "$NATIVE_MESH_TRANSACTION_DIR" && ! -L "$NATIVE_MESH_TRANSACTION_DIR" ]] \
         || die "Mesa / RADV runtime remains; run '$0 uninstall' before purge."
     if [[ -x "$FSR4_DLL_TOOL" && ! -L "$FSR4_DLL_TOOL" ]]; then
         [[ "$(fsr4_dll_count)" -eq 0 ]] \
@@ -2250,6 +2832,18 @@ legacy_fsr4_badge() {
     fi
 }
 
+native_mesh_badge() {
+    if [[ -e "$NATIVE_MESH_TRANSACTION_DIR" || -L "$NATIVE_MESH_TRANSACTION_DIR" ]]; then
+        printf '%s' "${CR}[recover]${C0}"
+    elif verify_current_native_mesh_runtime; then
+        printf '%s' "${CG}[ready]${C0}"
+    elif [[ -e "$NATIVE_MESH_DIR" || -L "$NATIVE_MESH_DIR" ]]; then
+        printf '%s' "${CR}[repair]${C0}"
+    else
+        printf '%s' "${CY}[setup]${C0}"
+    fi
+}
+
 fsr4_dll_badge() {
     local rc=0
     fsr4_dll_probe >/dev/null 2>&1 || rc=$?
@@ -2304,10 +2898,11 @@ cmd_menu() {
     [[ -t 0 && -t 1 ]] \
         || die "The menu needs an interactive terminal. Use '$0 help' for CLI commands."
     while true; do
-        local runtime_state fsr4_state legacy_fsr4_state
+        local runtime_state fsr4_state legacy_fsr4_state native_mesh_state
         runtime_state=$(runtime_badge)
         fsr4_state=$(fsr4_dll_badge)
         legacy_fsr4_state=$(legacy_fsr4_badge)
+        native_mesh_state=$(native_mesh_badge)
         local legacy_games legacy_state
         if ! legacy_games=$(manage_games list 2>/dev/null); then
             legacy_state="${CR}[invalid]${C0}"
@@ -2320,6 +2915,8 @@ cmd_menu() {
             "Status overview|${runtime_state}|Verify the patched AMDGPU module, scheduler policy, RADV runtime, and global activation."
             "Install FSR4 RC9 game DLL (recommended)|${fsr4_state}|Portable FSR4 route. Replaces one exact existing DLL and retains the original; no custom RADV installation is needed."
             "Install / resume FSR4 RADV|${runtime_state}|Installs AMDGPU first when needed, then builds async compute plus the FSR4 v4 driver for GE Proton."
+            "Install private LoneWolf native mesh|${native_mesh_state}|Build the combined async-compute, FSR4, and experimental physical-GFX10 native-mesh ICD; Steam is not edited."
+            "Remove private LoneWolf native mesh|${native_mesh_state}|Remove only the private native-mesh profile; leave global RADV and Steam configuration unchanged."
             "Older per-game setup cleanup|${legacy_state}|Migration only: remove old MESA_DRICONF_EXECUTABLE_OVERRIDE and VK_ICD_FILENAMES Steam launch options, then clear their records."
             "Uninstall Mesa / RADV runtime|${runtime_state}|Remove the alternate driver, ICD, and user environment generator; preserve build caches."
             "Full help||Show CLI commands, activation behavior, and upstream source."
@@ -2332,17 +2929,21 @@ cmd_menu() {
             2) confirm_menu_action \
                 "Install or resume FSR4 RADV and its AMDGPU prerequisite? This is not required for the portable FSR4 RC9 route." setup ;;
             3) confirm_menu_action \
-                "Have you removed MESA_DRICONF_EXECUTABLE_OVERRIDE and VK_ICD_FILENAMES from the old per-game Steam launch options?" legacy-clear ;;
+                "Install the private experimental LoneWolf native-mesh profile? The current compute kernel and sched_policy=2 must already be active." setup --native-mesh ;;
             4) confirm_menu_action \
+                "Remove only the private native-mesh profile? Global RADV and Steam configuration will remain unchanged." uninstall --native-mesh ;;
+            5) confirm_menu_action \
+                "Have you removed MESA_DRICONF_EXECUTABLE_OVERRIDE and VK_ICD_FILENAMES from the old per-game Steam launch options?" legacy-clear ;;
+            6) confirm_menu_action \
                 "Remove the global Mesa / RADV runtime?" uninstall ;;
-            5) echo; cmd_help; pause_key ;;
+            7) echo; cmd_help; pause_key ;;
         esac
     done
 }
 
 cmd_help() {
     cat <<EOF
-Usage: $0 [menu|setup [--replace-unmanaged|--fsr4 TARGET_DLL|--fsr4-legacy]|status|status-json|legacy-clear|uninstall [--fsr4 TARGET_DLL|--fsr4-legacy]|purge|help]
+Usage: $0 [menu|setup [--replace-unmanaged|--native-mesh|--fsr4 TARGET_DLL|--fsr4-legacy]|status|status-json|legacy-clear|uninstall [--native-mesh|--fsr4 TARGET_DLL|--fsr4-legacy]|purge|help]
 
   setup                        Fetch the verified upstream series, build the
                                audited Mesa RADV driver with GFX1013 async
@@ -2353,6 +2954,9 @@ Usage: $0 [menu|setup [--replace-unmanaged|--fsr4 TARGET_DLL|--fsr4-legacy]|stat
   setup --replace-unmanaged    Explicitly replace existing regular driver, ICD,
                                generator, and manifest files that cannot be
                                verified as a toolkit-owned installation.
+  setup --native-mesh          Build and install the private x86-64 LoneWolf
+                               native-mesh profile. Requires the current compute
+                               kernel and amdgpu.sched_policy=2 to be active.
   setup --fsr4 TARGET_DLL      Recommended FSR4 route. Replace one exact existing
                                game or OptiScaler DLL, retaining the original.
                                Absolute paths are recommended; quote spaces at the shell.
@@ -2367,6 +2971,7 @@ Usage: $0 [menu|setup [--replace-unmanaged|--fsr4 TARGET_DLL|--fsr4-legacy]|stat
   uninstall                    Remove the alternate ICD, legacy V3 profile, and global activation.
   uninstall --fsr4 TARGET_DLL  Restore one game-local DLL from its recorded backup.
   uninstall --fsr4-legacy      Remove only the private legacy V3 profile.
+  uninstall --native-mesh      Remove only the private native-mesh profile.
   purge                        After uninstall, remove patch/source/build caches.
 
 The environment generator exports VK_DRIVER_FILES and VK_ICD_FILENAMES only
@@ -2377,6 +2982,13 @@ an update when the policy is already active.
 The patched ICD serves 64-bit processes; SteamOS's stock RADV serves 32-bit
 processes through the same global driver list.
 
+The native-mesh profile is never enabled globally and does not edit Steam.
+Launch a game with:
+  $NATIVE_MESH_RUNNER %command%
+The runner sets RADV_EXPERIMENTAL to exactly bc250_mesh. For FF7's historical
+capability negotiation only, use:
+  $NATIVE_MESH_RUNNER --ff7-capabilities %command%
+
 Legacy FSR4 V3 RADV setup has been retired. Existing recorded legacy profiles can
 still be inspected and removed with 'uninstall --fsr4-legacy'.
 
@@ -2384,6 +2996,8 @@ Async-compute upstream (pinned to $UPSTREAM_COMMIT):
   $UPSTREAM_REPO
 FSR4 patches (pinned to $FSR4_RADV_COMMIT):
   $FSR4_RADV_REPO
+Native mesh source (pinned to $NATIVE_MESH_COMMIT; toolkit-maintained rebase):
+  $NATIVE_MESH_REPO
 EOF
 }
 
@@ -2393,10 +3007,12 @@ case "${1:-menu}" in
         if (($# == 1)); then cmd_setup default
         elif (($# == 2)) && [[ "$2" == --replace-unmanaged ]]; then
             cmd_setup default 1
+        elif (($# == 2)) && [[ "$2" == --native-mesh ]]; then
+            cmd_setup_native_mesh
         elif (($# == 3)) && [[ "$2" == --fsr4 ]]; then cmd_setup_fsr4_dll "$3"
         elif (($# == 2)) && [[ "$2" == --fsr4-legacy ]]; then
             die "Legacy FSR4 V3 builds are retired; use FSR4 RADV or the portable RC9 DLL."
-        else die "Usage: $0 setup [--replace-unmanaged|--fsr4 TARGET_DLL|--fsr4-legacy]"
+        else die "Usage: $0 setup [--replace-unmanaged|--native-mesh|--fsr4 TARGET_DLL|--fsr4-legacy]"
         fi ;;
     status) (($# == 1)) || die "Usage: $0 status"; cmd_status ;;
     status-json) (($# == 1)) || die "Usage: $0 status-json"; cmd_status_json ;;
@@ -2404,9 +3020,10 @@ case "${1:-menu}" in
     legacy-clear) (($# == 1)) || die "Usage: $0 legacy-clear"; cmd_legacy_clear ;;
     uninstall)
         if (($# == 1)); then cmd_uninstall
+        elif (($# == 2)) && [[ "$2" == --native-mesh ]]; then cmd_uninstall_native_mesh
         elif (($# == 3)) && [[ "$2" == --fsr4 ]]; then cmd_uninstall_fsr4_dll "$3"
         elif (($# == 2)) && [[ "$2" == --fsr4-legacy ]]; then cmd_uninstall_fsr4
-        else die "Usage: $0 uninstall [--fsr4 TARGET_DLL|--fsr4-legacy]"
+        else die "Usage: $0 uninstall [--native-mesh|--fsr4 TARGET_DLL|--fsr4-legacy]"
         fi ;;
     purge) (($# == 1)) || die "Usage: $0 purge"; cmd_purge ;;
     help|-h|--help) (($# == 1)) || die "Usage: $0 help"; cmd_help ;;

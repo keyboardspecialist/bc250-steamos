@@ -30,6 +30,12 @@ class Plugin:
     async def get_mesh_status(self):
         return await self.backend.get_mesh_status()
 
+    async def install_native_mesh(self):
+        return await self.backend.install_native_mesh()
+
+    async def uninstall_native_mesh(self):
+        return await self.backend.uninstall_native_mesh()
+
     async def get_fsr4_inventory(self):
         return await self.backend.get_fsr4_inventory()
 

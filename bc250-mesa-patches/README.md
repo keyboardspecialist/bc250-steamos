@@ -35,6 +35,37 @@ markers in the final ELF driver. Patches `0002` through `0004` are deliberately
 omitted because the mesh/task path is unsafe on this hardware and the broad
 GFX10.3 override is not required by the FSR4 profile.
 
+## LoneWolf Native-Mesh Profile
+
+The optional private profile combines that unchanged Mesa `mesa-26.2.2`,
+async-compute, and FSR4 composition with LoneWolf's physical-GFX10 native-mesh
+work from
+[`lonewolf0622/BC250-Native-Mesh-Shaders-`](https://github.com/lonewolf0622/BC250-Native-Mesh-Shaders-)
+at commit `d67c00d4aad5797364abc3401d419e76afb04edd`. The upstream patch is
+SHA-256 `bb3561153c97413b9c4a348b09a1219e7971b5f1490963c28a238733cc946fed`
+and targets Mesa 26.1.4 commit
+`6dfbc555b4128ee51139c5f78c5aba2594c9701b`.
+
+`0010-lonewolf-native-mesh-mesa-26.2.2-rebase.patch` is a
+**toolkit-maintained rebase**, not an upstream LoneWolf release. Its SHA-256 is
+`2dabe48622732d9761efefc1a655909ee775cc36efb49deeaccda585d0fab0ea`.
+It adapts LoneWolf's patch to Mesa 26.2's compiler-info/API changes and to the
+already-applied `0001` plus `0005` through `0009` composition. Setup verifies
+both upstream and rebased patch hashes, applies every patch without fuzz or
+3-way fallback, and retains LoneWolf's license, README, and known-limitations
+notices.
+
+This profile is x86-64 and private. Its attested runner routes 32-bit processes
+to the stock SteamOS i686 RADV ICD and sets `RADV_EXPERIMENTAL` to exactly
+`bc250_mesh`. `--ff7-capabilities` additionally sets
+`RADV_BC250_ADVERTISE_TASK=1` and `RADV_BC250_EXPOSE_FSR=1`; the latter means
+fragment shading rate, not FidelityFX Super Resolution. Capability
+advertisement does not make Task execution safe. The current patched compute
+kernel and active `amdgpu.sched_policy=2` are required because this combined
+profile also contains async compute. It has independent install, transaction,
+status, uninstall, and purge gates, is never exported globally, and does not
+edit Steam launch options.
+
 The GFX1013 async-compute kernel lifecycle remains based on
 `DryhoppedIPA/bc250-gfx1013-fix` commit
 `d3e6dc062c34d2523db0abe5741d1f5b0dea00d9`. Its matching AMDGPU repair and
@@ -63,3 +94,6 @@ All FSR4 paths remain experimental BC-250 software. They can regress
 performance, corrupt frames, hang, or reset the GPU. Qualify one game at a time,
 retain the portable rollback route while evaluating integrated GE-Proton, and
 do not use DLL injection or FSR4 upgrade with anti-cheat games.
+The LoneWolf profile is also an experimental preview, not a claim of full
+`VK_EXT_mesh_shader` compliance. Read `LONEWOLF-KNOWN_LIMITATIONS.md` before
+use.

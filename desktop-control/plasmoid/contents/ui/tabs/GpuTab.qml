@@ -112,6 +112,48 @@ ColumnLayout {
     }
 
     Components.Section {
+        title: "Private Native Mesh"
+        Components.StatusRow {
+            label: "Native-mesh profile"
+            value: root.mesh.nativeMeshState || "Unavailable"
+            health: root.mesh.nativeMeshState === "ready" ? 1 : root.mesh.nativeMeshState === "invalid" ? -1 : 0
+        }
+        Components.StatusRow { label: "Private ICD"; value: root.mesh.nativeMeshIcdPath || "Unavailable" }
+        Components.StatusRow { label: "Private runner"; value: root.mesh.nativeMeshRunnerPath || "Unavailable" }
+        Components.ActionButton {
+            visible: root.mesh.nativeMeshState === "not-installed"
+            text: "Install private native mesh"
+            enabled: !root.backend.busy && root.mesh.kernelReady && root.mesh.schedulerActive
+            disabledReason: root.backend.busy ? root.backend.busyLabel
+                : !root.mesh.kernelReady ? "Install and activate the patched AMDGPU module first."
+                : !root.mesh.schedulerActive ? "Reboot with amdgpu.sched_policy=2 active first." : ""
+            onClicked: confirmation.ask(
+                "Install the private native-mesh profile?",
+                "Build the experimental combined async-compute, FSR4, and physical-GFX10 native-mesh ICD. It is not enabled globally and Steam launch options are not changed.",
+                false,
+                function() { root.backend.setNativeMeshEnabled(true); })
+        }
+        Components.ActionButton {
+            visible: root.mesh.nativeMeshState && root.mesh.nativeMeshState !== "not-installed"
+            text: "Remove private native mesh"
+            enabled: !root.backend.busy && root.mesh.nativeMeshState === "ready"
+            disabledReason: root.backend.busy ? root.backend.busyLabel
+                : "Invalid profile state must be repaired from the toolkit CLI."
+            onClicked: confirmation.ask(
+                "Remove the private native-mesh profile?",
+                "Remove only the private profile. The global RADV runtime and Steam configuration are unchanged.",
+                true,
+                function() { root.backend.setNativeMeshEnabled(false); })
+        }
+        Kirigami.InlineMessage {
+            Layout.fillWidth: true
+            visible: true
+            type: Kirigami.MessageType.Information
+            text: "This profile is never enabled globally. Add the displayed runner to a game's Steam launch options manually when required."
+        }
+    }
+
+    Components.Section {
         title: "FSR4 and OptiScaler Game Manager"
         QQC2.TextField {
             Layout.fillWidth: true

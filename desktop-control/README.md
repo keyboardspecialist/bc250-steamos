@@ -7,7 +7,7 @@ Plasma 6 system-tray and windowed hardware controls for the BC-250 SteamOS toolk
 | Area | Controls and status |
 | --- | --- |
 | Overview | CPU and GPU clocks, temperature history, CU availability, service health, and boot persistence |
-| GPU | Adaptive frequency ranges, pinned clocks, load targets, thermal target, voltage curves, ramp timing, and guarded per-game FSR4 RC9 toggles |
+| GPU | Adaptive frequency ranges, pinned clocks, load targets, thermal target, voltage curves, ramp timing, guarded per-game FSR4 RC9 toggles, and explicit private native-mesh profile management |
 | Compute units | Shader-row and WGP routing, factory-route indicators, live application, and saved masks |
 | CPU | Active profile, bounded stability detection, immediate application, boot enablement, and stock settings |
 | CEC | TV and receiver power, active source, volume, behavior toggles, and broadcast name |
@@ -116,6 +116,7 @@ frontend cannot accidentally remove their service.
 | GPU, CU, and CPU changes | Polkit-authorized service methods |
 | CEC actions | Validated service methods |
 | CEC broadcast name | Printable UTF-8 input with a 14-byte limit |
+| Private native mesh | Fixed install/remove methods; no global activation or Steam launch-option edits |
 
 Service methods apply argument allowlists, integer bounds, operation-ID
 validation, and serialized hardware mutation.

@@ -1,11 +1,12 @@
 # AMDGPU corrections
 
-Corrects Cyan Skillfish GPU telemetry and the GFX1013 compute-queue lifecycle
+Corrects Cyan Skillfish 6-core and 8-core telemetry and the GFX1013 compute-queue lifecycle
 through one patched `amdgpu` module. On older supported kernels it also
 corrects DisplayPort video/audio timing. GPU
-activity comes from GC status sampling and GFX clock comes from a validated
-direct SMU query while retaining the firmware's published `SmuMetrics_t`
-layout. The GFX1013 async-compute repair also requires patched Mesa RADV and
+activity comes from cached GFX-ring fence sampling and GFX clock comes from a
+cached direct SMU query. Stock, current 8-core BIOS, and legacy 8-core BIOS
+metrics layouts are decoded without confusing fields. The GFX1013
+async-compute repair also requires patched Mesa RADV and
 `amdgpu.sched_policy=2`. Module installation deliberately leaves that policy
 off. `bc250-mesh-shader.sh setup` enables it only after the matching RADV
 runtime is installed, preventing either half from being activated alone.
@@ -41,10 +42,11 @@ artifact directly also requires `install.sh --acknowledge-dcn201-display-risk`.
 | 3.9.x | `linux-neptune-618` | [`0002-bc250-audio.patch`](0002-bc250-audio.patch) |
 | Valve 7.2 integration | `7.2` | No DisplayPort audio patch required; experimental DSC/HDMI 2.1 PCON is opt-in |
 
-All supported versions apply the Cyan Skillfish telemetry patches. They preserve
-the firmware's published metrics-table transfer size, query and validate the
-GFX clock through the SMU, expose the 350-2230 MHz SCLK range, sample GPU
-activity from GC status, guard partial TTM cleanup, and apply the three-part
+All supported versions apply the same pinned consolidated Cyan Skillfish
+telemetry patch. It supports the stock 244-byte export and the current 284-byte
+8-core firmware export, queries the GFX clock through the SMU, exposes the
+350-2230 MHz SCLK range, samples GPU activity from emitted GFX-ring fences,
+guards partial TTM cleanup, and applies the three-part
 GFX1013 PASID/GFXOFF compute-queue repair. They also carry an experimental KFD
 HWS runlist TLB-flush workaround, disabled by default.
 The build selects the kernel-specific patch set and produces
@@ -79,8 +81,7 @@ override.
 
 | Patch | Operation |
 |---|---|
-| `bc250-cyan-skillfish-gpu-telemetry.patch` / `-7.2.patch` | Apply bounded GC activity sampling while retaining `SmuMetrics_t` |
-| `bc250-cyan-skillfish-gfxclk.patch` / `-7.2.patch` | Apply range-checked direct SMU GFX-clock reporting |
+| MastaG `0001-bc250-8core-telemetry-gpu-activity.patch` | Decode 6/8-core SMU layouts, cache telemetry and GFXCLK, and sample GFX-ring activity |
 | `bc250-cyan-skillfish-sclk-range.patch` | Widen the kernel SCLK interface to 350-2230 MHz |
 | `bc250-amdgpu-ttm-null-page-guard.patch` | Safely clean up partially populated TTM page vectors |
 | `0001-gfx1013-mmio-pasid-route.patch` | Route GFX1013 PASID invalidation through MMIO |
@@ -91,7 +92,11 @@ override.
 | `bc250-dcn201-pcon-hdmi21.patch` | Opt-in DP-to-HDMI 2.1 PCON support on DCN201 for kernel 7.2 |
 | `bc250-dcn201-dsc-enable.patch` | Opt-in DSC resources on DCN201 for kernel 7.2 |
 
-The SCLK and TTM changes are adapted from the stable `linux-cachyos` patch set
+The consolidated telemetry patch is pinned to MastaG commit
+[`622ed9e`](https://github.com/MastaG/linux-cachyos-bc250/commit/622ed9e56107f8d13a19848ed06b7a7241ff6cd3), checksum-verified, and normalized
+only for the feature table, allocation helper, socket-power units, and sysfs
+callback context that differ between kernels 6.16/6.18 and 7.2. The SCLK and
+TTM changes are adapted from the stable `linux-cachyos` patch set
 in [`MastaG/linux-cachyos-bc250`](https://github.com/MastaG/linux-cachyos-bc250/tree/main/patches/linux-cachyos).
 The kernel SCLK interface and toolkit governor use the same conservative
 350 MHz floor.
@@ -113,27 +118,36 @@ patches are `GPL-2.0-only`; they are not relicensed by this toolkit.
 
 | Export | Source | Representation |
 |---|---|---|
-| `AMDGPU_PP_SENSOR_GPU_LOAD` | `GRBM_STATUS.GUI_ACTIVE` sampling | `0-100` percent |
-| `gpu_metrics_v2_2.average_gfx_activity` | `GRBM_STATUS.GUI_ACTIVE` sampling | `0-10000` centipercent |
+| `AMDGPU_PP_SENSOR_GPU_LOAD` | emitted GFX-ring fence sampling | `0-100` percent |
+| `gpu_metrics_v2_2.average_gfx_activity` | emitted GFX-ring fence sampling | `0-10000` centipercent |
 | `METRICS_CURR_GFXCLK` | `PPSMC_MSG_GetGfxFrequency` | Point-in-time MHz |
 | `gpu_metrics_v2_2.current_gfxclk` | `PPSMC_MSG_GetGfxFrequency` | Point-in-time MHz |
 | `gpu_metrics_v2_2.average_gfxclk_frequency` | `PPSMC_MSG_GetGfxFrequency` | Point-in-time MHz |
 
 ### Activity Sampling
 
-`gpu-telemetry` samples `GRBM_STATUS.GUI_ACTIVE` 32 times at 50-microsecond
-intervals. The approximately 1.55-millisecond window supplies both activity
-exports. The `average_gfx_activity` member name follows the
-`gpu_metrics_v2_2` ABI; its value represents this sampling window.
+The consolidated implementation samples the GFX ring's emitted-fence count 32
+times at 50-microsecond intervals. `GRBM_STATUS` is deliberately not used: on
+Cyan Skillfish it can return the all-ones bus-fault sentinel and falsely report
+100% load. A 25 ms cache lets adjacent sensor and `gpu_metrics` reads share the
+approximately 1.55-millisecond sample window.
 
 ### GFX Clock Query
 
-`gfxclk` maps `SMU_MSG_GetGfxclkFrequency` to Cyan Skillfish firmware command
-`PPSMC_MSG_GetGfxFrequency`. One SMU reply populates `METRICS_CURR_GFXCLK`,
-`current_gfxclk`, and `average_gfxclk_frequency`. Query errors and replies
-outside the patched 350-2230 MHz range propagate to the metrics caller. The
-widened kernel range also lets SMU governors use their lower-power and
-overclocking ranges through the kernel frequency interface.
+The telemetry patch maps `SMU_MSG_GetGfxclkFrequency` to Cyan Skillfish firmware
+command `PPSMC_MSG_GetGfxFrequency` and caches successful mailbox replies for 25
+ms. A valid table GFXCLK is the fallback when available; the legacy 8-core
+layout has no such slot. The widened kernel range separately lets SMU governors
+use their lower-power and overclocking ranges through the frequency interface.
+
+### 8-Core Layouts
+
+Physical-core detection selects the stock 6-core or current widened 8-core
+layout automatically. `amdgpu.cs_legacy_8core_metrics=1` selects the partial
+116-byte mapping used by older core-unlock BIOS builds; missing fields remain
+unsupported rather than being decoded from unrelated offsets. Diagnostic full
+telemetry through `pp_dpm_socclk` is opt-in with
+`amdgpu.cs_full_telemetry=1`.
 
 ### Compute Queues
 
@@ -201,7 +215,11 @@ Use a custom kernel-tree path as the final argument:
 
 ## Validation
 
-The build and installer verify the source revision, kernel release, kernel configuration, and stock-module ABI before installation.
+The build and installer verify the source revision, telemetry composition,
+kernel release, kernel configuration, and stock-module ABI before installation.
+The loaded module exposes `bc250_amdgpu_revision=mastag-8core-622ed9e-r1` in
+addition to the GFX1013 commit. Readiness requires both, so a newly installed
+module cannot be reported ready while the previous module remains loaded.
 
 ## Rollback
 
@@ -261,6 +279,5 @@ The complete fallback remains mandatory for the AMDGPU override. AIC8800 may ins
 | `build-env.sh` | Local build environment |
 | `bc250-dp-audio-clock-6.16.patch` | SteamOS 3.8.x DCN 2.01 clock-manager selection backport |
 | `0002-bc250-audio.patch` | Stable-tagged upstream Cyan Skillfish DP-audio quirk |
-| `bc250-cyan-skillfish-gpu-telemetry.patch` / `-7.2.patch` | Runtime GPU activity export using the published metrics layout |
-| `bc250-cyan-skillfish-gfxclk.patch` / `-7.2.patch` | Runtime GFX clock export using a direct SMU query |
-| `bc250-gfx1013-attestation.patch` | Read-only loaded-module identity for safe global RADV activation |
+| Pinned MastaG consolidated telemetry patch | Runtime 6/8-core telemetry, GFX clock, and GPU activity exports |
+| `bc250-gfx1013-attestation.patch` | Read-only loaded-module compute and telemetry-composition identity |

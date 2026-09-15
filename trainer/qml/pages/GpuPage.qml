@@ -42,7 +42,10 @@ ColumnLayout {
     C.StatusRow { label: "Global activation"; value: root.mesh.globalEnabled ? "Enabled" : "Disabled"; health: root.mesh.globalEnabled ? 1 : 0 }
     C.StatusRow { label: "FSR4 RC9 game DLLs"; value: (root.mesh.fsr4DllState || "Unavailable") + " (" + (root.mesh.fsr4DllInstallCount || 0) + ")"; health: root.mesh.fsr4DllState === "ready" ? 1 : root.mesh.fsr4DllState === "invalid" ? -1 : 0 }
     C.StatusRow { label: "Legacy FSR4 V3 profile"; value: root.mesh.fsr4State || "Unavailable"; health: root.mesh.fsr4State === "ready" ? 1 : root.mesh.fsr4State === "invalid" ? -1 : 0 }
-    Text { visible: Boolean(root.mesh.error) || root.mesh.runtimeState === "invalid" || root.mesh.fsr4State === "invalid" || root.mesh.fsr4DllState === "invalid"; text: root.mesh.error || "A Mesa / RADV or FSR4 runtime failed integrity validation. Repair it from the toolkit."; color: "#ff6aa2"; font.family: "monospace"; font.pixelSize: 9; wrapMode: Text.Wrap; Layout.fillWidth: true }
+    C.StatusRow { label: "Private native mesh"; value: root.mesh.nativeMeshState || "Unavailable"; health: root.mesh.nativeMeshState === "ready" ? 1 : root.mesh.nativeMeshState === "invalid" ? -1 : 0 }
+    C.StatusRow { label: "Native-mesh runner"; value: root.mesh.nativeMeshRunnerPath || "Not installed" }
+    Text { text: "Private native mesh is never enabled globally. Add its runner to Steam launch options manually when required."; color: "#7898a3"; font.family: "monospace"; font.pixelSize: 8; wrapMode: Text.Wrap; Layout.fillWidth: true }
+    Text { visible: Boolean(root.mesh.error) || root.mesh.runtimeState === "invalid" || root.mesh.fsr4State === "invalid" || root.mesh.fsr4DllState === "invalid" || root.mesh.nativeMeshState === "invalid"; text: root.mesh.error || "A Mesa / RADV, FSR4, or native-mesh runtime failed integrity validation. Repair it from the toolkit."; color: "#ff6aa2"; font.family: "monospace"; font.pixelSize: 9; wrapMode: Text.Wrap; Layout.fillWidth: true }
     C.SectionHeader { text: "Frequency control" }
     C.StatusRow { label: "Live / saved mode"; value: (root.gpu.mode || "--") + " / " + (root.gpu.requestedMode || "--"); health: root.gpu.dbusReady ? 1 : -1 }
     C.StatusRow { label: "Live range"; value: (root.gpu.liveMinimum ?? "--") + " - " + (root.gpu.liveMaximum ?? "--") + " MHz" }

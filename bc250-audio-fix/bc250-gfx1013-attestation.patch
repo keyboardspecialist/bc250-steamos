@@ -1,16 +1,18 @@
 From: bc250-steamos contributors
-Subject: [PATCH] amdgpu: expose BC-250 GFX1013 repair attestation
+Subject: [PATCH] amdgpu: expose BC-250 module composition attestation
 
 Expose the pinned upstream repair commit through a read-only module parameter
 so userspace can prove that the currently loaded module carries the kernel half
-before globally enabling the matching RADV driver.
+before globally enabling the matching RADV driver. Also expose the consolidated
+telemetry revision so an older loaded module cannot attest a newly installed
+composition after an upgrade.
 
 This patch modifies GPL-2.0-only Linux kernel source and is distributed under
 GPL-2.0-only.
 
 --- a/drivers/gpu/drm/amd/amdgpu/amdgpu_drv.c
 +++ b/drivers/gpu/drm/amd/amdgpu/amdgpu_drv.c
-@@ -148,6 +148,11 @@ enum AMDGPU_DEBUG_MASK {
+@@ -148,6 +148,17 @@ enum AMDGPU_DEBUG_MASK {
  	AMDGPU_DEBUG_ENABLE_CE_CS = BIT(10)
  };
  
@@ -19,6 +21,12 @@ GPL-2.0-only.
 +MODULE_PARM_DESC(bc250_gfx1013_fix, "BC-250 GFX1013 repair commit");
 +module_param_string(bc250_gfx1013_fix, bc250_gfx1013_fix,
 +		    sizeof(bc250_gfx1013_fix), 0444);
++
++static char bc250_amdgpu_revision[] = "mastag-8core-622ed9e-r1";
++MODULE_PARM_DESC(bc250_amdgpu_revision,
++		 "BC-250 AMDGPU telemetry composition revision");
++module_param_string(bc250_amdgpu_revision, bc250_amdgpu_revision,
++		    sizeof(bc250_amdgpu_revision), 0444);
  unsigned int amdgpu_vram_limit = UINT_MAX;
  int amdgpu_vis_vram_limit;
  int amdgpu_gart_size = -1; /* auto */

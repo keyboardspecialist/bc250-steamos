@@ -38,6 +38,7 @@ private slots:
             QStringLiteral("proton-install"), QStringLiteral("proton-update"),
             QStringLiteral("proton-remove"), QStringLiteral("graphics-setup"),
             QStringLiteral("mesh-remove"),
+            QStringLiteral("native-mesh-install"), QStringLiteral("native-mesh-remove"),
             QStringLiteral("decky-install"), QStringLiteral("decky-remove"),
             QStringLiteral("desktop-install"), QStringLiteral("desktop-remove"),
             QStringLiteral("coolercontrol-install"),
@@ -83,7 +84,12 @@ private slots:
                     .value(QStringLiteral("destructive")).toBool());
         QCOMPARE(ToolkitController::operationMetadata(QStringLiteral("graphics-setup"))
                      .value(QStringLiteral("component")).toString(),
-                 QStringLiteral("mesh"));
+                  QStringLiteral("mesh"));
+        QCOMPARE(ToolkitController::operationMetadata(QStringLiteral("native-mesh-install"))
+                     .value(QStringLiteral("component")).toString(),
+                 QStringLiteral("native-mesh"));
+        QVERIFY(ToolkitController::operationMetadata(QStringLiteral("native-mesh-remove"))
+                    .value(QStringLiteral("destructive")).toBool());
         QCOMPARE(ToolkitController::operationMetadata(QStringLiteral("ac3-install"))
                      .value(QStringLiteral("component")).toString(),
                  QStringLiteral("ac3"));
@@ -285,7 +291,8 @@ private slots:
                               QStringLiteral("cec"), QStringLiteral("ac3"),
                               QStringLiteral("power"), QStringLiteral("ram"),
                               QStringLiteral("swap"), QStringLiteral("compute"),
-                              QStringLiteral("proton"), QStringLiteral("mesh"),
+                               QStringLiteral("proton"), QStringLiteral("native-mesh"),
+                               QStringLiteral("mesh"),
                               QStringLiteral("audio"), QStringLiteral("fan"),
                               QStringLiteral("aic"), QStringLiteral("storage")}));
         QVERIFY(controller.start(QStringLiteral("power-install")));

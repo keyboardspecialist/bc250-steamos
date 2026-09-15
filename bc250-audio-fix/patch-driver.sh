@@ -13,6 +13,7 @@ set -euo pipefail
 HERE=$(cd "$(dirname "$0")" && pwd)
 TREE_DRIFT_EXIT=75
 GFX1013_COMMIT=d3e6dc062c34d2523db0abe5741d1f5b0dea00d9
+AMDGPU_REVISION=mastag-8core-622ed9e-r1
 
 usage() {
     cat <<EOF
@@ -43,7 +44,8 @@ set -- "${ARGS[@]}"
 show_status_json() {
     local rel updates default_module default_audio_marker default_metrics_marker
     local default_gfx1013_marker default_active module audio_marker metrics_marker
-    local gfx1013_marker active resolved selected_path module_path actual expected
+    local gfx1013_marker active revision_active resolved selected_path module_path actual expected active_revision
+    local default_revision_active
     local owner mode state artifact_present=0 override_installed=1
     local override_selected=0 active_ready=0 boot_present=0 marker path
 
@@ -54,11 +56,13 @@ show_status_json() {
     default_metrics_marker="$updates/.bc250-metrics-fix"
     default_gfx1013_marker="$updates/.bc250-gfx1013-fix"
     default_active=/sys/module/amdgpu/parameters/bc250_gfx1013_fix
+    default_revision_active=/sys/module/amdgpu/parameters/bc250_amdgpu_revision
     module=${BC250_GFX1013_MODULE:-$default_module}
     audio_marker=${BC250_AUDIO_MARKER:-$default_audio_marker}
     metrics_marker=${BC250_METRICS_MARKER:-$default_metrics_marker}
     gfx1013_marker=${BC250_GFX1013_MARKER:-$default_gfx1013_marker}
     active=${BC250_GFX1013_ACTIVE:-$default_active}
+    revision_active=${BC250_AMDGPU_REVISION_ACTIVE:-$default_revision_active}
 
     for path in "$module" "$audio_marker" "$metrics_marker" "$gfx1013_marker"; do
         if [ -e "$path" ] || [ -L "$path" ]; then
@@ -103,9 +107,13 @@ show_status_json() {
         fi
     fi
 
-    if [ -r "$active" ] && [ ! -L "$active" ]; then
+    if [ -r "$active" ] && [ ! -L "$active" ] \
+       && [ -r "$revision_active" ] && [ ! -L "$revision_active" ]; then
         read -r expected < "$active" || expected=
-        [ "$expected" = "$GFX1013_COMMIT" ] && active_ready=1
+        read -r active_revision < "$revision_active" || active_revision=
+        [ "$expected" = "$GFX1013_COMMIT" ] \
+            && [ "$active_revision" = "$AMDGPU_REVISION" ] \
+            && active_ready=1
     fi
 
     if [ -f "${BC250_AMDGPU_BOOT_CONFIG:-$HERE/boot-config.sh}" ] \

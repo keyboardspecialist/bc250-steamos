@@ -216,6 +216,7 @@ void Bc250Bridge::handleJsonReply(JsonRequest request, QDBusPendingCallWatcher *
                 {QStringLiteral("fsr4State"), QStringLiteral("not-installed")},
                 {QStringLiteral("fsr4DllState"), QStringLiteral("not-installed")},
                 {QStringLiteral("fsr4DllInstallCount"), 0},
+                {QStringLiteral("nativeMeshState"), QStringLiteral("not-installed")},
                 {QStringLiteral("error"), QStringLiteral("The installed service does not provide Mesa / RADV status yet.")}
             };
             emit meshStatusChanged();
@@ -720,7 +721,10 @@ void Bc250Bridge::makeMockSnapshot()
         {QStringLiteral("fsr4State"), QStringLiteral("ready")},
         {QStringLiteral("fsr4RunnerPath"), QStringLiteral("/home/deck/.local/share/bc250-mesh-shader/fsr4/bc250-fsr4-run")},
         {QStringLiteral("fsr4DllState"), QStringLiteral("ready")},
-        {QStringLiteral("fsr4DllInstallCount"), 1}
+        {QStringLiteral("fsr4DllInstallCount"), 1},
+        {QStringLiteral("nativeMeshState"), QStringLiteral("ready")},
+        {QStringLiteral("nativeMeshIcdPath"), QStringLiteral("/home/deck/.local/share/bc250-mesh-shader/native-mesh/radeon_native_mesh_icd.x86_64.json")},
+        {QStringLiteral("nativeMeshRunnerPath"), QStringLiteral("/home/deck/.local/share/bc250-mesh-shader/native-mesh/bc250-native-mesh-run")}
     };
     const auto mockCore = [](int core, int ccx) {
         return QVariantMap{{QStringLiteral("packageId"), 0}, {QStringLiteral("coreId"), core},

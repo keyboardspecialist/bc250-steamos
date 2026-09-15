@@ -90,7 +90,7 @@ QtObject {
             "SetCuWgp", "SetGpuFrequency", "SetLoadTarget", "SetCustomLoadTarget",
             "SetRamp", "CpuOcAction", "CpuUnlockAction", "SetCpuMitigations", "CecAction", "SetCecToggle", "SetCecName",
             "SetUmaSize", "SetTtmPages", "RemoveTtmOverride", "SetHdmiSurround", "InstallFsr4Dll", "UninstallFsr4Dll",
-            "InstallOptiscaler", "UninstallOptiscaler", "CancelOperation"]);
+            "InstallOptiscaler", "UninstallOptiscaler", "InstallNativeMesh", "UninstallNativeMesh", "CancelOperation"]);
         signature = Utils.allowed(signature, ["", "b", "s", "u", "yy", "suu", "yyyb", "suuu", "sb", "ss"]);
         var interactive = ["SetCuWgp", "SetGpuFrequency", "SetLoadTarget",
             "SetCustomLoadTarget", "SetRamp", "CpuOcAction", "CpuUnlockAction", "SetCpuMitigations",
@@ -158,7 +158,7 @@ QtObject {
         _operationPollFailures = 0;
         var cancellable = ["CpuUnlockAction", "SetCpuMitigations", "SetUmaSize", "SetTtmPages",
             "RemoveTtmOverride", "SetHdmiSurround", "InstallFsr4Dll", "UninstallFsr4Dll",
-            "InstallOptiscaler", "UninstallOptiscaler"].indexOf(method) < 0;
+            "InstallOptiscaler", "UninstallOptiscaler", "InstallNativeMesh", "UninstallNativeMesh"].indexOf(method) < 0;
         _enqueue("mutation", _command(method, signature, args), {
             label: label,
             refreshFsr4: method === "InstallFsr4Dll" || method === "UninstallFsr4Dll"
@@ -205,6 +205,11 @@ QtObject {
         var safeId = Utils.safeTargetId(targetId);
         _startMutation(enabled ? "InstallFsr4Dll" : "UninstallFsr4Dll", "s", [safeId],
             (enabled ? "Installing" : "Restoring") + " FSR4 game DLL");
+    }
+
+    function setNativeMeshEnabled(enabled) {
+        _startMutation(enabled ? "InstallNativeMesh" : "UninstallNativeMesh", "", [],
+            (enabled ? "Installing" : "Removing") + " private native mesh");
     }
 
     function installOptiscaler(candidateId, proxy) {

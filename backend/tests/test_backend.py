@@ -1428,6 +1428,8 @@ class BackendMutationTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(status["fsr4State"], "not-installed")
         self.assertEqual(status["fsr4DllState"], "not-installed")
         self.assertEqual(status["fsr4DllInstallCount"], 0)
+        self.assertEqual(status["nativeMeshState"], "not-installed")
+        self.assertTrue(status["nativeMeshRunnerPath"].endswith("/bc250-native-mesh-run"))
         self.assertEqual(
             status["icdPath"], "/home/deck/radeon_driconf_icd.x86_64.json"
         )
@@ -1455,6 +1457,9 @@ class BackendMutationTests(unittest.IsolatedAsyncioTestCase):
                     "fsr4RunnerPath": "/home/deck/.local/share/bc250-mesh-shader/fsr4/bc250-fsr4-run",
                     "fsr4DllState": "ready",
                     "fsr4DllInstallCount": 2,
+                    "nativeMeshState": "ready",
+                    "nativeMeshIcdPath": "/home/deck/.local/share/bc250-mesh-shader/native-mesh/radeon_native_mesh_icd.x86_64.json",
+                    "nativeMeshRunnerPath": "/home/deck/.local/share/bc250-mesh-shader/native-mesh/bc250-native-mesh-run",
                     "error": None,
                     "games": [
                         {
@@ -1478,6 +1483,8 @@ class BackendMutationTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(status["fsr4DllInstallCount"], 2)
         self.assertEqual(status["fsr4DllState"], "ready")
         self.assertTrue(status["fsr4RunnerPath"].endswith("/bc250-fsr4-run"))
+        self.assertEqual(status["nativeMeshState"], "ready")
+        self.assertTrue(status["nativeMeshRunnerPath"].endswith("/bc250-native-mesh-run"))
         self.assertEqual(status["games"][0]["executable"], "bc250-steam-1462040")
         backend._user_tool.assert_awaited_once_with(
             "bc250-mesh-shader.sh", "status-json", timeout=30
@@ -1491,6 +1498,24 @@ class BackendMutationTests(unittest.IsolatedAsyncioTestCase):
 
         with self.assertRaisesRegex(CommandError, "invalid JSON"):
             await backend.get_mesh_status()
+
+    async def test_native_mesh_mutations_use_fixed_tool_commands(self):
+        backend = object.__new__(ToolkitBackend)
+        prepare_mutation_backend(backend)
+        backend._user_tool = AsyncMock(return_value="")
+
+        installed = await backend.install_native_mesh()
+        removed = await backend.uninstall_native_mesh()
+
+        self.assertIn("Steam launch options were not changed", installed["message"])
+        self.assertIn("global RADV runtime was unchanged", removed["message"])
+        self.assertEqual(
+            backend._user_tool.await_args_list,
+            [
+                call("bc250-mesh-shader.sh", "setup", "--native-mesh", timeout=3600),
+                call("bc250-mesh-shader.sh", "uninstall", "--native-mesh", timeout=120),
+            ],
+        )
 
     async def test_mesh_game_toggle_rejects_removed_per_game_mode(self):
         backend = object.__new__(ToolkitBackend)

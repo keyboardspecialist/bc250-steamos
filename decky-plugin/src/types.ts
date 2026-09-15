@@ -239,6 +239,9 @@ export interface MeshStatus {
   fsr4RunnerPath: string;
   fsr4DllState: "ready" | "not-installed" | "invalid";
   fsr4DllInstallCount: number;
+  nativeMeshState: "ready" | "not-installed" | "invalid";
+  nativeMeshIcdPath: string;
+  nativeMeshRunnerPath: string;
   error: string | null;
   games: MeshGame[];
 }

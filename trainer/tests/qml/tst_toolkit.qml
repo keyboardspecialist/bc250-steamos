@@ -32,6 +32,7 @@ TestCase {
                 {"id": "ac3", "state": "installed"},
                 {"id": "proton", "state": "not-installed"},
                 {"id": "mesh", "state": "partial"}
+                ,{"id": "native-mesh", "state": "not-installed"}
             ]
         })
         property var operations: [
@@ -49,6 +50,8 @@ TestCase {
             {"id": "proton-remove", "title": "Remove Proton", "verb": "REMOVE", "description": "Remove Proton.", "destructive": true},
             {"id": "graphics-setup", "title": "Install graphics stack", "verb": "INSTALL / RESUME", "description": "Install graphics.", "destructive": false},
             {"id": "mesh-remove", "title": "Remove RADV", "verb": "REMOVE", "description": "Remove RADV.", "destructive": true}
+            ,{"id": "native-mesh-install", "title": "Install private native mesh", "verb": "BUILD + INSTALL", "description": "Never globally enabled and Steam is not edited.", "destructive": false}
+            ,{"id": "native-mesh-remove", "title": "Remove private native mesh", "verb": "REMOVE", "description": "Leave global RADV unchanged.", "destructive": true}
         ]
         property bool refreshing: false
         property bool running: false
@@ -161,12 +164,14 @@ TestCase {
         var swap = findChild(page, "toolkitCard-swap")
         var ac3 = findChild(page, "toolkitCard-ac3")
         var proton = findChild(page, "toolkitCard-proton")
+        var nativeMesh = findChild(page, "toolkitCard-native-mesh")
         var coolercontrol = findChild(page, "toolkitCard-coolercontrol")
         verify(storage !== null)
         verify(ram !== null)
         verify(swap !== null)
         verify(ac3 !== null)
         verify(proton !== null)
+        verify(nativeMesh !== null)
         verify(findChild(page, "toolkitCard-cec") === null)
         verify(findChild(page, "toolkitCard-persistence") === null)
         verify(coolercontrol !== null)
@@ -175,6 +180,7 @@ TestCase {
         compare(swap.categoryName, "PERFORMANCE")
         compare(ac3.categoryName, "DEVICES")
         compare(proton.categoryName, "PERFORMANCE")
+        compare(nativeMesh.categoryName, "PERFORMANCE")
         compare(coolercontrol.categoryName, "INTERFACES")
         compare(page.showsCategory(storage.categoryName), true)
         compare(page.showsCategory(ram.categoryName), false)

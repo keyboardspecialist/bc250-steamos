@@ -51,6 +51,12 @@ class FakeBackend:
     async def get_fsr4_inventory(self):
         return {"schemaVersion": 1, "games": []}
 
+    async def install_native_mesh(self):
+        await self._mutation("install_native_mesh")
+
+    async def uninstall_native_mesh(self):
+        await self._mutation("uninstall_native_mesh")
+
     async def get_telemetry(self):
         return {"cpuClock": 3200}
 
@@ -296,6 +302,20 @@ class ControlServiceTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(operation["method"], "InstallFsr4Dll")
         self.assertEqual(self.authorizer.calls, [(":1.1", 1000, "audit:1000", "gpu")])
         self.assertEqual(self.backends[0].calls, [("install_fsr4_dll", (target_id,))])
+
+    async def test_native_mesh_mutations_are_fixed_and_non_cancellable(self):
+        operation_id = await self.service.install_native_mesh(":1.1")
+        operation = await self.wait_for_status(":1.1", operation_id, "succeeded")
+        self.assertFalse(operation["cancellable"])
+        self.assertEqual(operation["method"], "InstallNativeMesh")
+        self.assertEqual(self.authorizer.calls, [(":1.1", 1000, "audit:1000", "gpu")])
+        self.assertEqual(self.backends[0].calls, [("install_native_mesh", ())])
+
+        operation_id = await self.service.uninstall_native_mesh(":1.1")
+        operation = await self.wait_for_status(":1.1", operation_id, "succeeded")
+        self.assertFalse(operation["cancellable"])
+        self.assertEqual(operation["method"], "UninstallNativeMesh")
+        self.assertEqual(self.backends[0].calls[-1], ("uninstall_native_mesh", ()))
 
     async def test_optiscaler_mutations_are_gpu_authorized_and_non_cancellable(self):
         candidate_id = "b" * 64

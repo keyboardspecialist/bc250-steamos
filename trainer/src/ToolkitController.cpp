@@ -105,6 +105,10 @@ constexpr OperationDefinition Operations[] = {
      "Install or repair AMDGPU kernel fixes, Mesa / RADV async compute, and the scheduler policy through the resumable graphics workflow.", false, false},
     {"mesh-remove", "Remove Mesa / RADV async-compute runtime", "mesh", "REMOVE",
      "Remove the global alternate runtime and activation while preserving build caches.", false, true},
+    {"native-mesh-install", "Install private native-mesh profile", "native-mesh", "BUILD + INSTALL",
+     "Build the experimental combined native-mesh ICD for explicit per-game runner use. It is never enabled globally and Steam launch options are not changed.", false, false},
+    {"native-mesh-remove", "Remove private native-mesh profile", "native-mesh", "REMOVE",
+     "Remove only the private native-mesh profile while leaving global RADV and Steam configuration unchanged.", false, true},
     {"decky-install", "Install Decky plugin", "decky", "INSTALL",
      "Build and install the BC-250 Decky plugin and privileged helper.", false, false},
     {"decky-remove", "Remove Decky plugin", "decky", "REMOVE",
@@ -1076,7 +1080,8 @@ QVariantMap ToolkitController::mockInventory() const
                               QStringLiteral("cec"), QStringLiteral("ac3"),
                               QStringLiteral("power"), QStringLiteral("ram"),
                               QStringLiteral("swap"), QStringLiteral("compute"),
-                              QStringLiteral("proton"), QStringLiteral("mesh"),
+                              QStringLiteral("proton"), QStringLiteral("native-mesh"),
+                              QStringLiteral("mesh"),
                               QStringLiteral("audio"), QStringLiteral("fan"),
                               QStringLiteral("aic"), QStringLiteral("storage")};
     QVariantList components;
