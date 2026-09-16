@@ -7,6 +7,8 @@ import tempfile
 import unittest
 from pathlib import Path
 
+from scripts.menu_graph import parse
+
 
 ROOT = Path(__file__).resolve().parents[1]
 TOOLKIT = ROOT / "bc250-toolkit.sh"
@@ -80,160 +82,60 @@ class ToolkitTests(unittest.TestCase):
 
     def test_main_menu_groups_related_workflows(self):
         source = TOOLKIT.read_text(encoding="utf-8")
-        main_menu = source[source.index("cmd_menu() {") : source.index("cmd_help() {")]
-        drivers_menu = source[
-            source.index("cmd_drivers_menu() {") : source.index("cmd_unlocks_menu() {")
-        ]
-        unlocks_menu = source[
-            source.index("cmd_unlocks_menu() {") : source.index("cmd_storage_updates_menu() {")
-        ]
-        interfaces_menu = source[
-            source.index("cmd_interfaces_menu() {") : source.index("cmd_core_system_menu() {")
-        ]
-        devices_menu = source[
-            source.index("cmd_devices_menu() {") : source.index("cmd_audio_menu() {")
-        ]
-        guided_overview = source[
-            source.index("show_guided_setup_overview() {") : source.index("cmd_guided_setup_menu() {")
-        ]
-        performance_menu = source[
-            source.index("cmd_performance_menu() {") : source.index("cmd_devices_menu() {")
-        ]
-
-        for label in (
-            "Auto Base Toolkit Installation",
-            "Manual guided setup",
-            "System health",
-            "Core system",
-            "Performance tuning",
-            "Hardware unlocks",
-            "Device drivers & connectivity",
-            "Control interfaces",
-            "Maintenance & recovery",
-        ):
-            self.assertIn(f'"{label}|', main_menu)
+        graph = parse(ROOT / "menus/toolkit.mmd")
+        root_labels = [node.title for node in graph.choices(graph.root.id)]
+        self.assertEqual(
+            [
+                "Auto Base Toolkit Installation",
+                "Manual Guided Setup",
+                "Core System",
+                "Power & Thermals",
+                "Graphics Stack",
+                "Hardware Unlocks",
+                "Devices & Connectivity",
+                "Control Interfaces",
+                "Maintenance & Recovery",
+                "System Health",
+            ],
+            root_labels,
+        )
         self.assertRegex(
             (ROOT / "VERSION").read_text(encoding="utf-8").strip(),
             r"^v\d+\.\d+\.\d+$",
         )
+        self.assertIn("menu_graph_render menu__cmd_menu", source)
         self.assertIn(
-            'menu_select "BC-250 SteamOS toolkit ${CD}[${TOOLKIT_VERSION}]${C0}"',
-            main_menu,
+            "action__auto_base_installation) run_menu_action auto-base-installation",
+            source,
         )
-        self.assertGreater(
-            main_menu.index('"System health|'),
-            main_menu.index('"Maintenance & recovery|'),
-        )
-        self.assertIn("0) run_menu_action auto-base-installation", main_menu)
-        self.assertIn("8) run_menu_action status", main_menu)
-        self.assertNotIn("Mesh shaders (per game)", source)
-        self.assertNotIn("[optional]", drivers_menu)
-        self.assertIn("Install / resume async-compute stack", drivers_menu)
-        self.assertIn("AMDGPU scheduler policy (advanced)", drivers_menu)
-        self.assertIn("KFD HWS runlist TLB flush (experimental)", drivers_menu)
-        self.assertIn("Clean AMDGPU build tree", drivers_menu)
-        self.assertLess(
-            drivers_menu.index("AMDGPU kernel fixes"),
-            drivers_menu.index("Clean AMDGPU build tree"),
-        )
-        self.assertLess(
-            drivers_menu.index("Clean AMDGPU build tree"),
-            drivers_menu.index("AMDGPU scheduler policy (advanced)"),
-        )
-        self.assertLess(
-            drivers_menu.index("AMDGPU scheduler policy (advanced)"),
-            drivers_menu.index("KFD HWS runlist TLB flush (experimental)"),
-        )
-        self.assertLess(
-            drivers_menu.index("KFD HWS runlist TLB flush (experimental)"),
-            drivers_menu.index("Install / resume async-compute stack"),
-        )
-        self.assertLess(
-            drivers_menu.index("Install / resume async-compute stack"),
-            drivers_menu.index("NCT6687 fan-control driver"),
-        )
-        self.assertLess(
-            drivers_menu.index("NCT6687 fan-control driver"),
-            drivers_menu.index("AIC8800 WiFi / Bluetooth"),
-        )
-        self.assertIn("0) run_menu_action amdgpu", drivers_menu)
-        self.assertIn("1) run_menu_action amdgpu-clean", drivers_menu)
-        self.assertIn("2) run_menu_action scheduler-policy", drivers_menu)
-        self.assertIn("3) run_menu_action kfd-runlist", drivers_menu)
-        self.assertIn("4) run_menu_action graphics-setup", drivers_menu)
-        self.assertIn("GE-Proton with FSR4", performance_menu)
-        self.assertIn("Private native-mesh profile", performance_menu)
-        self.assertIn("portable FSR4 RC9 game DLLs", performance_menu)
-        self.assertIn("2) run_menu_child radv", performance_menu)
-        self.assertIn("3) cmd_proton_menu", performance_menu)
+        self.assertIn("action__system_health) run_menu_action status", source)
         self.assertIn("bc250-proton.sh", source)
-        self.assertIn("GPU compute-unit unlock", unlocks_menu)
-        self.assertIn("CPU core unlock", unlocks_menu)
-        self.assertIn(
-            "Test GPU compute units or CPU cores with explicit stability and recovery steps.",
-            main_menu,
-        )
-        self.assertNotIn("without confusing the two workflows", source)
-        self.assertIn("0) run_menu_child compute", unlocks_menu)
-        self.assertIn("1) run_menu_child cpu-unlock", unlocks_menu)
-        self.assertIn('"HDMI audio|', source)
-        self.assertNotIn('"HDMI-CEC"', guided_overview)
-        self.assertIn('"HDMI-CEC|${CG}[menu]${C0}|', devices_menu)
-        self.assertIn('"Enable HDMI AC-3 5.1|', source)
-        self.assertIn('"Revert HDMI AC-3 to stereo|', source)
-        self.assertIn("0) run_menu_action hdmi-ac3-enable", source)
-        self.assertIn("1) run_menu_action hdmi-ac3-revert", source)
+        self.assertNotIn("Mesh shaders (per game)", source)
+
+        guided = graph.choices("menu__cmd_guided_setup_menu")
+        guided_ids = {node.id for node in guided}
+        self.assertTrue(all(node.kind in {"action", "child"} for node in guided))
+        self.assertIn("child__compute", guided_ids)
+        self.assertIn("child__cpu_unlock", guided_ids)
+        self.assertIn("action__amdgpu", guided_ids)
+        self.assertIn("child__power_foundation", guided_ids)
+        self.assertIn("child__ram", guided_ids)
+        self.assertIn("action__graphics_setup", guided_ids)
+        self.assertNotIn("child__storage", guided_ids)
+
+        unlock_ids = {node.id for node in graph.choices("menu__cmd_unlocks_menu")}
+        self.assertEqual({"child__compute", "child__cpu_unlock"}, unlock_ids)
+        device_ids = {node.id for node in graph.choices("menu__cmd_devices_menu")}
+        self.assertIn("menu__cmd_audio_menu", device_ids)
+        self.assertIn("child__cec", device_ids)
+        interface_ids = {node.id for node in graph.choices("menu__cmd_interfaces_menu")}
+        self.assertIn("action__coolercontrol", interface_ids)
+        self.assertIn("action__trainer", interface_ids)
+
         self.assertIn("amdgpu|audio)", source)
         self.assertIn("radv|mesh)", source)
         self.assertIn('python3 "$TRAINER_RELEASE_INSTALLER"', source)
         self.assertNotIn('bash "$TRAINER_INSTALL_SH" install', source)
-        self.assertIn('"CoolerControl|', interfaces_menu)
-        self.assertIn("2) run_menu_action coolercontrol", interfaces_menu)
-        self.assertIn("3) run_menu_action trainer", interfaces_menu)
-
-        power = (ROOT / "bc250-power.sh").read_text(encoding="utf-8")
-        power_menu = power[power.index("cmd_menu() {") : power.index("cmd_help() {")]
-        self.assertNotIn('"CPU core unlock|', power_menu)
-        self.assertIn("menu)      menu_cpu_unlock", power)
-
-        guided_menu = source[
-            source.index("cmd_guided_setup_menu() {") : source.index("cmd_drivers_menu() {")
-        ]
-        for label in (
-            "Setup overview",
-            "GPU compute-unit unlock",
-            "CPU core unlock",
-            "AMDGPU kernel fixes",
-            "Power foundation",
-            "RAM / VRAM split",
-            "Performance tuning",
-        ):
-            self.assertIn(label, guided_menu)
-        self.assertIn("load-test", guided_menu.lower())
-        self.assertIn("reboot", guided_menu.lower())
-        self.assertIn("choose by goal", guided_menu)
-        self.assertNotIn("Step 1", guided_menu)
-        self.assertNotIn("Step 2", guided_menu)
-        self.assertNotIn("Step 3", guided_menu)
-        self.assertNotIn("Persistent foundation", guided_menu)
-        self.assertNotIn("run_menu_child storage", guided_menu)
-        self.assertLess(
-            guided_menu.index("GPU compute-unit unlock"),
-            guided_menu.index("Performance tuning"),
-        )
-        self.assertLess(
-            guided_menu.index("CPU core unlock"),
-            guided_menu.index("Performance tuning"),
-        )
-        self.assertNotIn("auto-base-installation", guided_menu)
-        self.assertIn("1) run_menu_child compute", guided_menu)
-        self.assertIn("2) run_menu_child cpu-unlock", guided_menu)
-        self.assertIn("3) run_menu_action amdgpu", guided_menu)
-        self.assertIn("4) run_menu_child power", guided_menu)
-        self.assertIn("5) run_menu_child ram", guided_menu)
-        self.assertIn("6) cmd_performance_menu", guided_menu)
-        self.assertNotIn("Finish - Verify system", guided_menu)
-        self.assertIn("cmd_guided_setup_menu", main_menu)
 
     def test_dense_component_menus_are_grouped_by_intent(self):
         power = (ROOT / "bc250-power.sh").read_text(encoding="utf-8")
@@ -245,6 +147,7 @@ class ToolkitTests(unittest.TestCase):
         self.assertIn("menu_power_setup()", power)
         self.assertIn("menu_gpu_tuning()", power)
         self.assertIn("menu_cpu_tuning()", power)
+        self.assertIn('exec sudo "$0" menu "$entry"', power_menu)
 
         cec = (ROOT / "bc250-cec.sh").read_text(encoding="utf-8")
         cec_menu = cec[cec.index("cmd_menu() {") : cec.index("tv_badge_menu() {")]
@@ -618,6 +521,14 @@ class ToolkitTests(unittest.TestCase):
                 )
                 self.assertEqual(result.returncode, expected)
                 self.assertIn("BC-250 system health", result.stdout)
+                for heading in (
+                    "CORE SYSTEM",
+                    "POWER & THERMALS",
+                    "GRAPHICS STACK",
+                    "HARDWARE UNLOCKS",
+                    "DEVICES & CONNECTIVITY",
+                ):
+                    self.assertIn(heading, result.stdout)
                 self.assertIn("1000-1850 MHz saved range", result.stdout)
                 self.assertNotIn("config=1500", result.stdout)
                 self.assertIn("CPU core unlock", result.stdout)
@@ -732,6 +643,13 @@ class ToolkitTests(unittest.TestCase):
                 text=True,
                 env=env,
             )
+            foundation = subprocess.run(
+                ["bash", str(toolkit), "power", "foundation"],
+                check=True,
+                capture_output=True,
+                text=True,
+                env=env,
+            )
             rejected = subprocess.run(
                 ["bash", str(toolkit), "power", "freq", "status"],
                 capture_output=True,
@@ -740,6 +658,7 @@ class ToolkitTests(unittest.TestCase):
             )
 
             self.assertEqual(default.stdout.strip(), "menu")
+            self.assertEqual(foundation.stdout.strip(), "menu foundation")
             self.assertNotEqual(rejected.returncode, 0)
             self.assertIn("Usage:", rejected.stderr)
 

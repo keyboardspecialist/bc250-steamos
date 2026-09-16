@@ -9,6 +9,7 @@ on:
       - "coolercontrol/**"
       - "core-unlock/**"
       - "scripts/**"
+      - "menus/**"
       - "tests/**"
       - "acpi-tables/**"
       - "aic8800/*.sh"
@@ -100,6 +101,8 @@ jobs:
 
       - name: Run service and release tests
         run: |
+          python3 scripts/generate-menus.py --check
+          python3 scripts/analyze-menu-graph.py --check --depth-budget 3
           PYTHONPATH=backend:backend/vendor \
             python3 -m unittest discover -s backend/tests
           PYTHONPATH=desktop-control/service:desktop-control/vendor:backend:backend/vendor \

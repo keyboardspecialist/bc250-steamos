@@ -1,0 +1,158 @@
+%% menu-flow-v1
+flowchart TD
+
+menu__cmd_menu["BC-250 SteamOS toolkit [{{TOOLKIT_VERSION}}]<br/>Choose a guided workflow or a system domain."]:::root
+menu__cmd_guided_setup_menu["Manual Guided Setup<br/>Follow the safe setup order without crossing through sibling categories."]:::menu
+menu__cmd_core_system_menu["Core System<br/>Manage storage, memory allocation, swap, and update protection."]:::menu
+menu__cmd_power_menu["Power & Thermals<br/>Configure the power foundation, GPU behavior, CPU tuning, and memory sensors."]:::menu
+menu__cmd_graphics_menu["Graphics Stack<br/>Manage AMDGPU, Mesa and RADV, FSR4, and GE-Proton."]:::menu
+menu__cmd_unlocks_menu["Hardware Unlocks<br/>Test CPU cores or GPU compute units with explicit recovery paths."]:::menu
+menu__cmd_devices_menu["Devices & Connectivity<br/>Configure HDMI audio, CEC, fan control, and hardware-specific wireless support."]:::menu
+menu__cmd_interfaces_menu["Control Interfaces<br/>Install Gaming Mode, desktop, fan-control, or standalone interfaces."]:::menu
+menu__cmd_maintenance_menu["Maintenance & Recovery<br/>Recover updates, clean build state, or remove installed components."]:::menu
+menu__cmd_proton_menu["BC-250 GE-Proton<br/>Inspect, install, repair, or remove the pinned compatibility tool."]:::menu
+menu__cmd_memory_temperature_menu["GDDR6 Memory Temperature<br/>Manage the experimental P3.0-only live SMU temperature payload."]:::menu
+menu__cmd_audio_menu["HDMI Audio<br/>Enable Dolby Digital 5.1 or return to the default stereo profile."]:::menu
+menu__cmd_amdgpu_boot_menu["Advanced AMDGPU Boot Options<br/>Manage mutually exclusive scheduler and KFD runlist policies."]:::menu
+menu__cmd_drivers_menu["Legacy Drivers Entry<br/>Direct-CLI compatibility menu for driver workflows."]:::entry
+menu__cmd_storage_updates_menu["Legacy Storage and Updates Entry<br/>Direct-CLI compatibility menu for storage and update protection."]:::entry
+
+action__auto_base_installation["Auto Base Toolkit Installation<br/>Install or resume the safe foundation in dependency order."]:::install
+action__system_health["System Health<br/>Show operational state using the same domain names as the menu."]:::read_only
+action__guided_overview["Setup Overview<br/>Review goals, current state, and restart checkpoints."]:::read_only
+action__amdgpu["AMDGPU Kernel Fixes<br/>Build the corrected kernel module and reboot before RADV setup."]:::install
+action__graphics_setup["Install or Resume Async Compute<br/>Install AMDGPU first when needed, then resume Mesa and RADV."]:::install
+action__amdgpu_clean["Clean AMDGPU Build Tree<br/>Remove generated build output while retaining downloads and dependencies."]:::cleanup
+action__fan_driver["NCT6687 Fan-Control Driver<br/>Install Linux hwmon fan-speed and PWM support."]:::install
+action__wifi["AIC8800 WiFi and Bluetooth<br/>Install only on systems using the AIC8800 adapter."]:::hardware_specific
+action__decky["Decky Plugin<br/>Install BC-250 controls for Gaming Mode and Quick Access."]:::install
+action__desktop["Plasma Desktop Control<br/>Install the shared service and Plasma system-tray control."]:::install
+action__coolercontrol["CoolerControl<br/>Install fan profiles, curves, and monitoring for the onboard controller."]:::install
+action__trainer["BC250 Trainer<br/>Install the standalone native Qt control application."]:::install
+action__proton_status["Status<br/>Verify the pinned compatibility tool and required files."]:::read_only
+action__proton_install["Install<br/>Install GE-Proton after the required FSR4 RADV runtime is active."]:::install
+action__proton_update["Update or Repair<br/>Transactionally replace an older or incomplete toolkit installation."]:::install
+action__proton_uninstall["Uninstall<br/>Remove the compatibility tool while preserving prefixes and saves."]:::cleanup
+action__memory_status["Status<br/>Verify source and recorded original-SMU backup state."]:::read_only
+action__memory_prepare["Prepare Verified Source<br/>Download and verify the pinned payload, source, README, and license."]:::install
+action__memory_patch["Apply Live SMU Payload<br/>Patch this SMU runtime after explicit risk acknowledgement."]:::experimental
+action__memory_read["Read GDDR6 Temperatures<br/>Attest the payload and read all eight memory chips."]:::read_only
+action__memory_restore["Restore Original SMU Bytes<br/>Restore the recorded handler and overwritten bytes."]:::cleanup
+action__hdmi_ac3_enable["Enable HDMI AC-3 5.1<br/>Encode system audio as Dolby Digital 5.1."]:::install
+action__hdmi_ac3_revert["Revert HDMI AC-3 to Stereo<br/>Remove toolkit AC-3 configuration and restore default stereo."]:::cleanup
+action__scheduler_policy["AMDGPU Scheduler Policy<br/>Normally managed by Mesa and RADV setup."]:::advanced
+action__kfd_runlist["KFD Runlist Workaround<br/>Experimental ROCm workaround that cannot coexist with sched_policy=2."]:::experimental
+
+child__storage["Persistent Storage<br/>Inspect or repair privileged storage and boot recovery."]:::menu
+child__ram["RAM and VRAM Split<br/>Balance the CMOS minimum and dynamic Linux TTM limit."]:::menu
+child__swap["Compressed Swap<br/>Choose mutually exclusive zram or zswap-backed disk profiles."]:::menu
+child__persistence["SteamOS Update Protection<br/>Protect and recover supported component settings across updates."]:::menu
+child__power_foundation["Power Foundation<br/>Install ACPI, test the GPU governor, then enable it at boot."]:::menu
+child__power_frequency["GPU Frequency and Voltage<br/>Set adaptive ranges, pinned clocks, or voltage-curve points."]:::menu
+child__power_load["GPU Load Targets<br/>Choose when the governor clocks up and down."]:::menu
+child__power_ramp["GPU Ramp Behavior<br/>Choose how quickly and granularly GPU clocks move."]:::menu
+child__power_cpu["CPU Performance and Security<br/>Configure CPU undervolt, overclock, and mitigation policy."]:::menu
+child__radv["GPU Driver and FSR4 Options<br/>Manage Mesa and RADV, portable FSR4 DLLs, native mesh, or cleanup."]:::menu
+child__compute["GPU Compute-Unit Unlock<br/>Inspect harvesting, test live routing, stress-test, and persist."]:::menu
+child__cpu_unlock["CPU Core Unlock<br/>Test eight cores, then choose one automatic unlock method."]:::experimental
+child__cec["HDMI-CEC<br/>Configure automation, everyday controls, and diagnostics."]:::menu
+child__manage["Manage Installed Components<br/>Review removal plans, uninstall components, or purge preserved data."]:::menu
+
+menu__cmd_menu --> action__auto_base_installation
+menu__cmd_menu --> menu__cmd_guided_setup_menu
+menu__cmd_menu --> menu__cmd_core_system_menu
+menu__cmd_menu --> menu__cmd_power_menu
+menu__cmd_menu --> menu__cmd_graphics_menu
+menu__cmd_menu --> menu__cmd_unlocks_menu
+menu__cmd_menu --> menu__cmd_devices_menu
+menu__cmd_menu --> menu__cmd_interfaces_menu
+menu__cmd_menu --> menu__cmd_maintenance_menu
+menu__cmd_menu --> action__system_health
+
+menu__cmd_guided_setup_menu --> action__guided_overview
+menu__cmd_guided_setup_menu --> child__compute
+menu__cmd_guided_setup_menu --> child__cpu_unlock
+menu__cmd_guided_setup_menu --> action__amdgpu
+menu__cmd_guided_setup_menu --> child__power_foundation
+menu__cmd_guided_setup_menu --> child__ram
+menu__cmd_guided_setup_menu --> action__graphics_setup
+
+menu__cmd_core_system_menu --> child__storage
+menu__cmd_core_system_menu --> child__ram
+menu__cmd_core_system_menu --> child__swap
+menu__cmd_core_system_menu --> child__persistence
+
+menu__cmd_power_menu --> child__power_foundation
+menu__cmd_power_menu --> child__power_frequency
+menu__cmd_power_menu --> child__power_load
+menu__cmd_power_menu --> child__power_ramp
+menu__cmd_power_menu --> child__power_cpu
+menu__cmd_power_menu --> menu__cmd_memory_temperature_menu
+
+menu__cmd_graphics_menu --> action__amdgpu
+menu__cmd_graphics_menu --> action__graphics_setup
+menu__cmd_graphics_menu --> child__radv
+menu__cmd_graphics_menu --> menu__cmd_proton_menu
+menu__cmd_graphics_menu --> menu__cmd_amdgpu_boot_menu
+
+menu__cmd_unlocks_menu --> child__compute
+menu__cmd_unlocks_menu --> child__cpu_unlock
+
+menu__cmd_devices_menu --> menu__cmd_audio_menu
+menu__cmd_devices_menu --> child__cec
+menu__cmd_devices_menu --> action__fan_driver
+menu__cmd_devices_menu --> action__wifi
+
+menu__cmd_interfaces_menu --> action__decky
+menu__cmd_interfaces_menu --> action__desktop
+menu__cmd_interfaces_menu --> action__coolercontrol
+menu__cmd_interfaces_menu --> action__trainer
+
+menu__cmd_maintenance_menu --> child__persistence
+menu__cmd_maintenance_menu --> action__amdgpu_clean
+menu__cmd_maintenance_menu --> child__manage
+
+menu__cmd_proton_menu --> action__proton_status
+menu__cmd_proton_menu --> action__proton_install
+menu__cmd_proton_menu --> action__proton_update
+menu__cmd_proton_menu --> action__proton_uninstall
+
+menu__cmd_memory_temperature_menu --> action__memory_status
+menu__cmd_memory_temperature_menu --> action__memory_prepare
+menu__cmd_memory_temperature_menu --> action__memory_patch
+menu__cmd_memory_temperature_menu --> action__memory_read
+menu__cmd_memory_temperature_menu --> action__memory_restore
+
+menu__cmd_audio_menu --> action__hdmi_ac3_enable
+menu__cmd_audio_menu --> action__hdmi_ac3_revert
+
+menu__cmd_amdgpu_boot_menu --> action__scheduler_policy
+menu__cmd_amdgpu_boot_menu --> action__kfd_runlist
+
+menu__cmd_drivers_menu --> action__amdgpu
+menu__cmd_drivers_menu --> action__amdgpu_clean
+menu__cmd_drivers_menu --> action__scheduler_policy
+menu__cmd_drivers_menu --> action__kfd_runlist
+menu__cmd_drivers_menu --> action__graphics_setup
+menu__cmd_drivers_menu --> action__fan_driver
+menu__cmd_drivers_menu --> action__wifi
+
+menu__cmd_storage_updates_menu --> child__storage
+menu__cmd_storage_updates_menu --> child__persistence
+
+action__graphics_setup -.-> action__amdgpu
+action__proton_install -.-> action__graphics_setup
+action__hdmi_ac3_enable -.-> action__amdgpu
+child__power_frequency -.-> child__power_foundation
+child__power_load -.-> child__power_foundation
+child__power_ramp -.-> child__power_foundation
+
+classDef root fill:#10283c,color:#fff,stroke:#67b7dc,stroke-width:3px
+classDef menu fill:#17324d,color:#fff,stroke:#67b7dc,stroke-width:2px
+classDef entry fill:#263746,color:#ddd,stroke:#778899,stroke-dasharray:5 5
+classDef install fill:#264653,color:#fff,stroke:#2a9d8f
+classDef read_only fill:#353535,color:#eee,stroke:#999
+classDef advanced fill:#4a304d,color:#fff,stroke:#d17b9f
+classDef cleanup fill:#493f2c,color:#fff,stroke:#e9c46a
+classDef experimental fill:#532f38,color:#fff,stroke:#e76f51
+classDef hardware_specific fill:#3b3a24,color:#fff,stroke:#e9c46a

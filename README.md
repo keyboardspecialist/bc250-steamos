@@ -46,7 +46,7 @@ Open the unified toolkit menu as the logged-in Deck user:
 | Compressed swap (optional) | `sudo ./bc250-swap.sh`, then choose zram or zswap-backed disk swap |
 | GPU compute-unit unlock | `sudo ./bc250-40cu.sh` |
 | CEC | `./bc250-cec.sh setup` |
-| HDMI Dolby Digital 5.1 (optional) | **Device drivers & connectivity > HDMI audio** or `./hdmi-ac3/hdmi-ac3.sh install` |
+| HDMI Dolby Digital 5.1 (optional) | **Devices & Connectivity > HDMI Audio** or `./hdmi-ac3/hdmi-ac3.sh install` |
 | NCT6687 fan-control driver | `./bc250-toolkit.sh fan-driver` |
 | GDDR6 memory temperature (experimental) | `./bc250-toolkit.sh memory-temperature` |
 | AIC8800 | `sudo bash ./aic8800/steamdeck-setup.sh` |
@@ -117,12 +117,17 @@ The unified launcher and individual component scripts remain independently usabl
 
 ## Toolkit Menu
 
-Run `./bc250-toolkit.sh` without `sudo`. The main menu groups drivers, hardware
-unlocks, power, memory, CEC, storage/update integration, control interfaces,
-and installed-component maintenance. Child menus return to the toolkit when
+Run `./bc250-toolkit.sh` without `sudo`. The main menu groups Core System, Power
+& Thermals, Graphics Stack, Hardware Unlocks, Devices & Connectivity, Control
+Interfaces, and Maintenance & Recovery. Child menus return to the toolkit when
 they exit. Installer and build entries require confirmation before starting
 their longer setup workflows.
 Each child requests administrator access only when needed.
+
+The menu structure is authored in [`menus/toolkit.mmd`](menus/toolkit.mmd).
+Regenerate it with `python3 scripts/generate-menus.py --write` and audit it with
+`python3 scripts/analyze-menu-graph.py`. See
+[`MENU-GRAPH.md`](MENU-GRAPH.md) for syntax and validation details.
 
 | Command | Action |
 |---|---|
@@ -135,7 +140,7 @@ Each child requests administrator access only when needed.
 | `./bc250-toolkit.sh action OPERATION_ID` | Run one fixed dashboard action without opening a TUI |
 | `./bc250-toolkit.sh drivers` | Open AMDGPU, Mesa / RADV, NCT6687, and AIC8800 driver setup |
 | `./bc250-toolkit.sh unlocks` | Open GPU compute-unit and CPU core unlock setup |
-| `./bc250-toolkit.sh power` | Open a component menu directly |
+| `./bc250-toolkit.sh power [ENTRY]` | Open Power at root, foundation, frequency, load, ramp, or CPU tuning |
 | `./bc250-toolkit.sh ram` | Open RAM / VRAM split settings |
 | `./bc250-toolkit.sh swap` | Choose a compressed swap profile |
 | `./bc250-toolkit.sh amdgpu` | Build the AMDGPU kernel fixes |
@@ -601,8 +606,8 @@ SteamOS ships an ALSA AC-3 profile for Valve hardware, but the BC-250's DMI
 identity does not activate it. The toolkit can select that profile for the AMD
 HDMI card and encode six-channel PCM to Dolby Digital with ALSA's `a52` plugin.
 On 6.16 and 6.18, install the AMDGPU audio correction and reboot first. Valve
-7.2 does not need the legacy audio patches. Then open **Device drivers & connectivity
-> HDMI audio** and choose **Enable HDMI AC-3 5.1**.
+7.2 does not need the legacy audio patches. Then open **Devices & Connectivity
+> HDMI Audio** and choose **Enable HDMI AC-3 5.1**.
 
 The setup requires an AC-3-capable receiver or soundbar. It installs a
 toolkit-owned udev rule, adds a user WirePlumber fragment, selects the encoded
@@ -646,8 +651,8 @@ before installation. If Valve omitted the matching headers, the toolkit can
 generate the required symbols with a complete exact-source kernel build.
 
 The module also carries a disabled-by-default KFD HWS runlist TLB-flush
-workaround for stale ROCm mappings. Enable it only from **Core system > Advanced
-AMDGPU boot options > KFD runlist workaround**. It requires hardware scheduling and is mutually exclusive
+workaround for stale ROCm mappings. Enable it only from **Graphics Stack > Advanced
+AMDGPU Boot Options > KFD Runlist Workaround**. It requires hardware scheduling and is mutually exclusive
 with the RADV workflow's `amdgpu.sched_policy=2`; enabling RADV policy replaces
 the workaround rather than combining both boot options.
 
@@ -668,8 +673,8 @@ as a separate Vulkan ICD to enable GFX1013 asynchronous compute. The matching
 active first. Driver readiness refuses to pass unless all installed module
 markers, the selected `modinfo` path, and the loaded module composition
 attestations agree. Use
-**Auto Base Toolkit Installation** for the complete foundation, or choose **Install / resume
-async-compute stack** under Performance tuning. The toolkit installs AMDGPU
+**Auto Base Toolkit Installation** for the complete foundation, or choose **Graphics
+Stack > Install or Resume Async Compute**. The toolkit installs AMDGPU
 first, pauses for reboot, and resumes RADV when the same option is selected
 again. The RADV build normally takes about 3-5 minutes.
 

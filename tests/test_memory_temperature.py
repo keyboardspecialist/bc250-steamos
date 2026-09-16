@@ -2,6 +2,8 @@ import importlib.util
 import json
 import os
 from pathlib import Path
+
+from scripts.menu_graph import parse
 import subprocess
 import tempfile
 import unittest
@@ -206,15 +208,11 @@ class MemoryTemperatureTests(unittest.TestCase):
         readme = (ROOT / "README.md").read_text(encoding="utf-8")
         self.assertIn('MEMORY_TEMP_SH="$SCRIPT_DIR/bc250-memory-temperature.sh"', toolkit)
         self.assertIn("memory-temperature-patch", toolkit)
-        performance = toolkit[
-            toolkit.index("cmd_performance_menu() {") : toolkit.index("cmd_devices_menu() {")
-        ]
-        devices = toolkit[
-            toolkit.index("cmd_devices_menu() {") : toolkit.index("cmd_memory_temperature_menu() {")
-        ]
-        self.assertIn("GDDR6 memory temperature", performance)
-        self.assertIn("cmd_memory_temperature_menu", performance)
-        self.assertNotIn("GDDR6 memory temperature", devices)
+        graph = parse(ROOT / "menus/toolkit.mmd")
+        power_ids = {node.id for node in graph.choices("menu__cmd_power_menu")}
+        device_ids = {node.id for node in graph.choices("menu__cmd_devices_menu")}
+        self.assertIn("menu__cmd_memory_temperature_menu", power_ids)
+        self.assertNotIn("menu__cmd_memory_temperature_menu", device_ids)
         self.assertNotIn("memory temperature (research)", toolkit)
         self.assertNotIn("memory-temperature research", toolkit)
         self.assertIn("bc250-mesa-patches memory-temperature", workflow)

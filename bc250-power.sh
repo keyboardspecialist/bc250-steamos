@@ -4615,13 +4615,23 @@ menu_cpu_unlock() {
 }
 
 cmd_menu() {
+    local entry="${1:-root}"
     [[ -t 0 && -t 1 ]] || die "The menu needs an interactive terminal. See '$0 help' for CLI commands."
     if [[ $EUID -ne 0 ]]; then
         warn "Not running as root -- setup actions will fail."
         ask "Restart with sudo? [Y/n]" "Y"
-        if [[ "$REPLY" =~ ^[Yy] ]]; then exec sudo "$0" menu; fi
+        if [[ "$REPLY" =~ ^[Yy] ]]; then exec sudo "$0" menu "$entry"; fi
         echo
     fi
+    case "$entry" in
+        root) ;;
+        foundation) menu_power_setup; return 0 ;;
+        frequency) menu_freq; return 0 ;;
+        load) menu_load_target; return 0 ;;
+        ramp) menu_ramp; return 0 ;;
+        cpu) menu_cpu_tuning; return 0 ;;
+        *) die "Unknown power menu entry: $entry" ;;
+    esac
     while true; do
         local items=(
             "Status overview||Health check of every service, clock and temp. Always safe."
@@ -4915,9 +4925,13 @@ case "${1:-}" in
     uninstall)    (($# == 1)) || die "Usage: $0 uninstall"; cmd_uninstall ;;
     status)       cmd_status ;;
     all)          cmd_acpi; cmd_governor ;;
-    menu)         cmd_menu ;;
+    menu)
+        shift
+        (($# <= 1)) || die "Usage: $0 menu [root|foundation|frequency|load|ramp|cpu]"
+        cmd_menu "${1:-root}"
+        ;;
     help|-h|--help) cmd_help ;;
-    *) echo "Usage: $0 {acpi|governor|helpers|freq|gpu-volt|load-target|temperature|ramp|cpu-oc|cpu-unlock|cpu-mitigations|enable|foundation-ready|installed|uninstall|status|all|menu|help}"
+    *) echo "Usage: $0 {acpi|governor|helpers|freq|gpu-volt|load-target|temperature|ramp|cpu-oc|cpu-unlock|cpu-mitigations|enable|foundation-ready|installed|uninstall|status|all|menu [ENTRY]|help}"
        echo "  (no arguments on a terminal opens the guided menu)"
        echo "  freq                 show performance-mode state"
        echo "  freq 1800            pin GPU at 1800 MHz (perf mode)"

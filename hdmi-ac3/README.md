@@ -11,7 +11,7 @@ AC-3 frame before playback starts. It requires PipeWire, WirePlumber,
 
 ## Usage
 
-Use **Device drivers & connectivity > HDMI audio** in `bc250-toolkit.sh`, or run:
+Use **Devices & Connectivity > HDMI Audio** in `bc250-toolkit.sh`, or run:
 
 ```bash
 ./hdmi-ac3/hdmi-ac3.sh install
@@ -24,8 +24,8 @@ for the udev rule and SteamOS update-retention entry. Revert removes only
 recognized toolkit configuration and restores `output:hdmi-stereo`.
 
 The AMDGPU DisplayPort audio-clock correction remains a separate prerequisite
-for reliable BC-250 HDMI/DP audio. Install it from the toolkit's Core System or
-Drivers menu and reboot before enabling AC-3.
+for reliable BC-250 HDMI/DP audio. Install it from **Graphics Stack > AMDGPU
+Kernel Fixes** and reboot before enabling AC-3.
 
 ## Attribution
 

@@ -785,7 +785,7 @@ show_status() {
         status_row "SteamOS update protection" "not configured" dim "no managed component lists"
     fi
 
-    status_heading "POWER FOUNDATION"
+    status_heading "POWER & THERMALS"
     enabled=$(systemctl is-enabled cyan-skillfish-governor-smu.service 2>/dev/null || true)
     active=$(systemctl is-active cyan-skillfish-governor-smu.service 2>/dev/null || true)
     detail=$(status_value "$power_output" "saved freq setting (reapplied at boot): " || true)
@@ -835,37 +835,9 @@ show_status() {
         status_row "Thermals" "unavailable" dim "sensor data not exposed"
     fi
 
-    state=$(status_value "$cpu_output" "automatic unlock: " || true)
-    detail=$(status_value "$cpu_output" "CPU topology: " || true)
-    secondary=$(status_value "$cpu_output" "unlock attempt/reboot guard: " || true)
-    if [[ $cpu_rc -ne 0 || -z "$detail" ]]; then
-        status_row "CPU core unlock" "unavailable" bad "${detail:-status probe failed}"
-        failed=1; failed_components+=("CPU core unlock")
-    elif [[ "$detail" == *"(unlocked)"* ]]; then
-        status_row "CPU core unlock" "unlocked" good "$detail; ${state:-mode unknown}${secondary:+; guard $secondary}"
-    elif [[ "$detail" == *"(locked)"* && "${state:-disabled}" == disabled ]]; then
-        status_row "CPU core unlock" "stock" dim "$detail; automatic unlock disabled"
-    elif [[ "$detail" == *"(locked)"* ]]; then
-        status_row "CPU core unlock" "reboot needed" warn "$detail; ${state:-mode unknown}${secondary:+; guard $secondary}"
-    else
-        status_row "CPU core unlock" "unexpected" bad "$detail; ${state:-mode unknown}"
-        failed=1; failed_components+=("CPU core unlock")
-    fi
-
     if [[ $power_rc -ne 0 ]]; then
         failed=1; failed_components+=("Power management")
     fi
-
-    state=$(status_value "$fan_output" "state: " || true)
-    detail=$(status_value "$fan_output" "hwmon: " || true)
-    secondary=$(status_value "$fan_output" "load option: " || true)
-    case "$state" in
-        installed) status_row "NCT6687 fan-control driver" "installed" good "hwmon ${detail:--}; ${secondary:-force=0}" ;;
-        not-installed) status_row "NCT6687 fan-control driver" "not installed" dim "onboard controller uses firmware control" ;;
-        *)
-            status_row "NCT6687 fan-control driver" "${state:-incomplete}" bad "${detail:+hwmon $detail; }${secondary:-status unavailable}"
-            failed=1; failed_components+=("NCT6687 fan-control driver") ;;
-    esac
 
     status_heading "GRAPHICS STACK"
     state=$(json_field "$amdgpu_output" state || true)
@@ -940,6 +912,24 @@ show_status() {
             failed=1; failed_components+=("BC-250 GE-Proton") ;;
     esac
 
+    status_heading "HARDWARE UNLOCKS"
+    state=$(status_value "$cpu_output" "automatic unlock: " || true)
+    detail=$(status_value "$cpu_output" "CPU topology: " || true)
+    secondary=$(status_value "$cpu_output" "unlock attempt/reboot guard: " || true)
+    if [[ $cpu_rc -ne 0 || -z "$detail" ]]; then
+        status_row "CPU core unlock" "unavailable" bad "${detail:-status probe failed}"
+        failed=1; failed_components+=("CPU core unlock")
+    elif [[ "$detail" == *"(unlocked)"* ]]; then
+        status_row "CPU core unlock" "unlocked" good "$detail; ${state:-mode unknown}${secondary:+; guard $secondary}"
+    elif [[ "$detail" == *"(locked)"* && "${state:-disabled}" == disabled ]]; then
+        status_row "CPU core unlock" "stock" dim "$detail; automatic unlock disabled"
+    elif [[ "$detail" == *"(locked)"* ]]; then
+        status_row "CPU core unlock" "reboot needed" warn "$detail; ${state:-mode unknown}${secondary:+; guard $secondary}"
+    else
+        status_row "CPU core unlock" "unexpected" bad "$detail; ${state:-mode unknown}"
+        failed=1; failed_components+=("CPU core unlock")
+    fi
+
     if [[ $cu_rc -ne 0 ]]; then
         status_row "GPU compute-unit unlock" "unavailable" bad "${cu_output:-register read failed}"
         failed=1; failed_components+=("GPU compute-unit unlock")
@@ -949,7 +939,18 @@ show_status() {
         status_row "GPU compute-unit unlock" "${cu_output:-unknown}" warn "current hardware route"
     fi
 
-    status_heading "DISPLAY"
+    status_heading "DEVICES & CONNECTIVITY"
+    state=$(status_value "$fan_output" "state: " || true)
+    detail=$(status_value "$fan_output" "hwmon: " || true)
+    secondary=$(status_value "$fan_output" "load option: " || true)
+    case "$state" in
+        installed) status_row "NCT6687 fan-control driver" "installed" good "hwmon ${detail:--}; ${secondary:-force=0}" ;;
+        not-installed) status_row "NCT6687 fan-control driver" "not installed" dim "onboard controller uses firmware control" ;;
+        *)
+            status_row "NCT6687 fan-control driver" "${state:-incomplete}" bad "${detail:+hwmon $detail; }${secondary:-status unavailable}"
+            failed=1; failed_components+=("NCT6687 fan-control driver") ;;
+    esac
+
     state=$(status_value "$cec_output" "cecd.service: " || true)
     detail=$(status_value "$cec_output" "aggregate integration: " || true)
     secondary=$(status_value "$cec_output" "poweroff standby unit: " || true)
@@ -987,7 +988,7 @@ show_status() {
         status_row "CEC setup & automation" "not available" dim "no active CEC adapter"
     fi
 
-    status_heading "CEC BUS MAP"
+    printf '\n%s%s%s\n' "${CB}${CC}" "  CEC BUS MAP" "$C0"
     if [[ $cec_bus_rc -eq 0 && -n "$cec_bus_output" ]]; then
         printf '%s\n' "$cec_bus_output"
     else
@@ -1109,277 +1110,287 @@ show_guided_setup_overview() {
     pause_key
 }
 
-cmd_guided_setup_menu() {
-    require_terminal
-    require_normal_user
-    while true; do
-        local items=(
-            "Setup overview|${CD}[read only]${C0}|Show the goal-first order, current component state, and restart checkpoints."
-            "GPU compute-unit unlock|$(component_badge "$COMPUTE_SH")|Inspect the harvest map, test live routing, stress-test it, then choose whether to persist it."
-            "CPU core unlock|${CD}[guided test]${C0}|Test eight cores once, then choose one automatic unlock method: standard Linux or EFI pre-boot. Install AMDGPU fixes afterward for corrected eight-core telemetry."
-            "AMDGPU kernel fixes|$(amdgpu_badge)|Build the corrected kernel module, but leave sched_policy=2 off. Reboot before RADV setup."
-            "Power foundation|$(power_foundation_badge)|Install ACPI, reboot, then load-test the GPU governor before enabling it at boot."
-            "RAM / VRAM split|$(component_badge "$RAM_SPLIT_SH")|Install the helper, then choose CMOS minimum VRAM and the dynamic TTM limit."
-            "Performance tuning|$(radv_badge)|Build the Mesa RADV async-compute patch or tune GPU and CPU behavior after unlock testing. RADV takes about 3-5 minutes."
-            "Device drivers & connectivity||Configure HDMI audio, CEC, NCT6687 fan control, or hardware-specific AIC8800 support."
-            "Choose control interface||Install Decky, Plasma, CoolerControl, or the standalone Trainer."
-        )
-        menu_select "BC-250 guided setup  ${CD}(choose by goal)${C0}" "${items[@]}" || { echo; break; }
-        case $MENU_CHOICE in
-            0) show_guided_setup_overview ;;
-            1) run_menu_child compute ;;
-            2) run_menu_child cpu-unlock ;;
-            3) run_menu_action amdgpu ;;
-            4) run_menu_child power ;;
-            5) run_menu_child ram ;;
-            6) cmd_performance_menu ;;
-            7) cmd_devices_menu ;;
-            8) cmd_interfaces_menu ;;
-        esac
-    done
+menu_graph_badge() {
+    local node="$1" style="$2"
+    case "$node" in
+        action__auto_base_installation) printf '%s' "${CG}[install / resume]${C0}" ;;
+        action__amdgpu) amdgpu_badge ;;
+        action__graphics_setup|child__radv) radv_badge ;;
+        action__fan_driver) fan_driver_badge ;;
+        action__proton_status|action__proton_install|action__proton_update|action__proton_uninstall|menu__cmd_proton_menu) proton_badge ;;
+        action__hdmi_ac3_enable|menu__cmd_audio_menu) hdmi_ac3_badge ;;
+        action__coolercontrol) component_badge "$COOLERCONTROL_INSTALL_SH" status ;;
+        child__storage) component_badge "$STORAGE_SH" ;;
+        child__ram) component_badge "$RAM_SPLIT_SH" ;;
+        child__swap) component_badge "$SWAP_SH" ;;
+        child__power_foundation) power_foundation_badge ;;
+        child__compute) component_badge "$COMPUTE_SH" ;;
+        child__cpu_unlock) printf '%s' "${CD}[guided test]${C0}" ;;
+        *)
+            case "$style" in
+                root|menu|entry) printf '%s' "${CG}[menu]${C0}" ;;
+                install) printf '%s' "${CY}[installer]${C0}" ;;
+                read_only) printf '%s' "${CD}[read only]${C0}" ;;
+                advanced) printf '%s' "${CY}[advanced]${C0}" ;;
+                cleanup) printf '%s' "${CY}[cleanup]${C0}" ;;
+                experimental) printf '%s' "${CR}[experimental]${C0}" ;;
+                hardware_specific) printf '%s' "${CY}[hardware specific]${C0}" ;;
+                *) printf '%s' "${CD}[unknown]${C0}" ;;
+            esac
+            ;;
+    esac
 }
 
-cmd_drivers_menu() {
-    require_terminal
-    require_normal_user
-    while true; do
-        local items=(
-            "AMDGPU kernel fixes|${CY}[build]${C0}|Install the required kernel module first. sched_policy=2 stays off until the RADV patch is installed. Reboot afterward."
-            "Clean AMDGPU build tree|${CY}[cleanup]${C0}|Reset patched source and generated build output while keeping cached downloads and dependencies."
-            "AMDGPU scheduler policy (advanced)|$(scheduler_policy_badge)|Normally managed by RADV setup. Enabling is blocked until the patched RADV runtime is installed."
-            "KFD HWS runlist TLB flush (experimental)|$(kfd_runlist_badge)|Opt-in ROCm workaround for stale mappings. Requires HWS and cannot coexist with sched_policy=2."
-            "Install / resume async-compute stack|$(radv_badge)|Automatically installs AMDGPU first when needed, then resumes Mesa / RADV after reboot."
-            "NCT6687 fan-control driver|$(fan_driver_badge)|Install Linux hwmon fan-speed and PWM support for the BC-250's onboard controller."
-            "AIC8800 WiFi / Bluetooth|${CY}[installer]${C0}|Install only when the system uses the AIC8800 wireless adapter."
-        )
-        menu_select "BC-250 drivers" "${items[@]}" || { echo; break; }
-        case $MENU_CHOICE in
-            0) run_menu_action amdgpu ;;
-            1) run_menu_action amdgpu-clean ;;
-            2) run_menu_action scheduler-policy ;;
-            3) run_menu_action kfd-runlist ;;
-            4) run_menu_action graphics-setup ;;
-            5) run_menu_action fan-driver ;;
-            6) run_menu_action wifi ;;
-        esac
-    done
+menu_graph_activate() {
+    case "$1" in
+        action__auto_base_installation) run_menu_action auto-base-installation ;;
+        action__system_health) run_menu_action status ;;
+        action__guided_overview) show_guided_setup_overview ;;
+        action__amdgpu) run_menu_action amdgpu ;;
+        action__graphics_setup) run_menu_action graphics-setup ;;
+        action__amdgpu_clean) run_menu_action amdgpu-clean ;;
+        action__fan_driver) run_menu_action fan-driver ;;
+        action__wifi) run_menu_action wifi ;;
+        action__decky) run_menu_action decky ;;
+        action__desktop) run_menu_action desktop ;;
+        action__coolercontrol) run_menu_action coolercontrol ;;
+        action__trainer) run_menu_action trainer ;;
+        action__proton_status) run_menu_action proton-status ;;
+        action__proton_install) run_menu_action proton-install ;;
+        action__proton_update) run_menu_action proton-update ;;
+        action__proton_uninstall) run_menu_action proton-uninstall ;;
+        action__memory_status) run_menu_action memory-temperature-status ;;
+        action__memory_prepare)
+            run_confirmed_menu_action "Download and verify the pinned memory-temperature source?" \
+                bash "$SELF" memory-temperature-prepare
+            ;;
+        action__memory_patch)
+            run_confirmed_menu_action "Apply the P3.0-only live SMU payload? Memory corruption, data loss, crashes, and a required cold power cycle are possible." \
+                bash "$SELF" memory-temperature-patch
+            ;;
+        action__memory_read) run_menu_action memory-temperature-read ;;
+        action__memory_restore)
+            run_confirmed_menu_action "Restore the recorded original live SMU handler and bytes?" \
+                bash "$SELF" memory-temperature-restore
+            ;;
+        action__hdmi_ac3_enable) run_menu_action hdmi-ac3-enable ;;
+        action__hdmi_ac3_revert) run_menu_action hdmi-ac3-revert ;;
+        action__scheduler_policy) run_menu_action scheduler-policy ;;
+        action__kfd_runlist) run_menu_action kfd-runlist ;;
+        child__storage) run_menu_child storage ;;
+        child__ram) run_menu_child ram ;;
+        child__swap) run_menu_child swap ;;
+        child__persistence) run_menu_child persistence ;;
+        child__power_foundation) run_menu_child power foundation ;;
+        child__power_frequency) run_menu_child power frequency ;;
+        child__power_load) run_menu_child power load ;;
+        child__power_ramp) run_menu_child power ramp ;;
+        child__power_cpu) run_menu_child power cpu ;;
+        child__radv) run_menu_child radv ;;
+        child__compute) run_menu_child compute ;;
+        child__cpu_unlock) run_menu_child cpu-unlock ;;
+        child__cec) run_menu_child cec ;;
+        child__manage) run_menu_child manage ;;
+        *) die "Unknown generated menu target: $1" ;;
+    esac
 }
 
-cmd_unlocks_menu() {
-    require_terminal
-    require_normal_user
+# BEGIN GENERATED TOOLKIT MENUS
+# Generated from menus/toolkit.mmd by scripts/generate-menus.py.
+# Do not edit this region directly.
+menu_graph_render() {
+    local menu_id="$1" title target
     while true; do
-        local items=(
-            "GPU compute-unit unlock|${CG}[menu]${C0}|Configure GPU CU/WGP routing from the factory 24 CU toward the board's stable maximum."
-            "CPU core unlock|${CG}[menu]${C0}|Test and configure the experimental CPU topology change from 6c/12t to 8c/16t."
-        )
-        menu_select "BC-250 hardware unlocks" "${items[@]}" || { echo; break; }
-        case $MENU_CHOICE in
-            0) run_menu_child compute ;;
-            1) run_menu_child cpu-unlock ;;
+        local items=() targets=()
+        case "$menu_id" in
+            menu__cmd_menu)
+                title="BC-250 SteamOS toolkit [${TOOLKIT_VERSION}]"
+                items+=("Auto Base Toolkit Installation|$(menu_graph_badge action__auto_base_installation install)|Install or resume the safe foundation in dependency order.")
+                targets+=("action__auto_base_installation")
+                items+=("Manual Guided Setup|$(menu_graph_badge menu__cmd_guided_setup_menu menu)|Follow the safe setup order without crossing through sibling categories.")
+                targets+=("menu__cmd_guided_setup_menu")
+                items+=("Core System|$(menu_graph_badge menu__cmd_core_system_menu menu)|Manage storage, memory allocation, swap, and update protection.")
+                targets+=("menu__cmd_core_system_menu")
+                items+=("Power & Thermals|$(menu_graph_badge menu__cmd_power_menu menu)|Configure the power foundation, GPU behavior, CPU tuning, and memory sensors.")
+                targets+=("menu__cmd_power_menu")
+                items+=("Graphics Stack|$(menu_graph_badge menu__cmd_graphics_menu menu)|Manage AMDGPU, Mesa and RADV, FSR4, and GE-Proton.")
+                targets+=("menu__cmd_graphics_menu")
+                items+=("Hardware Unlocks|$(menu_graph_badge menu__cmd_unlocks_menu menu)|Test CPU cores or GPU compute units with explicit recovery paths.")
+                targets+=("menu__cmd_unlocks_menu")
+                items+=("Devices & Connectivity|$(menu_graph_badge menu__cmd_devices_menu menu)|Configure HDMI audio, CEC, fan control, and hardware-specific wireless support.")
+                targets+=("menu__cmd_devices_menu")
+                items+=("Control Interfaces|$(menu_graph_badge menu__cmd_interfaces_menu menu)|Install Gaming Mode, desktop, fan-control, or standalone interfaces.")
+                targets+=("menu__cmd_interfaces_menu")
+                items+=("Maintenance & Recovery|$(menu_graph_badge menu__cmd_maintenance_menu menu)|Recover updates, clean build state, or remove installed components.")
+                targets+=("menu__cmd_maintenance_menu")
+                items+=("System Health|$(menu_graph_badge action__system_health read_only)|Show operational state using the same domain names as the menu.")
+                targets+=("action__system_health")
+                ;;
+            menu__cmd_guided_setup_menu)
+                title="Manual Guided Setup"
+                items+=("Setup Overview|$(menu_graph_badge action__guided_overview read_only)|Review goals, current state, and restart checkpoints.")
+                targets+=("action__guided_overview")
+                items+=("GPU Compute-Unit Unlock|$(menu_graph_badge child__compute menu)|Inspect harvesting, test live routing, stress-test, and persist.")
+                targets+=("child__compute")
+                items+=("CPU Core Unlock|$(menu_graph_badge child__cpu_unlock experimental)|Test eight cores, then choose one automatic unlock method.")
+                targets+=("child__cpu_unlock")
+                items+=("AMDGPU Kernel Fixes|$(menu_graph_badge action__amdgpu install)|Build the corrected kernel module and reboot before RADV setup.")
+                targets+=("action__amdgpu")
+                items+=("Power Foundation|$(menu_graph_badge child__power_foundation menu)|Install ACPI, test the GPU governor, then enable it at boot.")
+                targets+=("child__power_foundation")
+                items+=("RAM and VRAM Split|$(menu_graph_badge child__ram menu)|Balance the CMOS minimum and dynamic Linux TTM limit.")
+                targets+=("child__ram")
+                items+=("Install or Resume Async Compute|$(menu_graph_badge action__graphics_setup install)|Install AMDGPU first when needed, then resume Mesa and RADV.")
+                targets+=("action__graphics_setup")
+                ;;
+            menu__cmd_core_system_menu)
+                title="Core System"
+                items+=("Persistent Storage|$(menu_graph_badge child__storage menu)|Inspect or repair privileged storage and boot recovery.")
+                targets+=("child__storage")
+                items+=("RAM and VRAM Split|$(menu_graph_badge child__ram menu)|Balance the CMOS minimum and dynamic Linux TTM limit.")
+                targets+=("child__ram")
+                items+=("Compressed Swap|$(menu_graph_badge child__swap menu)|Choose mutually exclusive zram or zswap-backed disk profiles.")
+                targets+=("child__swap")
+                items+=("SteamOS Update Protection|$(menu_graph_badge child__persistence menu)|Protect and recover supported component settings across updates.")
+                targets+=("child__persistence")
+                ;;
+            menu__cmd_power_menu)
+                title="Power & Thermals"
+                items+=("Power Foundation|$(menu_graph_badge child__power_foundation menu)|Install ACPI, test the GPU governor, then enable it at boot.")
+                targets+=("child__power_foundation")
+                items+=("GPU Frequency and Voltage|$(menu_graph_badge child__power_frequency menu)|Set adaptive ranges, pinned clocks, or voltage-curve points.")
+                targets+=("child__power_frequency")
+                items+=("GPU Load Targets|$(menu_graph_badge child__power_load menu)|Choose when the governor clocks up and down.")
+                targets+=("child__power_load")
+                items+=("GPU Ramp Behavior|$(menu_graph_badge child__power_ramp menu)|Choose how quickly and granularly GPU clocks move.")
+                targets+=("child__power_ramp")
+                items+=("CPU Performance and Security|$(menu_graph_badge child__power_cpu menu)|Configure CPU undervolt, overclock, and mitigation policy.")
+                targets+=("child__power_cpu")
+                items+=("GDDR6 Memory Temperature|$(menu_graph_badge menu__cmd_memory_temperature_menu menu)|Manage the experimental P3.0-only live SMU temperature payload.")
+                targets+=("menu__cmd_memory_temperature_menu")
+                ;;
+            menu__cmd_graphics_menu)
+                title="Graphics Stack"
+                items+=("AMDGPU Kernel Fixes|$(menu_graph_badge action__amdgpu install)|Build the corrected kernel module and reboot before RADV setup.")
+                targets+=("action__amdgpu")
+                items+=("Install or Resume Async Compute|$(menu_graph_badge action__graphics_setup install)|Install AMDGPU first when needed, then resume Mesa and RADV.")
+                targets+=("action__graphics_setup")
+                items+=("GPU Driver and FSR4 Options|$(menu_graph_badge child__radv menu)|Manage Mesa and RADV, portable FSR4 DLLs, native mesh, or cleanup.")
+                targets+=("child__radv")
+                items+=("BC-250 GE-Proton|$(menu_graph_badge menu__cmd_proton_menu menu)|Inspect, install, repair, or remove the pinned compatibility tool.")
+                targets+=("menu__cmd_proton_menu")
+                items+=("Advanced AMDGPU Boot Options|$(menu_graph_badge menu__cmd_amdgpu_boot_menu menu)|Manage mutually exclusive scheduler and KFD runlist policies.")
+                targets+=("menu__cmd_amdgpu_boot_menu")
+                ;;
+            menu__cmd_unlocks_menu)
+                title="Hardware Unlocks"
+                items+=("GPU Compute-Unit Unlock|$(menu_graph_badge child__compute menu)|Inspect harvesting, test live routing, stress-test, and persist.")
+                targets+=("child__compute")
+                items+=("CPU Core Unlock|$(menu_graph_badge child__cpu_unlock experimental)|Test eight cores, then choose one automatic unlock method.")
+                targets+=("child__cpu_unlock")
+                ;;
+            menu__cmd_devices_menu)
+                title="Devices & Connectivity"
+                items+=("HDMI Audio|$(menu_graph_badge menu__cmd_audio_menu menu)|Enable Dolby Digital 5.1 or return to the default stereo profile.")
+                targets+=("menu__cmd_audio_menu")
+                items+=("HDMI-CEC|$(menu_graph_badge child__cec menu)|Configure automation, everyday controls, and diagnostics.")
+                targets+=("child__cec")
+                items+=("NCT6687 Fan-Control Driver|$(menu_graph_badge action__fan_driver install)|Install Linux hwmon fan-speed and PWM support.")
+                targets+=("action__fan_driver")
+                items+=("AIC8800 WiFi and Bluetooth|$(menu_graph_badge action__wifi hardware_specific)|Install only on systems using the AIC8800 adapter.")
+                targets+=("action__wifi")
+                ;;
+            menu__cmd_interfaces_menu)
+                title="Control Interfaces"
+                items+=("Decky Plugin|$(menu_graph_badge action__decky install)|Install BC-250 controls for Gaming Mode and Quick Access.")
+                targets+=("action__decky")
+                items+=("Plasma Desktop Control|$(menu_graph_badge action__desktop install)|Install the shared service and Plasma system-tray control.")
+                targets+=("action__desktop")
+                items+=("CoolerControl|$(menu_graph_badge action__coolercontrol install)|Install fan profiles, curves, and monitoring for the onboard controller.")
+                targets+=("action__coolercontrol")
+                items+=("BC250 Trainer|$(menu_graph_badge action__trainer install)|Install the standalone native Qt control application.")
+                targets+=("action__trainer")
+                ;;
+            menu__cmd_maintenance_menu)
+                title="Maintenance & Recovery"
+                items+=("SteamOS Update Protection|$(menu_graph_badge child__persistence menu)|Protect and recover supported component settings across updates.")
+                targets+=("child__persistence")
+                items+=("Clean AMDGPU Build Tree|$(menu_graph_badge action__amdgpu_clean cleanup)|Remove generated build output while retaining downloads and dependencies.")
+                targets+=("action__amdgpu_clean")
+                items+=("Manage Installed Components|$(menu_graph_badge child__manage menu)|Review removal plans, uninstall components, or purge preserved data.")
+                targets+=("child__manage")
+                ;;
+            menu__cmd_proton_menu)
+                title="BC-250 GE-Proton"
+                items+=("Status|$(menu_graph_badge action__proton_status read_only)|Verify the pinned compatibility tool and required files.")
+                targets+=("action__proton_status")
+                items+=("Install|$(menu_graph_badge action__proton_install install)|Install GE-Proton after the required FSR4 RADV runtime is active.")
+                targets+=("action__proton_install")
+                items+=("Update or Repair|$(menu_graph_badge action__proton_update install)|Transactionally replace an older or incomplete toolkit installation.")
+                targets+=("action__proton_update")
+                items+=("Uninstall|$(menu_graph_badge action__proton_uninstall cleanup)|Remove the compatibility tool while preserving prefixes and saves.")
+                targets+=("action__proton_uninstall")
+                ;;
+            menu__cmd_memory_temperature_menu)
+                title="GDDR6 Memory Temperature"
+                items+=("Status|$(menu_graph_badge action__memory_status read_only)|Verify source and recorded original-SMU backup state.")
+                targets+=("action__memory_status")
+                items+=("Prepare Verified Source|$(menu_graph_badge action__memory_prepare install)|Download and verify the pinned payload, source, README, and license.")
+                targets+=("action__memory_prepare")
+                items+=("Apply Live SMU Payload|$(menu_graph_badge action__memory_patch experimental)|Patch this SMU runtime after explicit risk acknowledgement.")
+                targets+=("action__memory_patch")
+                items+=("Read GDDR6 Temperatures|$(menu_graph_badge action__memory_read read_only)|Attest the payload and read all eight memory chips.")
+                targets+=("action__memory_read")
+                items+=("Restore Original SMU Bytes|$(menu_graph_badge action__memory_restore cleanup)|Restore the recorded handler and overwritten bytes.")
+                targets+=("action__memory_restore")
+                ;;
+            menu__cmd_audio_menu)
+                title="HDMI Audio"
+                items+=("Enable HDMI AC-3 5.1|$(menu_graph_badge action__hdmi_ac3_enable install)|Encode system audio as Dolby Digital 5.1.")
+                targets+=("action__hdmi_ac3_enable")
+                items+=("Revert HDMI AC-3 to Stereo|$(menu_graph_badge action__hdmi_ac3_revert cleanup)|Remove toolkit AC-3 configuration and restore default stereo.")
+                targets+=("action__hdmi_ac3_revert")
+                ;;
+            menu__cmd_amdgpu_boot_menu)
+                title="Advanced AMDGPU Boot Options"
+                items+=("AMDGPU Scheduler Policy|$(menu_graph_badge action__scheduler_policy advanced)|Normally managed by Mesa and RADV setup.")
+                targets+=("action__scheduler_policy")
+                items+=("KFD Runlist Workaround|$(menu_graph_badge action__kfd_runlist experimental)|Experimental ROCm workaround that cannot coexist with sched_policy=2.")
+                targets+=("action__kfd_runlist")
+                ;;
+            menu__cmd_drivers_menu)
+                title="Legacy Drivers Entry"
+                items+=("AMDGPU Kernel Fixes|$(menu_graph_badge action__amdgpu install)|Build the corrected kernel module and reboot before RADV setup.")
+                targets+=("action__amdgpu")
+                items+=("Clean AMDGPU Build Tree|$(menu_graph_badge action__amdgpu_clean cleanup)|Remove generated build output while retaining downloads and dependencies.")
+                targets+=("action__amdgpu_clean")
+                items+=("AMDGPU Scheduler Policy|$(menu_graph_badge action__scheduler_policy advanced)|Normally managed by Mesa and RADV setup.")
+                targets+=("action__scheduler_policy")
+                items+=("KFD Runlist Workaround|$(menu_graph_badge action__kfd_runlist experimental)|Experimental ROCm workaround that cannot coexist with sched_policy=2.")
+                targets+=("action__kfd_runlist")
+                items+=("Install or Resume Async Compute|$(menu_graph_badge action__graphics_setup install)|Install AMDGPU first when needed, then resume Mesa and RADV.")
+                targets+=("action__graphics_setup")
+                items+=("NCT6687 Fan-Control Driver|$(menu_graph_badge action__fan_driver install)|Install Linux hwmon fan-speed and PWM support.")
+                targets+=("action__fan_driver")
+                items+=("AIC8800 WiFi and Bluetooth|$(menu_graph_badge action__wifi hardware_specific)|Install only on systems using the AIC8800 adapter.")
+                targets+=("action__wifi")
+                ;;
+            menu__cmd_storage_updates_menu)
+                title="Legacy Storage and Updates Entry"
+                items+=("Persistent Storage|$(menu_graph_badge child__storage menu)|Inspect or repair privileged storage and boot recovery.")
+                targets+=("child__storage")
+                items+=("SteamOS Update Protection|$(menu_graph_badge child__persistence menu)|Protect and recover supported component settings across updates.")
+                targets+=("child__persistence")
+                ;;
+            *) die "Unknown generated menu ID: $menu_id" ;;
         esac
-    done
-}
-
-cmd_storage_updates_menu() {
-    require_terminal
-    require_normal_user
-    while true; do
-        local items=(
-            "Persistent storage|${CG}[menu]${C0}|Install, inspect, or repair the toolkit's persistent privileged storage and boot recovery."
-            "SteamOS update protection|${CG}[menu]${C0}|Protect and recover supported component configuration across SteamOS updates."
-        )
-        menu_select "BC-250 storage & SteamOS updates" "${items[@]}" || { echo; break; }
-        case $MENU_CHOICE in
-            0) run_menu_child storage ;;
-            1) run_menu_child persistence ;;
-        esac
-    done
-}
-
-cmd_interfaces_menu() {
-    require_terminal
-    require_normal_user
-    while true; do
-        local items=(
-            "Decky plugin|${CY}[installer]${C0}|Install the BC-250 controls for Gaming Mode and Quick Access."
-            "Plasma desktop control|${CY}[installer]${C0}|Install the system service and Plasma system-tray control."
-            "CoolerControl|$(component_badge "$COOLERCONTROL_INSTALL_SH" status)|Control the BC-250's onboard fan controller with profiles, curves, and monitoring."
-            "BC250 Trainer|${CY}[installer]${C0}|Install the standalone native Qt control application."
-        )
-        menu_select "BC-250 control interfaces" "${items[@]}" || { echo; break; }
-        case $MENU_CHOICE in
-            0) run_menu_action decky ;;
-            1) run_menu_action desktop ;;
-            2) run_menu_action coolercontrol ;;
-            3) run_menu_action trainer ;;
-        esac
-    done
-}
-
-cmd_amdgpu_boot_menu() {
-    require_terminal
-    require_normal_user
-    while true; do
-        local items=(
-            "AMDGPU scheduler policy|$(scheduler_policy_badge)|Normally managed automatically by Mesa / RADV setup."
-            "KFD runlist workaround (experimental)|$(kfd_runlist_badge)|Opt-in ROCm workaround for stale mappings; cannot coexist with the RADV scheduler policy."
-        )
-        menu_select "BC-250 advanced AMDGPU boot options" "${items[@]}" || { echo; break; }
-        case $MENU_CHOICE in
-            0) run_menu_action scheduler-policy ;;
-            1) run_menu_action kfd-runlist ;;
-        esac
-    done
-}
-
-cmd_core_system_menu() {
-    require_terminal
-    require_normal_user
-    while true; do
-        local items=(
-            "Persistent storage|$(component_badge "$STORAGE_SH")|Installed automatically when needed; open for status, boot recovery, repair, or manual management."
-            "AMDGPU kernel fixes|$(amdgpu_badge)|Install kernel-specific telemetry and GFX1013 async-compute fixes, plus display/audio corrections where required. Reboot afterward."
-            "Advanced AMDGPU boot options|${CY}[advanced]${C0}|Inspect the RADV scheduler policy or experimental KFD runlist workaround."
-            "Power foundation|$(power_foundation_badge)|Set up ACPI and the GPU governor. GPU and CPU tuning remains under Performance tuning."
-            "RAM / VRAM split|$(component_badge "$RAM_SPLIT_SH")|Balance the persistent CMOS minimum and dynamic Linux TTM limit."
-            "Compressed swap|$(component_badge "$SWAP_SH")|Choose mutually exclusive zram or zswap-backed disk swap profiles."
-            "SteamOS update protection|${CG}[menu]${C0}|Protect installed integration and recover supported settings after updates."
-        )
-        menu_select "BC-250 core system" "${items[@]}" || { echo; break; }
-        case $MENU_CHOICE in
-            0) run_menu_child storage ;;
-            1) run_menu_action amdgpu ;;
-            2) cmd_amdgpu_boot_menu ;;
-            3) run_menu_child power ;;
-            4) run_menu_child ram ;;
-            5) run_menu_child swap ;;
-            6) run_menu_child persistence ;;
-        esac
-    done
-}
-
-cmd_performance_menu() {
-    require_terminal
-    require_normal_user
-    while true; do
-        local items=(
-            "Install / resume async-compute stack|$(radv_badge)|Automatically install AMDGPU first when needed, then resume Mesa / RADV after reboot."
-            "GPU driver & FSR4 options|${CG}[menu]${C0}|Manage Mesa / RADV, portable FSR4 RC9 game DLLs, or cleanup."
-            "Private native-mesh profile|$(native_mesh_badge)|Experimental combined profile for explicit per-game runner use; never enabled globally and Steam is not edited."
-            "GE-Proton with FSR4|$(proton_badge)|Install the pinned BC-250 GE build after FSR4 RADV is active; Steam prefixes and saves remain separate."
-            "GPU / CPU tuning|${CG}[menu]${C0}|Adjust GPU clocks, load response, ramp behavior, and CPU undervolt/overclock."
-            "GDDR6 memory temperature|${CY}[experimental]${C0}|Prepare, apply, read, or restore the P3.0-only live SMU temperature payload."
-        )
-        menu_select "BC-250 performance tuning" "${items[@]}" || { echo; break; }
-        case $MENU_CHOICE in
-            0) run_menu_action graphics-setup ;;
-            1) run_menu_child radv ;;
-            2) run_menu_child radv ;;
-            3) cmd_proton_menu ;;
-            4) run_menu_child power ;;
-            5) cmd_memory_temperature_menu ;;
-        esac
-    done
-}
-
-cmd_proton_menu() {
-    require_terminal
-    require_normal_user
-    while true; do
-        local items=(
-            "Status|$(proton_badge)|Verify the pinned compatibility-tool version and required files."
-            "Install|${CY}[731 MB download]${C0}|Require active FSR4 RADV, then install GE-Proton for the current user."
-            "Update / repair|$(proton_badge)|Transactionally replace a recorded older or incomplete toolkit installation."
-            "Uninstall|${CY}[preserves prefixes]${C0}|Remove only the compatibility tool; keep Steam prefixes, saves, and game data."
-        )
-        menu_select "BC-250 GE-Proton" "${items[@]}" || { echo; break; }
-        case $MENU_CHOICE in
-            0) run_menu_action proton-status ;;
-            1) run_menu_action proton-install ;;
-            2) run_menu_action proton-update ;;
-            3) run_menu_action proton-uninstall ;;
-        esac
-    done
-}
-
-cmd_devices_menu() {
-    require_terminal
-    require_normal_user
-    while true; do
-        local items=(
-            "HDMI audio|${CG}[menu]${C0}|Enable Dolby Digital 5.1 encoding or revert to the default HDMI stereo profile."
-            "HDMI-CEC|${CG}[menu]${C0}|Review setup automation, everyday controls, and the live CEC bus."
-            "NCT6687 fan-control driver|$(fan_driver_badge)|Install Linux hwmon fan-speed and PWM support for the BC-250's onboard controller."
-            "AIC8800 WiFi / Bluetooth|${CY}[hardware specific]${C0}|Install only when the system uses the AIC8800 wireless adapter."
-        )
-        menu_select "BC-250 device drivers & connectivity" "${items[@]}" || { echo; break; }
-        case $MENU_CHOICE in
-            0) cmd_audio_menu ;;
-            1) run_menu_child cec ;;
-            2) run_menu_action fan-driver ;;
-            3) run_menu_action wifi ;;
-        esac
-    done
-}
-
-cmd_memory_temperature_menu() {
-    require_terminal
-    require_normal_user
-    require_script "$MEMORY_TEMP_SH"
-    while true; do
-        local items=(
-            "Status|${CD}[read only]${C0}|Verify the pinned source and show whether an original-SMU backup is recorded."
-            "Prepare verified source|${CY}[download]${C0}|Download the pinned upstream payload, source, README, and MIT license with fixed SHA-256 hashes."
-            "Apply live SMU payload|${CR}[high risk]${C0}|Patch this SMU runtime only. Requires ASRock BC-250 P3.0 firmware and explicit acknowledgement."
-            "Read GDDR6 temperatures|${CY}[live read]${C0}|Attest the payload, then read and validate MR3 data from all eight memory chips."
-            "Restore original SMU bytes|${CR}[high risk]${C0}|Restore the recorded handler and overwritten bytes before purging state."
-        )
-        menu_select "BC-250 GDDR6 memory temperature" "${items[@]}" || { echo; break; }
-        case $MENU_CHOICE in
-            0) run_menu_action memory-temperature-status ;;
-            1) run_confirmed_menu_action "Download and verify the pinned memory-temperature source?" \
-                bash "$SELF" memory-temperature-prepare ;;
-            2) run_confirmed_menu_action "Apply the P3.0-only live SMU payload? Memory corruption, data loss, crashes, and a required cold power cycle are possible." \
-                bash "$SELF" memory-temperature-patch ;;
-            3) run_menu_action memory-temperature-read ;;
-            4) run_confirmed_menu_action "Restore the recorded original live SMU handler and bytes?" \
-                bash "$SELF" memory-temperature-restore ;;
-        esac
-    done
-}
-
-cmd_audio_menu() {
-    require_terminal
-    require_normal_user
-    while true; do
-        local items=(
-            "Enable HDMI AC-3 5.1|$(hdmi_ac3_badge)|Encode system audio as Dolby Digital 5.1. Requires the AMDGPU audio fix, an AC-3 receiver, and SteamOS audio packages."
-            "Revert HDMI AC-3 to stereo|${CY}[revert]${C0}|Remove toolkit AC-3 configuration and restore the default HDMI stereo profile and sink."
-        )
-        menu_select "BC-250 HDMI audio" "${items[@]}" || { echo; break; }
-        case $MENU_CHOICE in
-            0) run_menu_action hdmi-ac3-enable ;;
-            1) run_menu_action hdmi-ac3-revert ;;
-        esac
-    done
-}
-
-cmd_maintenance_menu() {
-    require_terminal
-    require_normal_user
-    while true; do
-        local items=(
-            "SteamOS update recovery|${CG}[menu]${C0}|Inspect protection or restore supported settings from the newest update snapshot."
-            "Clean AMDGPU build tree|${CY}[cleanup]${C0}|Reset patched source and build output while retaining downloads and dependencies."
-            "Manage installed components|${CG}[menu]${C0}|Review removal plans, uninstall components, or permanently purge preserved data."
-        )
-        menu_select "BC-250 maintenance & recovery" "${items[@]}" || { echo; break; }
-        case $MENU_CHOICE in
-            0) run_menu_child persistence ;;
-            1) run_menu_action amdgpu-clean ;;
-            2) run_menu_child manage ;;
-        esac
+        menu_select "$title" "${items[@]}" || { echo; return 0; }
+        target=${targets[$MENU_CHOICE]}
+        if [[ "$target" == menu__* ]]; then
+            menu_graph_render "$target"
+        else
+            menu_graph_activate "$target"
+        fi
     done
 }
 
@@ -1387,36 +1398,98 @@ cmd_menu() {
     require_terminal
     require_normal_user
     start_sudo_session
-    while true; do
-        local items=(
-            "Auto Base Toolkit Installation|${CG}[install / resume]${C0}|Install the safe foundation in dependency order; re-run this option after each requested reboot."
-            "Manual guided setup|${CG}[menu]${C0}|Choose individual hardware goals and follow their support, reboot, load-test, and tuning checkpoints."
-            "Core system|${CG}[menu]${C0}|Configure storage, AMDGPU, power foundations, memory balance, and update protection."
-            "Performance tuning|${CG}[menu]${C0}|Configure Mesa / RADV and optional GPU or CPU tuning after setup is stable."
-            "Hardware unlocks|${CG}[menu]${C0}|Test GPU compute units or CPU cores with explicit stability and recovery steps."
-            "Device drivers & connectivity|${CG}[menu]${C0}|Configure HDMI audio, HDMI-CEC, NCT6687 fan control, or hardware-specific AIC8800 support."
-            "Control interfaces|${CG}[menu]${C0}|Install Decky, Plasma, CoolerControl, or the standalone BC250 Trainer."
-            "Maintenance & recovery|${CG}[menu]${C0}|Verify, repair, clean build state, remove components, or purge preserved data."
-            "System health|${CD}[read only]${C0}|Show the operational state of configured components using the same names as their menu options."
-        )
-        menu_select "BC-250 SteamOS toolkit ${CD}[${TOOLKIT_VERSION}]${C0}" "${items[@]}" || { echo; break; }
-        case $MENU_CHOICE in
-            0) run_menu_action auto-base-installation ;;
-            1) cmd_guided_setup_menu ;;
-            2) cmd_core_system_menu ;;
-            3) cmd_performance_menu ;;
-            4) cmd_unlocks_menu ;;
-            5) cmd_devices_menu ;;
-            6) cmd_interfaces_menu ;;
-            7) cmd_maintenance_menu ;;
-            8) run_menu_action status ;;
-        esac
-    done
+    menu_graph_render menu__cmd_menu
 }
+
+cmd_guided_setup_menu() {
+    require_terminal
+    require_normal_user
+    menu_graph_render menu__cmd_guided_setup_menu
+}
+
+cmd_core_system_menu() {
+    require_terminal
+    require_normal_user
+    menu_graph_render menu__cmd_core_system_menu
+}
+
+cmd_power_menu() {
+    require_terminal
+    require_normal_user
+    menu_graph_render menu__cmd_power_menu
+}
+
+cmd_graphics_menu() {
+    require_terminal
+    require_normal_user
+    menu_graph_render menu__cmd_graphics_menu
+}
+
+cmd_unlocks_menu() {
+    require_terminal
+    require_normal_user
+    menu_graph_render menu__cmd_unlocks_menu
+}
+
+cmd_devices_menu() {
+    require_terminal
+    require_normal_user
+    menu_graph_render menu__cmd_devices_menu
+}
+
+cmd_interfaces_menu() {
+    require_terminal
+    require_normal_user
+    menu_graph_render menu__cmd_interfaces_menu
+}
+
+cmd_maintenance_menu() {
+    require_terminal
+    require_normal_user
+    menu_graph_render menu__cmd_maintenance_menu
+}
+
+cmd_proton_menu() {
+    require_terminal
+    require_normal_user
+    menu_graph_render menu__cmd_proton_menu
+}
+
+cmd_memory_temperature_menu() {
+    require_terminal
+    require_normal_user
+    menu_graph_render menu__cmd_memory_temperature_menu
+}
+
+cmd_audio_menu() {
+    require_terminal
+    require_normal_user
+    menu_graph_render menu__cmd_audio_menu
+}
+
+cmd_amdgpu_boot_menu() {
+    require_terminal
+    require_normal_user
+    menu_graph_render menu__cmd_amdgpu_boot_menu
+}
+
+cmd_drivers_menu() {
+    require_terminal
+    require_normal_user
+    menu_graph_render menu__cmd_drivers_menu
+}
+
+cmd_storage_updates_menu() {
+    require_terminal
+    require_normal_user
+    menu_graph_render menu__cmd_storage_updates_menu
+}
+
+# END GENERATED TOOLKIT MENUS
 
 cmd_help() {
     cat << EOF
-Usage: $0 [menu|setup|auto-base-installation|graphics-setup|status|inventory-json|action OPERATION_ID|drivers|unlocks|storage-updates|interfaces|power|ram|swap|compute|cpu-unlock|cec|audio-output|hdmi-ac3-enable|hdmi-ac3-revert|storage|persistence|wifi|fan-driver|memory-temperature|amdgpu|amdgpu-clean|scheduler-policy|kfd-runlist|radv|proton|proton-install|proton-update|proton-status|proton-uninstall|decky|desktop|coolercontrol|trainer|manage|help]
+Usage: $0 [menu|setup|auto-base-installation|graphics-setup|status|inventory-json|action OPERATION_ID|drivers|unlocks|storage-updates|interfaces|power [ENTRY]|ram|swap|compute|cpu-unlock|cec|audio-output|hdmi-ac3-enable|hdmi-ac3-revert|storage|persistence|wifi|fan-driver|memory-temperature|amdgpu|amdgpu-clean|scheduler-policy|kfd-runlist|radv|proton|proton-install|proton-update|proton-status|proton-uninstall|decky|desktop|coolercontrol|trainer|manage|help]
 
 Run without arguments in a terminal to open the unified toolkit menu.
 Run the toolkit as the logged-in Deck user, not with sudo; child tools request
@@ -1434,7 +1507,8 @@ Commands:
   unlocks                Open GPU compute-unit and CPU core unlocks
   storage-updates        Open persistent storage and update protection
   interfaces             Open Decky, Plasma, CoolerControl, and Trainer installers
-  power                  Open the Power Management menu
+  power [ENTRY]          Open Power Management at root, foundation, frequency,
+                         load, ramp, or CPU tuning
   ram                    Open the RAM / VRAM Split menu
   swap                   Choose zram or zswap-backed disk swap
   compute                Open the GPU Compute-Unit Unlock menu
@@ -1523,7 +1597,18 @@ case "$command_name" in
     unlocks) (($# == 0)) || die "Usage: $0 unlocks"; cmd_unlocks_menu ;;
     storage-updates) (($# == 0)) || die "Usage: $0 storage-updates"; cmd_storage_updates_menu ;;
     interfaces) (($# == 0)) || die "Usage: $0 interfaces"; cmd_interfaces_menu ;;
-    power) (($# == 0)) || die "Usage: $0 power"; run_sudo_script "$POWER_SH" menu ;;
+    power)
+        (($# <= 1)) || die "Usage: $0 power [root|foundation|frequency|load|ramp|cpu]"
+        case "${1:-root}" in
+            root|foundation|frequency|load|ramp|cpu) ;;
+            *) die "Usage: $0 power [root|foundation|frequency|load|ramp|cpu]" ;;
+        esac
+        if (($# == 0)); then
+            run_sudo_script "$POWER_SH" menu
+        else
+            run_sudo_script "$POWER_SH" menu "$1"
+        fi
+        ;;
     ram) (($# == 0)) || die "Usage: $0 ram"; run_script "$RAM_SPLIT_SH" menu ;;
     swap) (($# == 0)) || die "Usage: $0 swap"; run_sudo_script "$SWAP_SH" menu ;;
     compute) (($# == 0)) || die "Usage: $0 compute"; run_sudo_script "$COMPUTE_SH" menu ;;

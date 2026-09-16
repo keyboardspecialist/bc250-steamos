@@ -5,6 +5,8 @@ import tempfile
 import unittest
 from pathlib import Path
 
+from scripts.menu_graph import parse
+
 
 ROOT = Path(__file__).resolve().parents[1]
 RAM = ROOT / "bc250-ram-split.sh"
@@ -257,8 +259,9 @@ class RamSplitTests(unittest.TestCase):
 
     def test_toolkit_exposes_ram_child_menu(self):
         source = TOOLKIT.read_text(encoding="utf-8")
+        graph = parse(ROOT / "menus/toolkit.mmd")
         self.assertIn('RAM_SPLIT_SH="$SCRIPT_DIR/bc250-ram-split.sh"', source)
-        self.assertIn('"RAM / VRAM split|', source)
+        self.assertEqual("RAM and VRAM Split", graph.nodes["child__ram"].title)
         self.assertIn("ram) (($# == 0))", source)
 
     def test_script_parses(self):
