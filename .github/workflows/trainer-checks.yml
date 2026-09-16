@@ -10,6 +10,8 @@ on:
       - "core-unlock/**"
       - "scripts/**"
       - "menus/**"
+      - "MENU-GRAPH.md"
+      - "README.md"
       - "tests/**"
       - "acpi-tables/**"
       - "aic8800/*.sh"

@@ -1,0 +1,11 @@
+%% menu-flow-v1
+flowchart TD
+
+menu__root["BC-250 persistent storage<br/>Install, repair, or inspect persistent privileged storage."]:::root
+action__install["Install / repair storage<br/>Install persistent storage, recovery, units, and keep lists."]:::install
+action__repair_infrastructure["Repair boot infrastructure<br/>Validate and repair an established home-backed mount."]:::install
+action__status["Show status<br/>Show mount source, recovery integration, and keep-list paths."]:::read_only
+
+menu__root --> action__install
+menu__root --> action__repair_infrastructure
+menu__root --> action__status

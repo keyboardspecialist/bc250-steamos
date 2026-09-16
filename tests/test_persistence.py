@@ -634,9 +634,9 @@ grep -Fxq "daemon-reload" "$SYSTEMCTL_LOG"
         source = STORAGE.read_text(encoding="utf-8")
         self.assertIn("Continue with sudo? [y/N]", source)
         self.assertIn('sudo bash "$SELF" "$@"', source)
-        self.assertIn(
-            'Repair boot infrastructure|$(infrastructure_badge)|', source
-        )
+        graph = (ROOT / "menus/storage.mmd").read_text(encoding="utf-8")
+        self.assertIn('action__repair_infrastructure["Repair boot infrastructure', graph)
+        self.assertIn("action__repair_infrastructure) infrastructure_badge", source)
         self.assertIn('log "Boot infrastructure is healthy."', source)
 
     def test_desktop_service_is_isolated_root_dbus_service(self):

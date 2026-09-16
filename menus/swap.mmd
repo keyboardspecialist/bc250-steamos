@@ -1,0 +1,15 @@
+%% menu-flow-v1
+flowchart TD
+
+menu__root["BC-250 compressed swap<br/>Inspect or configure a mutually exclusive compressed-swap profile."]:::root
+action__status["Status overview<br/>Show the configured profile, active swap, zswap state, and swappiness."]:::read_only
+action__zram["Use zram<br/>Compressed RAM swap using Valve's half-RAM zstd profile at priority 100."]:::install
+action__zswap["Use zswap + disk<br/>Use lz4 zswap with a 25% RAM pool plus a 16 GiB disk swapfile at priority 10."]:::install
+action__remove["Remove toolkit profile<br/>Remove toolkit-owned swap settings and return to Valve's zram defaults."]:::cleanup
+action__help["Full help<br/>Show profile details, CLI commands, paths, and reboot behavior."]:::read_only
+
+menu__root --> action__status
+menu__root --> action__zram
+menu__root --> action__zswap
+menu__root --> action__remove
+menu__root --> action__help

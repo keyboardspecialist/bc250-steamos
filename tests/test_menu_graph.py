@@ -1,4 +1,5 @@
 import importlib.util
+import json
 import re
 import subprocess
 import sys
@@ -15,12 +16,9 @@ ANALYZER = SCRIPTS / "analyze-menu-graph.py"
 sys.path.insert(0, str(SCRIPTS))
 
 from menu_graph import MenuGraphError, parse, reachable  # noqa: E402
+from menu_targets import MANIFEST_PATH, load_targets  # noqa: E402
 
 
-GENERATOR_SPEC = importlib.util.spec_from_file_location("menu_generator", GENERATOR)
-assert GENERATOR_SPEC is not None and GENERATOR_SPEC.loader is not None
-MENU_GENERATOR = importlib.util.module_from_spec(GENERATOR_SPEC)
-GENERATOR_SPEC.loader.exec_module(MENU_GENERATOR)
 ANALYZER_SPEC = importlib.util.spec_from_file_location("menu_analyzer", ANALYZER)
 assert ANALYZER_SPEC is not None and ANALYZER_SPEC.loader is not None
 MENU_ANALYZER = importlib.util.module_from_spec(ANALYZER_SPEC)
@@ -31,6 +29,8 @@ class MenuGraphTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.graph = parse(GRAPH_PATH)
+        cls.targets = load_targets()
+        cls.graphs = {target.name: parse(target.graph_path) for target in cls.targets}
 
     @staticmethod
     def parse_source(source):
@@ -81,25 +81,53 @@ class MenuGraphTests(unittest.TestCase):
         self.assertEqual([], self.graph.navigation()["action__graphics_setup"])
 
     def test_every_terminal_node_has_a_fixed_bash_adapter(self):
-        toolkit = (ROOT / "bc250-toolkit.sh").read_text(encoding="utf-8")
-        adapter = toolkit[
-            toolkit.index("menu_graph_activate() {") : toolkit.index(
-                "# BEGIN GENERATED TOOLKIT MENUS"
-            )
-        ]
-        for node in self.graph.nodes.values():
-            if node.kind != "menu":
-                with self.subTest(node=node.id):
-                    self.assertRegex(
-                        adapter,
-                        rf"(?m)^\s*{re.escape(node.id)}\)",
-                    )
+        for target in self.targets:
+            graph = self.graphs[target.name]
+            source = target.bash_path.read_text(encoding="utf-8")
+            adapter = source[
+                source.index(f"{target.symbol}_activate() {{") : source.index(
+                    target.begin
+                )
+            ]
+            for node in graph.nodes.values():
+                if node.kind != "menu":
+                    with self.subTest(target=target.name, node=node.id):
+                        self.assertRegex(
+                            adapter,
+                            rf"(?m)^\s*{re.escape(node.id)}\)",
+                        )
 
     def test_generated_bash_is_current_and_valid(self):
         subprocess.run(
             [sys.executable, str(GENERATOR), "--check"], cwd=ROOT, check=True
         )
-        subprocess.run(["bash", "-n", str(ROOT / "bc250-toolkit.sh")], check=True)
+        for target in self.targets:
+            subprocess.run(["bash", "-n", str(target.bash_path)], check=True)
+            source = target.bash_path.read_text(encoding="utf-8")
+            self.assertIn(
+                f'{target.symbol}_activate "$target" "${{badges[$MENU_CHOICE]}}"',
+                source,
+            )
+            self.assertIn('"$title" == *[[:cntrl:]]*', source)
+
+    def test_manifest_entries_reference_menus_and_expose_each_root(self):
+        for target in self.targets:
+            graph = self.graphs[target.name]
+            entries = dict(target.entries)
+            with self.subTest(target=target.name):
+                self.assertEqual(graph.root.id, entries.get("root"))
+                self.assertTrue(
+                    all(graph.nodes[node].kind == "menu" for node in entries.values())
+                )
+
+    def test_manifest_cannot_omit_a_supported_target(self):
+        payload = json.loads(MANIFEST_PATH.read_text(encoding="utf-8"))
+        payload["targets"] = payload["targets"][1:]
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "targets.json"
+            path.write_text(json.dumps(payload), encoding="utf-8")
+            with self.assertRaisesRegex(MenuGraphError, "target set is incomplete"):
+                load_targets(path)
 
     def test_analyzer_enforces_depth_budget(self):
         result = subprocess.run(
@@ -110,6 +138,29 @@ class MenuGraphTests(unittest.TestCase):
             text=True,
         )
         self.assertIn("Selectable nodes: 51", result.stdout)
+
+    def test_documented_aggregate_metrics_are_current(self):
+        graphs = self.graphs.values()
+        self.assertEqual(
+            (40, 211, 227, 8),
+            (
+                sum(node.kind == "menu" for graph in graphs for node in graph.nodes.values()),
+                sum(
+                    len({edge.target for edge in graph.edges if not edge.dependency})
+                    for graph in self.graphs.values()
+                ),
+                sum(
+                    not edge.dependency
+                    for graph in self.graphs.values()
+                    for edge in graph.edges
+                ),
+                sum(
+                    edge.dependency
+                    for graph in self.graphs.values()
+                    for edge in graph.edges
+                ),
+            ),
+        )
 
     def test_parser_rejects_navigation_cycles(self):
         source = """%% menu-flow-v1
@@ -164,6 +215,29 @@ menu__root --> action__done
                 with self.assertRaisesRegex(MenuGraphError, "menu delimiters or control"):
                     self.parse_source(template.format(title=encoded))
 
+    def test_menu_title_directive_preserves_contextual_screen_heading(self):
+        source = """%% menu-flow-v1
+flowchart TD
+%% menu-title menu__root "Contextual root heading"
+menu__root["Short root label<br/>Root hint."]:::root
+action__done["Done<br/>Done hint."]:::read_only
+menu__root --> action__done
+"""
+        graph = self.parse_source(source)
+        self.assertEqual("Short root label", graph.root.title)
+        self.assertEqual("Contextual root heading", graph.display_title(graph.root.id))
+
+    def test_parser_rejects_malformed_menu_title_directives(self):
+        source = """%% menu-flow-v1
+flowchart TD
+%% menu-title
+menu__root["Root<br/>Root hint."]:::root
+action__done["Done<br/>Done hint."]:::read_only
+menu__root --> action__done
+"""
+        with self.assertRaisesRegex(MenuGraphError, "malformed menu-title"):
+            self.parse_source(source)
+
     def test_parser_rejects_malformed_class_definitions(self):
         source = """%% menu-flow-v1
 flowchart TD
@@ -174,50 +248,6 @@ classDef this is not valid mermaid !!!
 """
         with self.assertRaisesRegex(MenuGraphError, "unsupported classDef"):
             self.parse_source(source)
-
-    def test_generator_rejects_wrapper_function_collisions(self):
-        source = """%% menu-flow-v1
-flowchart TD
-menu__cmd_custom_menu["Root<br/>Root hint."]:::root
-action__done["Done<br/>Done hint."]:::read_only
-menu__cmd_custom_menu --> action__done
-"""
-        graph = self.parse_source(source)
-        with self.assertRaisesRegex(MenuGraphError, "collides with existing Bash"):
-            MENU_GENERATOR.validate_wrapper_names(
-                graph, "    cmd_custom_menu() {\n        :\n    }\n"
-            )
-
-    def test_generator_rejects_non_command_wrapper_names(self):
-        source = """%% menu-flow-v1
-flowchart TD
-menu__printf["Root<br/>Root hint."]:::root
-action__done["Done<br/>Done hint."]:::read_only
-menu__printf --> action__done
-"""
-        graph = self.parse_source(source)
-        with self.assertRaisesRegex(MenuGraphError, "must use cmd_ names"):
-            MENU_GENERATOR.validate_wrapper_names(graph, "")
-
-    def test_generator_excludes_the_replaceable_legacy_menu_region(self):
-        source = """%% menu-flow-v1
-flowchart TD
-menu__cmd_custom_menu["Root<br/>Root hint."]:::root
-action__done["Done<br/>Done hint."]:::read_only
-menu__cmd_custom_menu --> action__done
-"""
-        legacy_toolkit = """cmd_guided_setup_menu() {
-    :
-}
-cmd_custom_menu() {
-    :
-}
-cmd_help() {
-    :
-}
-"""
-        graph = self.parse_source(source)
-        MENU_GENERATOR.validate_wrapper_names(graph, legacy_toolkit)
 
     def test_entry_routes_are_included_in_depth_analysis(self):
         source = """%% menu-flow-v1
@@ -241,9 +271,30 @@ menu__cmd_third_menu --> action__direct
             for start, depths, _ in MENU_ANALYZER.supported_entry_paths(graph)
         }
         self.assertEqual(4, max(entry_paths["menu__cmd_direct_menu"].values()))
+        self.assertTrue(MENU_ANALYZER.graph_violates_policy(graph, 3))
         report = MENU_ANALYZER.report(graph, 3)
         self.assertIn("Deepest shortest route: 4 links", report)
         self.assertIn("Beyond depth budget (3 links): 1", report)
+
+    def test_entry_routes_are_included_in_detour_analysis(self):
+        source = """%% menu-flow-v1
+flowchart TD
+menu__root["Root<br/>Root hint."]:::root
+action__done["Done<br/>Done hint."]:::read_only
+menu__direct["Direct<br/>Direct hint."]:::entry
+menu__first["First<br/>First hint."]:::menu
+action__direct["Direct Action<br/>Direct action hint."]:::read_only
+menu__root --> action__done
+menu__direct --> menu__first
+menu__direct --> action__direct
+menu__first --> action__direct
+"""
+        graph = self.parse_source(source)
+        self.assertTrue(MENU_ANALYZER.graph_violates_policy(graph, 3))
+        self.assertIn(
+            "Detour links (a shorter supported-entry route exists): 1",
+            MENU_ANALYZER.report(graph, 3),
+        )
 
 
 if __name__ == "__main__":

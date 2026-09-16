@@ -1,8 +1,9 @@
 # Menu Sources
 
-`toolkit.mmd` is the canonical Mermaid source for `bc250-toolkit.sh` menus.
-See [`../MENU-GRAPH.md`](../MENU-GRAPH.md) for the supported syntax, generation
-commands, and validation policy.
+Each `.mmd` file is the canonical source for one toolkit or standalone component
+menu. `targets.json` maps those graphs to Bash targets and generated entry
+points. See [`../MENU-GRAPH.md`](../MENU-GRAPH.md) for the supported syntax,
+generation commands, and validation policy.
 
-Generated Bash is committed inline in `bc250-toolkit.sh` so packaged runtimes do
-not need Python, Mermaid, or an additional sourced file.
+Generated Bash is committed inline in each target so packaged runtimes do not
+need Python, Mermaid, or an additional sourced file.

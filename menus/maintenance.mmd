@@ -1,0 +1,43 @@
+%% menu-flow-v1
+flowchart TD
+
+menu__root["BC-250 installed components<br/>Inspect or remove toolkit components and preserved data."]:::root
+action__status["Show component inventory<br/>Inspect installed, partial, and preserved-data state."]:::read_only
+action__remove_trainer["Remove BC250 Trainer<br/>Review the plan and remove only this component."]:::cleanup
+action__remove_desktop["Remove Plasma desktop control<br/>Review the plan and remove only this component."]:::cleanup
+action__remove_decky["Remove Decky plugin<br/>Review the plan and remove only this component."]:::cleanup
+action__remove_coolercontrol["Remove CoolerControl<br/>Review the plan and remove only this component."]:::cleanup
+action__remove_cec["Remove CEC integration<br/>Review the plan and remove only this component."]:::cleanup
+action__remove_ac3["Remove HDMI AC-3 surround encoding<br/>Review the plan and remove only this component."]:::cleanup
+action__remove_power["Remove Power management / CPU core unlock<br/>Review the plan and remove only this component."]:::cleanup
+action__remove_ram["Remove RAM / VRAM split<br/>Review the plan and remove only this component."]:::cleanup
+action__remove_swap["Remove Compressed swap<br/>Review the plan and remove only this component."]:::cleanup
+action__remove_compute["Remove GPU compute-unit unlock<br/>Review the plan and remove only this component."]:::cleanup
+action__remove_proton["Remove BC-250 GE-Proton<br/>Review the plan and remove only this component."]:::cleanup
+action__remove_native_mesh["Remove Private native-mesh profile<br/>Review the plan and remove only this component."]:::cleanup
+action__remove_mesh["Remove Mesa / RADV async compute<br/>Review the plan and remove only this component."]:::cleanup
+action__remove_audio["Remove AMDGPU kernel fixes<br/>Review the plan and remove only this component."]:::cleanup
+action__remove_fan["Remove NCT6687 fan-control driver<br/>Review the plan and remove only this component."]:::cleanup
+action__remove_aic["Remove AIC8800 WiFi / Bluetooth<br/>Review the plan and remove only this component."]:::cleanup
+action__uninstall_all["Uninstall all components<br/>Restore stock behavior and remove all integrations; preserve settings and data."]:::cleanup
+action__purge["Purge preserved data<br/>After uninstall, delete profiles, backing data, and reproducible build caches."]:::cleanup
+
+menu__root --> action__status
+menu__root --> action__remove_trainer
+menu__root --> action__remove_desktop
+menu__root --> action__remove_decky
+menu__root --> action__remove_coolercontrol
+menu__root --> action__remove_cec
+menu__root --> action__remove_ac3
+menu__root --> action__remove_power
+menu__root --> action__remove_ram
+menu__root --> action__remove_swap
+menu__root --> action__remove_compute
+menu__root --> action__remove_proton
+menu__root --> action__remove_native_mesh
+menu__root --> action__remove_mesh
+menu__root --> action__remove_audio
+menu__root --> action__remove_fan
+menu__root --> action__remove_aic
+menu__root --> action__uninstall_all
+menu__root --> action__purge

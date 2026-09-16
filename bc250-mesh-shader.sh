@@ -2898,52 +2898,151 @@ prompt_fsr4_target() {
     run_menu_action setup --fsr4 "$target"
 }
 
+mesh_menu_graph_badge() {
+    local legacy_games
+    case "$1" in
+        action__status|action__setup|action__uninstall) runtime_badge ;;
+        action__fsr4_dll) fsr4_dll_badge ;;
+        action__native_mesh_install|action__native_mesh_remove) native_mesh_badge ;;
+        action__legacy_cleanup)
+            if ! legacy_games=$(manage_games list 2>/dev/null); then
+                printf '%s' "${CR}[invalid]${C0}"
+            elif [[ -n "$legacy_games" ]]; then
+                printf '%s' "${CY}[cleanup needed]${C0}"
+            else
+                printf '%s' "${CD}[not needed]${C0}"
+            fi
+            ;;
+        action__help) ;;
+        *) return 2 ;;
+    esac
+}
+
+mesh_menu_graph_activate() {
+    case "$1" in
+        action__status) show_menu_status ;;
+        action__fsr4_dll) prompt_fsr4_target ;;
+        action__setup)
+            confirm_menu_action \
+                "Install or resume FSR4 RADV and its AMDGPU prerequisite? This is not required for the portable FSR4 RC9 route." setup
+            ;;
+        action__native_mesh_install)
+            confirm_menu_action \
+                "Install the private experimental LoneWolf native-mesh profile? The current compute kernel and sched_policy=2 must already be active." setup --native-mesh
+            ;;
+        action__native_mesh_remove)
+            confirm_menu_action \
+                "Remove only the private native-mesh profile? Global RADV and Steam configuration will remain unchanged." uninstall --native-mesh
+            ;;
+        action__legacy_cleanup)
+            confirm_menu_action \
+                "Have you removed MESA_DRICONF_EXECUTABLE_OVERRIDE and VK_ICD_FILENAMES from the old per-game Steam launch options?" legacy-clear
+            ;;
+        action__uninstall)
+            confirm_menu_action "Remove the global Mesa / RADV runtime?" uninstall
+            ;;
+        action__help) echo; cmd_help; pause_key ;;
+        *) die "Unknown generated mesh-shader menu target: $1" ;;
+    esac
+}
+
+# BEGIN GENERATED MESH_SHADER MENUS
+# Generated from menus/mesh-shader.mmd by scripts/generate-menus.py.
+# Do not edit this region directly.
+mesh_menu_graph_render() {
+    local menu_id="$1" title target badge
+    if declare -F mesh_menu_graph_prepare >/dev/null; then mesh_menu_graph_prepare "$menu_id"; fi
+    while true; do
+        local items=() targets=() badges=()
+        case "$menu_id" in
+            menu__root)
+                title="BC-250 GPU driver and FSR4"
+                if ! badge=$(mesh_menu_graph_badge action__status read_only); then badge=; fi
+                if [[ "$badge" == *"|"* || "$badge" == *$'\n'* ]]; then
+                    die "Invalid generated menu badge: action__status"
+                fi
+                items+=("Status overview|${badge}|Verify the patched AMDGPU module, scheduler policy, RADV runtime, and global activation.")
+                targets+=("action__status")
+                badges+=("$badge")
+                if ! badge=$(mesh_menu_graph_badge action__fsr4_dll install); then badge=; fi
+                if [[ "$badge" == *"|"* || "$badge" == *$'\n'* ]]; then
+                    die "Invalid generated menu badge: action__fsr4_dll"
+                fi
+                items+=("Install FSR4 RC9 game DLL (recommended)|${badge}|Portable FSR4 route. Replaces one exact existing DLL and retains the original; no custom RADV installation is needed.")
+                targets+=("action__fsr4_dll")
+                badges+=("$badge")
+                if ! badge=$(mesh_menu_graph_badge action__setup install); then badge=; fi
+                if [[ "$badge" == *"|"* || "$badge" == *$'\n'* ]]; then
+                    die "Invalid generated menu badge: action__setup"
+                fi
+                items+=("Install / resume FSR4 RADV|${badge}|Installs AMDGPU first when needed, then builds async compute plus the FSR4 v4 driver for GE Proton.")
+                targets+=("action__setup")
+                badges+=("$badge")
+                if ! badge=$(mesh_menu_graph_badge action__native_mesh_install experimental); then badge=; fi
+                if [[ "$badge" == *"|"* || "$badge" == *$'\n'* ]]; then
+                    die "Invalid generated menu badge: action__native_mesh_install"
+                fi
+                items+=("Install private LoneWolf native mesh|${badge}|Build the combined async-compute, FSR4, and experimental physical-GFX10 native-mesh ICD; Steam is not edited.")
+                targets+=("action__native_mesh_install")
+                badges+=("$badge")
+                if ! badge=$(mesh_menu_graph_badge action__native_mesh_remove cleanup); then badge=; fi
+                if [[ "$badge" == *"|"* || "$badge" == *$'\n'* ]]; then
+                    die "Invalid generated menu badge: action__native_mesh_remove"
+                fi
+                items+=("Remove private LoneWolf native mesh|${badge}|Remove only the private native-mesh profile; leave global RADV and Steam configuration unchanged.")
+                targets+=("action__native_mesh_remove")
+                badges+=("$badge")
+                if ! badge=$(mesh_menu_graph_badge action__legacy_cleanup cleanup); then badge=; fi
+                if [[ "$badge" == *"|"* || "$badge" == *$'\n'* ]]; then
+                    die "Invalid generated menu badge: action__legacy_cleanup"
+                fi
+                items+=("Older per-game setup cleanup|${badge}|Migration only: remove old MESA_DRICONF_EXECUTABLE_OVERRIDE and VK_ICD_FILENAMES Steam launch options, then clear their records.")
+                targets+=("action__legacy_cleanup")
+                badges+=("$badge")
+                if ! badge=$(mesh_menu_graph_badge action__uninstall cleanup); then badge=; fi
+                if [[ "$badge" == *"|"* || "$badge" == *$'\n'* ]]; then
+                    die "Invalid generated menu badge: action__uninstall"
+                fi
+                items+=("Uninstall Mesa / RADV runtime|${badge}|Remove the alternate driver, ICD, and user environment generator; preserve build caches.")
+                targets+=("action__uninstall")
+                badges+=("$badge")
+                if ! badge=$(mesh_menu_graph_badge action__help read_only); then badge=; fi
+                if [[ "$badge" == *"|"* || "$badge" == *$'\n'* ]]; then
+                    die "Invalid generated menu badge: action__help"
+                fi
+                items+=("Full help|${badge}|Show CLI commands, activation behavior, and upstream source.")
+                targets+=("action__help")
+                badges+=("$badge")
+                ;;
+            *) die "Unknown generated mesh-shader menu ID: $menu_id" ;;
+        esac
+        if [[ "$title" == *"|"* || "$title" == *[[:cntrl:]]* ]]; then
+            die "Invalid generated mesh-shader menu title"
+        fi
+        menu_select "$title" "${items[@]}" || { echo; return 0; }
+        target=${targets[$MENU_CHOICE]}
+        if [[ "$target" == menu__* ]]; then
+            mesh_menu_graph_render "$target"
+        else
+            mesh_menu_graph_activate "$target" "${badges[$MENU_CHOICE]}"
+        fi
+    done
+}
+
+mesh_menu_graph_open() {
+    case "${1:-root}" in
+        root) mesh_menu_graph_render menu__root ;;
+        *) return 2 ;;
+    esac
+}
+
+# END GENERATED MESH_SHADER MENUS
+
 cmd_menu() {
     require_normal_user
     [[ -t 0 && -t 1 ]] \
         || die "The menu needs an interactive terminal. Use '$0 help' for CLI commands."
-    while true; do
-        local runtime_state fsr4_state legacy_fsr4_state native_mesh_state
-        runtime_state=$(runtime_badge)
-        fsr4_state=$(fsr4_dll_badge)
-        legacy_fsr4_state=$(legacy_fsr4_badge)
-        native_mesh_state=$(native_mesh_badge)
-        local legacy_games legacy_state
-        if ! legacy_games=$(manage_games list 2>/dev/null); then
-            legacy_state="${CR}[invalid]${C0}"
-        elif [[ -n "$legacy_games" ]]; then
-            legacy_state="${CY}[cleanup needed]${C0}"
-        else
-            legacy_state="${CD}[not needed]${C0}"
-        fi
-        local items=(
-            "Status overview|${runtime_state}|Verify the patched AMDGPU module, scheduler policy, RADV runtime, and global activation."
-            "Install FSR4 RC9 game DLL (recommended)|${fsr4_state}|Portable FSR4 route. Replaces one exact existing DLL and retains the original; no custom RADV installation is needed."
-            "Install / resume FSR4 RADV|${runtime_state}|Installs AMDGPU first when needed, then builds async compute plus the FSR4 v4 driver for GE Proton."
-            "Install private LoneWolf native mesh|${native_mesh_state}|Build the combined async-compute, FSR4, and experimental physical-GFX10 native-mesh ICD; Steam is not edited."
-            "Remove private LoneWolf native mesh|${native_mesh_state}|Remove only the private native-mesh profile; leave global RADV and Steam configuration unchanged."
-            "Older per-game setup cleanup|${legacy_state}|Migration only: remove old MESA_DRICONF_EXECUTABLE_OVERRIDE and VK_ICD_FILENAMES Steam launch options, then clear their records."
-            "Uninstall Mesa / RADV runtime|${runtime_state}|Remove the alternate driver, ICD, and user environment generator; preserve build caches."
-            "Full help||Show CLI commands, activation behavior, and upstream source."
-        )
-        menu_select "BC-250 GPU driver and FSR4" "${items[@]}" \
-            || { echo; break; }
-        case $MENU_CHOICE in
-            0) show_menu_status ;;
-            1) prompt_fsr4_target ;;
-            2) confirm_menu_action \
-                "Install or resume FSR4 RADV and its AMDGPU prerequisite? This is not required for the portable FSR4 RC9 route." setup ;;
-            3) confirm_menu_action \
-                "Install the private experimental LoneWolf native-mesh profile? The current compute kernel and sched_policy=2 must already be active." setup --native-mesh ;;
-            4) confirm_menu_action \
-                "Remove only the private native-mesh profile? Global RADV and Steam configuration will remain unchanged." uninstall --native-mesh ;;
-            5) confirm_menu_action \
-                "Have you removed MESA_DRICONF_EXECUTABLE_OVERRIDE and VK_ICD_FILENAMES from the old per-game Steam launch options?" legacy-clear ;;
-            6) confirm_menu_action \
-                "Remove the global Mesa / RADV runtime?" uninstall ;;
-            7) echo; cmd_help; pause_key ;;
-        esac
-    done
+    mesh_menu_graph_open root
 }
 
 cmd_help() {

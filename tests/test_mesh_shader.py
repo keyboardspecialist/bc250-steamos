@@ -1848,9 +1848,12 @@ ensure_radv_prerequisites
 
     def test_interactive_menu_can_remove_only_native_mesh(self):
         script = MESH.read_text(encoding="utf-8")
-        menu = script[script.index("cmd_menu() {") : script.index("\n}\n\ncmd_help()")]
-        self.assertIn("Remove private LoneWolf native mesh", menu)
-        self.assertIn("uninstall --native-mesh", menu)
+        graph = (ROOT / "menus/mesh-shader.mmd").read_text(encoding="utf-8")
+        self.assertIn("Remove private LoneWolf native mesh", graph)
+        self.assertIn(
+            "action__native_mesh_remove)", script
+        )
+        self.assertIn("uninstall --native-mesh", script)
 
     def test_rc9_helper_is_executable_and_in_toolkit_release_glob(self):
         workflow = (ROOT / ".github/workflows/release-artifacts.yml").read_text(

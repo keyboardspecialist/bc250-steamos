@@ -789,82 +789,261 @@ confirm_ttm() {
     esac
 }
 
-menu_uma() {
+ram_menu_graph_badge() {
+    case "$1" in
+        action__install) tool_badge ;;
+        menu__uma) uma_badge ;;
+        menu__ttm|action__ttm_status) ttm_badge ;;
+        action__uma_256) uma_preset_badge 256 ;;
+        action__uma_512) uma_preset_badge 512 ;;
+        action__uma_1024) uma_preset_badge 1024 ;;
+        action__uma_3072) uma_preset_badge 3072 ;;
+        action__uma_4096) uma_preset_badge 4096 ;;
+        action__uma_6144) uma_preset_badge 6144 ;;
+        action__uma_8192) uma_preset_badge 8192 ;;
+        action__uma_10240) uma_preset_badge 10240 ;;
+        action__uma_12288) uma_preset_badge 12288 ;;
+        action__ttm_2097152) ttm_preset_badge 2097152 ;;
+        action__ttm_2621440) ttm_preset_badge 2621440 ;;
+        action__ttm_3014656) ttm_preset_badge 3014656 ;;
+        action__ttm_3145728) ttm_preset_badge 3145728 ;;
+    esac
+}
+
+ram_menu_graph_activate() {
+    case "$1" in
+        action__status) run_action cmd_status ;;
+        action__install) run_privileged install ;;
+        action__help) cmd_help; pause_key ;;
+        action__uma_show) run_privileged show ;;
+        action__uma_256) confirm_uma 256 ;;
+        action__uma_512) confirm_uma 512 ;;
+        action__uma_1024) confirm_uma 1024 ;;
+        action__uma_3072) confirm_uma 3072 ;;
+        action__uma_4096) confirm_uma 4096 ;;
+        action__uma_6144) confirm_uma 6144 ;;
+        action__uma_8192) confirm_uma 8192 ;;
+        action__uma_10240) confirm_uma 10240 ;;
+        action__uma_12288) confirm_uma 12288 ;;
+        action__uma_custom) ask "UMA size in MiB" "512"; confirm_uma "$REPLY" ;;
+        action__ttm_status) run_action cmd_status ;;
+        action__ttm_2097152) confirm_ttm 2097152 ;;
+        action__ttm_2621440) confirm_ttm 2621440 ;;
+        action__ttm_3014656) confirm_ttm 3014656 ;;
+        action__ttm_3145728) confirm_ttm 3145728 ;;
+        action__ttm_custom) ask "ttm.pages_limit page count" "3014656"; confirm_ttm "$REPLY" ;;
+        action__ttm_remove) run_privileged ttm-remove ;;
+        *) die "Unknown generated RAM-split menu target: $1" ;;
+    esac
+}
+
+# BEGIN GENERATED RAM_SPLIT MENUS
+# Generated from menus/ram-split.mmd by scripts/generate-menus.py.
+# Do not edit this region directly.
+ram_menu_graph_render() {
+    local menu_id="$1" title target badge
+    if declare -F ram_menu_graph_prepare >/dev/null; then ram_menu_graph_prepare "$menu_id"; fi
     while true; do
-        local items=(
-            "Read current CMOS configuration||Requires administrator access; read-only."
-            "256 MiB minimum|$(uma_preset_badge 256)|Smallest documented split; maximizes CPU RAM."
-            "512 MiB minimum|$(uma_preset_badge 512)|Documentation recommendation with a raised TTM limit."
-            "1 GiB minimum|$(uma_preset_badge 1024)|Set UMA_SIZE to 1024 MiB."
-            "3 GiB minimum|$(uma_preset_badge 3072)|Set UMA_SIZE to 3072 MiB."
-            "4 GiB minimum|$(uma_preset_badge 4096)|Set UMA_SIZE to 4096 MiB."
-            "6 GiB minimum|$(uma_preset_badge 6144)|Set UMA_SIZE to 6144 MiB."
-            "8 GiB minimum|$(uma_preset_badge 8192)|Factory-style equal RAM/VRAM split."
-            "10 GiB minimum|$(uma_preset_badge 10240)|Leaves substantially less memory for the CPU."
-            "12 GiB minimum|$(uma_preset_badge 12288)|Leaves only about 4 GiB for CPU memory."
-            "Custom aligned size||256-12288 MiB in 16 MiB increments; 2048 MiB is blocked."
-        )
-        menu_select "CMOS minimum VRAM allocation" "${items[@]}" || return 0
-        case $MENU_CHOICE in
-            0) run_privileged show ;;
-            1) confirm_uma 256 ;;
-            2) confirm_uma 512 ;;
-            3) confirm_uma 1024 ;;
-            4) confirm_uma 3072 ;;
-            5) confirm_uma 4096 ;;
-            6) confirm_uma 6144 ;;
-            7) confirm_uma 8192 ;;
-            8) confirm_uma 10240 ;;
-            9) confirm_uma 12288 ;;
-            10) ask "UMA size in MiB" "512"; confirm_uma "$REPLY" ;;
+        local items=() targets=() badges=()
+        case "$menu_id" in
+            menu__root)
+                title="BC-250 RAM / VRAM split"
+                if ! badge=$(ram_menu_graph_badge action__status read_only); then badge=; fi
+                if [[ "$badge" == *"|"* || "$badge" == *$'\n'* ]]; then
+                    die "Invalid generated menu badge: action__status"
+                fi
+                items+=("Status overview|${badge}|Read-only local status; does not contact GitHub.")
+                targets+=("action__status")
+                badges+=("$badge")
+                if ! badge=$(ram_menu_graph_badge action__install install); then badge=; fi
+                if [[ "$badge" == *"|"* || "$badge" == *$'\n'* ]]; then
+                    die "Invalid generated menu badge: action__install"
+                fi
+                items+=("Install / update bc250_memcfg|${badge}|Fetch and verify the latest upstream release.")
+                targets+=("action__install")
+                badges+=("$badge")
+                if ! badge=$(ram_menu_graph_badge menu__uma menu); then badge=; fi
+                if [[ "$badge" == *"|"* || "$badge" == *$'\n'* ]]; then
+                    die "Invalid generated menu badge: menu__uma"
+                fi
+                items+=("Minimum VRAM (CMOS UMA split)|${badge}|Set the persistent minimum GPU allocation; reboot required.")
+                targets+=("menu__uma")
+                badges+=("$badge")
+                if ! badge=$(ram_menu_graph_badge menu__ttm menu); then badge=; fi
+                if [[ "$badge" == *"|"* || "$badge" == *$'\n'* ]]; then
+                    die "Invalid generated menu badge: menu__ttm"
+                fi
+                items+=("Dynamic VRAM limit (TTM)|${badge}|Manage ttm.pages_limit in a dedicated SteamOS GRUB drop-in.")
+                targets+=("menu__ttm")
+                badges+=("$badge")
+                if ! badge=$(ram_menu_graph_badge action__help read_only); then badge=; fi
+                if [[ "$badge" == *"|"* || "$badge" == *$'\n'* ]]; then
+                    die "Invalid generated menu badge: action__help"
+                fi
+                items+=("Full help|${badge}|Safety notes, commands, and recovery guidance.")
+                targets+=("action__help")
+                badges+=("$badge")
+                ;;
+            menu__uma)
+                title="CMOS minimum VRAM allocation"
+                if ! badge=$(ram_menu_graph_badge action__uma_show read_only); then badge=; fi
+                if [[ "$badge" == *"|"* || "$badge" == *$'\n'* ]]; then
+                    die "Invalid generated menu badge: action__uma_show"
+                fi
+                items+=("Read current CMOS configuration|${badge}|Requires administrator access; read-only.")
+                targets+=("action__uma_show")
+                badges+=("$badge")
+                if ! badge=$(ram_menu_graph_badge action__uma_256 advanced); then badge=; fi
+                if [[ "$badge" == *"|"* || "$badge" == *$'\n'* ]]; then
+                    die "Invalid generated menu badge: action__uma_256"
+                fi
+                items+=("256 MiB minimum|${badge}|Smallest documented split; maximizes CPU RAM.")
+                targets+=("action__uma_256")
+                badges+=("$badge")
+                if ! badge=$(ram_menu_graph_badge action__uma_512 advanced); then badge=; fi
+                if [[ "$badge" == *"|"* || "$badge" == *$'\n'* ]]; then
+                    die "Invalid generated menu badge: action__uma_512"
+                fi
+                items+=("512 MiB minimum|${badge}|Documentation recommendation with a raised TTM limit.")
+                targets+=("action__uma_512")
+                badges+=("$badge")
+                if ! badge=$(ram_menu_graph_badge action__uma_1024 advanced); then badge=; fi
+                if [[ "$badge" == *"|"* || "$badge" == *$'\n'* ]]; then
+                    die "Invalid generated menu badge: action__uma_1024"
+                fi
+                items+=("1 GiB minimum|${badge}|Set UMA_SIZE to 1024 MiB.")
+                targets+=("action__uma_1024")
+                badges+=("$badge")
+                if ! badge=$(ram_menu_graph_badge action__uma_3072 advanced); then badge=; fi
+                if [[ "$badge" == *"|"* || "$badge" == *$'\n'* ]]; then
+                    die "Invalid generated menu badge: action__uma_3072"
+                fi
+                items+=("3 GiB minimum|${badge}|Set UMA_SIZE to 3072 MiB.")
+                targets+=("action__uma_3072")
+                badges+=("$badge")
+                if ! badge=$(ram_menu_graph_badge action__uma_4096 advanced); then badge=; fi
+                if [[ "$badge" == *"|"* || "$badge" == *$'\n'* ]]; then
+                    die "Invalid generated menu badge: action__uma_4096"
+                fi
+                items+=("4 GiB minimum|${badge}|Set UMA_SIZE to 4096 MiB.")
+                targets+=("action__uma_4096")
+                badges+=("$badge")
+                if ! badge=$(ram_menu_graph_badge action__uma_6144 advanced); then badge=; fi
+                if [[ "$badge" == *"|"* || "$badge" == *$'\n'* ]]; then
+                    die "Invalid generated menu badge: action__uma_6144"
+                fi
+                items+=("6 GiB minimum|${badge}|Set UMA_SIZE to 6144 MiB.")
+                targets+=("action__uma_6144")
+                badges+=("$badge")
+                if ! badge=$(ram_menu_graph_badge action__uma_8192 advanced); then badge=; fi
+                if [[ "$badge" == *"|"* || "$badge" == *$'\n'* ]]; then
+                    die "Invalid generated menu badge: action__uma_8192"
+                fi
+                items+=("8 GiB minimum|${badge}|Factory-style equal RAM/VRAM split.")
+                targets+=("action__uma_8192")
+                badges+=("$badge")
+                if ! badge=$(ram_menu_graph_badge action__uma_10240 advanced); then badge=; fi
+                if [[ "$badge" == *"|"* || "$badge" == *$'\n'* ]]; then
+                    die "Invalid generated menu badge: action__uma_10240"
+                fi
+                items+=("10 GiB minimum|${badge}|Leaves substantially less memory for the CPU.")
+                targets+=("action__uma_10240")
+                badges+=("$badge")
+                if ! badge=$(ram_menu_graph_badge action__uma_12288 advanced); then badge=; fi
+                if [[ "$badge" == *"|"* || "$badge" == *$'\n'* ]]; then
+                    die "Invalid generated menu badge: action__uma_12288"
+                fi
+                items+=("12 GiB minimum|${badge}|Leaves only about 4 GiB for CPU memory.")
+                targets+=("action__uma_12288")
+                badges+=("$badge")
+                if ! badge=$(ram_menu_graph_badge action__uma_custom advanced); then badge=; fi
+                if [[ "$badge" == *"|"* || "$badge" == *$'\n'* ]]; then
+                    die "Invalid generated menu badge: action__uma_custom"
+                fi
+                items+=("Custom aligned size|${badge}|256-12288 MiB in 16 MiB increments; 2048 MiB is blocked.")
+                targets+=("action__uma_custom")
+                badges+=("$badge")
+                ;;
+            menu__ttm)
+                title="Dynamic VRAM / TTM limit"
+                if ! badge=$(ram_menu_graph_badge action__ttm_status read_only); then badge=; fi
+                if [[ "$badge" == *"|"* || "$badge" == *$'\n'* ]]; then
+                    die "Invalid generated menu badge: action__ttm_status"
+                fi
+                items+=("Show TTM status|${badge}|Compare configured, boot, and live page limits.")
+                targets+=("action__ttm_status")
+                badges+=("$badge")
+                if ! badge=$(ram_menu_graph_badge action__ttm_2097152 advanced); then badge=; fi
+                if [[ "$badge" == *"|"* || "$badge" == *$'\n'* ]]; then
+                    die "Invalid generated menu badge: action__ttm_2097152"
+                fi
+                items+=("8 GiB dynamic limit|${badge}|Set ttm.pages_limit=2097152.")
+                targets+=("action__ttm_2097152")
+                badges+=("$badge")
+                if ! badge=$(ram_menu_graph_badge action__ttm_2621440 advanced); then badge=; fi
+                if [[ "$badge" == *"|"* || "$badge" == *$'\n'* ]]; then
+                    die "Invalid generated menu badge: action__ttm_2621440"
+                fi
+                items+=("10 GiB dynamic limit|${badge}|Set ttm.pages_limit=2621440.")
+                targets+=("action__ttm_2621440")
+                badges+=("$badge")
+                if ! badge=$(ram_menu_graph_badge action__ttm_3014656 advanced); then badge=; fi
+                if [[ "$badge" == *"|"* || "$badge" == *$'\n'* ]]; then
+                    die "Invalid generated menu badge: action__ttm_3014656"
+                fi
+                items+=("BC-250 guide 12 GB preset|${badge}|Published guide value: 11.50 GiB dynamic, about 12 GB total with 512 MiB UMA.")
+                targets+=("action__ttm_3014656")
+                badges+=("$badge")
+                if ! badge=$(ram_menu_graph_badge action__ttm_3145728 advanced); then badge=; fi
+                if [[ "$badge" == *"|"* || "$badge" == *$'\n'* ]]; then
+                    die "Invalid generated menu badge: action__ttm_3145728"
+                fi
+                items+=("12 GiB dynamic limit|${badge}|Exact 12 GiB dynamic page count.")
+                targets+=("action__ttm_3145728")
+                badges+=("$badge")
+                if ! badge=$(ram_menu_graph_badge action__ttm_custom advanced); then badge=; fi
+                if [[ "$badge" == *"|"* || "$badge" == *$'\n'* ]]; then
+                    die "Invalid generated menu badge: action__ttm_custom"
+                fi
+                items+=("Custom pages_limit|${badge}|Enter the raw 4 KiB page count.")
+                targets+=("action__ttm_custom")
+                badges+=("$badge")
+                if ! badge=$(ram_menu_graph_badge action__ttm_remove cleanup); then badge=; fi
+                if [[ "$badge" == *"|"* || "$badge" == *$'\n'* ]]; then
+                    die "Invalid generated menu badge: action__ttm_remove"
+                fi
+                items+=("Remove TTM override|${badge}|Return to the kernel default after reboot.")
+                targets+=("action__ttm_remove")
+                badges+=("$badge")
+                ;;
+            *) die "Unknown generated ram-split menu ID: $menu_id" ;;
         esac
+        if [[ "$title" == *"|"* || "$title" == *[[:cntrl:]]* ]]; then
+            die "Invalid generated ram-split menu title"
+        fi
+        menu_select "$title" "${items[@]}" || { echo; return 0; }
+        target=${targets[$MENU_CHOICE]}
+        if [[ "$target" == menu__* ]]; then
+            ram_menu_graph_render "$target"
+        else
+            ram_menu_graph_activate "$target" "${badges[$MENU_CHOICE]}"
+        fi
     done
 }
 
-menu_ttm() {
-    while true; do
-        local items=(
-            "Show TTM status|$(ttm_badge)|Compare configured, boot, and live page limits."
-            "8 GiB dynamic limit|$(ttm_preset_badge 2097152)|Set ttm.pages_limit=2097152."
-            "10 GiB dynamic limit|$(ttm_preset_badge 2621440)|Set ttm.pages_limit=2621440."
-            "BC-250 guide 12 GB preset|$(ttm_preset_badge 3014656)|Published guide value: 11.50 GiB dynamic, about 12 GB total with 512 MiB UMA."
-            "12 GiB dynamic limit|$(ttm_preset_badge 3145728)|Exact 12 GiB dynamic page count."
-            "Custom pages_limit||Enter the raw 4 KiB page count."
-            "Remove TTM override||Return to the kernel default after reboot."
-        )
-        menu_select "Dynamic VRAM / TTM limit" "${items[@]}" || return 0
-        case $MENU_CHOICE in
-            0) run_action cmd_status ;;
-            1) confirm_ttm 2097152 ;;
-            2) confirm_ttm 2621440 ;;
-            3) confirm_ttm 3014656 ;;
-            4) confirm_ttm 3145728 ;;
-            5) ask "ttm.pages_limit page count" "3014656"; confirm_ttm "$REPLY" ;;
-            6) run_privileged ttm-remove ;;
-        esac
-    done
+ram_menu_graph_open() {
+    case "${1:-root}" in
+        root) ram_menu_graph_render menu__root ;;
+        *) return 2 ;;
+    esac
 }
+
+# END GENERATED RAM_SPLIT MENUS
 
 cmd_menu() {
     require_normal_user
     [[ -t 0 && -t 1 ]] || die "The menu needs an interactive terminal. Use '$0 help' for CLI commands."
-    while true; do
-        local items=(
-            "Status overview||Read-only local status; does not contact GitHub."
-            "Install / update bc250_memcfg|$(tool_badge)|Fetch and verify the latest upstream release."
-            "Minimum VRAM (CMOS UMA split)|$(uma_badge)|Set the persistent minimum GPU allocation; reboot required."
-            "Dynamic VRAM limit (TTM)|$(ttm_badge)|Manage ttm.pages_limit in a dedicated SteamOS GRUB drop-in."
-            "Full help||Safety notes, commands, and recovery guidance."
-        )
-        menu_select "BC-250 RAM / VRAM split" "${items[@]}" || { echo; break; }
-        case $MENU_CHOICE in
-            0) run_action cmd_status ;;
-            1) run_privileged install ;;
-            2) menu_uma ;;
-            3) menu_ttm ;;
-            4) cmd_help; pause_key ;;
-        esac
-    done
+    ram_menu_graph_open
 }
 
 cmd_help() {

@@ -550,45 +550,188 @@ show_menu_status() {
     pause_key
 }
 
+persistence_menu_graph_badge() {
+    case "$1" in
+        action__protect_compute) keep_badge compute ;;
+        action__protect_power) keep_badge power ;;
+        action__protect_ram) keep_badge ram ;;
+        action__protect_swap) keep_badge swap ;;
+        action__protect_cec) keep_badge cec ;;
+        action__protect_aic) keep_badge aic ;;
+        action__protect_fan) keep_badge fan ;;
+        action__protect_coolercontrol) keep_badge coolercontrol ;;
+        action__protect_desktop) keep_badge desktop ;;
+        action__protect_amdgpu) keep_badge amdgpu ;;
+        action__protect_all|action__recover_compute|action__recover_power|action__recover_all|action__status) ;;
+        *) return 2 ;;
+    esac
+}
+
+persistence_menu_graph_activate() {
+    case "$1" in
+        action__protect_compute) run_menu_action install compute ;;
+        action__protect_power) run_menu_action install power ;;
+        action__protect_ram) run_menu_action install ram ;;
+        action__protect_swap) run_menu_action install swap ;;
+        action__protect_cec) run_menu_action install cec ;;
+        action__protect_aic) run_menu_action install aic ;;
+        action__protect_fan) run_menu_action install fan ;;
+        action__protect_coolercontrol) run_menu_action install coolercontrol ;;
+        action__protect_desktop) run_menu_action install desktop ;;
+        action__protect_amdgpu) run_menu_action install amdgpu ;;
+        action__protect_all) run_menu_action install all ;;
+        action__recover_compute) run_menu_action recover compute ;;
+        action__recover_power) run_menu_action recover power ;;
+        action__recover_all) run_menu_action recover all ;;
+        action__status) show_menu_status ;;
+        *) die "Unknown generated update-persistence menu target: $1" ;;
+    esac
+}
+
+# BEGIN GENERATED UPDATE_PERSISTENCE MENUS
+# Generated from menus/update-persistence.mmd by scripts/generate-menus.py.
+# Do not edit this region directly.
+persistence_menu_graph_render() {
+    local menu_id="$1" title target badge
+    if declare -F persistence_menu_graph_prepare >/dev/null; then persistence_menu_graph_prepare "$menu_id"; fi
+    while true; do
+        local items=() targets=() badges=()
+        case "$menu_id" in
+            menu__root)
+                title="SteamOS update persistence"
+                if ! badge=$(persistence_menu_graph_badge action__protect_compute install); then badge=; fi
+                if [[ "$badge" == *"|"* || "$badge" == *$'\n'* ]]; then
+                    die "Invalid generated menu badge: action__protect_compute"
+                fi
+                items+=("Protect compute|${badge}|Preserve UMR, compute-unit routing, and its boot service.")
+                targets+=("action__protect_compute")
+                badges+=("$badge")
+                if ! badge=$(persistence_menu_graph_badge action__protect_power install); then badge=; fi
+                if [[ "$badge" == *"|"* || "$badge" == *$'\n'* ]]; then
+                    die "Invalid generated menu badge: action__protect_power"
+                fi
+                items+=("Protect power|${badge}|Preserve power services, GPU tuning, and CPU tuning.")
+                targets+=("action__protect_power")
+                badges+=("$badge")
+                if ! badge=$(persistence_menu_graph_badge action__protect_ram install); then badge=; fi
+                if [[ "$badge" == *"|"* || "$badge" == *$'\n'* ]]; then
+                    die "Invalid generated menu badge: action__protect_ram"
+                fi
+                items+=("Protect RAM split|${badge}|Preserve the dynamic TTM VRAM boot setting.")
+                targets+=("action__protect_ram")
+                badges+=("$badge")
+                if ! badge=$(persistence_menu_graph_badge action__protect_swap install); then badge=; fi
+                if [[ "$badge" == *"|"* || "$badge" == *$'\n'* ]]; then
+                    die "Invalid generated menu badge: action__protect_swap"
+                fi
+                items+=("Protect compressed swap|${badge}|Preserve the selected zram or zswap-backed disk profile.")
+                targets+=("action__protect_swap")
+                badges+=("$badge")
+                if ! badge=$(persistence_menu_graph_badge action__protect_cec install); then badge=; fi
+                if [[ "$badge" == *"|"* || "$badge" == *$'\n'* ]]; then
+                    die "Invalid generated menu badge: action__protect_cec"
+                fi
+                items+=("Protect CEC|${badge}|Preserve CEC poweroff and sleep integration.")
+                targets+=("action__protect_cec")
+                badges+=("$badge")
+                if ! badge=$(persistence_menu_graph_badge action__protect_aic install); then badge=; fi
+                if [[ "$badge" == *"|"* || "$badge" == *$'\n'* ]]; then
+                    die "Invalid generated menu badge: action__protect_aic"
+                fi
+                items+=("Protect AIC8800|${badge}|Preserve AIC8800 service and device configuration.")
+                targets+=("action__protect_aic")
+                badges+=("$badge")
+                if ! badge=$(persistence_menu_graph_badge action__protect_fan install); then badge=; fi
+                if [[ "$badge" == *"|"* || "$badge" == *$'\n'* ]]; then
+                    die "Invalid generated menu badge: action__protect_fan"
+                fi
+                items+=("Protect fan driver|${badge}|Preserve NCT6687 fan-driver configuration and boot recovery.")
+                targets+=("action__protect_fan")
+                badges+=("$badge")
+                if ! badge=$(persistence_menu_graph_badge action__protect_coolercontrol install); then badge=; fi
+                if [[ "$badge" == *"|"* || "$badge" == *$'\n'* ]]; then
+                    die "Invalid generated menu badge: action__protect_coolercontrol"
+                fi
+                items+=("Protect CoolerControl|${badge}|Preserve the CoolerControl system service after updates.")
+                targets+=("action__protect_coolercontrol")
+                badges+=("$badge")
+                if ! badge=$(persistence_menu_graph_badge action__protect_desktop install); then badge=; fi
+                if [[ "$badge" == *"|"* || "$badge" == *$'\n'* ]]; then
+                    die "Invalid generated menu badge: action__protect_desktop"
+                fi
+                items+=("Protect desktop control|${badge}|Preserve the desktop service and repair integration after updates.")
+                targets+=("action__protect_desktop")
+                badges+=("$badge")
+                if ! badge=$(persistence_menu_graph_badge action__protect_amdgpu install); then badge=; fi
+                if [[ "$badge" == *"|"* || "$badge" == *$'\n'* ]]; then
+                    die "Invalid generated menu badge: action__protect_amdgpu"
+                fi
+                items+=("Protect patched AMDGPU|${badge}|Preserve the selected scheduler or KFD runlist boot option.")
+                targets+=("action__protect_amdgpu")
+                badges+=("$badge")
+                if ! badge=$(persistence_menu_graph_badge action__protect_all install); then badge=; fi
+                if [[ "$badge" == *"|"* || "$badge" == *$'\n'* ]]; then
+                    die "Invalid generated menu badge: action__protect_all"
+                fi
+                items+=("Protect all components|${badge}|Install every component keep list.")
+                targets+=("action__protect_all")
+                badges+=("$badge")
+                if ! badge=$(persistence_menu_graph_badge action__recover_compute advanced); then badge=; fi
+                if [[ "$badge" == *"|"* || "$badge" == *$'\n'* ]]; then
+                    die "Invalid generated menu badge: action__recover_compute"
+                fi
+                items+=("Recover compute settings|${badge}|Restore CU routing from the newest atomupd snapshot.")
+                targets+=("action__recover_compute")
+                badges+=("$badge")
+                if ! badge=$(persistence_menu_graph_badge action__recover_power advanced); then badge=; fi
+                if [[ "$badge" == *"|"* || "$badge" == *$'\n'* ]]; then
+                    die "Invalid generated menu badge: action__recover_power"
+                fi
+                items+=("Recover power settings|${badge}|Restore GPU and CPU tuning from the newest atomupd snapshot.")
+                targets+=("action__recover_power")
+                badges+=("$badge")
+                if ! badge=$(persistence_menu_graph_badge action__recover_all advanced); then badge=; fi
+                if [[ "$badge" == *"|"* || "$badge" == *$'\n'* ]]; then
+                    die "Invalid generated menu badge: action__recover_all"
+                fi
+                items+=("Recover all settings|${badge}|Restore compute and power settings from the newest snapshot.")
+                targets+=("action__recover_all")
+                badges+=("$badge")
+                if ! badge=$(persistence_menu_graph_badge action__status read_only); then badge=; fi
+                if [[ "$badge" == *"|"* || "$badge" == *$'\n'* ]]; then
+                    die "Invalid generated menu badge: action__status"
+                fi
+                items+=("Show status|${badge}|Show component protection and available recovery sources.")
+                targets+=("action__status")
+                badges+=("$badge")
+                ;;
+            *) die "Unknown generated update-persistence menu ID: $menu_id" ;;
+        esac
+        if [[ "$title" == *"|"* || "$title" == *[[:cntrl:]]* ]]; then
+            die "Invalid generated update-persistence menu title"
+        fi
+        menu_select "$title" "${items[@]}" || { echo; return 0; }
+        target=${targets[$MENU_CHOICE]}
+        if [[ "$target" == menu__* ]]; then
+            persistence_menu_graph_render "$target"
+        else
+            persistence_menu_graph_activate "$target" "${badges[$MENU_CHOICE]}"
+        fi
+    done
+}
+
+persistence_menu_graph_open() {
+    case "${1:-root}" in
+        root) persistence_menu_graph_render menu__root ;;
+        *) return 2 ;;
+    esac
+}
+
+# END GENERATED UPDATE_PERSISTENCE MENUS
+
 cmd_menu() {
     [[ -t 0 && -t 1 ]] || die "The menu needs an interactive terminal. Use '$0 help' for CLI commands."
-    while true; do
-        local items=(
-            "Protect compute|$(keep_badge compute)|Preserve UMR, compute-unit routing, and its boot service."
-            "Protect power|$(keep_badge power)|Preserve power services, GPU tuning, and CPU tuning."
-            "Protect RAM split|$(keep_badge ram)|Preserve the dynamic TTM VRAM boot setting."
-            "Protect compressed swap|$(keep_badge swap)|Preserve the selected zram or zswap-backed disk profile."
-            "Protect CEC|$(keep_badge cec)|Preserve CEC poweroff and sleep integration."
-            "Protect AIC8800|$(keep_badge aic)|Preserve AIC8800 service and device configuration."
-            "Protect fan driver|$(keep_badge fan)|Preserve NCT6687 fan-driver configuration and boot recovery."
-            "Protect CoolerControl|$(keep_badge coolercontrol)|Preserve the CoolerControl system service after updates."
-            "Protect desktop control|$(keep_badge desktop)|Preserve the desktop service and repair integration after updates."
-            "Protect patched AMDGPU|$(keep_badge amdgpu)|Preserve the selected scheduler or KFD runlist boot option."
-            "Protect all components||Install every component keep list."
-            "Recover compute settings||Restore CU routing from the newest atomupd snapshot."
-            "Recover power settings||Restore GPU and CPU tuning from the newest atomupd snapshot."
-            "Recover all settings||Restore compute and power settings from the newest snapshot."
-            "Show status||Show component protection and available recovery sources."
-        )
-        menu_select "SteamOS update persistence" "${items[@]}" || { echo; break; }
-        case $MENU_CHOICE in
-            0) run_menu_action install compute ;;
-            1) run_menu_action install power ;;
-            2) run_menu_action install ram ;;
-            3) run_menu_action install swap ;;
-            4) run_menu_action install cec ;;
-            5) run_menu_action install aic ;;
-            6) run_menu_action install fan ;;
-            7) run_menu_action install coolercontrol ;;
-            8) run_menu_action install desktop ;;
-            9) run_menu_action install amdgpu ;;
-            10) run_menu_action install all ;;
-            11) run_menu_action recover compute ;;
-            12) run_menu_action recover power ;;
-            13) run_menu_action recover all ;;
-            14) show_menu_status ;;
-        esac
-    done
+    persistence_menu_graph_open root
 }
 
 cmd_help() {

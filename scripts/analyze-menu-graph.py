@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Analyze the canonical Mermaid toolkit menu graph."""
+"""Analyze canonical Mermaid menu graphs."""
 
 from __future__ import annotations
 
@@ -8,13 +8,9 @@ import json
 import sys
 from collections import defaultdict, deque
 from dataclasses import asdict
-from pathlib import Path
 
 from menu_graph import MenuGraph, MenuGraphError, grouped_incoming, parse, reachable
-
-
-ROOT = Path(__file__).resolve().parents[1]
-GRAPH_PATH = ROOT / "menus/toolkit.mmd"
+from menu_targets import MenuTarget, load_targets
 
 
 def cycles(adjacency: dict[str, list[str]]) -> list[list[str]]:
@@ -96,6 +92,21 @@ def detour_edges(graph: MenuGraph, depths: dict[str, int]):
     )
 
 
+def supported_detour_edges(
+    graph: MenuGraph,
+    entry_paths: list[tuple[str, dict[str, int], dict[str, str | None]]],
+):
+    detours = {
+        (edge.source, edge.target): edge
+        for _, depths, _ in entry_paths
+        for edge in detour_edges(graph, depths)
+    }
+    return sorted(
+        detours.values(),
+        key=lambda edge: (graph.nodes[edge.source].title, graph.nodes[edge.target].title),
+    )
+
+
 def path_to(node: str, parents: dict[str, str | None]) -> list[str]:
     path = []
     current: str | None = node
@@ -112,7 +123,7 @@ def display_path(graph: MenuGraph, path: list[str]) -> str:
     )
 
 
-def report(graph: MenuGraph, depth_budget: int) -> str:
+def report(graph: MenuGraph, depth_budget: int, name: str = "Toolkit") -> str:
     navigation = graph.navigation()
     depths, _ = shortest_paths(graph)
     entry_paths = supported_entry_paths(graph)
@@ -131,7 +142,7 @@ def report(graph: MenuGraph, depth_budget: int) -> str:
         if not edge.dependency:
             edge_groups[(edge.source, edge.target)].append(graph.nodes[edge.target].title)
     parallel = [item for item, labels in edge_groups.items() if len(labels) > 1]
-    detours = detour_edges(graph, depths)
+    detours = supported_detour_edges(graph, entry_paths)
     unreachable = sorted(
         (node for node in graph.nodes if node not in depths),
         key=lambda node: graph.nodes[node].title,
@@ -150,8 +161,8 @@ def report(graph: MenuGraph, depth_budget: int) -> str:
     selectable_nodes = {edge.target for edge in navigation_edges}
 
     lines = [
-        "Toolkit menu graph analysis",
-        "===========================",
+        f"{name} menu graph analysis",
+        "=" * (len(name) + 20),
         f"Menus: {sum(node.kind == 'menu' for node in graph.nodes.values())}",
         f"Selectable nodes: {len(selectable_nodes)}",
         f"Navigation links: {len(navigation_edges)}",
@@ -182,7 +193,9 @@ def report(graph: MenuGraph, depth_budget: int) -> str:
         )
         lines.append(f"  - {graph.nodes[node].title} <- {parent_titles}")
     lines.extend(["", f"Parallel choices to the same destination: {len(parallel)}"])
-    lines.extend(["", f"Detour links (a shorter root route exists): {len(detours)}"])
+    lines.extend(
+        ["", f"Detour links (a shorter supported-entry route exists): {len(detours)}"]
+    )
     for edge in detours:
         lines.append(
             f"  - {graph.nodes[edge.source].title} --> {graph.nodes[edge.target].title}"
@@ -236,29 +249,49 @@ def parse_args() -> argparse.Namespace:
         default=4,
         help="fail/report routes exceeding this many links (default: 4)",
     )
+    parser.add_argument("--target", help="analyze one configured menu target")
     parser.add_argument("--check", action="store_true", help="enforce graph policy")
     return parser.parse_args()
 
 
-def main() -> int:
-    args = parse_args()
-    graph = parse(GRAPH_PATH)
-    depths = reachable(graph)
-    if args.format == "report":
-        output = report(graph, args.depth_budget)
-    elif args.format == "mermaid":
-        output = GRAPH_PATH.read_text(encoding="utf-8")
-    elif args.format == "dot":
-        output = dot(graph)
-    else:
-        output = json_output(graph)
-    sys.stdout.write(output)
+def graph_violates_policy(graph: MenuGraph, depth_budget: int) -> bool:
+    entry_paths = supported_entry_paths(graph)
     violates_depth = any(
-        depth > args.depth_budget
-        for _, entry_depths, _ in supported_entry_paths(graph)
+        depth > depth_budget
+        for _, entry_depths, _ in entry_paths
         for depth in entry_depths.values()
     )
-    return 1 if args.check and (violates_depth or detour_edges(graph, depths)) else 0
+    return violates_depth or bool(supported_detour_edges(graph, entry_paths))
+
+
+def render_target(target: MenuTarget, graph: MenuGraph, args: argparse.Namespace) -> str:
+    if args.format == "report":
+        return report(graph, args.depth_budget, target.name)
+    if args.format == "mermaid":
+        return target.graph_path.read_text(encoding="utf-8")
+    if args.format == "dot":
+        return dot(graph)
+    return json_output(graph)
+
+
+def main() -> int:
+    args = parse_args()
+    targets = load_targets()
+    if args.target:
+        targets = tuple(target for target in targets if target.name == args.target)
+        if not targets:
+            raise MenuGraphError(f"unknown menu target: {args.target}")
+    elif args.format != "report":
+        raise MenuGraphError("--target is required for non-report output")
+
+    failed = False
+    outputs = []
+    for target in sorted(targets, key=lambda item: item.name):
+        graph = parse(target.graph_path)
+        outputs.append(render_target(target, graph, args))
+        failed = failed or graph_violates_policy(graph, args.depth_budget)
+    sys.stdout.write("\n".join(output.rstrip("\n") for output in outputs) + "\n")
+    return 1 if args.check and failed else 0
 
 
 if __name__ == "__main__":

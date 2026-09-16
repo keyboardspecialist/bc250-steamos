@@ -1,0 +1,35 @@
+%% menu-flow-v1
+flowchart TD
+
+menu__root["SteamOS update persistence<br/>Protect component state or recover settings from atomic-update snapshots."]:::root
+action__protect_compute["Protect compute<br/>Preserve UMR, compute-unit routing, and its boot service."]:::install
+action__protect_power["Protect power<br/>Preserve power services, GPU tuning, and CPU tuning."]:::install
+action__protect_ram["Protect RAM split<br/>Preserve the dynamic TTM VRAM boot setting."]:::install
+action__protect_swap["Protect compressed swap<br/>Preserve the selected zram or zswap-backed disk profile."]:::install
+action__protect_cec["Protect CEC<br/>Preserve CEC poweroff and sleep integration."]:::install
+action__protect_aic["Protect AIC8800<br/>Preserve AIC8800 service and device configuration."]:::install
+action__protect_fan["Protect fan driver<br/>Preserve NCT6687 fan-driver configuration and boot recovery."]:::install
+action__protect_coolercontrol["Protect CoolerControl<br/>Preserve the CoolerControl system service after updates."]:::install
+action__protect_desktop["Protect desktop control<br/>Preserve the desktop service and repair integration after updates."]:::install
+action__protect_amdgpu["Protect patched AMDGPU<br/>Preserve the selected scheduler or KFD runlist boot option."]:::install
+action__protect_all["Protect all components<br/>Install every component keep list."]:::install
+action__recover_compute["Recover compute settings<br/>Restore CU routing from the newest atomupd snapshot."]:::advanced
+action__recover_power["Recover power settings<br/>Restore GPU and CPU tuning from the newest atomupd snapshot."]:::advanced
+action__recover_all["Recover all settings<br/>Restore compute and power settings from the newest snapshot."]:::advanced
+action__status["Show status<br/>Show component protection and available recovery sources."]:::read_only
+
+menu__root --> action__protect_compute
+menu__root --> action__protect_power
+menu__root --> action__protect_ram
+menu__root --> action__protect_swap
+menu__root --> action__protect_cec
+menu__root --> action__protect_aic
+menu__root --> action__protect_fan
+menu__root --> action__protect_coolercontrol
+menu__root --> action__protect_desktop
+menu__root --> action__protect_amdgpu
+menu__root --> action__protect_all
+menu__root --> action__recover_compute
+menu__root --> action__recover_power
+menu__root --> action__recover_all
+menu__root --> action__status

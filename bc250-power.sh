@@ -4431,155 +4431,477 @@ menu_voltage_curve() {
     done
 }
 
-menu_freq() {
+power_menu_graph_badge() {
+    local node="$1"
+    case "$node" in
+        menu__foundation) printf '%s' "${CG}[guided]${C0}" ;;
+        menu__gpu|menu__frequency|action__frequency_status) badge_freq ;;
+        menu__load|action__load_status) badge_load_target ;;
+        menu__ramp|action__ramp_status) badge_ramp ;;
+        menu__cpu|menu__cpu_oc) badge_oc ;;
+        action__acpi) badge_acpi ;;
+        action__governor) badge_governor ;;
+        action__enable) badge_gov_boot ;;
+        child__cpu_mitigations) badge_cpu_mitigations ;;
+        action__oc_status) badge_oc_live ;;
+        child__oc_detect) badge_oc_last ;;
+        action__oc_enable) badge_oc_saved ;;
+        action__unlock_status|action__unlock_off) badge_core_unlock ;;
+        action__unlock_uninstall) badge_core_unlock_files "$(core_unlock_mode)" ;;
+    esac
+}
+
+power_menu_graph_activate() {
+    local minimum upper target_frequency voltage
+    case "$1" in
+        action__status) run_action cmd_status ;;
+        action__help) cmd_help; pause_key ;;
+        action__acpi) run_action cmd_acpi ;;
+        action__governor) run_action cmd_governor ;;
+        action__enable) run_action cmd_enable ;;
+        action__helpers) run_action cmd_helpers ;;
+        action__frequency_status) run_action cmd_freq status ;;
+        action__frequency_auto) run_action cmd_freq auto ;;
+        child__frequency_max)
+            ask "Max MHz ($GPU_FREQ_MIN-$GPU_FREQ_MAX, 1500 = tuned default)" "2000"
+            run_action cmd_freq 0 "$REPLY"
+            ;;
+        child__frequency_range)
+            ask "Min MHz ($GPU_FREQ_MIN-$GPU_FREQ_MAX)" "1200"
+            minimum="$REPLY"
+            ask "Max MHz" "1800"
+            run_action cmd_freq "$minimum" "$REPLY"
+            ;;
+        child__frequency_pin)
+            ask "Pin at MHz" "1800"
+            run_action cmd_freq "$REPLY"
+            ;;
+        action__frequency_maximum) run_action cmd_freq max ;;
+        child__voltage_curve) menu_voltage_curve ;;
+        action__load_status) run_action lt_show ;;
+        action__load_eager) run_action lt_set "$LT_EAGER_UPPER" "$LT_EAGER_LOWER" ;;
+        action__load_default) run_action lt_set "$LT_DEF_UPPER" "$LT_DEF_LOWER" ;;
+        child__load_custom)
+            ask "Upper -- clock UP above this GPU busy% (10-99)" "60"
+            upper="$REPLY"
+            ask "Lower -- step DOWN below this GPU busy%" "45"
+            run_action lt_set "$upper" "$REPLY"
+            ;;
+        action__ramp_status) run_action ramp_show ;;
+        action__ramp_responsive) run_action ramp_set 500 ;;
+        action__ramp_relaxed) run_action ramp_set 1000 ;;
+        child__ramp_custom)
+            ask "Idle-to-max climb time ms (200-5000)" "500"
+            run_action ramp_set "$REPLY"
+            ;;
+        action__ramp_reset) run_action ramp_reset ;;
+        child__temperature)
+            ask "GPU throttle target C ($GPU_TEMP_MIN-$GPU_TEMP_MAX)" "$GPU_TEMP_DEFAULT"
+            run_action temperature_set "$REPLY"
+            ;;
+        child__cpu_mitigations) menu_toggle_cpu_mitigations ;;
+        action__oc_status) run_action oc_status ;;
+        child__oc_detect)
+            echo
+            echo -e "  ${CR}${CB}Vid limit is the safety-critical number. NEVER above 1325 mV --${C0}"
+            echo -e "  ${CR}${CB}exceeding it has bricked boards. 1275 is the community reference;${C0}"
+            echo -e "  ${CR}${CB}pure undervolt: target 3500 MHz with a 1000 mV limit.${C0}"
+            echo
+            ask "Target frequency MHz" "4000"
+            target_frequency="$REPLY"
+            ask "Vid limit mV (max 1325)" "1275"
+            voltage="$REPLY"
+            ask "Temp limit C" "90"
+            run_action oc_detect "$target_frequency" "$voltage" "$REPLY"
+            ;;
+        action__oc_enable) run_action oc_enable ;;
+        action__oc_apply) run_action oc_apply ;;
+        action__oc_off) run_action oc_off ;;
+        action__oc_update) run_action install_oc_files force ;;
+        action__unlock_status) run_action core_unlock_status ;;
+        action__unlock_topology) run_action core_unlock_topology ;;
+        action__unlock_test) run_action core_unlock_test ;;
+        action__unlock_standard) run_action core_unlock_enable ;;
+        action__unlock_efi) run_action core_unlock_efi_enable ;;
+        action__unlock_off) run_action core_unlock_off ;;
+        action__unlock_uninstall) run_action core_unlock_uninstall ;;
+        *) die "Unknown generated power menu target: $1" ;;
+    esac
+}
+
+# BEGIN GENERATED POWER MENUS
+# Generated from menus/power.mmd by scripts/generate-menus.py.
+# Do not edit this region directly.
+power_menu_graph_render() {
+    local menu_id="$1" title target badge
+    if declare -F power_menu_graph_prepare >/dev/null; then power_menu_graph_prepare "$menu_id"; fi
     while true; do
-        local items=(
-            "Show current state|$(badge_freq)|Ask the governor for its performance-mode status."
-            "Adaptive (auto)||Back to config defaults; clears the saved boot setting."
-            "Set max cap||Raise/lower the ceiling, keep adaptive scaling + idle savings."
-            "Set min + max range||Floor AND ceiling, adaptive in between."
-            "Pin a frequency||Fixed clock, perf mode ON -- no idle downscale. For testing."
-            "Max performance||Top of the voltage curve until you switch back to auto."
-            "Edit frequency / voltage curve||List, add, edit, remove, offset, or reset safe-points transactionally."
-        )
-        menu_select "GPU frequency & voltage  ${CD}(persists across reboots)${C0}" "${items[@]}" || return 0
-        case $MENU_CHOICE in
-            0) run_action cmd_freq status ;;
-            1) run_action cmd_freq auto ;;
-            2) ask "Max MHz ($GPU_FREQ_MIN-$GPU_FREQ_MAX, 1500 = tuned default)" "2000"
-               run_action cmd_freq 0 "$REPLY" ;;
-            3) ask "Min MHz ($GPU_FREQ_MIN-$GPU_FREQ_MAX)" "1200"; local mn="$REPLY"
-               ask "Max MHz" "1800"
-               run_action cmd_freq "$mn" "$REPLY" ;;
-            4) ask "Pin at MHz" "1800"
-               run_action cmd_freq "$REPLY" ;;
-            5) run_action cmd_freq max ;;
-            6) menu_voltage_curve ;;
+        local items=() targets=() badges=()
+        case "$menu_id" in
+            menu__root)
+                title="BC-250 power setup  (SteamOS)"
+                if ! badge=$(power_menu_graph_badge action__status read_only); then badge=; fi
+                if [[ "$badge" == *"|"* || "$badge" == *$'\n'* ]]; then
+                    die "Invalid generated menu badge: action__status"
+                fi
+                items+=("Status overview|${badge}|Health check of every service, clock and temp. Always safe.")
+                targets+=("action__status")
+                badges+=("$badge")
+                if ! badge=$(power_menu_graph_badge menu__foundation menu); then badge=; fi
+                if [[ "$badge" == *"|"* || "$badge" == *$'\n'* ]]; then
+                    die "Invalid generated menu badge: menu__foundation"
+                fi
+                items+=("Power foundation|${badge}|Install ACPI, reboot, test the GPU governor, then enable it at boot.")
+                targets+=("menu__foundation")
+                badges+=("$badge")
+                if ! badge=$(power_menu_graph_badge menu__gpu menu); then badge=; fi
+                if [[ "$badge" == *"|"* || "$badge" == *$'\n'* ]]; then
+                    die "Invalid generated menu badge: menu__gpu"
+                fi
+                items+=("GPU performance tuning|${badge}|Configure clocks, voltage, load response, and ramp behavior.")
+                targets+=("menu__gpu")
+                badges+=("$badge")
+                if ! badge=$(power_menu_graph_badge menu__cpu menu); then badge=; fi
+                if [[ "$badge" == *"|"* || "$badge" == *$'\n'* ]]; then
+                    die "Invalid generated menu badge: menu__cpu"
+                fi
+                items+=("CPU performance & security|${badge}|Configure CPU undervolt/overclock and the security-mitigation policy.")
+                targets+=("menu__cpu")
+                badges+=("$badge")
+                if ! badge=$(power_menu_graph_badge action__help read_only); then badge=; fi
+                if [[ "$badge" == *"|"* || "$badge" == *$'\n'* ]]; then
+                    die "Invalid generated menu badge: action__help"
+                fi
+                items+=("Full help|${badge}|The complete manual for every CLI command.")
+                targets+=("action__help")
+                badges+=("$badge")
+                ;;
+            menu__foundation)
+                title="Power foundation  (complete in order)"
+                if ! badge=$(power_menu_graph_badge action__acpi install); then badge=; fi
+                if [[ "$badge" == *"|"* || "$badge" == *$'\n'* ]]; then
+                    die "Invalid generated menu badge: action__acpi"
+                fi
+                items+=("Step 1 - ACPI fix: CPU idle + scaling|${badge}|Install the ACPI override, then reboot before judging CPU idle or scaling.")
+                targets+=("action__acpi")
+                badges+=("$badge")
+                if ! badge=$(power_menu_graph_badge action__governor install); then badge=; fi
+                if [[ "$badge" == *"|"* || "$badge" == *$'\n'* ]]; then
+                    die "Invalid generated menu badge: action__governor"
+                fi
+                items+=("Step 2 - Install and test GPU governor|${badge}|Test-start adaptive GPU control. Load-test it before enabling boot startup.")
+                targets+=("action__governor")
+                badges+=("$badge")
+                if ! badge=$(power_menu_graph_badge action__enable install); then badge=; fi
+                if [[ "$badge" == *"|"* || "$badge" == *$'\n'* ]]; then
+                    die "Invalid generated menu badge: action__enable"
+                fi
+                items+=("Step 3 - Enable governor at boot|${badge}|Only enable after the test-started governor has proved stable under load.")
+                targets+=("action__enable")
+                badges+=("$badge")
+                if ! badge=$(power_menu_graph_badge action__helpers install); then badge=; fi
+                if [[ "$badge" == *"|"* || "$badge" == *$'\n'* ]]; then
+                    die "Invalid generated menu badge: action__helpers"
+                fi
+                items+=("Reinstall D-Bus helpers|${badge}|Repair frequency-control helpers and 'name is not activatable' errors.")
+                targets+=("action__helpers")
+                badges+=("$badge")
+                ;;
+            menu__gpu)
+                title="GPU performance tuning  (governor required)"
+                if ! badge=$(power_menu_graph_badge menu__frequency menu); then badge=; fi
+                if [[ "$badge" == *"|"* || "$badge" == *$'\n'* ]]; then
+                    die "Invalid generated menu badge: menu__frequency"
+                fi
+                items+=("Frequency & voltage|${badge}|Set adaptive caps, ranges, pinned clocks, or advanced voltage-curve changes.")
+                targets+=("menu__frequency")
+                badges+=("$badge")
+                if ! badge=$(power_menu_graph_badge menu__load menu); then badge=; fi
+                if [[ "$badge" == *"|"* || "$badge" == *$'\n'* ]]; then
+                    die "Invalid generated menu badge: menu__load"
+                fi
+                items+=("Load targets|${badge}|Choose when the governor clocks up and down.")
+                targets+=("menu__load")
+                badges+=("$badge")
+                if ! badge=$(power_menu_graph_badge child__temperature advanced); then badge=; fi
+                if [[ "$badge" == *"|"* || "$badge" == *$'\n'* ]]; then
+                    die "Invalid generated menu badge: child__temperature"
+                fi
+                items+=("Thermal target|${badge}|Set the GPU throttle temperature and automatic 10 C recovery hysteresis.")
+                targets+=("child__temperature")
+                badges+=("$badge")
+                if ! badge=$(power_menu_graph_badge menu__ramp menu); then badge=; fi
+                if [[ "$badge" == *"|"* || "$badge" == *$'\n'* ]]; then
+                    die "Invalid generated menu badge: menu__ramp"
+                fi
+                items+=("Ramp behavior|${badge}|Choose how quickly and granularly GPU clocks move.")
+                targets+=("menu__ramp")
+                badges+=("$badge")
+                ;;
+            menu__frequency)
+                title="GPU frequency & voltage  (persists across reboots)"
+                if ! badge=$(power_menu_graph_badge action__frequency_status read_only); then badge=; fi
+                if [[ "$badge" == *"|"* || "$badge" == *$'\n'* ]]; then
+                    die "Invalid generated menu badge: action__frequency_status"
+                fi
+                items+=("Show current state|${badge}|Ask the governor for its performance-mode status.")
+                targets+=("action__frequency_status")
+                badges+=("$badge")
+                if ! badge=$(power_menu_graph_badge action__frequency_auto advanced); then badge=; fi
+                if [[ "$badge" == *"|"* || "$badge" == *$'\n'* ]]; then
+                    die "Invalid generated menu badge: action__frequency_auto"
+                fi
+                items+=("Adaptive (auto)|${badge}|Back to config defaults; clears the saved boot setting.")
+                targets+=("action__frequency_auto")
+                badges+=("$badge")
+                if ! badge=$(power_menu_graph_badge child__frequency_max advanced); then badge=; fi
+                if [[ "$badge" == *"|"* || "$badge" == *$'\n'* ]]; then
+                    die "Invalid generated menu badge: child__frequency_max"
+                fi
+                items+=("Set max cap|${badge}|Raise/lower the ceiling, keep adaptive scaling + idle savings.")
+                targets+=("child__frequency_max")
+                badges+=("$badge")
+                if ! badge=$(power_menu_graph_badge child__frequency_range advanced); then badge=; fi
+                if [[ "$badge" == *"|"* || "$badge" == *$'\n'* ]]; then
+                    die "Invalid generated menu badge: child__frequency_range"
+                fi
+                items+=("Set min + max range|${badge}|Floor AND ceiling, adaptive in between.")
+                targets+=("child__frequency_range")
+                badges+=("$badge")
+                if ! badge=$(power_menu_graph_badge child__frequency_pin advanced); then badge=; fi
+                if [[ "$badge" == *"|"* || "$badge" == *$'\n'* ]]; then
+                    die "Invalid generated menu badge: child__frequency_pin"
+                fi
+                items+=("Pin a frequency|${badge}|Fixed clock, perf mode ON -- no idle downscale. For testing.")
+                targets+=("child__frequency_pin")
+                badges+=("$badge")
+                if ! badge=$(power_menu_graph_badge action__frequency_maximum advanced); then badge=; fi
+                if [[ "$badge" == *"|"* || "$badge" == *$'\n'* ]]; then
+                    die "Invalid generated menu badge: action__frequency_maximum"
+                fi
+                items+=("Max performance|${badge}|Top of the voltage curve until you switch back to auto.")
+                targets+=("action__frequency_maximum")
+                badges+=("$badge")
+                if ! badge=$(power_menu_graph_badge child__voltage_curve advanced); then badge=; fi
+                if [[ "$badge" == *"|"* || "$badge" == *$'\n'* ]]; then
+                    die "Invalid generated menu badge: child__voltage_curve"
+                fi
+                items+=("Edit frequency / voltage curve|${badge}|List, add, edit, remove, offset, or reset safe-points transactionally.")
+                targets+=("child__voltage_curve")
+                badges+=("$badge")
+                ;;
+            menu__load)
+                title="GPU load targets  (when the governor clocks up/down)"
+                if ! badge=$(power_menu_graph_badge action__load_status read_only); then badge=; fi
+                if [[ "$badge" == *"|"* || "$badge" == *$'\n'* ]]; then
+                    die "Invalid generated menu badge: action__load_status"
+                fi
+                items+=("Show load targets|${badge}|Config + live values, and what upper/lower mean.")
+                targets+=("action__load_status")
+                badges+=("$badge")
+                if ! badge=$(power_menu_graph_badge action__load_eager advanced); then badge=; fi
+                if [[ "$badge" == *"|"* || "$badge" == *$'\n'* ]]; then
+                    die "Invalid generated menu badge: action__load_eager"
+                fi
+                items+=("Eager preset (0.40 / 0.10)|${badge}|Light-load games clock up off idle. Fixes 'stuck at low clocks'.")
+                targets+=("action__load_eager")
+                badges+=("$badge")
+                if ! badge=$(power_menu_graph_badge action__load_default advanced); then badge=; fi
+                if [[ "$badge" == *"|"* || "$badge" == *$'\n'* ]]; then
+                    die "Invalid generated menu badge: action__load_default"
+                fi
+                items+=("Tuned default (0.80 / 0.65)|${badge}|Install default: full ramps under real load, best idle savings.")
+                targets+=("action__load_default")
+                badges+=("$badge")
+                if ! badge=$(power_menu_graph_badge child__load_custom advanced); then badge=; fi
+                if [[ "$badge" == *"|"* || "$badge" == *$'\n'* ]]; then
+                    die "Invalid generated menu badge: child__load_custom"
+                fi
+                items+=("Custom values|${badge}|Set your own thresholds (percent or fraction).")
+                targets+=("child__load_custom")
+                badges+=("$badge")
+                ;;
+            menu__ramp)
+                title="GPU ramp behavior  (how fast + how granular clocks move)"
+                if ! badge=$(power_menu_graph_badge action__ramp_status read_only); then badge=; fi
+                if [[ "$badge" == *"|"* || "$badge" == *$'\n'* ]]; then
+                    die "Invalid generated menu badge: action__ramp_status"
+                fi
+                items+=("Show ramp behavior|${badge}|Step size, climb time, downhold + hunting verdict from the config.")
+                targets+=("action__ramp_status")
+                badges+=("$badge")
+                if ! badge=$(power_menu_graph_badge action__ramp_responsive advanced); then badge=; fi
+                if [[ "$badge" == *"|"* || "$badge" == *$'\n'* ]]; then
+                    die "Invalid generated menu badge: action__ramp_responsive"
+                fi
+                items+=("Responsive (climb in 500 ms)|${badge}|Smoothest hunting-free step for a half-second idle-to-max climb.")
+                targets+=("action__ramp_responsive")
+                badges+=("$badge")
+                if ! badge=$(power_menu_graph_badge action__ramp_relaxed advanced); then badge=; fi
+                if [[ "$badge" == *"|"* || "$badge" == *$'\n'* ]]; then
+                    die "Invalid generated menu badge: action__ramp_relaxed"
+                fi
+                items+=("Relaxed (climb in 1000 ms)|${badge}|Install-default speed, but finer steps derived for smoothness.")
+                targets+=("action__ramp_relaxed")
+                badges+=("$badge")
+                if ! badge=$(power_menu_graph_badge child__ramp_custom advanced); then badge=; fi
+                if [[ "$badge" == *"|"* || "$badge" == *$'\n'* ]]; then
+                    die "Invalid generated menu badge: child__ramp_custom"
+                fi
+                items+=("Custom climb time|${badge}|You pick idle-to-max ms; step, interval, down-events are derived.")
+                targets+=("child__ramp_custom")
+                badges+=("$badge")
+                if ! badge=$(power_menu_graph_badge action__ramp_reset cleanup); then badge=; fi
+                if [[ "$badge" == *"|"* || "$badge" == *$'\n'* ]]; then
+                    die "Invalid generated menu badge: action__ramp_reset"
+                fi
+                items+=("Reset install defaults|${badge}|200 MHz steps every 200 ms, 1 s hold before downscaling.")
+                targets+=("action__ramp_reset")
+                badges+=("$badge")
+                ;;
+            menu__cpu)
+                title="CPU performance & security  (advanced)"
+                if ! badge=$(power_menu_graph_badge menu__cpu_oc menu); then badge=; fi
+                if [[ "$badge" == *"|"* || "$badge" == *$'\n'* ]]; then
+                    die "Invalid generated menu badge: menu__cpu_oc"
+                fi
+                items+=("CPU overclock / undervolt|${badge}|Detect, apply, persist, or revert a CPU voltage/frequency profile.")
+                targets+=("menu__cpu_oc")
+                badges+=("$badge")
+                if ! badge=$(power_menu_graph_badge child__cpu_mitigations advanced); then badge=; fi
+                if [[ "$badge" == *"|"* || "$badge" == *$'\n'* ]]; then
+                    die "Invalid generated menu badge: child__cpu_mitigations"
+                fi
+                items+=("CPU security mitigations (toggle)|${badge}|Trade kernel security mitigations for performance. Reboot required.")
+                targets+=("child__cpu_mitigations")
+                badges+=("$badge")
+                ;;
+            menu__cpu_oc)
+                title="CPU overclock / undervolt  (bc250_smu_oc)"
+                if ! badge=$(power_menu_graph_badge action__oc_status read_only); then badge=; fi
+                if [[ "$badge" == *"|"* || "$badge" == *$'\n'* ]]; then
+                    die "Invalid generated menu badge: action__oc_status"
+                fi
+                items+=("Show OC status|${badge}|Full report: configs, measured + live mV, saved verdict.")
+                targets+=("action__oc_status")
+                badges+=("$badge")
+                if ! badge=$(power_menu_graph_badge child__oc_detect experimental); then badge=; fi
+                if [[ "$badge" == *"|"* || "$badge" == *$'\n'* ]]; then
+                    die "Invalid generated menu badge: child__oc_detect"
+                fi
+                items+=("Detect stable overclock|${badge}|Guided stress-stepped search. Start here. CAN hard-crash if pushed.")
+                targets+=("child__oc_detect")
+                badges+=("$badge")
+                if ! badge=$(power_menu_graph_badge action__oc_enable install); then badge=; fi
+                if [[ "$badge" == *"|"* || "$badge" == *$'\n'* ]]; then
+                    die "Invalid generated menu badge: action__oc_enable"
+                fi
+                items+=("Enable at boot|${badge}|Persist the detected config; applies before the GPU governor.")
+                targets+=("action__oc_enable")
+                badges+=("$badge")
+                if ! badge=$(power_menu_graph_badge action__oc_apply advanced); then badge=; fi
+                if [[ "$badge" == *"|"* || "$badge" == *$'\n'* ]]; then
+                    die "Invalid generated menu badge: action__oc_apply"
+                fi
+                items+=("Apply now|${badge}|Re-apply the saved config immediately.")
+                targets+=("action__oc_apply")
+                badges+=("$badge")
+                if ! badge=$(power_menu_graph_badge action__oc_off cleanup); then badge=; fi
+                if [[ "$badge" == *"|"* || "$badge" == *$'\n'* ]]; then
+                    die "Invalid generated menu badge: action__oc_off"
+                fi
+                items+=("Revert to stock|${badge}|Disable at boot + back to 3500 MHz / factory curve now.")
+                targets+=("action__oc_off")
+                badges+=("$badge")
+                if ! badge=$(power_menu_graph_badge action__oc_update install); then badge=; fi
+                if [[ "$badge" == *"|"* || "$badge" == *$'\n'* ]]; then
+                    die "Invalid generated menu badge: action__oc_update"
+                fi
+                items+=("Update tool sources|${badge}|Re-fetch bc250_smu_oc (pinned commit + our patches).")
+                targets+=("action__oc_update")
+                badges+=("$badge")
+                ;;
+            menu__cpu_unlock)
+                title="CPU core unlock  (experimental 6c/12t -> 8c/16t: test, then choose one Setup 2 method)"
+                if ! badge=$(power_menu_graph_badge action__unlock_status read_only); then badge=; fi
+                if [[ "$badge" == *"|"* || "$badge" == *$'\n'* ]]; then
+                    die "Invalid generated menu badge: action__unlock_status"
+                fi
+                items+=("Status summary|${badge}|Show the automatic unlock method, active cores, service state, reboot guard, and telemetry compatibility.")
+                targets+=("action__unlock_status")
+                badges+=("$badge")
+                if ! badge=$(power_menu_graph_badge action__unlock_topology read_only); then badge=; fi
+                if [[ "$badge" == *"|"* || "$badge" == *$'\n'* ]]; then
+                    die "Invalid generated menu badge: action__unlock_topology"
+                fi
+                items+=("Core topology|${badge}|Display active and unavailable CPU cores grouped by CCX.")
+                targets+=("action__unlock_topology")
+                badges+=("$badge")
+                if ! badge=$(power_menu_graph_badge action__unlock_test experimental); then badge=; fi
+                if [[ "$badge" == *"|"* || "$badge" == *$'\n'* ]]; then
+                    die "Invalid generated menu badge: action__unlock_test"
+                fi
+                items+=("Setup 1 - Test eight cores once|${badge}|Write the volatile mask only. Manually reboot, stress-test, then return here.")
+                targets+=("action__unlock_test")
+                badges+=("$badge")
+                if ! badge=$(power_menu_graph_badge action__unlock_standard experimental); then badge=; fi
+                if [[ "$badge" == *"|"* || "$badge" == *$'\n'* ]]; then
+                    die "Invalid generated menu badge: action__unlock_standard"
+                fi
+                items+=("Setup 2 - Standard Linux boot method|${badge}|Recommended. Applies after Linux boots. Choose this OR EFI; they cannot be enabled together.")
+                targets+=("action__unlock_standard")
+                badges+=("$badge")
+                if ! badge=$(power_menu_graph_badge action__unlock_efi experimental); then badge=; fi
+                if [[ "$badge" == *"|"* || "$badge" == *$'\n'* ]]; then
+                    die "Invalid generated menu badge: action__unlock_efi"
+                fi
+                items+=("Setup 2 - EFI pre-boot method|${badge}|Alternative. Applies before Linux to avoid an extra Linux boot. Choose this OR standard; they cannot be enabled together.")
+                targets+=("action__unlock_efi")
+                badges+=("$badge")
+                if ! badge=$(power_menu_graph_badge action__unlock_off cleanup); then badge=; fi
+                if [[ "$badge" == *"|"* || "$badge" == *$'\n'* ]]; then
+                    die "Invalid generated menu badge: action__unlock_off"
+                fi
+                items+=("Disable automatic unlock (keep helper)|${badge}|Stop future automatic unlock; retain the helper for testing or re-enabling.")
+                targets+=("action__unlock_off")
+                badges+=("$badge")
+                if ! badge=$(power_menu_graph_badge action__unlock_uninstall cleanup); then badge=; fi
+                if [[ "$badge" == *"|"* || "$badge" == *$'\n'* ]]; then
+                    die "Invalid generated menu badge: action__unlock_uninstall"
+                fi
+                items+=("Uninstall all core-unlock files|${badge}|Disable automatic unlock and remove the helper, units, EFI files, licenses, and guard state.")
+                targets+=("action__unlock_uninstall")
+                badges+=("$badge")
+                ;;
+            *) die "Unknown generated power menu ID: $menu_id" ;;
         esac
+        if [[ "$title" == *"|"* || "$title" == *[[:cntrl:]]* ]]; then
+            die "Invalid generated power menu title"
+        fi
+        menu_select "$title" "${items[@]}" || { echo; return 0; }
+        target=${targets[$MENU_CHOICE]}
+        if [[ "$target" == menu__* ]]; then
+            power_menu_graph_render "$target"
+        else
+            power_menu_graph_activate "$target" "${badges[$MENU_CHOICE]}"
+        fi
     done
 }
 
-menu_load_target() {
-    while true; do
-        local items=(
-            "Show load targets|$(badge_load_target)|Config + live values, and what upper/lower mean."
-            "Eager preset (0.40 / 0.10)||Light-load games clock up off idle. Fixes 'stuck at low clocks'."
-            "Tuned default (0.80 / 0.65)||Install default: full ramps under real load, best idle savings."
-            "Custom values||Set your own thresholds (percent or fraction)."
-        )
-        menu_select "GPU load targets  ${CD}(when the governor clocks up/down)${C0}" "${items[@]}" || return 0
-        case $MENU_CHOICE in
-            0) run_action lt_show ;;
-            1) run_action lt_set "$LT_EAGER_UPPER" "$LT_EAGER_LOWER" ;;
-            2) run_action lt_set "$LT_DEF_UPPER" "$LT_DEF_LOWER" ;;
-            3) ask "Upper -- clock UP above this GPU busy% (10-99)" "60"; local u="$REPLY"
-               ask "Lower -- step DOWN below this GPU busy%" "45"
-               run_action lt_set "$u" "$REPLY" ;;
-        esac
-    done
+power_menu_graph_open() {
+    case "${1:-root}" in
+        root) power_menu_graph_render menu__root ;;
+        foundation) power_menu_graph_render menu__foundation ;;
+        frequency) power_menu_graph_render menu__frequency ;;
+        load) power_menu_graph_render menu__load ;;
+        ramp) power_menu_graph_render menu__ramp ;;
+        cpu) power_menu_graph_render menu__cpu ;;
+        cpu-unlock) power_menu_graph_render menu__cpu_unlock ;;
+        *) return 2 ;;
+    esac
 }
 
-menu_ramp() {
-    while true; do
-        local items=(
-            "Show ramp behavior|$(badge_ramp)|Step size, climb time, downhold + hunting verdict from the config."
-            "Responsive (climb in 500 ms)||Smoothest hunting-free step for a half-second idle-to-max climb."
-            "Relaxed (climb in 1000 ms)||Install-default speed, but finer steps derived for smoothness."
-            "Custom climb time||You pick idle-to-max ms; step, interval, down-events are derived."
-            "Reset install defaults||200 MHz steps every 200 ms, 1 s hold before downscaling."
-        )
-        menu_select "GPU ramp behavior  ${CD}(how fast + how granular clocks move)${C0}" "${items[@]}" || return 0
-        case $MENU_CHOICE in
-            0) run_action ramp_show ;;
-            1) run_action ramp_set 500 ;;
-            2) run_action ramp_set 1000 ;;
-            3) ask "Idle-to-max climb time ms (200-5000)" "500"
-               run_action ramp_set "$REPLY" ;;
-            4) run_action ramp_reset ;;
-        esac
-    done
-}
-
-menu_cpu_oc() {
-    while true; do
-        local items=(
-            "Show OC status|$(badge_oc_live)|Full report: configs, measured + live mV, saved verdict."
-            "Detect stable overclock|$(badge_oc_last)|Guided stress-stepped search. Start here. CAN hard-crash if pushed."
-            "Enable at boot|$(badge_oc_saved)|Persist the detected config; applies before the GPU governor."
-            "Apply now||Re-apply the saved config immediately."
-            "Revert to stock||Disable at boot + back to 3500 MHz / factory curve now."
-            "Update tool sources||Re-fetch bc250_smu_oc (pinned commit + our patches)."
-        )
-        menu_select "CPU overclock / undervolt  ${CD}(bc250_smu_oc)${C0}" "${items[@]}" || return 0
-        case $MENU_CHOICE in
-            0) run_action oc_status ;;
-            1) echo
-               echo -e "  ${CR}${CB}Vid limit is the safety-critical number. NEVER above 1325 mV --${C0}"
-               echo -e "  ${CR}${CB}exceeding it has bricked boards. 1275 is the community reference;${C0}"
-               echo -e "  ${CR}${CB}pure undervolt: target 3500 MHz with a 1000 mV limit.${C0}"
-               echo
-               ask "Target frequency MHz" "4000"; local f="$REPLY"
-               ask "Vid limit mV (max 1325)" "1275"; local v="$REPLY"
-               ask "Temp limit C" "90"
-               run_action oc_detect "$f" "$v" "$REPLY" ;;
-            2) run_action oc_enable ;;
-            3) run_action oc_apply ;;
-            4) run_action oc_off ;;
-            5) run_action install_oc_files force ;;
-        esac
-    done
-}
-
-menu_power_setup() {
-    while true; do
-        local items=(
-            "Step 1 - ACPI fix: CPU idle + scaling|$(badge_acpi)|Install the ACPI override, then reboot before judging CPU idle or scaling."
-            "Step 2 - Install and test GPU governor|$(badge_governor)|Test-start adaptive GPU control. Load-test it before enabling boot startup."
-            "Step 3 - Enable governor at boot|$(badge_gov_boot)|Only enable after the test-started governor has proved stable under load."
-            "Reinstall D-Bus helpers||Repair frequency-control helpers and 'name is not activatable' errors."
-        )
-        menu_select "Power foundation  ${CD}(complete in order)${C0}" "${items[@]}" || return 0
-        case $MENU_CHOICE in
-            0) run_action cmd_acpi ;;
-            1) run_action cmd_governor ;;
-            2) run_action cmd_enable ;;
-            3) run_action cmd_helpers ;;
-        esac
-    done
-}
-
-menu_gpu_tuning() {
-    while true; do
-        local items=(
-            "Frequency & voltage|$(badge_freq)|Set adaptive caps, ranges, pinned clocks, or advanced voltage-curve changes."
-            "Load targets|$(badge_load_target)|Choose when the governor clocks up and down."
-            "Thermal target||Set the GPU throttle temperature and automatic 10 C recovery hysteresis."
-            "Ramp behavior|$(badge_ramp)|Choose how quickly and granularly GPU clocks move."
-        )
-        menu_select "GPU performance tuning  ${CD}(governor required)${C0}" "${items[@]}" || return 0
-        case $MENU_CHOICE in
-            0) menu_freq ;;
-            1) menu_load_target ;;
-            2) ask "GPU throttle target C ($GPU_TEMP_MIN-$GPU_TEMP_MAX)" "$GPU_TEMP_DEFAULT"
-               run_action temperature_set "$REPLY" ;;
-            3) menu_ramp ;;
-        esac
-    done
-}
-
-menu_cpu_tuning() {
-    while true; do
-        local items=(
-            "CPU overclock / undervolt|$(badge_oc)|Detect, apply, persist, or revert a CPU voltage/frequency profile."
-            "CPU security mitigations (toggle)|$(badge_cpu_mitigations)|Trade kernel security mitigations for performance. Reboot required."
-        )
-        menu_select "CPU performance & security  ${CD}(advanced)${C0}" "${items[@]}" || return 0
-        case $MENU_CHOICE in
-            0) menu_cpu_oc ;;
-            1) menu_toggle_cpu_mitigations ;;
-        esac
-    done
-}
+# END GENERATED POWER MENUS
 
 menu_cpu_unlock() {
     [[ -t 0 && -t 1 ]] || die "The menu needs an interactive terminal. See '$0 help' for CLI commands."
@@ -4589,29 +4911,7 @@ menu_cpu_unlock() {
         if [[ "$REPLY" =~ ^[Yy] ]]; then exec sudo "$0" cpu-unlock menu; fi
         echo
     fi
-    while true; do
-        local mode
-        mode=$(core_unlock_mode)
-        local items=(
-            "Status summary|$(badge_core_unlock "$mode")|Show the automatic unlock method, active cores, service state, reboot guard, and telemetry compatibility."
-            "Core topology||Display active and unavailable CPU cores grouped by CCX."
-            "Setup 1 - Test eight cores once||Write the volatile mask only. Manually reboot, stress-test, then return here."
-            "Setup 2 - Standard Linux boot method||Recommended. Applies after Linux boots. Choose this OR EFI; they cannot be enabled together."
-            "Setup 2 - EFI pre-boot method||Alternative. Applies before Linux to avoid an extra Linux boot. Choose this OR standard; they cannot be enabled together."
-            "Disable automatic unlock (keep helper)|$(badge_core_unlock "$mode")|Stop future automatic unlock; retain the helper for testing or re-enabling."
-            "Uninstall all core-unlock files|$(badge_core_unlock_files "$mode")|Disable automatic unlock and remove the helper, units, EFI files, licenses, and guard state."
-        )
-        menu_select "CPU core unlock  ${CD}(experimental 6c/12t -> 8c/16t: test, then choose one Setup 2 method)${C0}" "${items[@]}" || return 0
-        case $MENU_CHOICE in
-            0) run_action core_unlock_status ;;
-            1) run_action core_unlock_topology ;;
-            2) run_action core_unlock_test ;;
-            3) run_action core_unlock_enable ;;
-            4) run_action core_unlock_efi_enable ;;
-            5) run_action core_unlock_off ;;
-            6) run_action core_unlock_uninstall ;;
-        esac
-    done
+    power_menu_graph_open cpu-unlock
 }
 
 cmd_menu() {
@@ -4624,31 +4924,10 @@ cmd_menu() {
         echo
     fi
     case "$entry" in
-        root) ;;
-        foundation) menu_power_setup; return 0 ;;
-        frequency) menu_freq; return 0 ;;
-        load) menu_load_target; return 0 ;;
-        ramp) menu_ramp; return 0 ;;
-        cpu) menu_cpu_tuning; return 0 ;;
+        root|foundation|frequency|load|ramp|cpu|cpu-unlock) ;;
         *) die "Unknown power menu entry: $entry" ;;
     esac
-    while true; do
-        local items=(
-            "Status overview||Health check of every service, clock and temp. Always safe."
-            "Power foundation|${CG}[guided]${C0}|Install ACPI, reboot, test the GPU governor, then enable it at boot."
-            "GPU performance tuning|$(badge_freq)|Configure clocks, voltage, load response, and ramp behavior."
-            "CPU performance & security|$(badge_oc)|Configure CPU undervolt/overclock and the security-mitigation policy."
-            "Full help||The complete manual for every CLI command."
-        )
-        menu_select "BC-250 power setup  ${CD}(SteamOS)${C0}" "${items[@]}" || { echo; break; }
-        case $MENU_CHOICE in
-            0) run_action cmd_status ;;
-            1) menu_power_setup ;;
-            2) menu_gpu_tuning ;;
-            3) menu_cpu_tuning ;;
-            4) cmd_help; pause_key ;;
-        esac
-    done
+    power_menu_graph_open "$entry"
 }
 
 cmd_help() {
@@ -4927,7 +5206,7 @@ case "${1:-}" in
     all)          cmd_acpi; cmd_governor ;;
     menu)
         shift
-        (($# <= 1)) || die "Usage: $0 menu [root|foundation|frequency|load|ramp|cpu]"
+        (($# <= 1)) || die "Usage: $0 menu [root|foundation|frequency|load|ramp|cpu|cpu-unlock]"
         cmd_menu "${1:-root}"
         ;;
     help|-h|--help) cmd_help ;;

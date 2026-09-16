@@ -1618,152 +1618,392 @@ cmd_mute()     { require_user; require_daemon; dev_call Mute       y "$(audio_la
 
 # ============================== menus =====================================
 
-menu_toggles() {
+cec_menu_graph_badge() {
+    case "$1" in
+        menu__setup) printf '%s' "${CG}[guided]${C0}" ;;
+        menu__toggles|action__clear_overrides) badge_overrides ;;
+        menu__boot_wake|action__boot_wake_toggle) badge_wake ;;
+        menu__amp|child__receiver_integration) badge_amp_summary ;;
+        menu__controls|action__tv_on|action__active|action__switch|action__handoff) badge_active ;;
+        menu__diagnostics|action__tv_off|action__test|action__scan|action__repair) tv_badge_menu ;;
+        action__osd_name) badge_osd ;;
+        action__shutdown_standby) badge_standby ;;
+        action__toggle_wake_tv) badge_toggle wake_tv ;;
+        action__toggle_suspend_tv) badge_toggle suspend_tv ;;
+        action__toggle_allow_standby) badge_toggle allow_standby ;;
+        action__toggle_uinput) badge_toggle uinput ;;
+        action__boot_wake_mode) badge_wake_mode ;;
+        action__amp_power) badge_amp_power "$(power_status "${CEC_AUDIO_LA:-$(audio_la)}")" ;;
+        action__amp_follow_boot) badge_amp_follow boot ;;
+        action__amp_follow_poweroff) badge_amp_follow poweroff ;;
+        action__amp_follow_suspend) badge_amp_follow suspend ;;
+        action__amp_follow_resume) badge_amp_follow resume ;;
+        action__amp_sleep_toggle) badge_sleep_hook ;;
+        action__remote) badge_remote ;;
+    esac
+}
+
+cec_menu_graph_prepare() {
+    if [[ "$1" == menu__amp ]]; then
+        CEC_AUDIO_LA=$(audio_la)
+    fi
+}
+
+cec_menu_graph_activate() {
+    local displayed_badge="${2:-}"
+    case "$1" in
+        action__status) run_action cmd_status ;;
+        action__help) cmd_help; pause_key ;;
+        action__recommended_setup) run_action cmd_setup ;;
+        action__osd_name) run_action cmd_osd_name ;;
+        action__shutdown_standby) run_action shutdown_standby_toggle ;;
+        child__receiver_integration) cec_menu_graph_render menu__amp ;;
+        action__toggle_wake_tv) run_action cmd_toggle wake-tv ;;
+        action__toggle_suspend_tv) run_action cmd_toggle suspend-tv ;;
+        action__toggle_allow_standby) run_action cmd_toggle allow-standby ;;
+        action__toggle_uinput) run_action cmd_toggle uinput ;;
+        action__clear_overrides) run_action cmd_clear_overrides ;;
+        action__boot_wake_toggle) run_action boot_wake_toggle ;;
+        action__boot_wake_mode) run_action boot_wake_mode_toggle ;;
+        action__amp_power)
+            if [[ "$displayed_badge" == *"[on]"* ]]; then
+                run_action cmd_amp_off
+            else
+                run_action cmd_amp_on
+            fi
+            ;;
+        action__amp_follow_boot) run_action cmd_amp_follow boot ;;
+        action__amp_follow_poweroff) run_action cmd_amp_follow poweroff ;;
+        action__amp_follow_suspend) run_action cmd_amp_follow suspend ;;
+        action__amp_follow_resume) run_action cmd_amp_follow resume ;;
+        action__amp_sleep_toggle) run_action amp_sleep_toggle ;;
+        action__tv_on) run_action cmd_tv_on ;;
+        action__tv_off) run_action cmd_tv_off ;;
+        action__active) run_action cmd_active ;;
+        action__switch) run_action cmd_switch ;;
+        action__handoff) run_action cmd_handoff ;;
+        action__release) run_action cmd_release ;;
+        action__test) run_action cmd_test ;;
+        action__scan) run_action cmd_scan ;;
+        action__repair) run_action cmd_repair ;;
+        action__remote) run_action cmd_remote ;;
+        action__monitor) cmd_monitor ;;
+        *) die "Unknown generated CEC menu target: $1" ;;
+    esac
+}
+
+# BEGIN GENERATED CEC MENUS
+# Generated from menus/cec.mmd by scripts/generate-menus.py.
+# Do not edit this region directly.
+cec_menu_graph_render() {
+    local menu_id="$1" title target badge
+    if declare -F cec_menu_graph_prepare >/dev/null; then cec_menu_graph_prepare "$menu_id"; fi
     while true; do
-        local items=(
-            "Wake TV on resume|$(badge_toggle wake_tv)|cecd wakes the TV when the console resumes from sleep. On by default."
-            "Standby TV on suspend|$(badge_toggle suspend_tv)|TV turns off when the console goes to sleep."
-            "Suspend when TV turns off|$(badge_toggle allow_standby)|TV standby puts the console to sleep too. On by default."
-            "TV remote as input|$(badge_toggle uinput)|Relay remote keys as an input device -- drives gamescope."
-            "Clear overrides|$(badge_overrides)|Delete our override file; Steam UI regains control of all four."
-        )
-        menu_select "CEC behavior toggles  ${CD}(override Steam UI)${C0}" "${items[@]}" || { echo; break; }
-        case $MENU_CHOICE in
-            0) run_action cmd_toggle wake-tv ;;
-            1) run_action cmd_toggle suspend-tv ;;
-            2) run_action cmd_toggle allow-standby ;;
-            3) run_action cmd_toggle uinput ;;
-            4) run_action cmd_clear_overrides ;;
+        local items=() targets=() badges=()
+        case "$menu_id" in
+            menu__root)
+                title="BC-250 CEC / TV control (SteamOS cecd)"
+                if ! badge=$(cec_menu_graph_badge action__status read_only); then badge=; fi
+                if [[ "$badge" == *"|"* || "$badge" == *$'\n'* ]]; then
+                    die "Invalid generated menu badge: action__status"
+                fi
+                items+=("Status overview|${badge}|Full health dump: device, daemon, TV power, config. Always safe.")
+                targets+=("action__status")
+                badges+=("$badge")
+                if ! badge=$(cec_menu_graph_badge menu__setup menu); then badge=; fi
+                if [[ "$badge" == *"|"* || "$badge" == *$'\n'* ]]; then
+                    die "Invalid generated menu badge: menu__setup"
+                fi
+                items+=("Setup & automation|${badge}|Configure identity, sleep, boot, poweroff, and receiver-follow behavior.")
+                targets+=("menu__setup")
+                badges+=("$badge")
+                if ! badge=$(cec_menu_graph_badge menu__controls menu); then badge=; fi
+                if [[ "$badge" == *"|"* || "$badge" == *$'\n'* ]]; then
+                    die "Invalid generated menu badge: menu__controls"
+                fi
+                items+=("Everyday controls|${badge}|Wake or sleep devices and manage the active HDMI input.")
+                targets+=("menu__controls")
+                badges+=("$badge")
+                if ! badge=$(cec_menu_graph_badge menu__diagnostics menu); then badge=; fi
+                if [[ "$badge" == *"|"* || "$badge" == *$'\n'* ]]; then
+                    die "Invalid generated menu badge: menu__diagnostics"
+                fi
+                items+=("Diagnostics & recovery|${badge}|Test, scan, repair, inspect remote input, or monitor raw traffic.")
+                targets+=("menu__diagnostics")
+                badges+=("$badge")
+                if ! badge=$(cec_menu_graph_badge action__help read_only); then badge=; fi
+                if [[ "$badge" == *"|"* || "$badge" == *$'\n'* ]]; then
+                    die "Invalid generated menu badge: action__help"
+                fi
+                items+=("Full help|${badge}|The complete manual for every CLI command.")
+                targets+=("action__help")
+                badges+=("$badge")
+                ;;
+            menu__setup)
+                title="CEC setup & automation"
+                if ! badge=$(cec_menu_graph_badge action__recommended_setup install); then badge=; fi
+                if [[ "$badge" == *"|"* || "$badge" == *$'\n'* ]]; then
+                    die "Invalid generated menu badge: action__recommended_setup"
+                fi
+                items+=("Recommended setup|${badge}|One shot: device name, TV sleep behavior, poweroff integration, and boot wake.")
+                targets+=("action__recommended_setup")
+                badges+=("$badge")
+                if ! badge=$(cec_menu_graph_badge action__osd_name advanced); then badge=; fi
+                if [[ "$badge" == *"|"* || "$badge" == *$'\n'* ]]; then
+                    die "Invalid generated menu badge: action__osd_name"
+                fi
+                items+=("Set TV name (OSD)|${badge}|Set the console name shown in the TV's HDMI device list.")
+                targets+=("action__osd_name")
+                badges+=("$badge")
+                if ! badge=$(cec_menu_graph_badge menu__toggles menu); then badge=; fi
+                if [[ "$badge" == *"|"* || "$badge" == *$'\n'* ]]; then
+                    die "Invalid generated menu badge: menu__toggles"
+                fi
+                items+=("Console sleep behavior|${badge}|Configure wake, suspend, TV-power, and remote-input overrides.")
+                targets+=("menu__toggles")
+                badges+=("$badge")
+                if ! badge=$(cec_menu_graph_badge action__shutdown_standby install); then badge=; fi
+                if [[ "$badge" == *"|"* || "$badge" == *$'\n'* ]]; then
+                    die "Invalid generated menu badge: action__shutdown_standby"
+                fi
+                items+=("TV standby on power-off|${badge}|Install or remove polite TV standby during console shutdown.")
+                targets+=("action__shutdown_standby")
+                badges+=("$badge")
+                if ! badge=$(cec_menu_graph_badge menu__boot_wake menu); then badge=; fi
+                if [[ "$badge" == *"|"* || "$badge" == *$'\n'* ]]; then
+                    die "Invalid generated menu badge: menu__boot_wake"
+                fi
+                items+=("Wake TV at boot|${badge}|Install boot wake and choose polite or always-grab input behavior.")
+                targets+=("menu__boot_wake")
+                badges+=("$badge")
+                if ! badge=$(cec_menu_graph_badge child__receiver_integration menu); then badge=; fi
+                if [[ "$badge" == *"|"* || "$badge" == *$'\n'* ]]; then
+                    die "Invalid generated menu badge: child__receiver_integration"
+                fi
+                items+=("Receiver integration|${badge}|Configure receiver follow behavior for boot, poweroff, suspend, and resume.")
+                targets+=("child__receiver_integration")
+                badges+=("$badge")
+                ;;
+            menu__toggles)
+                title="CEC behavior toggles  (override Steam UI)"
+                if ! badge=$(cec_menu_graph_badge action__toggle_wake_tv advanced); then badge=; fi
+                if [[ "$badge" == *"|"* || "$badge" == *$'\n'* ]]; then
+                    die "Invalid generated menu badge: action__toggle_wake_tv"
+                fi
+                items+=("Wake TV on resume|${badge}|cecd wakes the TV when the console resumes from sleep. On by default.")
+                targets+=("action__toggle_wake_tv")
+                badges+=("$badge")
+                if ! badge=$(cec_menu_graph_badge action__toggle_suspend_tv advanced); then badge=; fi
+                if [[ "$badge" == *"|"* || "$badge" == *$'\n'* ]]; then
+                    die "Invalid generated menu badge: action__toggle_suspend_tv"
+                fi
+                items+=("Standby TV on suspend|${badge}|TV turns off when the console goes to sleep.")
+                targets+=("action__toggle_suspend_tv")
+                badges+=("$badge")
+                if ! badge=$(cec_menu_graph_badge action__toggle_allow_standby advanced); then badge=; fi
+                if [[ "$badge" == *"|"* || "$badge" == *$'\n'* ]]; then
+                    die "Invalid generated menu badge: action__toggle_allow_standby"
+                fi
+                items+=("Suspend when TV turns off|${badge}|TV standby puts the console to sleep too. On by default.")
+                targets+=("action__toggle_allow_standby")
+                badges+=("$badge")
+                if ! badge=$(cec_menu_graph_badge action__toggle_uinput advanced); then badge=; fi
+                if [[ "$badge" == *"|"* || "$badge" == *$'\n'* ]]; then
+                    die "Invalid generated menu badge: action__toggle_uinput"
+                fi
+                items+=("TV remote as input|${badge}|Relay remote keys as an input device -- drives gamescope.")
+                targets+=("action__toggle_uinput")
+                badges+=("$badge")
+                if ! badge=$(cec_menu_graph_badge action__clear_overrides cleanup); then badge=; fi
+                if [[ "$badge" == *"|"* || "$badge" == *$'\n'* ]]; then
+                    die "Invalid generated menu badge: action__clear_overrides"
+                fi
+                items+=("Clear overrides|${badge}|Delete our override file; Steam UI regains control of all four.")
+                targets+=("action__clear_overrides")
+                badges+=("$badge")
+                ;;
+            menu__boot_wake)
+                title="Wake TV at boot  (session-start unit)"
+                if ! badge=$(cec_menu_graph_badge action__boot_wake_toggle install); then badge=; fi
+                if [[ "$badge" == *"|"* || "$badge" == *$'\n'* ]]; then
+                    die "Invalid generated menu badge: action__boot_wake_toggle"
+                fi
+                items+=("Boot wake unit|${badge}|Wake the TV at every session start. Toggles install/remove (installs polite).")
+                targets+=("action__boot_wake_toggle")
+                badges+=("$badge")
+                if ! badge=$(cec_menu_graph_badge action__boot_wake_mode advanced); then badge=; fi
+                if [[ "$badge" == *"|"* || "$badge" == *$'\n'* ]]; then
+                    die "Invalid generated menu badge: action__boot_wake_mode"
+                fi
+                items+=("Mode: polite / grab|${badge}|polite: back off if another device holds the input. grab: always switch the TV to us.")
+                targets+=("action__boot_wake_mode")
+                badges+=("$badge")
+                ;;
+            menu__amp)
+                title="Receiver / amp  (CEC audio system, LA ${CEC_AUDIO_LA})"
+                if ! badge=$(cec_menu_graph_badge action__amp_power advanced); then badge=; fi
+                if [[ "$badge" == *"|"* || "$badge" == *$'\n'* ]]; then
+                    die "Invalid generated menu badge: action__amp_power"
+                fi
+                items+=("Receiver power|${badge}|amp-on / amp-off via <System Audio Mode Request> -- flips based on the state shown.")
+                targets+=("action__amp_power")
+                badges+=("$badge")
+                if ! badge=$(cec_menu_graph_badge action__amp_follow_boot advanced); then badge=; fi
+                if [[ "$badge" == *"|"* || "$badge" == *$'\n'* ]]; then
+                    die "Invalid generated menu badge: action__amp_follow_boot"
+                fi
+                items+=("Wake receiver at boot|${badge}|Boot-wake also powers the receiver + hands it the audio. Needs boot-wake installed.")
+                targets+=("action__amp_follow_boot")
+                badges+=("$badge")
+                if ! badge=$(cec_menu_graph_badge action__amp_follow_poweroff advanced); then badge=; fi
+                if [[ "$badge" == *"|"* || "$badge" == *$'\n'* ]]; then
+                    die "Invalid generated menu badge: action__amp_follow_poweroff"
+                fi
+                items+=("Standby receiver at poweroff|${badge}|Poweroff unit sends the receiver to standby too. On by default; needs the unit.")
+                targets+=("action__amp_follow_poweroff")
+                badges+=("$badge")
+                if ! badge=$(cec_menu_graph_badge action__amp_follow_suspend advanced); then badge=; fi
+                if [[ "$badge" == *"|"* || "$badge" == *$'\n'* ]]; then
+                    die "Invalid generated menu badge: action__amp_follow_suspend"
+                fi
+                items+=("Standby receiver on suspend|${badge}|Receiver off when the console sleeps -- unless another device plays through it. Needs the hook.")
+                targets+=("action__amp_follow_suspend")
+                badges+=("$badge")
+                if ! badge=$(cec_menu_graph_badge action__amp_follow_resume advanced); then badge=; fi
+                if [[ "$badge" == *"|"* || "$badge" == *$'\n'* ]]; then
+                    die "Invalid generated menu badge: action__amp_follow_resume"
+                fi
+                items+=("Wake receiver on resume|${badge}|Receiver on + takes the audio when the console wakes. Needs the hook.")
+                targets+=("action__amp_follow_resume")
+                badges+=("$badge")
+                if ! badge=$(cec_menu_graph_badge action__amp_sleep_toggle install); then badge=; fi
+                if [[ "$badge" == *"|"* || "$badge" == *$'\n'* ]]; then
+                    die "Invalid generated menu badge: action__amp_sleep_toggle"
+                fi
+                items+=("Suspend/resume hook|${badge}|Root helper in /etc/systemd/system-sleep driving the two follows above. Uses sudo.")
+                targets+=("action__amp_sleep_toggle")
+                badges+=("$badge")
+                ;;
+            menu__controls)
+                title="Everyday controls  (send CEC commands now)"
+                if ! badge=$(cec_menu_graph_badge action__tv_on advanced); then badge=; fi
+                if [[ "$badge" == *"|"* || "$badge" == *$'\n'* ]]; then
+                    die "Invalid generated menu badge: action__tv_on"
+                fi
+                items+=("Wake TV and take input|${badge}|Wake the display and claim active source for the BC-250.")
+                targets+=("action__tv_on")
+                badges+=("$badge")
+                if ! badge=$(cec_menu_graph_badge action__tv_off advanced); then badge=; fi
+                if [[ "$badge" == *"|"* || "$badge" == *$'\n'* ]]; then
+                    die "Invalid generated menu badge: action__tv_off"
+                fi
+                items+=("TV standby|${badge}|Send the TV to standby now.")
+                targets+=("action__tv_off")
+                badges+=("$badge")
+                if ! badge=$(cec_menu_graph_badge menu__amp menu); then badge=; fi
+                if [[ "$badge" == *"|"* || "$badge" == *$'\n'* ]]; then
+                    die "Invalid generated menu badge: menu__amp"
+                fi
+                items+=("Receiver / amp|${badge}|Control receiver power and review its follow settings.")
+                targets+=("menu__amp")
+                badges+=("$badge")
+                if ! badge=$(cec_menu_graph_badge action__active read_only); then badge=; fi
+                if [[ "$badge" == *"|"* || "$badge" == *$'\n'* ]]; then
+                    die "Invalid generated menu badge: action__active"
+                fi
+                items+=("Who has the input|${badge}|Ask which HDMI device is currently active.")
+                targets+=("action__active")
+                badges+=("$badge")
+                if ! badge=$(cec_menu_graph_badge action__switch advanced); then badge=; fi
+                if [[ "$badge" == *"|"* || "$badge" == *$'\n'* ]]; then
+                    die "Invalid generated menu badge: action__switch"
+                fi
+                items+=("Take the input|${badge}|Claim active source without sending a separate TV wake command.")
+                targets+=("action__switch")
+                badges+=("$badge")
+                if ! badge=$(cec_menu_graph_badge action__handoff advanced); then badge=; fi
+                if [[ "$badge" == *"|"* || "$badge" == *$'\n'* ]]; then
+                    die "Invalid generated menu badge: action__handoff"
+                fi
+                items+=("Hand off the input|${badge}|Wake another device and route the TV or receiver to it.")
+                targets+=("action__handoff")
+                badges+=("$badge")
+                if ! badge=$(cec_menu_graph_badge action__release advanced); then badge=; fi
+                if [[ "$badge" == *"|"* || "$badge" == *$'\n'* ]]; then
+                    die "Invalid generated menu badge: action__release"
+                fi
+                items+=("Release the input|${badge}|Give up active source without selecting another device.")
+                targets+=("action__release")
+                badges+=("$badge")
+                ;;
+            menu__diagnostics)
+                title="Diagnostics & recovery  (read-only unless noted)"
+                if ! badge=$(cec_menu_graph_badge action__test read_only); then badge=; fi
+                if [[ "$badge" == *"|"* || "$badge" == *$'\n'* ]]; then
+                    die "Invalid generated menu badge: action__test"
+                fi
+                items+=("Test TV control|${badge}|Guided poll, wake, input, audio, and optional standby sequence.")
+                targets+=("action__test")
+                badges+=("$badge")
+                if ! badge=$(cec_menu_graph_badge action__scan read_only); then badge=; fi
+                if [[ "$badge" == *"|"* || "$badge" == *$'\n'* ]]; then
+                    die "Invalid generated menu badge: action__scan"
+                fi
+                items+=("Scan CEC bus|${badge}|Show the HDMI tree, addresses, names, power, and active source.")
+                targets+=("action__scan")
+                badges+=("$badge")
+                if ! badge=$(cec_menu_graph_badge action__repair advanced); then badge=; fi
+                if [[ "$badge" == *"|"* || "$badge" == *$'\n'* ]]; then
+                    die "Invalid generated menu badge: action__repair"
+                fi
+                items+=("Repair CEC|${badge}|Health-check and re-register an adapter that failed after suspend.")
+                targets+=("action__repair")
+                badges+=("$badge")
+                if ! badge=$(cec_menu_graph_badge action__remote read_only); then badge=; fi
+                if [[ "$badge" == *"|"* || "$badge" == *$'\n'* ]]; then
+                    die "Invalid generated menu badge: action__remote"
+                fi
+                items+=("TV-remote input|${badge}|Inspect remote-key relay and cecd-created input devices.")
+                targets+=("action__remote")
+                badges+=("$badge")
+                if ! badge=$(cec_menu_graph_badge action__monitor read_only); then badge=; fi
+                if [[ "$badge" == *"|"* || "$badge" == *$'\n'* ]]; then
+                    die "Invalid generated menu badge: action__monitor"
+                fi
+                items+=("Live CEC monitor|${badge}|Watch raw bus traffic with cectool until Ctrl-C.")
+                targets+=("action__monitor")
+                badges+=("$badge")
+                ;;
+            *) die "Unknown generated cec menu ID: $menu_id" ;;
         esac
+        if [[ "$title" == *"|"* || "$title" == *[[:cntrl:]]* ]]; then
+            die "Invalid generated cec menu title"
+        fi
+        menu_select "$title" "${items[@]}" || { echo; return 0; }
+        target=${targets[$MENU_CHOICE]}
+        if [[ "$target" == menu__* ]]; then
+            cec_menu_graph_render "$target"
+        else
+            cec_menu_graph_activate "$target" "${badges[$MENU_CHOICE]}"
+        fi
     done
 }
 
-menu_amp() {
-    while true; do
-        local la ast
-        la=$(audio_la); ast=$(power_status "$la")
-        local items=(
-            "Receiver power|$(badge_amp_power "$ast")|amp-on / amp-off via <System Audio Mode Request> -- flips based on the state shown."
-            "Wake receiver at boot|$(badge_amp_follow boot)|Boot-wake also powers the receiver + hands it the audio. Needs boot-wake installed."
-            "Standby receiver at poweroff|$(badge_amp_follow poweroff)|Poweroff unit sends the receiver to standby too. On by default; needs the unit."
-            "Standby receiver on suspend|$(badge_amp_follow suspend)|Receiver off when the console sleeps -- unless another device plays through it. Needs the hook."
-            "Wake receiver on resume|$(badge_amp_follow resume)|Receiver on + takes the audio when the console wakes. Needs the hook."
-            "Suspend/resume hook|$(badge_sleep_hook)|Root helper in /etc/systemd/system-sleep driving the two follows above. Uses sudo."
-        )
-        menu_select "Receiver / amp  ${CD}(CEC audio system, LA $la)${C0}" "${items[@]}" || { echo; break; }
-        case $MENU_CHOICE in
-            0) if [[ "$ast" == on ]]; then run_action cmd_amp_off; else run_action cmd_amp_on; fi ;;
-            1) run_action cmd_amp_follow boot ;;
-            2) run_action cmd_amp_follow poweroff ;;
-            3) run_action cmd_amp_follow suspend ;;
-            4) run_action cmd_amp_follow resume ;;
-            5) run_action amp_sleep_toggle ;;
-        esac
-    done
+cec_menu_graph_open() {
+    case "${1:-root}" in
+        root) cec_menu_graph_render menu__root ;;
+        *) return 2 ;;
+    esac
 }
 
-menu_boot_wake() {
-    while true; do
-        local items=(
-            "Boot wake unit|$(badge_wake)|Wake the TV at every session start. Toggles install/remove (installs polite)."
-            "Mode: polite / grab|$(badge_wake_mode)|polite: back off if another device holds the input. grab: always switch the TV to us."
-        )
-        menu_select "Wake TV at boot  ${CD}(session-start unit)${C0}" "${items[@]}" || { echo; break; }
-        case $MENU_CHOICE in
-            0) run_action boot_wake_toggle ;;
-            1) run_action boot_wake_mode_toggle ;;
-        esac
-    done
-}
-
-menu_setup() {
-    while true; do
-        local items=(
-            "Recommended setup||One shot: device name, TV sleep behavior, poweroff integration, and boot wake."
-            "Set TV name (OSD)|$(badge_osd)|Set the console name shown in the TV's HDMI device list."
-            "Console sleep behavior|$(badge_overrides)|Configure wake, suspend, TV-power, and remote-input overrides."
-            "TV standby on power-off|$(badge_standby)|Install or remove polite TV standby during console shutdown."
-            "Wake TV at boot|$(badge_wake)|Install boot wake and choose polite or always-grab input behavior."
-            "Receiver integration|$(badge_amp_summary)|Configure receiver follow behavior for boot, poweroff, suspend, and resume."
-        )
-        menu_select "CEC setup & automation" "${items[@]}" || return 0
-        case $MENU_CHOICE in
-            0) run_action cmd_setup ;;
-            1) run_action cmd_osd_name ;;
-            2) menu_toggles ;;
-            3) run_action shutdown_standby_toggle ;;
-            4) menu_boot_wake ;;
-            5) menu_amp ;;
-        esac
-    done
-}
-
-menu_controls() {
-    while true; do
-        local items=(
-            "Wake TV and take input|$(badge_active)|Wake the display and claim active source for the BC-250."
-            "TV standby|$(tv_badge_menu)|Send the TV to standby now."
-            "Receiver / amp|$(badge_amp_summary)|Control receiver power and review its follow settings."
-            "Who has the input|$(badge_active)|Ask which HDMI device is currently active."
-            "Take the input|$(badge_active)|Claim active source without sending a separate TV wake command."
-            "Hand off the input|$(badge_active)|Wake another device and route the TV or receiver to it."
-            "Release the input||Give up active source without selecting another device."
-        )
-        menu_select "CEC everyday controls" "${items[@]}" || return 0
-        case $MENU_CHOICE in
-            0) run_action cmd_tv_on ;;
-            1) run_action cmd_tv_off ;;
-            2) menu_amp ;;
-            3) run_action cmd_active ;;
-            4) run_action cmd_switch ;;
-            5) run_action cmd_handoff ;;
-            6) run_action cmd_release ;;
-        esac
-    done
-}
-
-menu_diagnostics() {
-    while true; do
-        local items=(
-            "Test TV control|$(tv_badge_menu)|Guided poll, wake, input, audio, and optional standby sequence."
-            "Scan CEC bus|$(tv_badge_menu)|Show the HDMI tree, addresses, names, power, and active source."
-            "Repair CEC|$(tv_badge_menu)|Health-check and re-register an adapter that failed after suspend."
-            "TV-remote input|$(badge_remote)|Inspect remote-key relay and cecd-created input devices."
-            "Live CEC monitor||Watch raw bus traffic with cectool until Ctrl-C."
-        )
-        menu_select "CEC diagnostics & recovery" "${items[@]}" || return 0
-        case $MENU_CHOICE in
-            0) run_action cmd_test ;;
-            1) run_action cmd_scan ;;
-            2) run_action cmd_repair ;;
-            3) run_action cmd_remote ;;
-            4) cmd_monitor ;;
-        esac
-    done
-}
+# END GENERATED CEC MENUS
 
 cmd_menu() {
     [[ -t 0 && -t 1 ]] || die "The menu needs an interactive terminal. See '$0 help' for CLI commands."
     # Opposite of bc250-power.sh: this script must NOT run as root, because
     # cecd only exists on deck's user D-Bus session.
     [[ $EUID -ne 0 ]] || die "Run as deck, not root. Only the poweroff unit asks for sudo itself."
-    while true; do
-        local items=(
-            "Status overview||Full health dump: device, daemon, TV power, config. Always safe."
-            "Setup & automation|${CG}[guided]${C0}|Configure identity, sleep, boot, poweroff, and receiver-follow behavior."
-            "Everyday controls|$(badge_active)|Wake or sleep devices and manage the active HDMI input."
-            "Diagnostics & recovery|$(tv_badge_menu)|Test, scan, repair, inspect remote input, or monitor raw traffic."
-            "Full help||The complete manual for every CLI command."
-        )
-        menu_select "BC-250 CEC / TV control  ${CD}(SteamOS cecd)${C0}" "${items[@]}" || { echo; break; }
-        case $MENU_CHOICE in
-            0) run_action cmd_status ;;
-            1) menu_setup ;;
-            2) menu_controls ;;
-            3) menu_diagnostics ;;
-            4) cmd_help; pause_key ;;
-        esac
-    done
+    cec_menu_graph_open
 }
 
 tv_badge_menu() {   # tiny live badge for the test row: is the TV reachable?

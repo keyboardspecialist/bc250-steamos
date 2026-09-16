@@ -6,12 +6,16 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
+import sys
+
 
 ROOT = Path(__file__).resolve().parents[1]
 HELPER = ROOT / "core-unlock" / "bc250-unlock-cores.py"
 EFI_SOURCE = ROOT / "core-unlock" / "bc250-unlock-cores-efi.c"
 EFI_BUILD_CHECK = ROOT / "scripts" / "check-efi-core-unlock-build.sh"
 POWER = ROOT / "bc250-power.sh"
+sys.path.insert(0, str(ROOT / "scripts"))
+from menu_graph import parse  # noqa: E402
 
 
 def load_helper():
@@ -45,11 +49,9 @@ class CoreUnlockTests(unittest.TestCase):
 
     def test_guided_menu_groups_status_setup_and_removal(self):
         power = POWER.read_text(encoding="utf-8")
-        menu = power[
-            power.index("menu_cpu_unlock() {") : power.index(
-                "cmd_menu() {", power.index("menu_cpu_unlock() {")
-            )
-        ]
+        graph = parse(ROOT / "menus/power.mmd")
+        choices = graph.choices("menu__cpu_unlock")
+        menu = "\n".join(node.title + " " + node.hint for node in choices)
 
         for expected in (
             "Status summary",
@@ -61,8 +63,8 @@ class CoreUnlockTests(unittest.TestCase):
             "Uninstall all core-unlock files",
         ):
             self.assertIn(expected, menu)
-        self.assertIn('$(badge_core_unlock "$mode")', menu)
-        self.assertIn('$(badge_core_unlock_files "$mode")', menu)
+        self.assertIn("action__unlock_status|action__unlock_off) badge_core_unlock", power)
+        self.assertIn("action__unlock_uninstall) badge_core_unlock_files", power)
         self.assertIn("avoid an extra Linux boot", menu)
         self.assertIn("they cannot be enabled together", menu)
         self.assertIn("retain the helper", menu)

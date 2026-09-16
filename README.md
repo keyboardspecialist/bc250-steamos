@@ -124,8 +124,10 @@ they exit. Installer and build entries require confirmation before starting
 their longer setup workflows.
 Each child requests administrator access only when needed.
 
-The menu structure is authored in [`menus/toolkit.mmd`](menus/toolkit.mmd).
-Regenerate it with `python3 scripts/generate-menus.py --write` and audit it with
+The toolkit and standalone component menus are authored as Mermaid graphs under
+[`menus/`](menus/), with targets declared in
+[`menus/targets.json`](menus/targets.json). Regenerate all menu targets with
+`python3 scripts/generate-menus.py --write` and audit them with
 `python3 scripts/analyze-menu-graph.py`. See
 [`MENU-GRAPH.md`](MENU-GRAPH.md) for syntax and validation details.
 

@@ -1,0 +1,66 @@
+%% menu-flow-v1
+flowchart TD
+
+%% menu-title menu__uma "CMOS minimum VRAM allocation"
+%% menu-title menu__ttm "Dynamic VRAM / TTM limit"
+
+menu__root["BC-250 RAM / VRAM split<br/>Inspect and configure the CMOS UMA split and Linux TTM limit."]:::root
+menu__uma["Minimum VRAM (CMOS UMA split)<br/>Set the persistent minimum GPU allocation; reboot required."]:::menu
+menu__ttm["Dynamic VRAM limit (TTM)<br/>Manage ttm.pages_limit in a dedicated SteamOS GRUB drop-in."]:::menu
+
+action__status["Status overview<br/>Read-only local status; does not contact GitHub."]:::read_only
+action__install["Install / update bc250_memcfg<br/>Fetch and verify the latest upstream release."]:::install
+action__help["Full help<br/>Safety notes, commands, and recovery guidance."]:::read_only
+
+action__uma_show["Read current CMOS configuration<br/>Requires administrator access; read-only."]:::read_only
+action__uma_256["256 MiB minimum<br/>Smallest documented split; maximizes CPU RAM."]:::advanced
+action__uma_512["512 MiB minimum<br/>Documentation recommendation with a raised TTM limit."]:::advanced
+action__uma_1024["1 GiB minimum<br/>Set UMA_SIZE to 1024 MiB."]:::advanced
+action__uma_3072["3 GiB minimum<br/>Set UMA_SIZE to 3072 MiB."]:::advanced
+action__uma_4096["4 GiB minimum<br/>Set UMA_SIZE to 4096 MiB."]:::advanced
+action__uma_6144["6 GiB minimum<br/>Set UMA_SIZE to 6144 MiB."]:::advanced
+action__uma_8192["8 GiB minimum<br/>Factory-style equal RAM/VRAM split."]:::advanced
+action__uma_10240["10 GiB minimum<br/>Leaves substantially less memory for the CPU."]:::advanced
+action__uma_12288["12 GiB minimum<br/>Leaves only about 4 GiB for CPU memory."]:::advanced
+action__uma_custom["Custom aligned size<br/>256-12288 MiB in 16 MiB increments; 2048 MiB is blocked."]:::advanced
+
+action__ttm_status["Show TTM status<br/>Compare configured, boot, and live page limits."]:::read_only
+action__ttm_2097152["8 GiB dynamic limit<br/>Set ttm.pages_limit=2097152."]:::advanced
+action__ttm_2621440["10 GiB dynamic limit<br/>Set ttm.pages_limit=2621440."]:::advanced
+action__ttm_3014656["BC-250 guide 12 GB preset<br/>Published guide value: 11.50 GiB dynamic, about 12 GB total with 512 MiB UMA."]:::advanced
+action__ttm_3145728["12 GiB dynamic limit<br/>Exact 12 GiB dynamic page count."]:::advanced
+action__ttm_custom["Custom pages_limit<br/>Enter the raw 4 KiB page count."]:::advanced
+action__ttm_remove["Remove TTM override<br/>Return to the kernel default after reboot."]:::cleanup
+
+menu__root --> action__status
+menu__root --> action__install
+menu__root --> menu__uma
+menu__root --> menu__ttm
+menu__root --> action__help
+
+menu__uma --> action__uma_show
+menu__uma --> action__uma_256
+menu__uma --> action__uma_512
+menu__uma --> action__uma_1024
+menu__uma --> action__uma_3072
+menu__uma --> action__uma_4096
+menu__uma --> action__uma_6144
+menu__uma --> action__uma_8192
+menu__uma --> action__uma_10240
+menu__uma --> action__uma_12288
+menu__uma --> action__uma_custom
+
+menu__ttm --> action__ttm_status
+menu__ttm --> action__ttm_2097152
+menu__ttm --> action__ttm_2621440
+menu__ttm --> action__ttm_3014656
+menu__ttm --> action__ttm_3145728
+menu__ttm --> action__ttm_custom
+menu__ttm --> action__ttm_remove
+
+classDef root fill:#10283c,color:#fff,stroke:#67b7dc,stroke-width:3px
+classDef menu fill:#17324d,color:#fff,stroke:#67b7dc,stroke-width:2px
+classDef install fill:#264653,color:#fff,stroke:#2a9d8f
+classDef read_only fill:#353535,color:#eee,stroke:#999
+classDef advanced fill:#4a304d,color:#fff,stroke:#d17b9f
+classDef cleanup fill:#493f2c,color:#fff,stroke:#e9c46a

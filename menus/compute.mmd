@@ -1,0 +1,19 @@
+%% menu-flow-v1
+flowchart TD
+
+menu__root["BC-250 GPU compute-unit unlock  (24 CU to stable maximum)<br/>Inspect, configure, persist, or revert runtime compute-unit routing."]:::root
+action__check["Board / install check<br/>Read-only report: board, debugfs, umr, service. Start here."]:::read_only
+action__prep["Step 1 - Build umr<br/>Deps + build under the hidden toolkit directory. Unlocks rootfs; takes a few minutes."]:::install
+action__manager["Step 2 - Live CU manager<br/>Dashboard TUI. READ the harvest map first: contiguous -> [f], scattered -> [e]."]:::advanced
+action__persist["Step 3 - Persist across updates<br/>Relocate the service off the wipeable rootfs. Run after 'i' in the manager."]:::install
+action__verify["Verify<br/>Read the live dispatch registers: routed CU count + guidance."]:::read_only
+action__revert["Revert to stock 24 CU<br/>Disable the boot service; stock dispatch after reboot."]:::cleanup
+action__help["Full help<br/>Complete walkthrough, including the harvest-map guide."]:::read_only
+
+menu__root --> action__check
+menu__root --> action__prep
+menu__root --> action__manager
+menu__root --> action__persist
+menu__root --> action__verify
+menu__root --> action__revert
+menu__root --> action__help

@@ -1199,293 +1199,653 @@ menu_graph_activate() {
 # Generated from menus/toolkit.mmd by scripts/generate-menus.py.
 # Do not edit this region directly.
 menu_graph_render() {
-    local menu_id="$1" title target
+    local menu_id="$1" title target badge
+    if declare -F menu_graph_prepare >/dev/null; then menu_graph_prepare "$menu_id"; fi
     while true; do
-        local items=() targets=()
+        local items=() targets=() badges=()
         case "$menu_id" in
             menu__cmd_menu)
                 title="BC-250 SteamOS toolkit [${TOOLKIT_VERSION}]"
-                items+=("Auto Base Toolkit Installation|$(menu_graph_badge action__auto_base_installation install)|Install or resume the safe foundation in dependency order.")
+                if ! badge=$(menu_graph_badge action__auto_base_installation install); then badge=; fi
+                if [[ "$badge" == *"|"* || "$badge" == *$'\n'* ]]; then
+                    die "Invalid generated menu badge: action__auto_base_installation"
+                fi
+                items+=("Auto Base Toolkit Installation|${badge}|Install or resume the safe foundation in dependency order.")
                 targets+=("action__auto_base_installation")
-                items+=("Manual Guided Setup|$(menu_graph_badge menu__cmd_guided_setup_menu menu)|Follow the safe setup order without crossing through sibling categories.")
+                badges+=("$badge")
+                if ! badge=$(menu_graph_badge menu__cmd_guided_setup_menu menu); then badge=; fi
+                if [[ "$badge" == *"|"* || "$badge" == *$'\n'* ]]; then
+                    die "Invalid generated menu badge: menu__cmd_guided_setup_menu"
+                fi
+                items+=("Manual Guided Setup|${badge}|Follow the safe setup order without crossing through sibling categories.")
                 targets+=("menu__cmd_guided_setup_menu")
-                items+=("Core System|$(menu_graph_badge menu__cmd_core_system_menu menu)|Manage storage, memory allocation, swap, and update protection.")
+                badges+=("$badge")
+                if ! badge=$(menu_graph_badge menu__cmd_core_system_menu menu); then badge=; fi
+                if [[ "$badge" == *"|"* || "$badge" == *$'\n'* ]]; then
+                    die "Invalid generated menu badge: menu__cmd_core_system_menu"
+                fi
+                items+=("Core System|${badge}|Manage storage, memory allocation, swap, and update protection.")
                 targets+=("menu__cmd_core_system_menu")
-                items+=("Power & Thermals|$(menu_graph_badge menu__cmd_power_menu menu)|Configure the power foundation, GPU behavior, CPU tuning, and memory sensors.")
+                badges+=("$badge")
+                if ! badge=$(menu_graph_badge menu__cmd_power_menu menu); then badge=; fi
+                if [[ "$badge" == *"|"* || "$badge" == *$'\n'* ]]; then
+                    die "Invalid generated menu badge: menu__cmd_power_menu"
+                fi
+                items+=("Power & Thermals|${badge}|Configure the power foundation, GPU behavior, CPU tuning, and memory sensors.")
                 targets+=("menu__cmd_power_menu")
-                items+=("Graphics Stack|$(menu_graph_badge menu__cmd_graphics_menu menu)|Manage AMDGPU, Mesa and RADV, FSR4, and GE-Proton.")
+                badges+=("$badge")
+                if ! badge=$(menu_graph_badge menu__cmd_graphics_menu menu); then badge=; fi
+                if [[ "$badge" == *"|"* || "$badge" == *$'\n'* ]]; then
+                    die "Invalid generated menu badge: menu__cmd_graphics_menu"
+                fi
+                items+=("Graphics Stack|${badge}|Manage AMDGPU, Mesa and RADV, FSR4, and GE-Proton.")
                 targets+=("menu__cmd_graphics_menu")
-                items+=("Hardware Unlocks|$(menu_graph_badge menu__cmd_unlocks_menu menu)|Test CPU cores or GPU compute units with explicit recovery paths.")
+                badges+=("$badge")
+                if ! badge=$(menu_graph_badge menu__cmd_unlocks_menu menu); then badge=; fi
+                if [[ "$badge" == *"|"* || "$badge" == *$'\n'* ]]; then
+                    die "Invalid generated menu badge: menu__cmd_unlocks_menu"
+                fi
+                items+=("Hardware Unlocks|${badge}|Test CPU cores or GPU compute units with explicit recovery paths.")
                 targets+=("menu__cmd_unlocks_menu")
-                items+=("Devices & Connectivity|$(menu_graph_badge menu__cmd_devices_menu menu)|Configure HDMI audio, CEC, fan control, and hardware-specific wireless support.")
+                badges+=("$badge")
+                if ! badge=$(menu_graph_badge menu__cmd_devices_menu menu); then badge=; fi
+                if [[ "$badge" == *"|"* || "$badge" == *$'\n'* ]]; then
+                    die "Invalid generated menu badge: menu__cmd_devices_menu"
+                fi
+                items+=("Devices & Connectivity|${badge}|Configure HDMI audio, CEC, fan control, and hardware-specific wireless support.")
                 targets+=("menu__cmd_devices_menu")
-                items+=("Control Interfaces|$(menu_graph_badge menu__cmd_interfaces_menu menu)|Install Gaming Mode, desktop, fan-control, or standalone interfaces.")
+                badges+=("$badge")
+                if ! badge=$(menu_graph_badge menu__cmd_interfaces_menu menu); then badge=; fi
+                if [[ "$badge" == *"|"* || "$badge" == *$'\n'* ]]; then
+                    die "Invalid generated menu badge: menu__cmd_interfaces_menu"
+                fi
+                items+=("Control Interfaces|${badge}|Install Gaming Mode, desktop, fan-control, or standalone interfaces.")
                 targets+=("menu__cmd_interfaces_menu")
-                items+=("Maintenance & Recovery|$(menu_graph_badge menu__cmd_maintenance_menu menu)|Recover updates, clean build state, or remove installed components.")
+                badges+=("$badge")
+                if ! badge=$(menu_graph_badge menu__cmd_maintenance_menu menu); then badge=; fi
+                if [[ "$badge" == *"|"* || "$badge" == *$'\n'* ]]; then
+                    die "Invalid generated menu badge: menu__cmd_maintenance_menu"
+                fi
+                items+=("Maintenance & Recovery|${badge}|Recover updates, clean build state, or remove installed components.")
                 targets+=("menu__cmd_maintenance_menu")
-                items+=("System Health|$(menu_graph_badge action__system_health read_only)|Show operational state using the same domain names as the menu.")
+                badges+=("$badge")
+                if ! badge=$(menu_graph_badge action__system_health read_only); then badge=; fi
+                if [[ "$badge" == *"|"* || "$badge" == *$'\n'* ]]; then
+                    die "Invalid generated menu badge: action__system_health"
+                fi
+                items+=("System Health|${badge}|Show operational state using the same domain names as the menu.")
                 targets+=("action__system_health")
+                badges+=("$badge")
                 ;;
             menu__cmd_guided_setup_menu)
                 title="Manual Guided Setup"
-                items+=("Setup Overview|$(menu_graph_badge action__guided_overview read_only)|Review goals, current state, and restart checkpoints.")
+                if ! badge=$(menu_graph_badge action__guided_overview read_only); then badge=; fi
+                if [[ "$badge" == *"|"* || "$badge" == *$'\n'* ]]; then
+                    die "Invalid generated menu badge: action__guided_overview"
+                fi
+                items+=("Setup Overview|${badge}|Review goals, current state, and restart checkpoints.")
                 targets+=("action__guided_overview")
-                items+=("GPU Compute-Unit Unlock|$(menu_graph_badge child__compute menu)|Inspect harvesting, test live routing, stress-test, and persist.")
+                badges+=("$badge")
+                if ! badge=$(menu_graph_badge child__compute menu); then badge=; fi
+                if [[ "$badge" == *"|"* || "$badge" == *$'\n'* ]]; then
+                    die "Invalid generated menu badge: child__compute"
+                fi
+                items+=("GPU Compute-Unit Unlock|${badge}|Inspect harvesting, test live routing, stress-test, and persist.")
                 targets+=("child__compute")
-                items+=("CPU Core Unlock|$(menu_graph_badge child__cpu_unlock experimental)|Test eight cores, then choose one automatic unlock method.")
+                badges+=("$badge")
+                if ! badge=$(menu_graph_badge child__cpu_unlock experimental); then badge=; fi
+                if [[ "$badge" == *"|"* || "$badge" == *$'\n'* ]]; then
+                    die "Invalid generated menu badge: child__cpu_unlock"
+                fi
+                items+=("CPU Core Unlock|${badge}|Test eight cores, then choose one automatic unlock method.")
                 targets+=("child__cpu_unlock")
-                items+=("AMDGPU Kernel Fixes|$(menu_graph_badge action__amdgpu install)|Build the corrected kernel module and reboot before RADV setup.")
+                badges+=("$badge")
+                if ! badge=$(menu_graph_badge action__amdgpu install); then badge=; fi
+                if [[ "$badge" == *"|"* || "$badge" == *$'\n'* ]]; then
+                    die "Invalid generated menu badge: action__amdgpu"
+                fi
+                items+=("AMDGPU Kernel Fixes|${badge}|Build the corrected kernel module and reboot before RADV setup.")
                 targets+=("action__amdgpu")
-                items+=("Power Foundation|$(menu_graph_badge child__power_foundation menu)|Install ACPI, test the GPU governor, then enable it at boot.")
+                badges+=("$badge")
+                if ! badge=$(menu_graph_badge child__power_foundation menu); then badge=; fi
+                if [[ "$badge" == *"|"* || "$badge" == *$'\n'* ]]; then
+                    die "Invalid generated menu badge: child__power_foundation"
+                fi
+                items+=("Power Foundation|${badge}|Install ACPI, test the GPU governor, then enable it at boot.")
                 targets+=("child__power_foundation")
-                items+=("RAM and VRAM Split|$(menu_graph_badge child__ram menu)|Balance the CMOS minimum and dynamic Linux TTM limit.")
+                badges+=("$badge")
+                if ! badge=$(menu_graph_badge child__ram menu); then badge=; fi
+                if [[ "$badge" == *"|"* || "$badge" == *$'\n'* ]]; then
+                    die "Invalid generated menu badge: child__ram"
+                fi
+                items+=("RAM and VRAM Split|${badge}|Balance the CMOS minimum and dynamic Linux TTM limit.")
                 targets+=("child__ram")
-                items+=("Install or Resume Async Compute|$(menu_graph_badge action__graphics_setup install)|Install AMDGPU first when needed, then resume Mesa and RADV.")
+                badges+=("$badge")
+                if ! badge=$(menu_graph_badge action__graphics_setup install); then badge=; fi
+                if [[ "$badge" == *"|"* || "$badge" == *$'\n'* ]]; then
+                    die "Invalid generated menu badge: action__graphics_setup"
+                fi
+                items+=("Install or Resume Async Compute|${badge}|Install AMDGPU first when needed, then resume Mesa and RADV.")
                 targets+=("action__graphics_setup")
+                badges+=("$badge")
                 ;;
             menu__cmd_core_system_menu)
                 title="Core System"
-                items+=("Persistent Storage|$(menu_graph_badge child__storage menu)|Inspect or repair privileged storage and boot recovery.")
+                if ! badge=$(menu_graph_badge child__storage menu); then badge=; fi
+                if [[ "$badge" == *"|"* || "$badge" == *$'\n'* ]]; then
+                    die "Invalid generated menu badge: child__storage"
+                fi
+                items+=("Persistent Storage|${badge}|Inspect or repair privileged storage and boot recovery.")
                 targets+=("child__storage")
-                items+=("RAM and VRAM Split|$(menu_graph_badge child__ram menu)|Balance the CMOS minimum and dynamic Linux TTM limit.")
+                badges+=("$badge")
+                if ! badge=$(menu_graph_badge child__ram menu); then badge=; fi
+                if [[ "$badge" == *"|"* || "$badge" == *$'\n'* ]]; then
+                    die "Invalid generated menu badge: child__ram"
+                fi
+                items+=("RAM and VRAM Split|${badge}|Balance the CMOS minimum and dynamic Linux TTM limit.")
                 targets+=("child__ram")
-                items+=("Compressed Swap|$(menu_graph_badge child__swap menu)|Choose mutually exclusive zram or zswap-backed disk profiles.")
+                badges+=("$badge")
+                if ! badge=$(menu_graph_badge child__swap menu); then badge=; fi
+                if [[ "$badge" == *"|"* || "$badge" == *$'\n'* ]]; then
+                    die "Invalid generated menu badge: child__swap"
+                fi
+                items+=("Compressed Swap|${badge}|Choose mutually exclusive zram or zswap-backed disk profiles.")
                 targets+=("child__swap")
-                items+=("SteamOS Update Protection|$(menu_graph_badge child__persistence menu)|Protect and recover supported component settings across updates.")
+                badges+=("$badge")
+                if ! badge=$(menu_graph_badge child__persistence menu); then badge=; fi
+                if [[ "$badge" == *"|"* || "$badge" == *$'\n'* ]]; then
+                    die "Invalid generated menu badge: child__persistence"
+                fi
+                items+=("SteamOS Update Protection|${badge}|Protect and recover supported component settings across updates.")
                 targets+=("child__persistence")
+                badges+=("$badge")
                 ;;
             menu__cmd_power_menu)
                 title="Power & Thermals"
-                items+=("Power Foundation|$(menu_graph_badge child__power_foundation menu)|Install ACPI, test the GPU governor, then enable it at boot.")
+                if ! badge=$(menu_graph_badge child__power_foundation menu); then badge=; fi
+                if [[ "$badge" == *"|"* || "$badge" == *$'\n'* ]]; then
+                    die "Invalid generated menu badge: child__power_foundation"
+                fi
+                items+=("Power Foundation|${badge}|Install ACPI, test the GPU governor, then enable it at boot.")
                 targets+=("child__power_foundation")
-                items+=("GPU Frequency and Voltage|$(menu_graph_badge child__power_frequency menu)|Set adaptive ranges, pinned clocks, or voltage-curve points.")
+                badges+=("$badge")
+                if ! badge=$(menu_graph_badge child__power_frequency menu); then badge=; fi
+                if [[ "$badge" == *"|"* || "$badge" == *$'\n'* ]]; then
+                    die "Invalid generated menu badge: child__power_frequency"
+                fi
+                items+=("GPU Frequency and Voltage|${badge}|Set adaptive ranges, pinned clocks, or voltage-curve points.")
                 targets+=("child__power_frequency")
-                items+=("GPU Load Targets|$(menu_graph_badge child__power_load menu)|Choose when the governor clocks up and down.")
+                badges+=("$badge")
+                if ! badge=$(menu_graph_badge child__power_load menu); then badge=; fi
+                if [[ "$badge" == *"|"* || "$badge" == *$'\n'* ]]; then
+                    die "Invalid generated menu badge: child__power_load"
+                fi
+                items+=("GPU Load Targets|${badge}|Choose when the governor clocks up and down.")
                 targets+=("child__power_load")
-                items+=("GPU Ramp Behavior|$(menu_graph_badge child__power_ramp menu)|Choose how quickly and granularly GPU clocks move.")
+                badges+=("$badge")
+                if ! badge=$(menu_graph_badge child__power_ramp menu); then badge=; fi
+                if [[ "$badge" == *"|"* || "$badge" == *$'\n'* ]]; then
+                    die "Invalid generated menu badge: child__power_ramp"
+                fi
+                items+=("GPU Ramp Behavior|${badge}|Choose how quickly and granularly GPU clocks move.")
                 targets+=("child__power_ramp")
-                items+=("CPU Performance and Security|$(menu_graph_badge child__power_cpu menu)|Configure CPU undervolt, overclock, and mitigation policy.")
+                badges+=("$badge")
+                if ! badge=$(menu_graph_badge child__power_cpu menu); then badge=; fi
+                if [[ "$badge" == *"|"* || "$badge" == *$'\n'* ]]; then
+                    die "Invalid generated menu badge: child__power_cpu"
+                fi
+                items+=("CPU Performance and Security|${badge}|Configure CPU undervolt, overclock, and mitigation policy.")
                 targets+=("child__power_cpu")
-                items+=("GDDR6 Memory Temperature|$(menu_graph_badge menu__cmd_memory_temperature_menu menu)|Manage the experimental P3.0-only live SMU temperature payload.")
+                badges+=("$badge")
+                if ! badge=$(menu_graph_badge menu__cmd_memory_temperature_menu menu); then badge=; fi
+                if [[ "$badge" == *"|"* || "$badge" == *$'\n'* ]]; then
+                    die "Invalid generated menu badge: menu__cmd_memory_temperature_menu"
+                fi
+                items+=("GDDR6 Memory Temperature|${badge}|Manage the experimental P3.0-only live SMU temperature payload.")
                 targets+=("menu__cmd_memory_temperature_menu")
+                badges+=("$badge")
                 ;;
             menu__cmd_graphics_menu)
                 title="Graphics Stack"
-                items+=("AMDGPU Kernel Fixes|$(menu_graph_badge action__amdgpu install)|Build the corrected kernel module and reboot before RADV setup.")
+                if ! badge=$(menu_graph_badge action__amdgpu install); then badge=; fi
+                if [[ "$badge" == *"|"* || "$badge" == *$'\n'* ]]; then
+                    die "Invalid generated menu badge: action__amdgpu"
+                fi
+                items+=("AMDGPU Kernel Fixes|${badge}|Build the corrected kernel module and reboot before RADV setup.")
                 targets+=("action__amdgpu")
-                items+=("Install or Resume Async Compute|$(menu_graph_badge action__graphics_setup install)|Install AMDGPU first when needed, then resume Mesa and RADV.")
+                badges+=("$badge")
+                if ! badge=$(menu_graph_badge action__graphics_setup install); then badge=; fi
+                if [[ "$badge" == *"|"* || "$badge" == *$'\n'* ]]; then
+                    die "Invalid generated menu badge: action__graphics_setup"
+                fi
+                items+=("Install or Resume Async Compute|${badge}|Install AMDGPU first when needed, then resume Mesa and RADV.")
                 targets+=("action__graphics_setup")
-                items+=("GPU Driver and FSR4 Options|$(menu_graph_badge child__radv menu)|Manage Mesa and RADV, portable FSR4 DLLs, native mesh, or cleanup.")
+                badges+=("$badge")
+                if ! badge=$(menu_graph_badge child__radv menu); then badge=; fi
+                if [[ "$badge" == *"|"* || "$badge" == *$'\n'* ]]; then
+                    die "Invalid generated menu badge: child__radv"
+                fi
+                items+=("GPU Driver and FSR4 Options|${badge}|Manage Mesa and RADV, portable FSR4 DLLs, native mesh, or cleanup.")
                 targets+=("child__radv")
-                items+=("BC-250 GE-Proton|$(menu_graph_badge menu__cmd_proton_menu menu)|Inspect, install, repair, or remove the pinned compatibility tool.")
+                badges+=("$badge")
+                if ! badge=$(menu_graph_badge menu__cmd_proton_menu menu); then badge=; fi
+                if [[ "$badge" == *"|"* || "$badge" == *$'\n'* ]]; then
+                    die "Invalid generated menu badge: menu__cmd_proton_menu"
+                fi
+                items+=("BC-250 GE-Proton|${badge}|Inspect, install, repair, or remove the pinned compatibility tool.")
                 targets+=("menu__cmd_proton_menu")
-                items+=("Advanced AMDGPU Boot Options|$(menu_graph_badge menu__cmd_amdgpu_boot_menu menu)|Manage mutually exclusive scheduler and KFD runlist policies.")
+                badges+=("$badge")
+                if ! badge=$(menu_graph_badge menu__cmd_amdgpu_boot_menu menu); then badge=; fi
+                if [[ "$badge" == *"|"* || "$badge" == *$'\n'* ]]; then
+                    die "Invalid generated menu badge: menu__cmd_amdgpu_boot_menu"
+                fi
+                items+=("Advanced AMDGPU Boot Options|${badge}|Manage mutually exclusive scheduler and KFD runlist policies.")
                 targets+=("menu__cmd_amdgpu_boot_menu")
+                badges+=("$badge")
                 ;;
             menu__cmd_unlocks_menu)
                 title="Hardware Unlocks"
-                items+=("GPU Compute-Unit Unlock|$(menu_graph_badge child__compute menu)|Inspect harvesting, test live routing, stress-test, and persist.")
+                if ! badge=$(menu_graph_badge child__compute menu); then badge=; fi
+                if [[ "$badge" == *"|"* || "$badge" == *$'\n'* ]]; then
+                    die "Invalid generated menu badge: child__compute"
+                fi
+                items+=("GPU Compute-Unit Unlock|${badge}|Inspect harvesting, test live routing, stress-test, and persist.")
                 targets+=("child__compute")
-                items+=("CPU Core Unlock|$(menu_graph_badge child__cpu_unlock experimental)|Test eight cores, then choose one automatic unlock method.")
+                badges+=("$badge")
+                if ! badge=$(menu_graph_badge child__cpu_unlock experimental); then badge=; fi
+                if [[ "$badge" == *"|"* || "$badge" == *$'\n'* ]]; then
+                    die "Invalid generated menu badge: child__cpu_unlock"
+                fi
+                items+=("CPU Core Unlock|${badge}|Test eight cores, then choose one automatic unlock method.")
                 targets+=("child__cpu_unlock")
+                badges+=("$badge")
                 ;;
             menu__cmd_devices_menu)
                 title="Devices & Connectivity"
-                items+=("HDMI Audio|$(menu_graph_badge menu__cmd_audio_menu menu)|Enable Dolby Digital 5.1 or return to the default stereo profile.")
+                if ! badge=$(menu_graph_badge menu__cmd_audio_menu menu); then badge=; fi
+                if [[ "$badge" == *"|"* || "$badge" == *$'\n'* ]]; then
+                    die "Invalid generated menu badge: menu__cmd_audio_menu"
+                fi
+                items+=("HDMI Audio|${badge}|Enable Dolby Digital 5.1 or return to the default stereo profile.")
                 targets+=("menu__cmd_audio_menu")
-                items+=("HDMI-CEC|$(menu_graph_badge child__cec menu)|Configure automation, everyday controls, and diagnostics.")
+                badges+=("$badge")
+                if ! badge=$(menu_graph_badge child__cec menu); then badge=; fi
+                if [[ "$badge" == *"|"* || "$badge" == *$'\n'* ]]; then
+                    die "Invalid generated menu badge: child__cec"
+                fi
+                items+=("HDMI-CEC|${badge}|Configure automation, everyday controls, and diagnostics.")
                 targets+=("child__cec")
-                items+=("NCT6687 Fan-Control Driver|$(menu_graph_badge action__fan_driver install)|Install Linux hwmon fan-speed and PWM support.")
+                badges+=("$badge")
+                if ! badge=$(menu_graph_badge action__fan_driver install); then badge=; fi
+                if [[ "$badge" == *"|"* || "$badge" == *$'\n'* ]]; then
+                    die "Invalid generated menu badge: action__fan_driver"
+                fi
+                items+=("NCT6687 Fan-Control Driver|${badge}|Install Linux hwmon fan-speed and PWM support.")
                 targets+=("action__fan_driver")
-                items+=("AIC8800 WiFi and Bluetooth|$(menu_graph_badge action__wifi hardware_specific)|Install only on systems using the AIC8800 adapter.")
+                badges+=("$badge")
+                if ! badge=$(menu_graph_badge action__wifi hardware_specific); then badge=; fi
+                if [[ "$badge" == *"|"* || "$badge" == *$'\n'* ]]; then
+                    die "Invalid generated menu badge: action__wifi"
+                fi
+                items+=("AIC8800 WiFi and Bluetooth|${badge}|Install only on systems using the AIC8800 adapter.")
                 targets+=("action__wifi")
+                badges+=("$badge")
                 ;;
             menu__cmd_interfaces_menu)
                 title="Control Interfaces"
-                items+=("Decky Plugin|$(menu_graph_badge action__decky install)|Install BC-250 controls for Gaming Mode and Quick Access.")
+                if ! badge=$(menu_graph_badge action__decky install); then badge=; fi
+                if [[ "$badge" == *"|"* || "$badge" == *$'\n'* ]]; then
+                    die "Invalid generated menu badge: action__decky"
+                fi
+                items+=("Decky Plugin|${badge}|Install BC-250 controls for Gaming Mode and Quick Access.")
                 targets+=("action__decky")
-                items+=("Plasma Desktop Control|$(menu_graph_badge action__desktop install)|Install the shared service and Plasma system-tray control.")
+                badges+=("$badge")
+                if ! badge=$(menu_graph_badge action__desktop install); then badge=; fi
+                if [[ "$badge" == *"|"* || "$badge" == *$'\n'* ]]; then
+                    die "Invalid generated menu badge: action__desktop"
+                fi
+                items+=("Plasma Desktop Control|${badge}|Install the shared service and Plasma system-tray control.")
                 targets+=("action__desktop")
-                items+=("CoolerControl|$(menu_graph_badge action__coolercontrol install)|Install fan profiles, curves, and monitoring for the onboard controller.")
+                badges+=("$badge")
+                if ! badge=$(menu_graph_badge action__coolercontrol install); then badge=; fi
+                if [[ "$badge" == *"|"* || "$badge" == *$'\n'* ]]; then
+                    die "Invalid generated menu badge: action__coolercontrol"
+                fi
+                items+=("CoolerControl|${badge}|Install fan profiles, curves, and monitoring for the onboard controller.")
                 targets+=("action__coolercontrol")
-                items+=("BC250 Trainer|$(menu_graph_badge action__trainer install)|Install the standalone native Qt control application.")
+                badges+=("$badge")
+                if ! badge=$(menu_graph_badge action__trainer install); then badge=; fi
+                if [[ "$badge" == *"|"* || "$badge" == *$'\n'* ]]; then
+                    die "Invalid generated menu badge: action__trainer"
+                fi
+                items+=("BC250 Trainer|${badge}|Install the standalone native Qt control application.")
                 targets+=("action__trainer")
+                badges+=("$badge")
                 ;;
             menu__cmd_maintenance_menu)
                 title="Maintenance & Recovery"
-                items+=("SteamOS Update Protection|$(menu_graph_badge child__persistence menu)|Protect and recover supported component settings across updates.")
+                if ! badge=$(menu_graph_badge child__persistence menu); then badge=; fi
+                if [[ "$badge" == *"|"* || "$badge" == *$'\n'* ]]; then
+                    die "Invalid generated menu badge: child__persistence"
+                fi
+                items+=("SteamOS Update Protection|${badge}|Protect and recover supported component settings across updates.")
                 targets+=("child__persistence")
-                items+=("Clean AMDGPU Build Tree|$(menu_graph_badge action__amdgpu_clean cleanup)|Remove generated build output while retaining downloads and dependencies.")
+                badges+=("$badge")
+                if ! badge=$(menu_graph_badge action__amdgpu_clean cleanup); then badge=; fi
+                if [[ "$badge" == *"|"* || "$badge" == *$'\n'* ]]; then
+                    die "Invalid generated menu badge: action__amdgpu_clean"
+                fi
+                items+=("Clean AMDGPU Build Tree|${badge}|Remove generated build output while retaining downloads and dependencies.")
                 targets+=("action__amdgpu_clean")
-                items+=("Manage Installed Components|$(menu_graph_badge child__manage menu)|Review removal plans, uninstall components, or purge preserved data.")
+                badges+=("$badge")
+                if ! badge=$(menu_graph_badge child__manage menu); then badge=; fi
+                if [[ "$badge" == *"|"* || "$badge" == *$'\n'* ]]; then
+                    die "Invalid generated menu badge: child__manage"
+                fi
+                items+=("Manage Installed Components|${badge}|Review removal plans, uninstall components, or purge preserved data.")
                 targets+=("child__manage")
+                badges+=("$badge")
                 ;;
             menu__cmd_proton_menu)
                 title="BC-250 GE-Proton"
-                items+=("Status|$(menu_graph_badge action__proton_status read_only)|Verify the pinned compatibility tool and required files.")
+                if ! badge=$(menu_graph_badge action__proton_status read_only); then badge=; fi
+                if [[ "$badge" == *"|"* || "$badge" == *$'\n'* ]]; then
+                    die "Invalid generated menu badge: action__proton_status"
+                fi
+                items+=("Status|${badge}|Verify the pinned compatibility tool and required files.")
                 targets+=("action__proton_status")
-                items+=("Install|$(menu_graph_badge action__proton_install install)|Install GE-Proton after the required FSR4 RADV runtime is active.")
+                badges+=("$badge")
+                if ! badge=$(menu_graph_badge action__proton_install install); then badge=; fi
+                if [[ "$badge" == *"|"* || "$badge" == *$'\n'* ]]; then
+                    die "Invalid generated menu badge: action__proton_install"
+                fi
+                items+=("Install|${badge}|Install GE-Proton after the required FSR4 RADV runtime is active.")
                 targets+=("action__proton_install")
-                items+=("Update or Repair|$(menu_graph_badge action__proton_update install)|Transactionally replace an older or incomplete toolkit installation.")
+                badges+=("$badge")
+                if ! badge=$(menu_graph_badge action__proton_update install); then badge=; fi
+                if [[ "$badge" == *"|"* || "$badge" == *$'\n'* ]]; then
+                    die "Invalid generated menu badge: action__proton_update"
+                fi
+                items+=("Update or Repair|${badge}|Transactionally replace an older or incomplete toolkit installation.")
                 targets+=("action__proton_update")
-                items+=("Uninstall|$(menu_graph_badge action__proton_uninstall cleanup)|Remove the compatibility tool while preserving prefixes and saves.")
+                badges+=("$badge")
+                if ! badge=$(menu_graph_badge action__proton_uninstall cleanup); then badge=; fi
+                if [[ "$badge" == *"|"* || "$badge" == *$'\n'* ]]; then
+                    die "Invalid generated menu badge: action__proton_uninstall"
+                fi
+                items+=("Uninstall|${badge}|Remove the compatibility tool while preserving prefixes and saves.")
                 targets+=("action__proton_uninstall")
+                badges+=("$badge")
                 ;;
             menu__cmd_memory_temperature_menu)
                 title="GDDR6 Memory Temperature"
-                items+=("Status|$(menu_graph_badge action__memory_status read_only)|Verify source and recorded original-SMU backup state.")
+                if ! badge=$(menu_graph_badge action__memory_status read_only); then badge=; fi
+                if [[ "$badge" == *"|"* || "$badge" == *$'\n'* ]]; then
+                    die "Invalid generated menu badge: action__memory_status"
+                fi
+                items+=("Status|${badge}|Verify source and recorded original-SMU backup state.")
                 targets+=("action__memory_status")
-                items+=("Prepare Verified Source|$(menu_graph_badge action__memory_prepare install)|Download and verify the pinned payload, source, README, and license.")
+                badges+=("$badge")
+                if ! badge=$(menu_graph_badge action__memory_prepare install); then badge=; fi
+                if [[ "$badge" == *"|"* || "$badge" == *$'\n'* ]]; then
+                    die "Invalid generated menu badge: action__memory_prepare"
+                fi
+                items+=("Prepare Verified Source|${badge}|Download and verify the pinned payload, source, README, and license.")
                 targets+=("action__memory_prepare")
-                items+=("Apply Live SMU Payload|$(menu_graph_badge action__memory_patch experimental)|Patch this SMU runtime after explicit risk acknowledgement.")
+                badges+=("$badge")
+                if ! badge=$(menu_graph_badge action__memory_patch experimental); then badge=; fi
+                if [[ "$badge" == *"|"* || "$badge" == *$'\n'* ]]; then
+                    die "Invalid generated menu badge: action__memory_patch"
+                fi
+                items+=("Apply Live SMU Payload|${badge}|Patch this SMU runtime after explicit risk acknowledgement.")
                 targets+=("action__memory_patch")
-                items+=("Read GDDR6 Temperatures|$(menu_graph_badge action__memory_read read_only)|Attest the payload and read all eight memory chips.")
+                badges+=("$badge")
+                if ! badge=$(menu_graph_badge action__memory_read read_only); then badge=; fi
+                if [[ "$badge" == *"|"* || "$badge" == *$'\n'* ]]; then
+                    die "Invalid generated menu badge: action__memory_read"
+                fi
+                items+=("Read GDDR6 Temperatures|${badge}|Attest the payload and read all eight memory chips.")
                 targets+=("action__memory_read")
-                items+=("Restore Original SMU Bytes|$(menu_graph_badge action__memory_restore cleanup)|Restore the recorded handler and overwritten bytes.")
+                badges+=("$badge")
+                if ! badge=$(menu_graph_badge action__memory_restore cleanup); then badge=; fi
+                if [[ "$badge" == *"|"* || "$badge" == *$'\n'* ]]; then
+                    die "Invalid generated menu badge: action__memory_restore"
+                fi
+                items+=("Restore Original SMU Bytes|${badge}|Restore the recorded handler and overwritten bytes.")
                 targets+=("action__memory_restore")
+                badges+=("$badge")
                 ;;
             menu__cmd_audio_menu)
                 title="HDMI Audio"
-                items+=("Enable HDMI AC-3 5.1|$(menu_graph_badge action__hdmi_ac3_enable install)|Encode system audio as Dolby Digital 5.1.")
+                if ! badge=$(menu_graph_badge action__hdmi_ac3_enable install); then badge=; fi
+                if [[ "$badge" == *"|"* || "$badge" == *$'\n'* ]]; then
+                    die "Invalid generated menu badge: action__hdmi_ac3_enable"
+                fi
+                items+=("Enable HDMI AC-3 5.1|${badge}|Encode system audio as Dolby Digital 5.1.")
                 targets+=("action__hdmi_ac3_enable")
-                items+=("Revert HDMI AC-3 to Stereo|$(menu_graph_badge action__hdmi_ac3_revert cleanup)|Remove toolkit AC-3 configuration and restore default stereo.")
+                badges+=("$badge")
+                if ! badge=$(menu_graph_badge action__hdmi_ac3_revert cleanup); then badge=; fi
+                if [[ "$badge" == *"|"* || "$badge" == *$'\n'* ]]; then
+                    die "Invalid generated menu badge: action__hdmi_ac3_revert"
+                fi
+                items+=("Revert HDMI AC-3 to Stereo|${badge}|Remove toolkit AC-3 configuration and restore default stereo.")
                 targets+=("action__hdmi_ac3_revert")
+                badges+=("$badge")
                 ;;
             menu__cmd_amdgpu_boot_menu)
                 title="Advanced AMDGPU Boot Options"
-                items+=("AMDGPU Scheduler Policy|$(menu_graph_badge action__scheduler_policy advanced)|Normally managed by Mesa and RADV setup.")
+                if ! badge=$(menu_graph_badge action__scheduler_policy advanced); then badge=; fi
+                if [[ "$badge" == *"|"* || "$badge" == *$'\n'* ]]; then
+                    die "Invalid generated menu badge: action__scheduler_policy"
+                fi
+                items+=("AMDGPU Scheduler Policy|${badge}|Normally managed by Mesa and RADV setup.")
                 targets+=("action__scheduler_policy")
-                items+=("KFD Runlist Workaround|$(menu_graph_badge action__kfd_runlist experimental)|Experimental ROCm workaround that cannot coexist with sched_policy=2.")
+                badges+=("$badge")
+                if ! badge=$(menu_graph_badge action__kfd_runlist experimental); then badge=; fi
+                if [[ "$badge" == *"|"* || "$badge" == *$'\n'* ]]; then
+                    die "Invalid generated menu badge: action__kfd_runlist"
+                fi
+                items+=("KFD Runlist Workaround|${badge}|Experimental ROCm workaround that cannot coexist with sched_policy=2.")
                 targets+=("action__kfd_runlist")
+                badges+=("$badge")
                 ;;
             menu__cmd_drivers_menu)
                 title="Legacy Drivers Entry"
-                items+=("AMDGPU Kernel Fixes|$(menu_graph_badge action__amdgpu install)|Build the corrected kernel module and reboot before RADV setup.")
+                if ! badge=$(menu_graph_badge action__amdgpu install); then badge=; fi
+                if [[ "$badge" == *"|"* || "$badge" == *$'\n'* ]]; then
+                    die "Invalid generated menu badge: action__amdgpu"
+                fi
+                items+=("AMDGPU Kernel Fixes|${badge}|Build the corrected kernel module and reboot before RADV setup.")
                 targets+=("action__amdgpu")
-                items+=("Clean AMDGPU Build Tree|$(menu_graph_badge action__amdgpu_clean cleanup)|Remove generated build output while retaining downloads and dependencies.")
+                badges+=("$badge")
+                if ! badge=$(menu_graph_badge action__amdgpu_clean cleanup); then badge=; fi
+                if [[ "$badge" == *"|"* || "$badge" == *$'\n'* ]]; then
+                    die "Invalid generated menu badge: action__amdgpu_clean"
+                fi
+                items+=("Clean AMDGPU Build Tree|${badge}|Remove generated build output while retaining downloads and dependencies.")
                 targets+=("action__amdgpu_clean")
-                items+=("AMDGPU Scheduler Policy|$(menu_graph_badge action__scheduler_policy advanced)|Normally managed by Mesa and RADV setup.")
+                badges+=("$badge")
+                if ! badge=$(menu_graph_badge action__scheduler_policy advanced); then badge=; fi
+                if [[ "$badge" == *"|"* || "$badge" == *$'\n'* ]]; then
+                    die "Invalid generated menu badge: action__scheduler_policy"
+                fi
+                items+=("AMDGPU Scheduler Policy|${badge}|Normally managed by Mesa and RADV setup.")
                 targets+=("action__scheduler_policy")
-                items+=("KFD Runlist Workaround|$(menu_graph_badge action__kfd_runlist experimental)|Experimental ROCm workaround that cannot coexist with sched_policy=2.")
+                badges+=("$badge")
+                if ! badge=$(menu_graph_badge action__kfd_runlist experimental); then badge=; fi
+                if [[ "$badge" == *"|"* || "$badge" == *$'\n'* ]]; then
+                    die "Invalid generated menu badge: action__kfd_runlist"
+                fi
+                items+=("KFD Runlist Workaround|${badge}|Experimental ROCm workaround that cannot coexist with sched_policy=2.")
                 targets+=("action__kfd_runlist")
-                items+=("Install or Resume Async Compute|$(menu_graph_badge action__graphics_setup install)|Install AMDGPU first when needed, then resume Mesa and RADV.")
+                badges+=("$badge")
+                if ! badge=$(menu_graph_badge action__graphics_setup install); then badge=; fi
+                if [[ "$badge" == *"|"* || "$badge" == *$'\n'* ]]; then
+                    die "Invalid generated menu badge: action__graphics_setup"
+                fi
+                items+=("Install or Resume Async Compute|${badge}|Install AMDGPU first when needed, then resume Mesa and RADV.")
                 targets+=("action__graphics_setup")
-                items+=("NCT6687 Fan-Control Driver|$(menu_graph_badge action__fan_driver install)|Install Linux hwmon fan-speed and PWM support.")
+                badges+=("$badge")
+                if ! badge=$(menu_graph_badge action__fan_driver install); then badge=; fi
+                if [[ "$badge" == *"|"* || "$badge" == *$'\n'* ]]; then
+                    die "Invalid generated menu badge: action__fan_driver"
+                fi
+                items+=("NCT6687 Fan-Control Driver|${badge}|Install Linux hwmon fan-speed and PWM support.")
                 targets+=("action__fan_driver")
-                items+=("AIC8800 WiFi and Bluetooth|$(menu_graph_badge action__wifi hardware_specific)|Install only on systems using the AIC8800 adapter.")
+                badges+=("$badge")
+                if ! badge=$(menu_graph_badge action__wifi hardware_specific); then badge=; fi
+                if [[ "$badge" == *"|"* || "$badge" == *$'\n'* ]]; then
+                    die "Invalid generated menu badge: action__wifi"
+                fi
+                items+=("AIC8800 WiFi and Bluetooth|${badge}|Install only on systems using the AIC8800 adapter.")
                 targets+=("action__wifi")
+                badges+=("$badge")
                 ;;
             menu__cmd_storage_updates_menu)
                 title="Legacy Storage and Updates Entry"
-                items+=("Persistent Storage|$(menu_graph_badge child__storage menu)|Inspect or repair privileged storage and boot recovery.")
+                if ! badge=$(menu_graph_badge child__storage menu); then badge=; fi
+                if [[ "$badge" == *"|"* || "$badge" == *$'\n'* ]]; then
+                    die "Invalid generated menu badge: child__storage"
+                fi
+                items+=("Persistent Storage|${badge}|Inspect or repair privileged storage and boot recovery.")
                 targets+=("child__storage")
-                items+=("SteamOS Update Protection|$(menu_graph_badge child__persistence menu)|Protect and recover supported component settings across updates.")
+                badges+=("$badge")
+                if ! badge=$(menu_graph_badge child__persistence menu); then badge=; fi
+                if [[ "$badge" == *"|"* || "$badge" == *$'\n'* ]]; then
+                    die "Invalid generated menu badge: child__persistence"
+                fi
+                items+=("SteamOS Update Protection|${badge}|Protect and recover supported component settings across updates.")
                 targets+=("child__persistence")
+                badges+=("$badge")
                 ;;
-            *) die "Unknown generated menu ID: $menu_id" ;;
+            *) die "Unknown generated toolkit menu ID: $menu_id" ;;
         esac
+        if [[ "$title" == *"|"* || "$title" == *[[:cntrl:]]* ]]; then
+            die "Invalid generated toolkit menu title"
+        fi
         menu_select "$title" "${items[@]}" || { echo; return 0; }
         target=${targets[$MENU_CHOICE]}
         if [[ "$target" == menu__* ]]; then
             menu_graph_render "$target"
         else
-            menu_graph_activate "$target"
+            menu_graph_activate "$target" "${badges[$MENU_CHOICE]}"
         fi
     done
 }
+
+menu_graph_open() {
+    case "${1:-root}" in
+        root) menu_graph_render menu__cmd_menu ;;
+        setup) menu_graph_render menu__cmd_guided_setup_menu ;;
+        core) menu_graph_render menu__cmd_core_system_menu ;;
+        power) menu_graph_render menu__cmd_power_menu ;;
+        graphics) menu_graph_render menu__cmd_graphics_menu ;;
+        unlocks) menu_graph_render menu__cmd_unlocks_menu ;;
+        devices) menu_graph_render menu__cmd_devices_menu ;;
+        interfaces) menu_graph_render menu__cmd_interfaces_menu ;;
+        maintenance) menu_graph_render menu__cmd_maintenance_menu ;;
+        proton) menu_graph_render menu__cmd_proton_menu ;;
+        memory-temperature) menu_graph_render menu__cmd_memory_temperature_menu ;;
+        audio) menu_graph_render menu__cmd_audio_menu ;;
+        amdgpu-boot) menu_graph_render menu__cmd_amdgpu_boot_menu ;;
+        drivers) menu_graph_render menu__cmd_drivers_menu ;;
+        storage-updates) menu_graph_render menu__cmd_storage_updates_menu ;;
+        *) return 2 ;;
+    esac
+}
+
+# END GENERATED TOOLKIT MENUS
 
 cmd_menu() {
     require_terminal
     require_normal_user
     start_sudo_session
-    menu_graph_render menu__cmd_menu
+    menu_graph_open root
 }
 
 cmd_guided_setup_menu() {
     require_terminal
     require_normal_user
-    menu_graph_render menu__cmd_guided_setup_menu
+    menu_graph_open setup
 }
 
 cmd_core_system_menu() {
     require_terminal
     require_normal_user
-    menu_graph_render menu__cmd_core_system_menu
+    menu_graph_open core
 }
 
 cmd_power_menu() {
     require_terminal
     require_normal_user
-    menu_graph_render menu__cmd_power_menu
+    menu_graph_open power
 }
 
 cmd_graphics_menu() {
     require_terminal
     require_normal_user
-    menu_graph_render menu__cmd_graphics_menu
+    menu_graph_open graphics
 }
 
 cmd_unlocks_menu() {
     require_terminal
     require_normal_user
-    menu_graph_render menu__cmd_unlocks_menu
+    menu_graph_open unlocks
 }
 
 cmd_devices_menu() {
     require_terminal
     require_normal_user
-    menu_graph_render menu__cmd_devices_menu
+    menu_graph_open devices
 }
 
 cmd_interfaces_menu() {
     require_terminal
     require_normal_user
-    menu_graph_render menu__cmd_interfaces_menu
+    menu_graph_open interfaces
 }
 
 cmd_maintenance_menu() {
     require_terminal
     require_normal_user
-    menu_graph_render menu__cmd_maintenance_menu
+    menu_graph_open maintenance
 }
 
 cmd_proton_menu() {
     require_terminal
     require_normal_user
-    menu_graph_render menu__cmd_proton_menu
+    menu_graph_open proton
 }
 
 cmd_memory_temperature_menu() {
     require_terminal
     require_normal_user
-    menu_graph_render menu__cmd_memory_temperature_menu
+    menu_graph_open memory-temperature
 }
 
 cmd_audio_menu() {
     require_terminal
     require_normal_user
-    menu_graph_render menu__cmd_audio_menu
+    menu_graph_open audio
 }
 
 cmd_amdgpu_boot_menu() {
     require_terminal
     require_normal_user
-    menu_graph_render menu__cmd_amdgpu_boot_menu
+    menu_graph_open amdgpu-boot
 }
 
 cmd_drivers_menu() {
     require_terminal
     require_normal_user
-    menu_graph_render menu__cmd_drivers_menu
+    menu_graph_open drivers
 }
 
 cmd_storage_updates_menu() {
     require_terminal
     require_normal_user
-    menu_graph_render menu__cmd_storage_updates_menu
+    menu_graph_open storage-updates
 }
-
-# END GENERATED TOOLKIT MENUS
 
 cmd_help() {
     cat << EOF

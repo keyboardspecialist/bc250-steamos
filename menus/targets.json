@@ -1,0 +1,101 @@
+{
+  "schemaVersion": 1,
+  "targets": [
+    {
+      "name": "toolkit",
+      "graph": "menus/toolkit.mmd",
+      "bash": "bc250-toolkit.sh",
+      "symbol": "menu_graph",
+      "entries": [
+        ["root", "menu__cmd_menu"],
+        ["setup", "menu__cmd_guided_setup_menu"],
+        ["core", "menu__cmd_core_system_menu"],
+        ["power", "menu__cmd_power_menu"],
+        ["graphics", "menu__cmd_graphics_menu"],
+        ["unlocks", "menu__cmd_unlocks_menu"],
+        ["devices", "menu__cmd_devices_menu"],
+        ["interfaces", "menu__cmd_interfaces_menu"],
+        ["maintenance", "menu__cmd_maintenance_menu"],
+        ["proton", "menu__cmd_proton_menu"],
+        ["memory-temperature", "menu__cmd_memory_temperature_menu"],
+        ["audio", "menu__cmd_audio_menu"],
+        ["amdgpu-boot", "menu__cmd_amdgpu_boot_menu"],
+        ["drivers", "menu__cmd_drivers_menu"],
+        ["storage-updates", "menu__cmd_storage_updates_menu"]
+      ],
+      "templates": ["TOOLKIT_VERSION"]
+    },
+    {
+      "name": "power",
+      "graph": "menus/power.mmd",
+      "bash": "bc250-power.sh",
+      "symbol": "power_menu_graph",
+      "entries": [
+        ["root", "menu__root"],
+        ["foundation", "menu__foundation"],
+        ["frequency", "menu__frequency"],
+        ["load", "menu__load"],
+        ["ramp", "menu__ramp"],
+        ["cpu", "menu__cpu"],
+        ["cpu-unlock", "menu__cpu_unlock"]
+      ]
+    },
+    {
+      "name": "cec",
+      "graph": "menus/cec.mmd",
+      "bash": "bc250-cec.sh",
+      "symbol": "cec_menu_graph",
+      "entries": [["root", "menu__root"]],
+      "templates": ["CEC_AUDIO_LA"]
+    },
+    {
+      "name": "ram-split",
+      "graph": "menus/ram-split.mmd",
+      "bash": "bc250-ram-split.sh",
+      "symbol": "ram_menu_graph",
+      "entries": [["root", "menu__root"]]
+    },
+    {
+      "name": "storage",
+      "graph": "menus/storage.mmd",
+      "bash": "bc250-storage.sh",
+      "symbol": "storage_menu_graph",
+      "entries": [["root", "menu__root"]]
+    },
+    {
+      "name": "swap",
+      "graph": "menus/swap.mmd",
+      "bash": "bc250-swap.sh",
+      "symbol": "swap_menu_graph",
+      "entries": [["root", "menu__root"]]
+    },
+    {
+      "name": "mesh-shader",
+      "graph": "menus/mesh-shader.mmd",
+      "bash": "bc250-mesh-shader.sh",
+      "symbol": "mesh_menu_graph",
+      "entries": [["root", "menu__root"]]
+    },
+    {
+      "name": "compute",
+      "graph": "menus/compute.mmd",
+      "bash": "bc250-40cu.sh",
+      "symbol": "compute_menu_graph",
+      "entries": [["root", "menu__root"]]
+    },
+    {
+      "name": "maintenance",
+      "graph": "menus/maintenance.mmd",
+      "bash": "bc250-maintenance.sh",
+      "symbol": "maintenance_menu_graph",
+      "entries": [["root", "menu__root"]]
+    },
+    {
+      "name": "update-persistence",
+      "graph": "menus/update-persistence.mmd",
+      "bash": "bc250-update-persistence.sh",
+      "symbol": "persistence_menu_graph",
+      "entries": [["root", "menu__root"]]
+    }
+  ]
+}

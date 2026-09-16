@@ -581,31 +581,229 @@ run_menu_action() {
     pause_key
 }
 
+maintenance_menu_graph_badge() {
+    case "$1" in
+        action__status) printf '%s' "${CD}[read only]${C0}" ;;
+        action__remove_trainer) state_badge "$(component_state trainer)" ;;
+        action__remove_desktop) state_badge "$(component_state desktop)" ;;
+        action__remove_decky) state_badge "$(component_state decky)" ;;
+        action__remove_coolercontrol) state_badge "$(component_state coolercontrol)" ;;
+        action__remove_cec) state_badge "$(component_state cec)" ;;
+        action__remove_ac3) state_badge "$(component_state ac3)" ;;
+        action__remove_power) state_badge "$(component_state power)" ;;
+        action__remove_ram) state_badge "$(component_state ram)" ;;
+        action__remove_swap) state_badge "$(component_state swap)" ;;
+        action__remove_compute) state_badge "$(component_state compute)" ;;
+        action__remove_proton) state_badge "$(component_state proton)" ;;
+        action__remove_native_mesh) state_badge "$(component_state native-mesh)" ;;
+        action__remove_mesh) state_badge "$(component_state mesh)" ;;
+        action__remove_audio) state_badge "$(component_state audio)" ;;
+        action__remove_fan) state_badge "$(component_state fan)" ;;
+        action__remove_aic) state_badge "$(component_state aic)" ;;
+        action__uninstall_all) printf '%s' "${CR}[destructive]${C0}" ;;
+        action__purge) printf '%s' "${CR}[permanent]${C0}" ;;
+        *) return 2 ;;
+    esac
+}
+
+maintenance_menu_graph_activate() {
+    case "$1" in
+        action__status) run_menu_action status ;;
+        action__remove_trainer) run_menu_action uninstall trainer ;;
+        action__remove_desktop) run_menu_action uninstall desktop ;;
+        action__remove_decky) run_menu_action uninstall decky ;;
+        action__remove_coolercontrol) run_menu_action uninstall coolercontrol ;;
+        action__remove_cec) run_menu_action uninstall cec ;;
+        action__remove_ac3) run_menu_action uninstall ac3 ;;
+        action__remove_power) run_menu_action uninstall power ;;
+        action__remove_ram) run_menu_action uninstall ram ;;
+        action__remove_swap) run_menu_action uninstall swap ;;
+        action__remove_compute) run_menu_action uninstall compute ;;
+        action__remove_proton) run_menu_action uninstall proton ;;
+        action__remove_native_mesh) run_menu_action uninstall native-mesh ;;
+        action__remove_mesh) run_menu_action uninstall mesh ;;
+        action__remove_audio) run_menu_action uninstall audio ;;
+        action__remove_fan) run_menu_action uninstall fan ;;
+        action__remove_aic) run_menu_action uninstall aic ;;
+        action__uninstall_all) run_menu_action uninstall all ;;
+        action__purge) run_menu_action purge ;;
+        *) die "Unknown generated maintenance menu target: $1" ;;
+    esac
+}
+
+# BEGIN GENERATED MAINTENANCE MENUS
+# Generated from menus/maintenance.mmd by scripts/generate-menus.py.
+# Do not edit this region directly.
+maintenance_menu_graph_render() {
+    local menu_id="$1" title target badge
+    if declare -F maintenance_menu_graph_prepare >/dev/null; then maintenance_menu_graph_prepare "$menu_id"; fi
+    while true; do
+        local items=() targets=() badges=()
+        case "$menu_id" in
+            menu__root)
+                title="BC-250 installed components"
+                if ! badge=$(maintenance_menu_graph_badge action__status read_only); then badge=; fi
+                if [[ "$badge" == *"|"* || "$badge" == *$'\n'* ]]; then
+                    die "Invalid generated menu badge: action__status"
+                fi
+                items+=("Show component inventory|${badge}|Inspect installed, partial, and preserved-data state.")
+                targets+=("action__status")
+                badges+=("$badge")
+                if ! badge=$(maintenance_menu_graph_badge action__remove_trainer cleanup); then badge=; fi
+                if [[ "$badge" == *"|"* || "$badge" == *$'\n'* ]]; then
+                    die "Invalid generated menu badge: action__remove_trainer"
+                fi
+                items+=("Remove BC250 Trainer|${badge}|Review the plan and remove only this component.")
+                targets+=("action__remove_trainer")
+                badges+=("$badge")
+                if ! badge=$(maintenance_menu_graph_badge action__remove_desktop cleanup); then badge=; fi
+                if [[ "$badge" == *"|"* || "$badge" == *$'\n'* ]]; then
+                    die "Invalid generated menu badge: action__remove_desktop"
+                fi
+                items+=("Remove Plasma desktop control|${badge}|Review the plan and remove only this component.")
+                targets+=("action__remove_desktop")
+                badges+=("$badge")
+                if ! badge=$(maintenance_menu_graph_badge action__remove_decky cleanup); then badge=; fi
+                if [[ "$badge" == *"|"* || "$badge" == *$'\n'* ]]; then
+                    die "Invalid generated menu badge: action__remove_decky"
+                fi
+                items+=("Remove Decky plugin|${badge}|Review the plan and remove only this component.")
+                targets+=("action__remove_decky")
+                badges+=("$badge")
+                if ! badge=$(maintenance_menu_graph_badge action__remove_coolercontrol cleanup); then badge=; fi
+                if [[ "$badge" == *"|"* || "$badge" == *$'\n'* ]]; then
+                    die "Invalid generated menu badge: action__remove_coolercontrol"
+                fi
+                items+=("Remove CoolerControl|${badge}|Review the plan and remove only this component.")
+                targets+=("action__remove_coolercontrol")
+                badges+=("$badge")
+                if ! badge=$(maintenance_menu_graph_badge action__remove_cec cleanup); then badge=; fi
+                if [[ "$badge" == *"|"* || "$badge" == *$'\n'* ]]; then
+                    die "Invalid generated menu badge: action__remove_cec"
+                fi
+                items+=("Remove CEC integration|${badge}|Review the plan and remove only this component.")
+                targets+=("action__remove_cec")
+                badges+=("$badge")
+                if ! badge=$(maintenance_menu_graph_badge action__remove_ac3 cleanup); then badge=; fi
+                if [[ "$badge" == *"|"* || "$badge" == *$'\n'* ]]; then
+                    die "Invalid generated menu badge: action__remove_ac3"
+                fi
+                items+=("Remove HDMI AC-3 surround encoding|${badge}|Review the plan and remove only this component.")
+                targets+=("action__remove_ac3")
+                badges+=("$badge")
+                if ! badge=$(maintenance_menu_graph_badge action__remove_power cleanup); then badge=; fi
+                if [[ "$badge" == *"|"* || "$badge" == *$'\n'* ]]; then
+                    die "Invalid generated menu badge: action__remove_power"
+                fi
+                items+=("Remove Power management / CPU core unlock|${badge}|Review the plan and remove only this component.")
+                targets+=("action__remove_power")
+                badges+=("$badge")
+                if ! badge=$(maintenance_menu_graph_badge action__remove_ram cleanup); then badge=; fi
+                if [[ "$badge" == *"|"* || "$badge" == *$'\n'* ]]; then
+                    die "Invalid generated menu badge: action__remove_ram"
+                fi
+                items+=("Remove RAM / VRAM split|${badge}|Review the plan and remove only this component.")
+                targets+=("action__remove_ram")
+                badges+=("$badge")
+                if ! badge=$(maintenance_menu_graph_badge action__remove_swap cleanup); then badge=; fi
+                if [[ "$badge" == *"|"* || "$badge" == *$'\n'* ]]; then
+                    die "Invalid generated menu badge: action__remove_swap"
+                fi
+                items+=("Remove Compressed swap|${badge}|Review the plan and remove only this component.")
+                targets+=("action__remove_swap")
+                badges+=("$badge")
+                if ! badge=$(maintenance_menu_graph_badge action__remove_compute cleanup); then badge=; fi
+                if [[ "$badge" == *"|"* || "$badge" == *$'\n'* ]]; then
+                    die "Invalid generated menu badge: action__remove_compute"
+                fi
+                items+=("Remove GPU compute-unit unlock|${badge}|Review the plan and remove only this component.")
+                targets+=("action__remove_compute")
+                badges+=("$badge")
+                if ! badge=$(maintenance_menu_graph_badge action__remove_proton cleanup); then badge=; fi
+                if [[ "$badge" == *"|"* || "$badge" == *$'\n'* ]]; then
+                    die "Invalid generated menu badge: action__remove_proton"
+                fi
+                items+=("Remove BC-250 GE-Proton|${badge}|Review the plan and remove only this component.")
+                targets+=("action__remove_proton")
+                badges+=("$badge")
+                if ! badge=$(maintenance_menu_graph_badge action__remove_native_mesh cleanup); then badge=; fi
+                if [[ "$badge" == *"|"* || "$badge" == *$'\n'* ]]; then
+                    die "Invalid generated menu badge: action__remove_native_mesh"
+                fi
+                items+=("Remove Private native-mesh profile|${badge}|Review the plan and remove only this component.")
+                targets+=("action__remove_native_mesh")
+                badges+=("$badge")
+                if ! badge=$(maintenance_menu_graph_badge action__remove_mesh cleanup); then badge=; fi
+                if [[ "$badge" == *"|"* || "$badge" == *$'\n'* ]]; then
+                    die "Invalid generated menu badge: action__remove_mesh"
+                fi
+                items+=("Remove Mesa / RADV async compute|${badge}|Review the plan and remove only this component.")
+                targets+=("action__remove_mesh")
+                badges+=("$badge")
+                if ! badge=$(maintenance_menu_graph_badge action__remove_audio cleanup); then badge=; fi
+                if [[ "$badge" == *"|"* || "$badge" == *$'\n'* ]]; then
+                    die "Invalid generated menu badge: action__remove_audio"
+                fi
+                items+=("Remove AMDGPU kernel fixes|${badge}|Review the plan and remove only this component.")
+                targets+=("action__remove_audio")
+                badges+=("$badge")
+                if ! badge=$(maintenance_menu_graph_badge action__remove_fan cleanup); then badge=; fi
+                if [[ "$badge" == *"|"* || "$badge" == *$'\n'* ]]; then
+                    die "Invalid generated menu badge: action__remove_fan"
+                fi
+                items+=("Remove NCT6687 fan-control driver|${badge}|Review the plan and remove only this component.")
+                targets+=("action__remove_fan")
+                badges+=("$badge")
+                if ! badge=$(maintenance_menu_graph_badge action__remove_aic cleanup); then badge=; fi
+                if [[ "$badge" == *"|"* || "$badge" == *$'\n'* ]]; then
+                    die "Invalid generated menu badge: action__remove_aic"
+                fi
+                items+=("Remove AIC8800 WiFi / Bluetooth|${badge}|Review the plan and remove only this component.")
+                targets+=("action__remove_aic")
+                badges+=("$badge")
+                if ! badge=$(maintenance_menu_graph_badge action__uninstall_all cleanup); then badge=; fi
+                if [[ "$badge" == *"|"* || "$badge" == *$'\n'* ]]; then
+                    die "Invalid generated menu badge: action__uninstall_all"
+                fi
+                items+=("Uninstall all components|${badge}|Restore stock behavior and remove all integrations; preserve settings and data.")
+                targets+=("action__uninstall_all")
+                badges+=("$badge")
+                if ! badge=$(maintenance_menu_graph_badge action__purge cleanup); then badge=; fi
+                if [[ "$badge" == *"|"* || "$badge" == *$'\n'* ]]; then
+                    die "Invalid generated menu badge: action__purge"
+                fi
+                items+=("Purge preserved data|${badge}|After uninstall, delete profiles, backing data, and reproducible build caches.")
+                targets+=("action__purge")
+                badges+=("$badge")
+                ;;
+            *) die "Unknown generated maintenance menu ID: $menu_id" ;;
+        esac
+        if [[ "$title" == *"|"* || "$title" == *[[:cntrl:]]* ]]; then
+            die "Invalid generated maintenance menu title"
+        fi
+        menu_select "$title" "${items[@]}" || { echo; return 0; }
+        target=${targets[$MENU_CHOICE]}
+        if [[ "$target" == menu__* ]]; then
+            maintenance_menu_graph_render "$target"
+        else
+            maintenance_menu_graph_activate "$target" "${badges[$MENU_CHOICE]}"
+        fi
+    done
+}
+
+maintenance_menu_graph_open() {
+    case "${1:-root}" in
+        root) maintenance_menu_graph_render menu__root ;;
+        *) return 2 ;;
+    esac
+}
+
+# END GENERATED MAINTENANCE MENUS
+
 cmd_menu() {
     require_normal_user
     [[ -t 0 && -t 1 ]] || die "The maintenance menu requires an interactive terminal."
-    local component
-    while true; do
-        local items=("Show component inventory|${CD}[read only]${C0}|Inspect installed, partial, and preserved-data state.")
-        for component in "${COMPONENTS[@]}"; do
-            items+=("Remove $(component_label "$component")|$(state_badge "$(component_state "$component")")|Review the plan and remove only this component.")
-        done
-        items+=(
-            "Uninstall all components|${CR}[destructive]${C0}|Restore stock behavior and remove all integrations; preserve settings and data."
-            "Purge preserved data|${CR}[permanent]${C0}|After uninstall, delete profiles, backing data, and reproducible build caches."
-        )
-        menu_select "BC-250 installed components" "${items[@]}" || { echo; break; }
-        if [[ $MENU_CHOICE -eq 0 ]]; then
-            run_menu_action status
-        elif (( MENU_CHOICE >= 1 && MENU_CHOICE <= ${#COMPONENTS[@]} )); then
-            component=${COMPONENTS[$((MENU_CHOICE - 1))]}
-            run_menu_action uninstall "$component"
-        elif (( MENU_CHOICE == ${#COMPONENTS[@]} + 1 )); then
-            run_menu_action uninstall all
-        else
-            run_menu_action purge
-        fi
-    done
+    maintenance_menu_graph_open root
 }
 
 cmd_help() {

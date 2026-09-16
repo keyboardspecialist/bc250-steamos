@@ -657,31 +657,109 @@ confirm_action() {
     case "$answer" in y|Y|yes|YES) "$@" ;; *) log "Cancelled." ;; esac
 }
 
+swap_menu_graph_badge() {
+    local badge="${CD}[not configured]${C0}"
+    case "$1" in
+        action__status|action__zram|action__zswap|action__remove)
+            if configured_complete && read_state; then
+                badge="${CG}[${MODE}]${C0}"
+            fi
+            printf '%s' "$badge"
+            ;;
+        action__help) ;;
+        *) return 2 ;;
+    esac
+}
+
+swap_menu_graph_activate() {
+    echo
+    case "$1" in
+        action__status) cmd_status || true ;;
+        action__zram) confirm_action "Configure the zram profile?" cmd_install_zram ;;
+        action__zswap) confirm_action "Configure zswap with a 16 GiB disk swapfile?" cmd_install_zswap "$DEFAULT_SWAP_GIB" ;;
+        action__remove) confirm_action "Remove the toolkit swap profile?" cmd_uninstall ;;
+        action__help) cmd_help ;;
+        *) die "Unknown generated swap menu target: $1" ;;
+    esac
+    echo
+    printf '%s' "${CD}-- press any key to continue --${C0}"
+    IFS= read -rsn1 || true
+}
+
+# BEGIN GENERATED SWAP MENUS
+# Generated from menus/swap.mmd by scripts/generate-menus.py.
+# Do not edit this region directly.
+swap_menu_graph_render() {
+    local menu_id="$1" title target badge
+    if declare -F swap_menu_graph_prepare >/dev/null; then swap_menu_graph_prepare "$menu_id"; fi
+    while true; do
+        local items=() targets=() badges=()
+        case "$menu_id" in
+            menu__root)
+                title="BC-250 compressed swap"
+                if ! badge=$(swap_menu_graph_badge action__status read_only); then badge=; fi
+                if [[ "$badge" == *"|"* || "$badge" == *$'\n'* ]]; then
+                    die "Invalid generated menu badge: action__status"
+                fi
+                items+=("Status overview|${badge}|Show the configured profile, active swap, zswap state, and swappiness.")
+                targets+=("action__status")
+                badges+=("$badge")
+                if ! badge=$(swap_menu_graph_badge action__zram install); then badge=; fi
+                if [[ "$badge" == *"|"* || "$badge" == *$'\n'* ]]; then
+                    die "Invalid generated menu badge: action__zram"
+                fi
+                items+=("Use zram|${badge}|Compressed RAM swap using Valve's half-RAM zstd profile at priority 100.")
+                targets+=("action__zram")
+                badges+=("$badge")
+                if ! badge=$(swap_menu_graph_badge action__zswap install); then badge=; fi
+                if [[ "$badge" == *"|"* || "$badge" == *$'\n'* ]]; then
+                    die "Invalid generated menu badge: action__zswap"
+                fi
+                items+=("Use zswap + disk|${badge}|Use lz4 zswap with a 25% RAM pool plus a 16 GiB disk swapfile at priority 10.")
+                targets+=("action__zswap")
+                badges+=("$badge")
+                if ! badge=$(swap_menu_graph_badge action__remove cleanup); then badge=; fi
+                if [[ "$badge" == *"|"* || "$badge" == *$'\n'* ]]; then
+                    die "Invalid generated menu badge: action__remove"
+                fi
+                items+=("Remove toolkit profile|${badge}|Remove toolkit-owned swap settings and return to Valve's zram defaults.")
+                targets+=("action__remove")
+                badges+=("$badge")
+                if ! badge=$(swap_menu_graph_badge action__help read_only); then badge=; fi
+                if [[ "$badge" == *"|"* || "$badge" == *$'\n'* ]]; then
+                    die "Invalid generated menu badge: action__help"
+                fi
+                items+=("Full help|${badge}|Show profile details, CLI commands, paths, and reboot behavior.")
+                targets+=("action__help")
+                badges+=("$badge")
+                ;;
+            *) die "Unknown generated swap menu ID: $menu_id" ;;
+        esac
+        if [[ "$title" == *"|"* || "$title" == *[[:cntrl:]]* ]]; then
+            die "Invalid generated swap menu title"
+        fi
+        menu_select "$title" "${items[@]}" || { echo; return 0; }
+        target=${targets[$MENU_CHOICE]}
+        if [[ "$target" == menu__* ]]; then
+            swap_menu_graph_render "$target"
+        else
+            swap_menu_graph_activate "$target" "${badges[$MENU_CHOICE]}"
+        fi
+    done
+}
+
+swap_menu_graph_open() {
+    case "${1:-root}" in
+        root) swap_menu_graph_render menu__root ;;
+        *) return 2 ;;
+    esac
+}
+
+# END GENERATED SWAP MENUS
+
 cmd_menu() {
     require_root
-    while true; do
-        local badge="${CD}[not configured]${C0}"
-        if configured_complete && read_state; then badge="${CG}[${MODE}]${C0}"; fi
-        local items=(
-            "Status overview|$badge|Show the configured profile, active swap, zswap state, and swappiness."
-            "Use zram|$badge|Compressed RAM swap using Valve's half-RAM zstd profile at priority 100."
-            "Use zswap + disk|$badge|Use lz4 zswap with a 25% RAM pool plus a 16 GiB disk swapfile at priority 10."
-            "Remove toolkit profile|$badge|Remove toolkit-owned swap settings and return to Valve's zram defaults."
-            "Full help||Show profile details, CLI commands, paths, and reboot behavior."
-        )
-        menu_select "BC-250 compressed swap" "${items[@]}" || { echo; break; }
-        echo
-        case $MENU_CHOICE in
-            0) cmd_status || true ;;
-            1) confirm_action "Configure the zram profile?" cmd_install_zram ;;
-            2) confirm_action "Configure zswap with a 16 GiB disk swapfile?" cmd_install_zswap "$DEFAULT_SWAP_GIB" ;;
-            3) confirm_action "Remove the toolkit swap profile?" cmd_uninstall ;;
-            4) cmd_help ;;
-        esac
-        echo
-        printf '%s' "${CD}-- press any key to continue --${C0}"
-        IFS= read -rsn1 || true
-    done
+    swap_menu_graph_open root
 }
 
 cmd_help() {

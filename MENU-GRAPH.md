@@ -1,18 +1,19 @@
-# Toolkit Menu Graph
+# Menu Graphs
 
-`menus/toolkit.mmd` is the source of truth for the unified toolkit's menu
-structure, ordering, titles, hints, and dependency documentation. It is valid
-Mermaid and can be previewed with any Mermaid renderer.
+The Mermaid files under `menus/` are the source of truth for the unified toolkit
+and every standalone component menu. `menus/targets.json` maps each graph to its
+Bash target, generated symbol prefix, and supported direct entries. The graphs
+are valid Mermaid and can be previewed with any Mermaid renderer.
 
 The graph deliberately contains no shell commands. Stable `action__*` and
-`child__*` IDs map to fixed adapters in `bc250-toolkit.sh`; live badges also
-remain in Bash. This keeps confirmation, privilege, and failure behavior out of
-the presentation format.
+`child__*` IDs map to fixed adapters in the target Bash script; live badges also
+remain in Bash. This keeps confirmation, privilege, prompts, and failure
+behavior out of the presentation format.
 
 ## Editing
 
-1. Edit `menus/toolkit.mmd`.
-2. Regenerate the marked region in `bc250-toolkit.sh`.
+1. Edit the target graph under `menus/`.
+2. Regenerate every configured target.
 3. Run structural and generated-output checks.
 
 ```bash
@@ -21,7 +22,8 @@ python3 scripts/generate-menus.py --check
 python3 scripts/analyze-menu-graph.py --check --depth-budget 3
 ```
 
-Do not edit the generated region in `bc250-toolkit.sh` directly.
+Do not edit generated regions in the Bash targets directly. The generator
+validates every graph and target before writing any file.
 
 ## Mermaid Subset
 
@@ -40,10 +42,13 @@ menu__cmd_menu --> action__status
 action__status -.-> menu__cmd_power_menu
 ```
 
-- `menu__cmd_*` nodes generate `cmd_*` menu functions.
-- `action__*` nodes dispatch a fixed toolkit operation.
-- `child__*` nodes launch an existing component menu.
+- `menu__*` nodes generate recursive menu screens.
+- `action__*` nodes dispatch a fixed operation.
+- `child__*` nodes enter a handwritten dynamic workflow or another generated
+  component menu through a fixed Bash adapter.
 - Every node label is `Title<br/>Hint`.
+- `%% menu-title menu__id "Context"` overrides a menu screen heading without
+  changing the shorter label shown by its parent.
 - Solid edges are selectable choices, in declaration order.
 - Dotted edges document dependencies and never become choices.
 - `:::entry` marks a supported direct-CLI menu that may be unreachable from the
@@ -54,19 +59,18 @@ action__status -.-> menu__cmd_power_menu
 
 ## Current Structure
 
-The generated toolkit graph has:
+The ten configured targets contain:
 
-- 15 authored menus and 51 selectable nodes
-- 67 navigation links and 6 dependency links
+- 40 authored menus and 211 selectable nodes
+- 227 navigation links and 8 dependency links
 - no forward-navigation or dependency cycles
 - no sibling-category detours
 - no parallel choices to the same destination
 - a deepest and longest authored route of three links
 
-`drivers` and `storage-updates` remain explicit `:::entry` menus for CLI
-compatibility, but are no longer part of the root taxonomy.
+Toolkit `drivers` and `storage-updates`, plus Power's CPU-unlock workflow, remain
+explicit `:::entry` menus for CLI compatibility.
 
-This first migration covers `bc250-toolkit.sh`. Component-local Power, CEC,
-RAM, and maintenance menus remain handwritten and independently usable. Power
-exposes direct `menu` entry points so the generated toolkit can open the
-selected workflow without first showing Power's broad root menu.
+Generated Bash remains committed inline so every component is independently
+usable without Python or Mermaid. Runtime-sized selectors, such as Power's live
+voltage-curve points, remain handwritten behind fixed `child__*` adapters.

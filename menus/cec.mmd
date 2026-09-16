@@ -1,0 +1,104 @@
+%% menu-flow-v1
+flowchart TD
+
+%% menu-title menu__setup "CEC setup &amp; automation"
+%% menu-title menu__toggles "CEC behavior toggles  (override Steam UI)"
+%% menu-title menu__boot_wake "Wake TV at boot  (session-start unit)"
+%% menu-title menu__amp "Receiver / amp  (CEC audio system, LA {{CEC_AUDIO_LA}})"
+%% menu-title menu__controls "Everyday controls  (send CEC commands now)"
+%% menu-title menu__diagnostics "Diagnostics &amp; recovery  (read-only unless noted)"
+
+menu__root["BC-250 CEC / TV control (SteamOS cecd)<br/>Configure CEC automation, everyday controls, and diagnostics."]:::root
+menu__setup["Setup & automation<br/>Configure identity, sleep, boot, poweroff, and receiver-follow behavior."]:::menu
+menu__toggles["Console sleep behavior<br/>Configure wake, suspend, TV-power, and remote-input overrides."]:::menu
+menu__boot_wake["Wake TV at boot<br/>Install boot wake and choose polite or always-grab input behavior."]:::menu
+menu__amp["Receiver / amp<br/>Control receiver power and review its follow settings."]:::menu
+menu__controls["Everyday controls<br/>Wake or sleep devices and manage the active HDMI input."]:::menu
+menu__diagnostics["Diagnostics & recovery<br/>Test, scan, repair, inspect remote input, or monitor raw traffic."]:::menu
+child__receiver_integration["Receiver integration<br/>Configure receiver follow behavior for boot, poweroff, suspend, and resume."]:::menu
+
+action__status["Status overview<br/>Full health dump: device, daemon, TV power, config. Always safe."]:::read_only
+action__help["Full help<br/>The complete manual for every CLI command."]:::read_only
+
+action__recommended_setup["Recommended setup<br/>One shot: device name, TV sleep behavior, poweroff integration, and boot wake."]:::install
+action__osd_name["Set TV name (OSD)<br/>Set the console name shown in the TV's HDMI device list."]:::advanced
+action__shutdown_standby["TV standby on power-off<br/>Install or remove polite TV standby during console shutdown."]:::install
+
+action__toggle_wake_tv["Wake TV on resume<br/>cecd wakes the TV when the console resumes from sleep. On by default."]:::advanced
+action__toggle_suspend_tv["Standby TV on suspend<br/>TV turns off when the console goes to sleep."]:::advanced
+action__toggle_allow_standby["Suspend when TV turns off<br/>TV standby puts the console to sleep too. On by default."]:::advanced
+action__toggle_uinput["TV remote as input<br/>Relay remote keys as an input device -- drives gamescope."]:::advanced
+action__clear_overrides["Clear overrides<br/>Delete our override file; Steam UI regains control of all four."]:::cleanup
+
+action__boot_wake_toggle["Boot wake unit<br/>Wake the TV at every session start. Toggles install/remove (installs polite)."]:::install
+action__boot_wake_mode["Mode: polite / grab<br/>polite: back off if another device holds the input. grab: always switch the TV to us."]:::advanced
+
+action__amp_power["Receiver power<br/>amp-on / amp-off via &lt;System Audio Mode Request&gt; -- flips based on the state shown."]:::advanced
+action__amp_follow_boot["Wake receiver at boot<br/>Boot-wake also powers the receiver + hands it the audio. Needs boot-wake installed."]:::advanced
+action__amp_follow_poweroff["Standby receiver at poweroff<br/>Poweroff unit sends the receiver to standby too. On by default; needs the unit."]:::advanced
+action__amp_follow_suspend["Standby receiver on suspend<br/>Receiver off when the console sleeps -- unless another device plays through it. Needs the hook."]:::advanced
+action__amp_follow_resume["Wake receiver on resume<br/>Receiver on + takes the audio when the console wakes. Needs the hook."]:::advanced
+action__amp_sleep_toggle["Suspend/resume hook<br/>Root helper in /etc/systemd/system-sleep driving the two follows above. Uses sudo."]:::install
+
+action__tv_on["Wake TV and take input<br/>Wake the display and claim active source for the BC-250."]:::advanced
+action__tv_off["TV standby<br/>Send the TV to standby now."]:::advanced
+action__active["Who has the input<br/>Ask which HDMI device is currently active."]:::read_only
+action__switch["Take the input<br/>Claim active source without sending a separate TV wake command."]:::advanced
+action__handoff["Hand off the input<br/>Wake another device and route the TV or receiver to it."]:::advanced
+action__release["Release the input<br/>Give up active source without selecting another device."]:::advanced
+
+action__test["Test TV control<br/>Guided poll, wake, input, audio, and optional standby sequence."]:::read_only
+action__scan["Scan CEC bus<br/>Show the HDMI tree, addresses, names, power, and active source."]:::read_only
+action__repair["Repair CEC<br/>Health-check and re-register an adapter that failed after suspend."]:::advanced
+action__remote["TV-remote input<br/>Inspect remote-key relay and cecd-created input devices."]:::read_only
+action__monitor["Live CEC monitor<br/>Watch raw bus traffic with cectool until Ctrl-C."]:::read_only
+
+menu__root --> action__status
+menu__root --> menu__setup
+menu__root --> menu__controls
+menu__root --> menu__diagnostics
+menu__root --> action__help
+
+menu__setup --> action__recommended_setup
+menu__setup --> action__osd_name
+menu__setup --> menu__toggles
+menu__setup --> action__shutdown_standby
+menu__setup --> menu__boot_wake
+menu__setup --> child__receiver_integration
+
+menu__toggles --> action__toggle_wake_tv
+menu__toggles --> action__toggle_suspend_tv
+menu__toggles --> action__toggle_allow_standby
+menu__toggles --> action__toggle_uinput
+menu__toggles --> action__clear_overrides
+
+menu__boot_wake --> action__boot_wake_toggle
+menu__boot_wake --> action__boot_wake_mode
+
+menu__amp --> action__amp_power
+menu__amp --> action__amp_follow_boot
+menu__amp --> action__amp_follow_poweroff
+menu__amp --> action__amp_follow_suspend
+menu__amp --> action__amp_follow_resume
+menu__amp --> action__amp_sleep_toggle
+
+menu__controls --> action__tv_on
+menu__controls --> action__tv_off
+menu__controls --> menu__amp
+menu__controls --> action__active
+menu__controls --> action__switch
+menu__controls --> action__handoff
+menu__controls --> action__release
+
+menu__diagnostics --> action__test
+menu__diagnostics --> action__scan
+menu__diagnostics --> action__repair
+menu__diagnostics --> action__remote
+menu__diagnostics --> action__monitor
+
+classDef root fill:#10283c,color:#fff,stroke:#67b7dc,stroke-width:3px
+classDef menu fill:#17324d,color:#fff,stroke:#67b7dc,stroke-width:2px
+classDef install fill:#264653,color:#fff,stroke:#2a9d8f
+classDef read_only fill:#353535,color:#eee,stroke:#999
+classDef advanced fill:#4a304d,color:#fff,stroke:#d17b9f
+classDef cleanup fill:#493f2c,color:#fff,stroke:#e9c46a

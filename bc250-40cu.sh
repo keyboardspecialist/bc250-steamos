@@ -781,6 +781,115 @@ EOF
 }
 
 # ============================ guided menu =================================
+compute_menu_graph_badge() {
+    case "$1" in
+        action__check|action__revert|action__help) ;;
+        action__prep) badge_umr ;;
+        action__manager) badge_service ;;
+        action__persist) badge_persist ;;
+        action__verify) badge_cu ;;
+        *) return 2 ;;
+    esac
+}
+
+compute_menu_graph_activate() {
+    case "$1" in
+        action__check) run_action cmd_check ;;
+        action__prep) run_action cmd_prep ;;
+        action__manager) run_action cmd_manager ;;
+        action__persist) run_action cmd_persist ;;
+        action__verify) run_action cmd_verify ;;
+        action__revert) run_action cmd_revert ;;
+        action__help) cmd_help; pause_key ;;
+        *) die "Unknown generated compute menu target: $1" ;;
+    esac
+}
+
+# BEGIN GENERATED COMPUTE MENUS
+# Generated from menus/compute.mmd by scripts/generate-menus.py.
+# Do not edit this region directly.
+compute_menu_graph_render() {
+    local menu_id="$1" title target badge
+    if declare -F compute_menu_graph_prepare >/dev/null; then compute_menu_graph_prepare "$menu_id"; fi
+    while true; do
+        local items=() targets=() badges=()
+        case "$menu_id" in
+            menu__root)
+                title="BC-250 GPU compute-unit unlock  (24 CU to stable maximum)"
+                if ! badge=$(compute_menu_graph_badge action__check read_only); then badge=; fi
+                if [[ "$badge" == *"|"* || "$badge" == *$'\n'* ]]; then
+                    die "Invalid generated menu badge: action__check"
+                fi
+                items+=("Board / install check|${badge}|Read-only report: board, debugfs, umr, service. Start here.")
+                targets+=("action__check")
+                badges+=("$badge")
+                if ! badge=$(compute_menu_graph_badge action__prep install); then badge=; fi
+                if [[ "$badge" == *"|"* || "$badge" == *$'\n'* ]]; then
+                    die "Invalid generated menu badge: action__prep"
+                fi
+                items+=("Step 1 - Build umr|${badge}|Deps + build under the hidden toolkit directory. Unlocks rootfs; takes a few minutes.")
+                targets+=("action__prep")
+                badges+=("$badge")
+                if ! badge=$(compute_menu_graph_badge action__manager advanced); then badge=; fi
+                if [[ "$badge" == *"|"* || "$badge" == *$'\n'* ]]; then
+                    die "Invalid generated menu badge: action__manager"
+                fi
+                items+=("Step 2 - Live CU manager|${badge}|Dashboard TUI. READ the harvest map first: contiguous -> [f], scattered -> [e].")
+                targets+=("action__manager")
+                badges+=("$badge")
+                if ! badge=$(compute_menu_graph_badge action__persist install); then badge=; fi
+                if [[ "$badge" == *"|"* || "$badge" == *$'\n'* ]]; then
+                    die "Invalid generated menu badge: action__persist"
+                fi
+                items+=("Step 3 - Persist across updates|${badge}|Relocate the service off the wipeable rootfs. Run after 'i' in the manager.")
+                targets+=("action__persist")
+                badges+=("$badge")
+                if ! badge=$(compute_menu_graph_badge action__verify read_only); then badge=; fi
+                if [[ "$badge" == *"|"* || "$badge" == *$'\n'* ]]; then
+                    die "Invalid generated menu badge: action__verify"
+                fi
+                items+=("Verify|${badge}|Read the live dispatch registers: routed CU count + guidance.")
+                targets+=("action__verify")
+                badges+=("$badge")
+                if ! badge=$(compute_menu_graph_badge action__revert cleanup); then badge=; fi
+                if [[ "$badge" == *"|"* || "$badge" == *$'\n'* ]]; then
+                    die "Invalid generated menu badge: action__revert"
+                fi
+                items+=("Revert to stock 24 CU|${badge}|Disable the boot service; stock dispatch after reboot.")
+                targets+=("action__revert")
+                badges+=("$badge")
+                if ! badge=$(compute_menu_graph_badge action__help read_only); then badge=; fi
+                if [[ "$badge" == *"|"* || "$badge" == *$'\n'* ]]; then
+                    die "Invalid generated menu badge: action__help"
+                fi
+                items+=("Full help|${badge}|Complete walkthrough, including the harvest-map guide.")
+                targets+=("action__help")
+                badges+=("$badge")
+                ;;
+            *) die "Unknown generated compute menu ID: $menu_id" ;;
+        esac
+        if [[ "$title" == *"|"* || "$title" == *[[:cntrl:]]* ]]; then
+            die "Invalid generated compute menu title"
+        fi
+        menu_select "$title" "${items[@]}" || { echo; return 0; }
+        target=${targets[$MENU_CHOICE]}
+        if [[ "$target" == menu__* ]]; then
+            compute_menu_graph_render "$target"
+        else
+            compute_menu_graph_activate "$target" "${badges[$MENU_CHOICE]}"
+        fi
+    done
+}
+
+compute_menu_graph_open() {
+    case "${1:-root}" in
+        root) compute_menu_graph_render menu__root ;;
+        *) return 2 ;;
+    esac
+}
+
+# END GENERATED COMPUTE MENUS
+
 cmd_menu() {
     [[ -t 0 && -t 1 ]] || die "The menu needs an interactive terminal. See '$0 help' for CLI commands."
     if [[ $EUID -ne 0 ]]; then
@@ -789,27 +898,7 @@ cmd_menu() {
         if [[ "$REPLY" =~ ^[Yy] ]]; then exec sudo "$0" menu; fi
         echo
     fi
-    while true; do
-        local items=(
-            "Board / install check||Read-only report: board, debugfs, umr, service. Start here."
-            "Step 1 - Build umr|$(badge_umr)|Deps + build under the hidden toolkit directory. Unlocks rootfs; takes a few minutes."
-            "Step 2 - Live CU manager|$(badge_service)|Dashboard TUI. READ the harvest map first: contiguous -> [f], scattered -> [e]."
-            "Step 3 - Persist across updates|$(badge_persist)|Relocate the service off the wipeable rootfs. Run after 'i' in the manager."
-            "Verify|$(badge_cu)|Read the live dispatch registers: routed CU count + guidance."
-            "Revert to stock 24 CU||Disable the boot service; stock dispatch after reboot."
-            "Full help||Complete walkthrough, including the harvest-map guide."
-        )
-        menu_select "BC-250 GPU compute-unit unlock  ${CD}(24 CU to stable maximum)${C0}" "${items[@]}" || { echo; break; }
-        case $MENU_CHOICE in
-            0) run_action cmd_check ;;
-            1) run_action cmd_prep ;;
-            2) run_action cmd_manager ;;
-            3) run_action cmd_persist ;;
-            4) run_action cmd_verify ;;
-            5) run_action cmd_revert ;;
-            6) cmd_help; pause_key ;;
-        esac
-    done
+    compute_menu_graph_open root
 }
 
 # ================================ main ====================================

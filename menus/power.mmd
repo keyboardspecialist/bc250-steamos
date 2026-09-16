@@ -1,0 +1,123 @@
+%% menu-flow-v1
+flowchart TD
+
+%% menu-title menu__foundation "Power foundation  (complete in order)"
+%% menu-title menu__gpu "GPU performance tuning  (governor required)"
+%% menu-title menu__frequency "GPU frequency &amp; voltage  (persists across reboots)"
+%% menu-title menu__load "GPU load targets  (when the governor clocks up/down)"
+%% menu-title menu__ramp "GPU ramp behavior  (how fast + how granular clocks move)"
+%% menu-title menu__cpu "CPU performance &amp; security  (advanced)"
+%% menu-title menu__cpu_oc "CPU overclock / undervolt  (bc250_smu_oc)"
+
+menu__root["BC-250 power setup  (SteamOS)<br/>Choose a power setup, tuning, or status workflow."]:::root
+menu__foundation["Power foundation<br/>Install ACPI, reboot, test the GPU governor, then enable it at boot."]:::menu
+menu__gpu["GPU performance tuning<br/>Configure clocks, voltage, load response, and ramp behavior."]:::menu
+menu__frequency["Frequency &amp; voltage<br/>Set adaptive caps, ranges, pinned clocks, or advanced voltage-curve changes."]:::menu
+menu__load["Load targets<br/>Choose when the governor clocks up and down."]:::menu
+menu__ramp["Ramp behavior<br/>Choose how quickly and granularly GPU clocks move."]:::menu
+menu__cpu["CPU performance &amp; security<br/>Configure CPU undervolt/overclock and the security-mitigation policy."]:::menu
+menu__cpu_oc["CPU overclock / undervolt<br/>Detect, apply, persist, or revert a CPU voltage/frequency profile."]:::menu
+menu__cpu_unlock["CPU core unlock  (experimental 6c/12t -&gt; 8c/16t: test, then choose one Setup 2 method)<br/>Test eight cores, then choose one mutually exclusive automatic unlock method."]:::entry
+
+action__status["Status overview<br/>Health check of every service, clock and temp. Always safe."]:::read_only
+action__help["Full help<br/>The complete manual for every CLI command."]:::read_only
+action__acpi["Step 1 - ACPI fix: CPU idle + scaling<br/>Install the ACPI override, then reboot before judging CPU idle or scaling."]:::install
+action__governor["Step 2 - Install and test GPU governor<br/>Test-start adaptive GPU control. Load-test it before enabling boot startup."]:::install
+action__enable["Step 3 - Enable governor at boot<br/>Only enable after the test-started governor has proved stable under load."]:::install
+action__helpers["Reinstall D-Bus helpers<br/>Repair frequency-control helpers and 'name is not activatable' errors."]:::install
+child__temperature["Thermal target<br/>Set the GPU throttle temperature and automatic 10 C recovery hysteresis."]:::advanced
+action__frequency_status["Show current state<br/>Ask the governor for its performance-mode status."]:::read_only
+action__frequency_auto["Adaptive (auto)<br/>Back to config defaults; clears the saved boot setting."]:::advanced
+child__frequency_max["Set max cap<br/>Raise/lower the ceiling, keep adaptive scaling + idle savings."]:::advanced
+child__frequency_range["Set min + max range<br/>Floor AND ceiling, adaptive in between."]:::advanced
+child__frequency_pin["Pin a frequency<br/>Fixed clock, perf mode ON -- no idle downscale. For testing."]:::advanced
+action__frequency_maximum["Max performance<br/>Top of the voltage curve until you switch back to auto."]:::advanced
+child__voltage_curve["Edit frequency / voltage curve<br/>List, add, edit, remove, offset, or reset safe-points transactionally."]:::advanced
+action__load_status["Show load targets<br/>Config + live values, and what upper/lower mean."]:::read_only
+action__load_eager["Eager preset (0.40 / 0.10)<br/>Light-load games clock up off idle. Fixes 'stuck at low clocks'."]:::advanced
+action__load_default["Tuned default (0.80 / 0.65)<br/>Install default: full ramps under real load, best idle savings."]:::advanced
+child__load_custom["Custom values<br/>Set your own thresholds (percent or fraction)."]:::advanced
+action__ramp_status["Show ramp behavior<br/>Step size, climb time, downhold + hunting verdict from the config."]:::read_only
+action__ramp_responsive["Responsive (climb in 500 ms)<br/>Smoothest hunting-free step for a half-second idle-to-max climb."]:::advanced
+action__ramp_relaxed["Relaxed (climb in 1000 ms)<br/>Install-default speed, but finer steps derived for smoothness."]:::advanced
+child__ramp_custom["Custom climb time<br/>You pick idle-to-max ms; step, interval, down-events are derived."]:::advanced
+action__ramp_reset["Reset install defaults<br/>200 MHz steps every 200 ms, 1 s hold before downscaling."]:::cleanup
+child__cpu_mitigations["CPU security mitigations (toggle)<br/>Trade kernel security mitigations for performance. Reboot required."]:::advanced
+action__oc_status["Show OC status<br/>Full report: configs, measured + live mV, saved verdict."]:::read_only
+child__oc_detect["Detect stable overclock<br/>Guided stress-stepped search. Start here. CAN hard-crash if pushed."]:::experimental
+action__oc_enable["Enable at boot<br/>Persist the detected config; applies before the GPU governor."]:::install
+action__oc_apply["Apply now<br/>Re-apply the saved config immediately."]:::advanced
+action__oc_off["Revert to stock<br/>Disable at boot + back to 3500 MHz / factory curve now."]:::cleanup
+action__oc_update["Update tool sources<br/>Re-fetch bc250_smu_oc (pinned commit + our patches)."]:::install
+action__unlock_status["Status summary<br/>Show the automatic unlock method, active cores, service state, reboot guard, and telemetry compatibility."]:::read_only
+action__unlock_topology["Core topology<br/>Display active and unavailable CPU cores grouped by CCX."]:::read_only
+action__unlock_test["Setup 1 - Test eight cores once<br/>Write the volatile mask only. Manually reboot, stress-test, then return here."]:::experimental
+action__unlock_standard["Setup 2 - Standard Linux boot method<br/>Recommended. Applies after Linux boots. Choose this OR EFI; they cannot be enabled together."]:::experimental
+action__unlock_efi["Setup 2 - EFI pre-boot method<br/>Alternative. Applies before Linux to avoid an extra Linux boot. Choose this OR standard; they cannot be enabled together."]:::experimental
+action__unlock_off["Disable automatic unlock (keep helper)<br/>Stop future automatic unlock; retain the helper for testing or re-enabling."]:::cleanup
+action__unlock_uninstall["Uninstall all core-unlock files<br/>Disable automatic unlock and remove the helper, units, EFI files, licenses, and guard state."]:::cleanup
+
+menu__root --> action__status
+menu__root --> menu__foundation
+menu__root --> menu__gpu
+menu__root --> menu__cpu
+menu__root --> action__help
+
+menu__foundation --> action__acpi
+menu__foundation --> action__governor
+menu__foundation --> action__enable
+menu__foundation --> action__helpers
+
+menu__gpu --> menu__frequency
+menu__gpu --> menu__load
+menu__gpu --> child__temperature
+menu__gpu --> menu__ramp
+
+menu__frequency --> action__frequency_status
+menu__frequency --> action__frequency_auto
+menu__frequency --> child__frequency_max
+menu__frequency --> child__frequency_range
+menu__frequency --> child__frequency_pin
+menu__frequency --> action__frequency_maximum
+menu__frequency --> child__voltage_curve
+
+menu__load --> action__load_status
+menu__load --> action__load_eager
+menu__load --> action__load_default
+menu__load --> child__load_custom
+
+menu__ramp --> action__ramp_status
+menu__ramp --> action__ramp_responsive
+menu__ramp --> action__ramp_relaxed
+menu__ramp --> child__ramp_custom
+menu__ramp --> action__ramp_reset
+
+menu__cpu --> menu__cpu_oc
+menu__cpu --> child__cpu_mitigations
+
+menu__cpu_oc --> action__oc_status
+menu__cpu_oc --> child__oc_detect
+menu__cpu_oc --> action__oc_enable
+menu__cpu_oc --> action__oc_apply
+menu__cpu_oc --> action__oc_off
+menu__cpu_oc --> action__oc_update
+
+menu__cpu_unlock --> action__unlock_status
+menu__cpu_unlock --> action__unlock_topology
+menu__cpu_unlock --> action__unlock_test
+menu__cpu_unlock --> action__unlock_standard
+menu__cpu_unlock --> action__unlock_efi
+menu__cpu_unlock --> action__unlock_off
+menu__cpu_unlock --> action__unlock_uninstall
+
+menu__gpu -.-> menu__foundation
+menu__cpu -.-> menu__foundation
+
+classDef root fill:#10283c,color:#fff,stroke:#67b7dc,stroke-width:3px
+classDef menu fill:#17324d,color:#fff,stroke:#67b7dc,stroke-width:2px
+classDef entry fill:#263746,color:#ddd,stroke:#778899,stroke-dasharray:5 5
+classDef install fill:#264653,color:#fff,stroke:#2a9d8f
+classDef read_only fill:#353535,color:#eee,stroke:#999
+classDef advanced fill:#4a304d,color:#fff,stroke:#d17b9f
+classDef cleanup fill:#493f2c,color:#fff,stroke:#e9c46a
+classDef experimental fill:#532f38,color:#fff,stroke:#e76f51

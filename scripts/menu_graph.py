@@ -31,6 +31,7 @@ DEPENDENCY_RE = re.compile(r"^([a-z][a-z0-9_]*)\s+-\.->\s+([a-z][a-z0-9_]*)$")
 ID_RE = re.compile(r"^(menu|action|child)__[a-z][a-z0-9_]*$")
 CLASS_DEF_RE = re.compile(r"^classDef ([a-z_]+) (.+)$")
 CLASS_PROPERTY_RE = re.compile(r"^[a-z][a-z-]*:[#a-zA-Z0-9]+(?: [#a-zA-Z0-9]+)*$")
+MENU_TITLE_RE = re.compile(r'^%% menu-title ([a-z][a-z0-9_]*) "([^"\n]+)"$')
 
 
 class MenuGraphError(ValueError):
@@ -63,6 +64,7 @@ class MenuGraph:
     path: Path
     nodes: dict[str, Node]
     edges: tuple[Edge, ...]
+    menu_titles: dict[str, str]
 
     @property
     def root(self) -> Node:
@@ -75,6 +77,9 @@ class MenuGraph:
             for edge in self.edges
             if not edge.dependency and edge.source == menu_id
         ]
+
+    def display_title(self, menu_id: str) -> str:
+        return self.menu_titles.get(menu_id, self.nodes[menu_id].title)
 
     def navigation(self) -> dict[str, list[str]]:
         result = {node_id: [] for node_id in self.nodes}
@@ -133,6 +138,9 @@ def validate(graph: MenuGraph) -> None:
         raise MenuGraphError("the graph must define exactly one :::root node")
     if roots[0].kind != "menu":
         raise MenuGraphError("the root node must use a menu__ ID")
+    for menu_id in graph.menu_titles:
+        if menu_id not in graph.nodes or graph.nodes[menu_id].kind != "menu":
+            raise MenuGraphError(f"menu title target is not a menu: {menu_id}")
 
     navigation = graph.navigation()
     dependencies = graph.dependencies()
@@ -190,6 +198,7 @@ def parse(path: Path) -> MenuGraph:
     nodes: dict[str, Node] = {}
     edges: list[Edge] = []
     class_defs: set[str] = set()
+    menu_titles: dict[str, str] = {}
     saw_marker = False
     saw_header = False
 
@@ -202,6 +211,28 @@ def parse(path: Path) -> MenuGraph:
             continue
         if line == "flowchart TD":
             saw_header = True
+            continue
+        if line.startswith("%% menu-title"):
+            title_match = MENU_TITLE_RE.fullmatch(line)
+            if not title_match:
+                raise MenuGraphError(
+                    f"{path}:{line_number}: malformed menu-title directive"
+                )
+            menu_id, raw_title = title_match.groups()
+            if menu_id in menu_titles:
+                raise MenuGraphError(
+                    f"{path}:{line_number}: duplicate menu-title: {menu_id}"
+                )
+            title = html.unescape(raw_title)
+            if "|" in title or any(
+                ord(character) < 32 or ord(character) == 127 for character in title
+            ):
+                raise MenuGraphError(
+                    f"{path}:{line_number}: menu titles cannot contain delimiters or control characters"
+                )
+            if any(token in title for token in ("$(", "${", "`", "\x1b")):
+                raise MenuGraphError(f"{path}:{line_number}: shell syntax is not allowed")
+            menu_titles[menu_id] = title
             continue
         if line.startswith("%%"):
             continue
@@ -276,7 +307,7 @@ def parse(path: Path) -> MenuGraph:
             raise MenuGraphError(
                 f"{path}:{edge.line}: unresolved edge: {edge.source} -> {edge.target}"
             )
-    graph = MenuGraph(path, nodes, tuple(edges))
+    graph = MenuGraph(path, nodes, tuple(edges), menu_titles)
     validate(graph)
     return graph
 

@@ -902,22 +902,85 @@ show_menu_status() {
     pause_key
 }
 
+storage_menu_graph_badge() {
+    case "$1" in
+        action__install) storage_badge ;;
+        action__repair_infrastructure) infrastructure_badge ;;
+        action__status) ;;
+        *) return 2 ;;
+    esac
+}
+
+storage_menu_graph_activate() {
+    case "$1" in
+        action__install) run_menu_action install ;;
+        action__repair_infrastructure) run_menu_action repair-infrastructure ;;
+        action__status) show_menu_status ;;
+        *) die "Unknown generated storage menu target: $1" ;;
+    esac
+}
+
+# BEGIN GENERATED STORAGE MENUS
+# Generated from menus/storage.mmd by scripts/generate-menus.py.
+# Do not edit this region directly.
+storage_menu_graph_render() {
+    local menu_id="$1" title target badge
+    if declare -F storage_menu_graph_prepare >/dev/null; then storage_menu_graph_prepare "$menu_id"; fi
+    while true; do
+        local items=() targets=() badges=()
+        case "$menu_id" in
+            menu__root)
+                title="BC-250 persistent storage"
+                if ! badge=$(storage_menu_graph_badge action__install install); then badge=; fi
+                if [[ "$badge" == *"|"* || "$badge" == *$'\n'* ]]; then
+                    die "Invalid generated menu badge: action__install"
+                fi
+                items+=("Install / repair storage|${badge}|Install persistent storage, recovery, units, and keep lists.")
+                targets+=("action__install")
+                badges+=("$badge")
+                if ! badge=$(storage_menu_graph_badge action__repair_infrastructure install); then badge=; fi
+                if [[ "$badge" == *"|"* || "$badge" == *$'\n'* ]]; then
+                    die "Invalid generated menu badge: action__repair_infrastructure"
+                fi
+                items+=("Repair boot infrastructure|${badge}|Validate and repair an established home-backed mount.")
+                targets+=("action__repair_infrastructure")
+                badges+=("$badge")
+                if ! badge=$(storage_menu_graph_badge action__status read_only); then badge=; fi
+                if [[ "$badge" == *"|"* || "$badge" == *$'\n'* ]]; then
+                    die "Invalid generated menu badge: action__status"
+                fi
+                items+=("Show status|${badge}|Show mount source, recovery integration, and keep-list paths.")
+                targets+=("action__status")
+                badges+=("$badge")
+                ;;
+            *) die "Unknown generated storage menu ID: $menu_id" ;;
+        esac
+        if [[ "$title" == *"|"* || "$title" == *[[:cntrl:]]* ]]; then
+            die "Invalid generated storage menu title"
+        fi
+        menu_select "$title" "${items[@]}" || { echo; return 0; }
+        target=${targets[$MENU_CHOICE]}
+        if [[ "$target" == menu__* ]]; then
+            storage_menu_graph_render "$target"
+        else
+            storage_menu_graph_activate "$target" "${badges[$MENU_CHOICE]}"
+        fi
+    done
+}
+
+storage_menu_graph_open() {
+    case "${1:-root}" in
+        root) storage_menu_graph_render menu__root ;;
+        *) return 2 ;;
+    esac
+}
+
+# END GENERATED STORAGE MENUS
+
 cmd_menu() {
     [[ -t 0 && -t 1 ]] \
         || die "The menu needs an interactive terminal. Use '$0 help' for CLI commands."
-    while true; do
-        local items=(
-            "Install / repair storage|$(storage_badge)|Install persistent storage, recovery, units, and keep lists."
-            "Repair boot infrastructure|$(infrastructure_badge)|Validate and repair an established home-backed mount."
-            "Show status||Show mount source, recovery integration, and keep-list paths."
-        )
-        menu_select "BC-250 persistent storage" "${items[@]}" || { echo; break; }
-        case $MENU_CHOICE in
-            0) run_menu_action install ;;
-            1) run_menu_action repair-infrastructure ;;
-            2) show_menu_status ;;
-        esac
-    done
+    storage_menu_graph_open root
 }
 
 cmd_help() {

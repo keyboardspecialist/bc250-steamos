@@ -1,0 +1,21 @@
+%% menu-flow-v1
+flowchart TD
+
+menu__root["BC-250 GPU driver and FSR4<br/>Manage the alternate RADV runtime, FSR4, native mesh, and migration cleanup."]:::root
+action__status["Status overview<br/>Verify the patched AMDGPU module, scheduler policy, RADV runtime, and global activation."]:::read_only
+action__fsr4_dll["Install FSR4 RC9 game DLL (recommended)<br/>Portable FSR4 route. Replaces one exact existing DLL and retains the original; no custom RADV installation is needed."]:::install
+action__setup["Install / resume FSR4 RADV<br/>Installs AMDGPU first when needed, then builds async compute plus the FSR4 v4 driver for GE Proton."]:::install
+action__native_mesh_install["Install private LoneWolf native mesh<br/>Build the combined async-compute, FSR4, and experimental physical-GFX10 native-mesh ICD; Steam is not edited."]:::experimental
+action__native_mesh_remove["Remove private LoneWolf native mesh<br/>Remove only the private native-mesh profile; leave global RADV and Steam configuration unchanged."]:::cleanup
+action__legacy_cleanup["Older per-game setup cleanup<br/>Migration only: remove old MESA_DRICONF_EXECUTABLE_OVERRIDE and VK_ICD_FILENAMES Steam launch options, then clear their records."]:::cleanup
+action__uninstall["Uninstall Mesa / RADV runtime<br/>Remove the alternate driver, ICD, and user environment generator; preserve build caches."]:::cleanup
+action__help["Full help<br/>Show CLI commands, activation behavior, and upstream source."]:::read_only
+
+menu__root --> action__status
+menu__root --> action__fsr4_dll
+menu__root --> action__setup
+menu__root --> action__native_mesh_install
+menu__root --> action__native_mesh_remove
+menu__root --> action__legacy_cleanup
+menu__root --> action__uninstall
+menu__root --> action__help

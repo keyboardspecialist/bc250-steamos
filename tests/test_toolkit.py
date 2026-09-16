@@ -140,28 +140,38 @@ class ToolkitTests(unittest.TestCase):
     def test_dense_component_menus_are_grouped_by_intent(self):
         power = (ROOT / "bc250-power.sh").read_text(encoding="utf-8")
         power_menu = power[power.index("cmd_menu() {") : power.index("cmd_help() {")]
-        self.assertIn("Power foundation", power_menu)
-        self.assertIn("GPU performance tuning", power_menu)
-        self.assertIn("CPU performance & security", power_menu)
-        self.assertNotIn('"Step 1 - ACPI fix:', power_menu)
-        self.assertIn("menu_power_setup()", power)
-        self.assertIn("menu_gpu_tuning()", power)
-        self.assertIn("menu_cpu_tuning()", power)
+        power_graph = parse(ROOT / "menus/power.mmd")
+        self.assertEqual(
+            [
+                "Status overview",
+                "Power foundation",
+                "GPU performance tuning",
+                "CPU performance & security",
+                "Full help",
+            ],
+            [node.title for node in power_graph.choices(power_graph.root.id)],
+        )
+        self.assertIn("Step 1 - ACPI fix: CPU idle + scaling", {
+            node.title for node in power_graph.choices("menu__foundation")
+        })
         self.assertIn('exec sudo "$0" menu "$entry"', power_menu)
 
         cec = (ROOT / "bc250-cec.sh").read_text(encoding="utf-8")
-        cec_menu = cec[cec.index("cmd_menu() {") : cec.index("tv_badge_menu() {")]
-        self.assertIn("Setup & automation", cec_menu)
-        self.assertIn("Everyday controls", cec_menu)
-        self.assertIn("Diagnostics & recovery", cec_menu)
-        self.assertNotIn('"Scan CEC bus|', cec_menu)
-        self.assertIn("menu_setup()", cec)
-        self.assertIn("menu_controls()", cec)
-        self.assertIn("menu_diagnostics()", cec)
+        cec_graph = parse(ROOT / "menus/cec.mmd")
+        self.assertEqual(
+            [
+                "Status overview",
+                "Setup & automation",
+                "Everyday controls",
+                "Diagnostics & recovery",
+                "Full help",
+            ],
+            [node.title for node in cec_graph.choices(cec_graph.root.id)],
+        )
         self.assertIn('echo "  boot wake mode: $mode"', cec)
-        controls = cec[cec.index("menu_controls() {") : cec.index("menu_diagnostics() {")]
-        self.assertIn("Take the input", controls)
-        self.assertIn("4) run_action cmd_switch", controls)
+        controls = {node.id for node in cec_graph.choices("menu__controls")}
+        self.assertIn("action__switch", controls)
+        self.assertIn("action__switch) run_action cmd_switch", cec)
 
         toolkit = TOOLKIT.read_text(encoding="utf-8")
         guided = toolkit[
