@@ -180,12 +180,34 @@ class MeshShaderTests(unittest.TestCase):
         digest = lambda path: hashlib.sha256(path.read_bytes()).hexdigest()
         (state / "install.conf").write_text(
             f"{digest(driver)} {digest(icd)} {MESA_TAG} {commit} "
-            f"{RADV_PROFILE_REVISION}\n",
+            f"{RADV_PROFILE_REVISION} {digest(generator)}\n",
             encoding="ascii",
         )
         driver_files = f'{icd}:{env["BC250_MESH_32BIT_ICD"]}'
         env["VK_DRIVER_FILES"] = driver_files
         env["VK_ICD_FILENAMES"] = driver_files
+
+    def make_generator_unrecorded(self, env):
+        generator = Path(env["BC250_GFX1013_GENERATOR"])
+        subprocess.run(
+            [
+                "bash",
+                "-c",
+                'script=$1; output=$2; set -- help; source "$script" >/dev/null; '
+                'render_unrecorded_generator > "$output"',
+                "_",
+                str(MESH),
+                str(generator),
+            ],
+            check=True,
+            env=env,
+        )
+        generator.chmod(0o755)
+        manifest = Path(env["BC250_MESH_STATE_DIR"]) / "install.conf"
+        manifest.write_text(
+            " ".join(manifest.read_text(encoding="ascii").split()[:5]) + "\n",
+            encoding="ascii",
+        )
 
     def install_fsr4_runtime(self, env):
         state = Path(env["BC250_MESH_STATE_DIR"])
@@ -387,10 +409,11 @@ class MeshShaderTests(unittest.TestCase):
             )
             state = Path(env["BC250_MESH_STATE_DIR"])
             driver = Path(env["BC250_MESH_DRIVER"])
+            generator = Path(env["BC250_GFX1013_GENERATOR"])
             digest = lambda path: hashlib.sha256(path.read_bytes()).hexdigest()
             (state / "install.conf").write_text(
                 f"{digest(driver)} {digest(icd)} {MESA_TAG} {UPSTREAM_COMMIT} "
-                f"{RADV_PROFILE_REVISION}\n",
+                f"{RADV_PROFILE_REVISION} {digest(generator)}\n",
                 encoding="ascii",
             )
             generated = subprocess.run(
@@ -402,6 +425,30 @@ class MeshShaderTests(unittest.TestCase):
             )
             self.assertEqual(self.run_status_json(env)["runtimeState"], "invalid")
             self.assertEqual(generated.stdout, "")
+
+    def test_generator_digest_is_required_for_ready_runtime(self):
+        for case in ("missing", "mismatch"):
+            with self.subTest(case=case), tempfile.TemporaryDirectory() as directory:
+                env = self.environment(Path(directory))
+                self.install_runtime(env)
+                manifest = Path(env["BC250_MESH_STATE_DIR"]) / "install.conf"
+                fields = manifest.read_text(encoding="ascii").split()
+                if case == "missing":
+                    fields.pop()
+                else:
+                    fields[-1] = "0" * 64
+                manifest.write_text(" ".join(fields) + "\n", encoding="ascii")
+
+                generated = subprocess.run(
+                    ["bash", env["BC250_GFX1013_GENERATOR"]],
+                    check=True,
+                    capture_output=True,
+                    text=True,
+                    env=env,
+                )
+
+                self.assertEqual(self.run_status_json(env)["runtimeState"], "invalid")
+                self.assertEqual(generated.stdout, "")
 
     def test_global_activation_stops_when_kernel_gate_is_missing(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -659,6 +706,279 @@ class MeshShaderTests(unittest.TestCase):
             )
             self.assertNotEqual(result.returncode, 0)
             self.assertIn("not a recorded toolkit install", result.stderr)
+
+    def test_recorded_generator_digest_survives_template_changes(self):
+        with tempfile.TemporaryDirectory() as directory:
+            env = self.environment(Path(directory))
+            self.install_runtime(env)
+            generator = Path(env["BC250_GFX1013_GENERATOR"])
+            generator.write_text(
+                generator.read_text(encoding="utf-8").replace(
+                    "#!/usr/bin/env bash\n", "#!/usr/bin/env bash\n# older toolkit revision\n"
+                ),
+                encoding="utf-8",
+            )
+            manifest = Path(env["BC250_MESH_STATE_DIR"]) / "install.conf"
+            fields = manifest.read_text(encoding="ascii").split()
+            fields[-1] = hashlib.sha256(generator.read_bytes()).hexdigest()
+            manifest.write_text(" ".join(fields) + "\n", encoding="ascii")
+            command = (
+                'script=$1; set -- help; source "$script" >/dev/null; '
+                "preflight_runtime_ownership"
+            )
+
+            recorded = subprocess.run(
+                ["bash", "-c", command, "_", str(MESH)],
+                capture_output=True,
+                text=True,
+                env=env,
+            )
+            self.assertEqual(recorded.returncode, 0, recorded.stderr)
+
+            with generator.open("a", encoding="utf-8") as stream:
+                stream.write("echo tampered\n")
+            tampered = subprocess.run(
+                ["bash", "-c", command, "_", str(MESH)],
+                capture_output=True,
+                text=True,
+                env=env,
+            )
+            self.assertNotEqual(tampered.returncode, 0)
+            self.assertIn("not a recorded toolkit install", tampered.stderr)
+
+    def test_unrecorded_current_generator_is_refreshed_without_mesa(self):
+        with tempfile.TemporaryDirectory() as directory:
+            env = self.environment(Path(directory))
+            self.install_runtime(env)
+            self.make_generator_unrecorded(env)
+            generator = Path(env["BC250_GFX1013_GENERATOR"])
+            manifest = Path(env["BC250_MESH_STATE_DIR"]) / "install.conf"
+            command = (
+                'script=$1; set -- help; source "$script" >/dev/null; '
+                "refresh_current_generator"
+            )
+
+            result = subprocess.run(
+                ["bash", "-c", command, "_", str(MESH)],
+                capture_output=True,
+                text=True,
+                env=env,
+            )
+
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertIn("without rebuilding Mesa", result.stdout)
+            fields = manifest.read_text(encoding="ascii").split()
+            self.assertEqual(len(fields), 6)
+            self.assertEqual(fields[-1], hashlib.sha256(generator.read_bytes()).hexdigest())
+            self.assertEqual(self.run_status_json(env)["runtimeState"], "ready")
+
+    def test_setup_repairs_fallback_then_refreshes_generator_without_mesa(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            env = self.environment(root)
+            self.install_runtime(env)
+            self.make_generator_unrecorded(env)
+            fallback = Path(env["BC250_MESH_32BIT_ICD"])
+            valid_fallback = root / "valid-fallback.json"
+            valid_fallback.write_bytes(fallback.read_bytes())
+            fallback.write_text("{}\n", encoding="ascii")
+            actions = root / "setup-actions.log"
+            env["BC250_TEST_MANAGER_INACTIVE"] = "1"
+            command = r'''
+script=$1
+set -- help
+source "$script" >/dev/null
+require_normal_user() { :; }
+require_production_kernel_paths() { :; }
+ensure_compute_kernel_prerequisite() { :; }
+ensure_radv_core_tools() { :; }
+ensure_radv_prerequisites() {
+    printf 'prerequisites\n' >> "$BC250_TEST_ACTIONS"
+    cp "$BC250_TEST_VALID_FALLBACK" "$FALLBACK_ICD"
+}
+stage_upstream() {
+    printf 'mesa-build\n' >> "$BC250_TEST_ACTIONS"
+    return 91
+}
+cmd_setup default 0
+'''
+
+            result = subprocess.run(
+                ["bash", "-c", command, "_", str(MESH)],
+                capture_output=True,
+                text=True,
+                env={
+                    **env,
+                    "BC250_TEST_ACTIONS": str(actions),
+                    "BC250_TEST_VALID_FALLBACK": str(valid_fallback),
+                },
+            )
+
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual(actions.read_text(encoding="utf-8").splitlines(), ["prerequisites"])
+            self.assertIn("without rebuilding Mesa", result.stdout)
+            self.assertIn("no Mesa rebuild is needed", result.stdout)
+            self.assertIn("Sign out and back in", result.stdout)
+            status = self.run_status_json(env)
+            self.assertEqual(status["runtimeState"], "ready")
+            self.assertTrue(status["restartRequired"])
+
+    def test_generator_refresh_failure_restores_readonly_and_transaction(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            env = self.environment(root)
+            self.install_runtime(env)
+            self.make_generator_unrecorded(env)
+            generator = Path(env["BC250_GFX1013_GENERATOR"])
+            manifest = Path(env["BC250_MESH_STATE_DIR"]) / "install.conf"
+            generator_before = generator.read_bytes()
+            manifest_before = manifest.read_bytes()
+            readonly_state = root / "readonly-state"
+            readonly_state.write_text("enabled\n", encoding="ascii")
+            actions = root / "readonly-actions.log"
+            command = r'''
+script=$1
+set -- help
+source "$script" >/dev/null
+as_root() { "$@"; }
+steamos-readonly() {
+    printf '%s\n' "$1" >> "$BC250_TEST_ACTIONS"
+    case "$1" in
+        status) cat "$BC250_TEST_READONLY_STATE" ;;
+        disable)
+            printf 'disabled\n' > "$BC250_TEST_READONLY_STATE"
+            return 23
+            ;;
+        enable) printf 'enabled\n' > "$BC250_TEST_READONLY_STATE" ;;
+    esac
+}
+refresh_current_generator
+'''
+
+            result = subprocess.run(
+                ["bash", "-c", command, "_", str(MESH)],
+                capture_output=True,
+                text=True,
+                env={
+                    **env,
+                    "BC250_TEST_ACTIONS": str(actions),
+                    "BC250_TEST_READONLY_STATE": str(readonly_state),
+                },
+            )
+
+            self.assertNotEqual(result.returncode, 0)
+            self.assertEqual(readonly_state.read_text(encoding="ascii").strip(), "enabled")
+            self.assertEqual(actions.read_text(encoding="utf-8").splitlines()[-1], "enable")
+            self.assertEqual(generator.read_bytes(), generator_before)
+            self.assertEqual(manifest.read_bytes(), manifest_before)
+            self.assertFalse((Path(env["BC250_MESH_STATE_DIR"]) / "install-transaction").exists())
+
+    def test_recovery_restores_recorded_readonly_state_in_new_process(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            env = self.environment(root)
+            self.install_runtime(env)
+            self.make_generator_unrecorded(env)
+            generator = Path(env["BC250_GFX1013_GENERATOR"])
+            manifest = Path(env["BC250_MESH_STATE_DIR"]) / "install.conf"
+            generator_before = generator.read_bytes()
+            manifest_before = manifest.read_bytes()
+            readonly_state = root / "readonly-state"
+            readonly_state.write_text("disabled\n", encoding="ascii")
+            actions = root / "readonly-actions.log"
+            arm = r'''
+script=$1
+set -- help
+source "$script" >/dev/null
+as_root() { "$@"; }
+arm_install_transaction 1
+printf 'interrupted generator\n' > "$GENERATOR"
+printf 'interrupted manifest\n' > "$MANIFEST"
+'''
+            subprocess.run(
+                ["bash", "-c", arm, "_", str(MESH)],
+                check=True,
+                capture_output=True,
+                text=True,
+                env=env,
+            )
+            recover = r'''
+script=$1
+set -- help
+source "$script" >/dev/null
+as_root() { "$@"; }
+steamos-readonly() {
+    printf '%s\n' "$1" >> "$BC250_TEST_ACTIONS"
+    case "$1" in
+        status) cat "$BC250_TEST_READONLY_STATE" ;;
+        disable) printf 'disabled\n' > "$BC250_TEST_READONLY_STATE" ;;
+        enable) printf 'enabled\n' > "$BC250_TEST_READONLY_STATE" ;;
+    esac
+}
+recover_install_transaction
+'''
+
+            result = subprocess.run(
+                ["bash", "-c", recover, "_", str(MESH)],
+                capture_output=True,
+                text=True,
+                env={
+                    **env,
+                    "BC250_TEST_ACTIONS": str(actions),
+                    "BC250_TEST_READONLY_STATE": str(readonly_state),
+                },
+            )
+
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual(readonly_state.read_text(encoding="ascii").strip(), "enabled")
+            self.assertEqual(actions.read_text(encoding="utf-8").splitlines(), ["status", "enable"])
+            self.assertEqual(generator.read_bytes(), generator_before)
+            self.assertEqual(manifest.read_bytes(), manifest_before)
+            self.assertFalse((Path(env["BC250_MESH_STATE_DIR"]) / "install-transaction").exists())
+
+    def test_generator_refresh_signal_rolls_back_and_returns_signal_status(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            env = self.environment(root)
+            self.install_runtime(env)
+            self.make_generator_unrecorded(env)
+            generator = Path(env["BC250_GFX1013_GENERATOR"])
+            manifest = Path(env["BC250_MESH_STATE_DIR"]) / "install.conf"
+            generator_before = generator.read_bytes()
+            manifest_before = manifest.read_bytes()
+            signal_marker = root / "signal-sent"
+            command = r'''
+script=$1
+set -- help
+source "$script" >/dev/null
+as_root() { "$@"; }
+install() {
+    while (( $# > 2 )); do
+        case "$1" in
+            -o|-g|-m) shift 2 ;;
+            *) break ;;
+        esac
+    done
+    cp "$1" "$2"
+    if [[ ! -e "$BC250_TEST_SIGNAL_MARKER" ]]; then
+        touch "$BC250_TEST_SIGNAL_MARKER"
+        kill -TERM "$BASHPID"
+    fi
+}
+refresh_current_generator
+'''
+
+            result = subprocess.run(
+                ["bash", "-c", command, "_", str(MESH)],
+                capture_output=True,
+                text=True,
+                env={**env, "BC250_TEST_SIGNAL_MARKER": str(signal_marker)},
+            )
+
+            self.assertEqual(result.returncode, 143, result.stderr)
+            self.assertEqual(generator.read_bytes(), generator_before)
+            self.assertEqual(manifest.read_bytes(), manifest_before)
+            self.assertFalse((Path(env["BC250_MESH_STATE_DIR"]) / "install-transaction").exists())
 
     def test_unmanaged_runtime_requires_explicit_safe_override(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -1597,7 +1917,11 @@ class MeshShaderTests(unittest.TestCase):
         kernel_gate = setup.index("ensure_compute_kernel_prerequisite")
         core_tools = setup.index("ensure_radv_core_tools")
         prerequisites = setup.index("ensure_radv_prerequisites")
+        generator_refresh = setup.index("runtime_generator_can_refresh")
         ownership = setup.index("preflight_runtime_ownership")
+        locked_ownership = setup.index(
+            "preflight_runtime_ownership", setup.index("recover_install_transaction")
+        )
         package_repair = source.split("ensure_radv_prerequisites() {", 1)[1].split(
             "\n}\n\nmanager_environment_active", 1
         )[0]
@@ -1606,7 +1930,9 @@ class MeshShaderTests(unittest.TestCase):
         self.assertLess(kernel_gate, ownership)
         self.assertLess(ownership, core_tools)
         self.assertLess(core_tools, setup.index("flock 9"))
-        self.assertLess(setup.index("recover_install_transaction"), prerequisites)
+        self.assertLess(setup.index("recover_install_transaction"), locked_ownership)
+        self.assertLess(locked_ownership, prerequisites)
+        self.assertLess(prerequisites, generator_refresh)
         self.assertNotIn("systemctl", package_repair)
         self.assertIn("verify_32bit_fallback", package_repair)
         self.assertIn(

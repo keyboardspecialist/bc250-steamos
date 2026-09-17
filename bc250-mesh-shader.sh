@@ -688,11 +688,11 @@ PY
 read_manifest() {
     local extra line
     STORED_DRIVER_SHA="" STORED_ICD_SHA="" STORED_MESA_TAG="" STORED_COMMIT=""
-    STORED_PROFILE_REVISION=""
+    STORED_PROFILE_REVISION="" STORED_GENERATOR_SHA=""
     [[ -f "$MANIFEST" && ! -L "$MANIFEST" ]] || return 1
     IFS= read -r line < "$MANIFEST" || return 1
     read -r STORED_DRIVER_SHA STORED_ICD_SHA STORED_MESA_TAG STORED_COMMIT \
-        STORED_PROFILE_REVISION extra <<< "$line"
+        STORED_PROFILE_REVISION STORED_GENERATOR_SHA extra <<< "$line"
     [[ -z "$extra" && "$STORED_DRIVER_SHA" =~ ^[0-9a-f]{64}$ \
         && "$STORED_ICD_SHA" =~ ^[0-9a-f]{64}$ \
         && "$STORED_MESA_TAG" =~ ^mesa-[0-9][0-9A-Za-z._-]*$ \
@@ -701,6 +701,8 @@ read_manifest() {
         && ( -z "$STORED_PROFILE_REVISION" \
             || "$STORED_PROFILE_REVISION" == "compute-only-v2" \
             || "$STORED_PROFILE_REVISION" == "$RADV_PROFILE_REVISION" ) \
+        && ( -z "$STORED_GENERATOR_SHA" \
+            || "$STORED_GENERATOR_SHA" =~ ^[0-9a-f]{64}$ ) \
         && "$(wc -l < "$MANIFEST")" -eq 1 ]]
 }
 
@@ -804,6 +806,7 @@ EOF
 }
 
 render_generator() {
+    local unrecorded_manifest="${1:-0}"
     local marker_q audio_marker_q metrics_marker_q module_q active_q revision_active_q policy_q
     local driver_q fallback_icd_q commit_q revision_q profile_revision_q
     marker_q=$(shell_word "$COMPUTE_MARKER")
@@ -862,10 +865,25 @@ done
 [ "\$(cat "\$ACTIVE")" = "\$COMMIT" ] || exit 0
 [ "\$(cat "\$REVISION_ACTIVE")" = "\$REVISION" ] || exit 0
 [ "\$(cat "\$SCHED_POLICY")" = 2 ] || exit 0
+EOF
+    if [[ "$unrecorded_manifest" == 1 ]]; then
+        cat <<EOF
 read -r driver_sha icd_sha mesa_version commit profile_revision extra < "\$MANIFEST" || exit 0
 [[ -z "\${extra:-}" && "\$driver_sha" =~ ^[0-9a-f]{64}\$ \
     && "\$icd_sha" =~ ^[0-9a-f]{64}\$ && "\$commit" = "\$COMMIT" \
     && "\$profile_revision" = "\$PROFILE_REVISION" ]] || exit 0
+EOF
+    else
+        cat <<EOF
+read -r driver_sha icd_sha mesa_version commit profile_revision generator_sha extra < "\$MANIFEST" || exit 0
+[[ -z "\${extra:-}" && "\$driver_sha" =~ ^[0-9a-f]{64}\$ \
+    && "\$icd_sha" =~ ^[0-9a-f]{64}\$ && "\$commit" = "\$COMMIT" \
+    && "\$profile_revision" = "\$PROFILE_REVISION" \
+    && "\$generator_sha" =~ ^[0-9a-f]{64}\$ ]] || exit 0
+[ "\$(sha256sum "\$0" | awk '{print \$1}')" = "\$generator_sha" ] || exit 0
+EOF
+    fi
+    cat <<EOF
 [ "\$(sha256sum "\$DRIVER" | awk '{print \$1}')" = "\$driver_sha" ] || exit 0
 [ "\$(sha256sum "\$ICD" | awk '{print \$1}')" = "\$icd_sha" ] || exit 0
 grep -qF "\"library_path\": \"\$DRIVER\"" "\$ICD" || exit 0
@@ -874,6 +892,10 @@ grep -Eq '"library_arch"[[:space:]]*:[[:space:]]*"32"' "\$FALLBACK_ICD" || exit 
 printf 'VK_DRIVER_FILES=%s:%s\n' "\$ICD" "\$FALLBACK_ICD"
 printf 'VK_ICD_FILENAMES=%s:%s\n' "\$ICD" "\$FALLBACK_ICD"
 EOF
+}
+
+render_unrecorded_generator() {
+    render_generator 1
 }
 
 render_pre_policy_generator() {
@@ -1432,7 +1454,10 @@ generator_matches_recorded_template() {
 generator_recorded() {
     generator_owned || {
         [[ -f "$GENERATOR" && ! -L "$GENERATOR" && -x "$GENERATOR" ]] \
-            && { generator_matches_recorded_template render_generator \
+            && { { read_manifest && [[ -n "$STORED_GENERATOR_SHA" \
+                    && "$(sha256_file "$GENERATOR")" == "$STORED_GENERATOR_SHA" ]]; } \
+                || generator_matches_recorded_template render_generator \
+                || generator_matches_recorded_template render_unrecorded_generator \
                 || generator_matches_recorded_template render_previous_generator \
                 || generator_matches_recorded_template render_pre_policy_generator \
                 || generator_matches_recorded_template render_legacy_generator; }
@@ -1443,7 +1468,9 @@ verify_current_runtime() {
     verify_owned_runtime && [[ "$STORED_COMMIT" == "$UPSTREAM_COMMIT" \
         && "$STORED_MESA_TAG" == "$DEFAULT_MESA_TAG" \
         && "$STORED_PROFILE_REVISION" == "$RADV_PROFILE_REVISION" ]] \
-        && generator_owned && verify_32bit_fallback
+        && generator_owned && [[ -n "$STORED_GENERATOR_SHA" \
+            && "$(sha256_file "$GENERATOR")" == "$STORED_GENERATOR_SHA" ]] \
+        && verify_32bit_fallback
 }
 
 verify_recorded_parts() {
@@ -1548,6 +1575,7 @@ recover_install_transaction() (
     [[ -d "$TRANSACTION_DIR" && ! -L "$TRANSACTION_DIR" ]] || return 0
     local conf="$TRANSACTION_DIR/transaction.conf" version old_driver driver_sha
     local old_icd icd_sha old_manifest manifest_sha old_generator=0 generator_sha=- ro_restore=0 environment
+    local recorded_ro_restore=0 extra
     finish_recovery() {
         local rc=$?
         trap - EXIT INT TERM HUP
@@ -1560,15 +1588,19 @@ recover_install_transaction() (
         return 0
     fi
     read -r version old_driver driver_sha old_icd icd_sha old_manifest manifest_sha \
-        old_generator generator_sha < "$conf" \
+        old_generator generator_sha recorded_ro_restore extra < "$conf" \
         || die "Malformed mesh-shader install transaction; manual recovery required."
     if [[ "$version" == 1 ]]; then
         old_generator=0
         generator_sha=-
+        recorded_ro_restore=0
+    elif [[ "$version" == 2 ]]; then
+        recorded_ro_restore=0
     fi
-    [[ ( "$version" == 1 || "$version" == 2 ) \
+    [[ ( "$version" == 1 || "$version" == 2 || "$version" == 3 ) \
         && "$old_driver" =~ ^[01]$ && "$old_icd" =~ ^[01]$ \
-        && "$old_manifest" =~ ^[01]$ && "$old_generator" =~ ^[01]$ ]] \
+        && "$old_manifest" =~ ^[01]$ && "$old_generator" =~ ^[01]$ \
+        && "$recorded_ro_restore" =~ ^[01]$ && -z "$extra" ]] \
         || die "Invalid mesh-shader install transaction; manual recovery required."
     if [[ "$old_driver" == 1 ]]; then
         [[ -f "$TRANSACTION_DIR/driver" && ! -L "$TRANSACTION_DIR/driver" \
@@ -1595,6 +1627,8 @@ recover_install_transaction() (
         && steamos-readonly status 2>/dev/null | grep -qi enabled; then
         ro_restore=1
         as_root steamos-readonly disable
+    elif [[ "$recorded_ro_restore" == 1 ]]; then
+        ro_restore=1
     fi
     if [[ "$old_driver" == 1 ]]; then
         as_root install -o root -g root -m 0755 "$TRANSACTION_DIR/driver" "$DRIVER"
@@ -1653,8 +1687,11 @@ PY
 )
 
 arm_install_transaction() {
+    local recorded_ro_restore="${1:-0}"
     local old_driver=0 old_icd=0 old_manifest=0 old_generator=0
     local driver_sha=- icd_sha=- manifest_sha=- generator_sha=- tmp
+    [[ "$recorded_ro_restore" =~ ^[01]$ ]] \
+        || die "Invalid readonly restoration state for mesh-shader transaction."
     rm -rf "$TRANSACTION_DIR"
     mkdir -m 0700 "$TRANSACTION_DIR"
     if [[ -f "$DRIVER" && ! -L "$DRIVER" ]]; then
@@ -1678,9 +1715,9 @@ arm_install_transaction() {
         old_generator=1
     fi
     tmp="$TRANSACTION_DIR/.transaction.conf"
-    printf '2 %s %s %s %s %s %s %s %s\n' \
+    printf '3 %s %s %s %s %s %s %s %s %s\n' \
         "$old_driver" "$driver_sha" "$old_icd" "$icd_sha" "$old_manifest" "$manifest_sha" \
-        "$old_generator" "$generator_sha" > "$tmp"
+        "$old_generator" "$generator_sha" "$recorded_ro_restore" > "$tmp"
     chmod 0600 "$tmp"
     mv -f "$tmp" "$TRANSACTION_DIR/transaction.conf"
     python3 - "$TRANSACTION_DIR" <<'PY'
@@ -1698,12 +1735,13 @@ PY
 }
 
 write_manifest() {
-    local driver_sha icd_sha tmp
+    local driver_sha icd_sha generator_sha tmp
     driver_sha=$(sha256_file "$DRIVER")
     icd_sha=$(sha256_file "$ICD")
+    generator_sha=$(sha256_file "$GENERATOR")
     tmp=$(mktemp "$STATE_DIR/.install.XXXXXX")
-    printf '%s %s %s %s %s\n' "$driver_sha" "$icd_sha" "$1" \
-        "$UPSTREAM_COMMIT" "$RADV_PROFILE_REVISION" > "$tmp"
+    printf '%s %s %s %s %s %s\n' "$driver_sha" "$icd_sha" "$1" \
+        "$UPSTREAM_COMMIT" "$RADV_PROFILE_REVISION" "$generator_sha" > "$tmp"
     chmod 0600 "$tmp"
     mv -f "$tmp" "$MANIFEST"
     python3 - "$MANIFEST" "$STATE_DIR" <<'PY'
@@ -1718,11 +1756,69 @@ for path in sys.argv[1:]:
 PY
 }
 
+runtime_generator_can_refresh() {
+    verify_owned_runtime \
+        && [[ "$STORED_COMMIT" == "$UPSTREAM_COMMIT" \
+            && "$STORED_MESA_TAG" == "$DEFAULT_MESA_TAG" \
+            && "$STORED_PROFILE_REVISION" == "$RADV_PROFILE_REVISION" ]] \
+        && generator_recorded && verify_32bit_fallback
+}
+
+refresh_current_generator() (
+    local work committed=0 ro_was_enabled=0
+    runtime_generator_can_refresh || return 1
+    if generator_owned && [[ -n "$STORED_GENERATOR_SHA" \
+        && "$(sha256_file "$GENERATOR")" == "$STORED_GENERATOR_SHA" ]]; then
+        return 0
+    fi
+
+    work=$(mktemp -d "$STATE_DIR/.generator.XXXXXX")
+    cleanup_generator_refresh() {
+        local rc=${1:-$?}
+        trap - EXIT INT TERM HUP
+        if [[ $committed -eq 0 ]]; then
+            if recover_install_transaction; then ro_was_enabled=0; else rc=1; fi
+        fi
+        if [[ $ro_was_enabled -eq 1 ]]; then as_root steamos-readonly enable || rc=1; fi
+        rm -rf "$work"
+        exit "$rc"
+    }
+    trap cleanup_generator_refresh EXIT
+    trap 'cleanup_generator_refresh 130' INT
+    trap 'cleanup_generator_refresh 143' TERM
+    trap 'cleanup_generator_refresh 129' HUP
+
+    render_generator > "$work/generator"
+    chmod 0755 "$work/generator"
+    if command -v steamos-readonly >/dev/null 2>&1 \
+        && steamos-readonly status 2>/dev/null | grep -qi enabled; then
+        ro_was_enabled=1
+    fi
+    arm_install_transaction "$ro_was_enabled"
+    if [[ $ro_was_enabled -eq 1 ]]; then
+        as_root steamos-readonly disable
+    fi
+    as_root install -o root -g root -m 0755 "$work/generator" "$GENERATOR"
+    as_root sync -f "$GENERATOR"
+    as_root sync -d "${GENERATOR%/*}"
+    if [[ $ro_was_enabled -eq 1 ]]; then
+        as_root steamos-readonly enable
+        ro_was_enabled=0
+    fi
+    write_manifest "$STORED_MESA_TAG"
+    verify_current_runtime \
+        || die "Refreshed GFX1013 environment generator failed verification"
+    rm -rf "$TRANSACTION_DIR"
+    fsync_paths "$STATE_DIR"
+    committed=1
+    log "Refreshed the recorded GFX1013 environment generator without rebuilding Mesa."
+)
+
 install_default_profile() {
     local output="$1" mesa_tag="$2"
     log "Installing audited $mesa_tag with DryhoppedIPA's patch series ${UPSTREAM_COMMIT:0:7}."
     log "The alternate ICD will become global for this user after the user manager reloads."
-    arm_install_transaction
+    arm_install_transaction "$ro_was_enabled"
     unlock_root
     as_root install -o root -g root -m 0755 "$output" "$staged_driver"
     as_root mv -f "$staged_driver" "$DRIVER"
@@ -1846,21 +1942,20 @@ cmd_setup() (
     flock 9
     recover_install_transaction
     recover_fsr4_install_transaction
-    if [[ "$profile" == default ]]; then
-        preflight_runtime_ownership "$replace_unmanaged"
-    else
+    preflight_runtime_ownership "$replace_unmanaged"
+    if [[ -e "$FSR4_DIR" || -L "$FSR4_DIR" ]]; then
+        verify_owned_fsr4_runtime \
+            || die "Existing legacy FSR4 V3 profile is incomplete or not a recorded toolkit install."
+    fi
+    ensure_radv_prerequisites
+    if runtime_generator_can_refresh; then refresh_current_generator; fi
+    if [[ "$profile" == fsr4 ]]; then
         if verify_current_runtime; then
             default_ready=1
         else
-            preflight_runtime_ownership "$replace_unmanaged"
             log "The async-compute RADV prerequisite is missing or stale; legacy FSR4 V3 setup will install it first."
         fi
-        if [[ -e "$FSR4_DIR" || -L "$FSR4_DIR" ]]; then
-            verify_owned_fsr4_runtime \
-                || die "Existing legacy FSR4 V3 profile is incomplete or not a recorded toolkit install."
-        fi
     fi
-    ensure_radv_prerequisites
     if [[ "$profile" == default ]] && verify_current_runtime; then
         if ! verify_scheduler_configured; then
             if ! as_root bash "$BOOT_CONFIG" install; then
@@ -1869,10 +1964,12 @@ cmd_setup() (
             fi
         fi
         log "The async-compute RADV profile is already installed and verified; no Mesa rebuild is needed."
-        if verify_scheduler_active; then
+        if ! verify_scheduler_active; then
+            log "Reboot to activate amdgpu.sched_policy=2 and the patched RADV driver together."
+        elif manager_environment_active; then
             log "The async-compute profile is active."
         else
-            log "Reboot to activate amdgpu.sched_policy=2 and the patched RADV driver together."
+            log "Sign out and back in so the complete graphical session inherits the refreshed Vulkan environment."
         fi
         report_fsr4_preserved
         return 0
