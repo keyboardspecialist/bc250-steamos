@@ -1,0 +1,47 @@
+name: Recover v0.27.12 release
+
+on:
+  push:
+    branches:
+      - master
+
+permissions:
+  actions: read
+  contents: write
+
+jobs:
+  publish:
+    name: Publish existing artifacts
+    runs-on: ubuntu-latest
+    env:
+      RELEASE_TAG: v0.27.12
+      SOURCE_RUN_ID: "35175619609"
+      DECKY_ARTIFACT_BASENAME: bc250-decky-control-v0.27.12
+      DESKTOP_ARTIFACT_BASENAME: bc250-desktop-control-v0.27.12
+      TOOLKIT_ARTIFACT_BASENAME: bc250-steamos-toolkit-v0.27.12
+    steps:
+      - name: Check out tag metadata
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Publish release from annotated tag
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          gh run download "$SOURCE_RUN_ID" --name "$DECKY_ARTIFACT_BASENAME" --dir .
+          gh run download "$SOURCE_RUN_ID" --name "$DESKTOP_ARTIFACT_BASENAME" --dir .
+          gh run download "$SOURCE_RUN_ID" --name "$TOOLKIT_ARTIFACT_BASENAME" --dir .
+          gh release create "$RELEASE_TAG" \
+            "${DECKY_ARTIFACT_BASENAME}.zip" \
+            "${DECKY_ARTIFACT_BASENAME}.zip.sha256" \
+            "${DESKTOP_ARTIFACT_BASENAME}.zip" \
+            "${DESKTOP_ARTIFACT_BASENAME}.zip.sha256" \
+            "${TOOLKIT_ARTIFACT_BASENAME}.zip" \
+            "${TOOLKIT_ARTIFACT_BASENAME}.zip.sha256" \
+            --verify-tag \
+            --notes-from-tag \
+            --title "$RELEASE_TAG"

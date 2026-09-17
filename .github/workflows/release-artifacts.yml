@@ -190,6 +190,11 @@ jobs:
       DESKTOP_ARTIFACT_BASENAME: bc250-desktop-control-${{ github.ref_name }}
       TOOLKIT_ARTIFACT_BASENAME: bc250-steamos-toolkit-${{ github.ref_name }}
     steps:
+      - name: Check out tag metadata
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
       - name: Attach artifacts to GitHub release
         env:
           GH_TOKEN: ${{ github.token }}
