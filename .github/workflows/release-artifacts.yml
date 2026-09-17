@@ -195,6 +195,14 @@ jobs:
         with:
           fetch-depth: 0
 
+      - name: Verify annotated tag metadata
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch --force --no-tags origin \
+            "refs/tags/$GITHUB_REF_NAME:refs/tags/$GITHUB_REF_NAME"
+          test "$(git cat-file -t "$GITHUB_REF_NAME")" = tag
+
       - name: Attach artifacts to GitHub release
         env:
           GH_TOKEN: ${{ github.token }}
