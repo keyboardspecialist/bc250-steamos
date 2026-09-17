@@ -218,6 +218,6 @@ jobs:
               "${TOOLKIT_ARTIFACT_BASENAME}.zip" \
               "${TOOLKIT_ARTIFACT_BASENAME}.zip.sha256" \
               --verify-tag \
-              --generate-notes \
+              --notes-from-tag \
               --title "$GITHUB_REF_NAME"
           fi
