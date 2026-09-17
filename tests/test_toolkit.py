@@ -927,6 +927,24 @@ class ToolkitTests(unittest.TestCase):
             self.assertEqual(call_log.read_text(encoding="utf-8").strip(), "mesh|setup")
             self.assertIn("Reboot to activate the scheduler policy", result.stdout)
 
+    def test_graphics_setup_rebuilds_valid_retained_amdgpu_state(self):
+        with tempfile.TemporaryDirectory() as directory:
+            toolkit, call_log, _, env = self.make_auto_base_installation_environment(
+                Path(directory), audio_state="rebuild-required"
+            )
+
+            result = subprocess.run(
+                ["bash", str(toolkit), "action", "graphics-setup"],
+                check=True,
+                capture_output=True,
+                text=True,
+                env=env,
+            )
+
+            self.assertEqual(call_log.read_text(encoding="utf-8").strip(), "audio|install")
+            self.assertIn("Rebuilding the AMDGPU prerequisite", result.stdout)
+            self.assertIn("Reboot to activate the AMDGPU kernel fixes", result.stdout)
+
     def test_graphics_setup_forwards_unmanaged_runtime_override(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

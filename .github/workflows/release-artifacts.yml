@@ -191,6 +191,19 @@ jobs:
       DESKTOP_ARTIFACT_BASENAME: bc250-desktop-control-${{ github.ref_name }}
       TOOLKIT_ARTIFACT_BASENAME: bc250-steamos-toolkit-${{ github.ref_name }}
     steps:
+      - name: Check out tag metadata
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Verify annotated tag metadata
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch --force --no-tags origin \
+            "refs/tags/$GITHUB_REF_NAME:refs/tags/$GITHUB_REF_NAME"
+          test "$(git cat-file -t "$GITHUB_REF_NAME")" = tag
+
       - name: Attach artifacts to GitHub release
         env:
           GH_TOKEN: ${{ github.token }}
@@ -219,6 +232,6 @@ jobs:
               "${TOOLKIT_ARTIFACT_BASENAME}.zip" \
               "${TOOLKIT_ARTIFACT_BASENAME}.zip.sha256" \
               --verify-tag \
-              --generate-notes \
+              --notes-from-tag \
               --title "$GITHUB_REF_NAME"
           fi

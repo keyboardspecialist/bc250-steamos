@@ -22,7 +22,7 @@ GPL-2.0-only.
 +module_param_string(bc250_gfx1013_fix, bc250_gfx1013_fix,
 +		    sizeof(bc250_gfx1013_fix), 0444);
 +
-+static char bc250_amdgpu_revision[] = "legacy-telemetry-r1";
++static char bc250_amdgpu_revision[] = "smu-8core-metrics-r1";
 +MODULE_PARM_DESC(bc250_amdgpu_revision,
 +		 "BC-250 AMDGPU telemetry composition revision");
 +module_param_string(bc250_amdgpu_revision, bc250_amdgpu_revision,

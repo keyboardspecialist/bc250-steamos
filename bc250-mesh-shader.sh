@@ -6,7 +6,7 @@ set -euo pipefail
 SELF="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/$(basename "${BASH_SOURCE[0]}")"
 UPSTREAM_REPO="https://github.com/DryhoppedIPA/bc250-gfx1013-fix"
 UPSTREAM_COMMIT="d3e6dc062c34d2523db0abe5741d1f5b0dea00d9"
-AMDGPU_REVISION="legacy-telemetry-r1"
+AMDGPU_REVISION="smu-8core-metrics-r1"
 LEGACY_UPSTREAM_COMMIT="b66203e012594204e5e3049856b28a2681112985"
 RADV_PROFILE_REVISION="production-fsr4-v4"
 RAW_BASE="https://raw.githubusercontent.com/DryhoppedIPA/bc250-gfx1013-fix/$UPSTREAM_COMMIT"
@@ -506,8 +506,12 @@ ensure_compute_kernel_prerequisite() {
         || die "Could not determine current-kernel AMDGPU state."
     state=$(json_string_field "$status" state || true)
     case "$state" in
-        not-installed)
-            log "Installing the required AMDGPU kernel fixes first."
+        not-installed|rebuild-required)
+            if [[ "$state" == rebuild-required ]]; then
+                log "Rebuilding the required AMDGPU kernel fixes for the running kernel."
+            else
+                log "Installing the required AMDGPU kernel fixes first."
+            fi
             bash "$AMDGPU_INSTALLER"
             status=$(bash "$AMDGPU_INSTALLER" status-json 2>/dev/null) \
                 || die "AMDGPU installation completed, but its state could not be verified."

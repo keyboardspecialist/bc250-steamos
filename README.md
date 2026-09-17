@@ -438,6 +438,13 @@ cold boot, the enabled service safely writes the mask and requests one warm
 reboot. A persistent pending marker prevents a failed unlock from creating a
 reboot loop.
 
+The AMDGPU build carries both the stock six-core metrics decoder and the Robin
+1/3 eight-core decoder. After eight cores are active, `cpu-unlock
+metrics-enable` installs a boot service that injects the matching widened table
+into the SMU and selects the widened decoder only after every write verifies.
+The production injector is under `core-unlock/smu-metrics`; it contains no RPC
+research payload or redistributed firmware image.
+
 After validating all eight cores, choose exactly one automatic unlock method.
 The standard Linux/systemd method and the EFI pre-boot method are mutually
 exclusive and cannot be enabled together. The standard method applies the mask
@@ -468,6 +475,7 @@ running kernel.
 | `sudo ./bc250-power.sh cpu-unlock test` | Apply the volatile mask once without installing boot persistence; reboot manually |
 | `sudo ./bc250-power.sh cpu-unlock enable` | Setup 2 standard choice: verify eight cores are active and enable automatic unlock from Linux |
 | `sudo ./bc250-power.sh cpu-unlock efi-enable` | Setup 2 alternative choice: verify eight cores are active and enable automatic unlock from EFI; do not use with `enable` |
+| `sudo ./bc250-power.sh cpu-unlock metrics-enable` | Install the boot-time SMU injection service for correct eight-core metrics |
 | `sudo ./bc250-power.sh cpu-unlock status` | Show service, topology, and reboot-guard state |
 | `sudo ./bc250-power.sh cpu-unlock off` | Disable/remove either automatic unlock method but retain the Linux helper |
 | `sudo ./bc250-power.sh cpu-unlock uninstall` | Remove all systemd/EFI artifacts, helper, license copies, and pending state |

@@ -82,6 +82,7 @@ override.
 | `bc250-cyan-skillfish-gpu-telemetry.patch` / `-7.2.patch` | Apply bounded GC activity sampling while retaining `SmuMetrics_t` |
 | `bc250-cyan-skillfish-gfxclk.patch` / `-7.2.patch` | Apply range-checked direct SMU GFX-clock reporting |
 | `bc250-cyan-skillfish-sclk-range.patch` | Widen the kernel SCLK interface to 350-2230 MHz |
+| `bc250-cyan-skillfish-8core-metrics-6.16.patch` / `-6.18.patch` / base patch for 7.2 | Decode the widened Robin 1/3 eight-core metrics ABI using each kernel's allocation and power-sensor APIs |
 | `bc250-amdgpu-ttm-null-page-guard.patch` | Safely clean up partially populated TTM page vectors |
 | `0001-gfx1013-mmio-pasid-route.patch` | Route GFX1013 PASID invalidation through MMIO |
 | `0002-gfx1013-compute-gfxoff-guard.patch` | Manage GFXOFF across the BC-250 compute lifecycle |
@@ -203,9 +204,17 @@ Use a custom kernel-tree path as the final argument:
 
 The build and installer verify the source revision, telemetry composition,
 kernel release, kernel configuration, and stock-module ABI before installation.
-The loaded module exposes `bc250_amdgpu_revision=legacy-telemetry-r1` in
+The loaded module exposes `bc250_amdgpu_revision=smu-8core-metrics-r1` in
 addition to the GFX1013 commit. Readiness requires both, so a newly installed
 module cannot be reported ready while the previous module remains loaded.
+
+The clean eight-core metrics layout is byte-compatible with the community BIOS
+layout consumed by MastaG's BC-250 telemetry patch. On a BIOS known to carry
+that patch, select it with `amdgpu.bc250_8core_metrics=1`; otherwise leave the
+selector disabled until the toolkit's runtime firmware patch has verified.
+Eight visible cores alone do not identify the firmware table layout.
+The toolkit's `cpu-unlock metrics-enable` action installs the matching
+boot-time SMU injector from `core-unlock/smu-metrics`.
 
 ## Rollback
 

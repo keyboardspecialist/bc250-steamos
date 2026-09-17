@@ -13,7 +13,7 @@ set -euo pipefail
 HERE=$(cd "$(dirname "$0")" && pwd)
 TREE_DRIFT_EXIT=75
 GFX1013_COMMIT=d3e6dc062c34d2523db0abe5741d1f5b0dea00d9
-AMDGPU_REVISION=legacy-telemetry-r1
+AMDGPU_REVISION=smu-8core-metrics-r1
 
 usage() {
     cat <<EOF
@@ -47,7 +47,7 @@ show_status_json() {
     local gfx1013_marker active revision_active resolved selected_path module_path actual expected active_revision marker_revision
     local default_revision_active
     local owner mode state artifact_present=0 override_installed=1
-    local override_selected=0 active_ready=0 boot_present=0 marker path
+    local override_selected=0 active_ready=0 boot_present=0 boot_configured=0 marker path
 
     rel=$(uname -r)
     updates="/usr/lib/modules/$rel/updates"
@@ -122,9 +122,17 @@ show_status_json() {
        && bash "${BC250_AMDGPU_BOOT_CONFIG:-$HERE/boot-config.sh}" present >/dev/null 2>&1; then
         boot_present=1
     fi
+    if [ -f "${BC250_AMDGPU_BOOT_CONFIG:-$HERE/boot-config.sh}" ] \
+       && [ ! -L "${BC250_AMDGPU_BOOT_CONFIG:-$HERE/boot-config.sh}" ] \
+       && { bash "${BC250_AMDGPU_BOOT_CONFIG:-$HERE/boot-config.sh}" configured >/dev/null 2>&1 \
+           || bash "${BC250_AMDGPU_BOOT_CONFIG:-$HERE/boot-config.sh}" runlist-configured >/dev/null 2>&1; }; then
+        boot_configured=1
+    fi
 
     if [ "$artifact_present" = 0 ]; then
-        if [ "$boot_present" = 1 ] || [ -e "$active" ] || [ -L "$active" ]; then
+        if [ "$boot_configured" = 1 ] && [ ! -e "$active" ] && [ ! -L "$active" ]; then
+            state=rebuild-required
+        elif [ "$boot_present" = 1 ] || [ -e "$active" ] || [ -L "$active" ]; then
             state=invalid
         else
             state=not-installed

@@ -54,6 +54,7 @@ action__unlock_topology["Core topology<br/>Display active and unavailable CPU co
 action__unlock_test["Setup 1 - Test eight cores once<br/>Write the volatile mask only. Manually reboot, stress-test, then return here."]:::experimental
 action__unlock_standard["Setup 2 - Standard Linux boot method<br/>Recommended. Applies after Linux boots. Choose this OR EFI; they cannot be enabled together."]:::experimental
 action__unlock_efi["Setup 2 - EFI pre-boot method<br/>Alternative. Applies before Linux to avoid an extra Linux boot. Choose this OR standard; they cannot be enabled together."]:::experimental
+action__unlock_metrics["Enable eight-core metrics<br/>Install the boot-time SMU injector and matching driver decoder service."]:::install
 action__unlock_off["Disable automatic unlock (keep helper)<br/>Stop future automatic unlock; retain the helper for testing or re-enabling."]:::cleanup
 action__unlock_uninstall["Uninstall all core-unlock files<br/>Disable automatic unlock and remove the helper, units, EFI files, licenses, and guard state."]:::cleanup
 
@@ -107,6 +108,7 @@ menu__cpu_unlock --> action__unlock_topology
 menu__cpu_unlock --> action__unlock_test
 menu__cpu_unlock --> action__unlock_standard
 menu__cpu_unlock --> action__unlock_efi
+menu__cpu_unlock --> action__unlock_metrics
 menu__cpu_unlock --> action__unlock_off
 menu__cpu_unlock --> action__unlock_uninstall
 

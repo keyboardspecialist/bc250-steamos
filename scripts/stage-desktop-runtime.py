@@ -35,6 +35,7 @@ EXECUTABLES = {
     Path("topology.sh"),
     Path("bc250-update-persistence.sh"),
     Path("core-unlock/bc250-unlock-cores.py"),
+    Path("core-unlock/smu-metrics/activate-8core-metrics.sh"),
     Path("desktop-control/install.sh"),
     Path("desktop-control/shared-service-install.sh"),
     Path("desktop-control/bc250-desktop-control-repair"),
@@ -107,6 +108,10 @@ def stage(output: Path, epoch: int) -> None:
                 REPOSITORY / "core-unlock" / name,
                 temporary / "core-unlock" / name,
             )
+        copy_tree(
+            REPOSITORY / "core-unlock/smu-metrics",
+            temporary / "core-unlock/smu-metrics",
+        )
         for name in ("acpi-tables", "hdmi-ac3", "smu-oc-patches"):
             copy_tree(REPOSITORY / name, temporary / name)
 
