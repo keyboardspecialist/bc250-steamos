@@ -33,6 +33,12 @@ SCLK_PATCH = ROOT / "bc250-audio-fix/bc250-cyan-skillfish-sclk-range.patch"
 EIGHT_CORE_METRICS_PATCH = (
     ROOT / "bc250-audio-fix/bc250-cyan-skillfish-8core-metrics.patch"
 )
+EIGHT_CORE_METRICS_616_PATCH = (
+    ROOT / "bc250-audio-fix/bc250-cyan-skillfish-8core-metrics-6.16.patch"
+)
+EIGHT_CORE_METRICS_618_PATCH = (
+    ROOT / "bc250-audio-fix/bc250-cyan-skillfish-8core-metrics-6.18.patch"
+)
 TTM_PATCH = ROOT / "bc250-audio-fix/bc250-amdgpu-ttm-null-page-guard.patch"
 KFD_RUNLIST_616_PATCH = (
     ROOT / "bc250-audio-fix/bc250-kfd-flush-by-runlist-6.16.patch"
@@ -758,6 +764,12 @@ class DriverLifecycleTests(unittest.TestCase):
         gfxclk_72_patch = GFXCLK_72_PATCH.read_text(encoding="utf-8")
         sclk_patch = SCLK_PATCH.read_text(encoding="utf-8")
         eight_core_patch = EIGHT_CORE_METRICS_PATCH.read_text(encoding="utf-8")
+        eight_core_616_patch = EIGHT_CORE_METRICS_616_PATCH.read_text(
+            encoding="utf-8"
+        )
+        eight_core_618_patch = EIGHT_CORE_METRICS_618_PATCH.read_text(
+            encoding="utf-8"
+        )
         ttm_patch = TTM_PATCH.read_text(encoding="utf-8")
         gfx1013_attestation_patch = GFX1013_ATTESTATION_PATCH.read_text(
             encoding="utf-8"
@@ -772,6 +784,16 @@ class DriverLifecycleTests(unittest.TestCase):
         )
         self.assertIn("bc250-cyan-skillfish-sclk-range.patch", builder)
         self.assertIn(EIGHT_CORE_METRICS_PATCH.name, builder)
+        self.assertIn(EIGHT_CORE_METRICS_616_PATCH.name, builder)
+        self.assertIn(EIGHT_CORE_METRICS_618_PATCH.name, builder)
+        for kernel, variant in (
+            ("6.16", EIGHT_CORE_METRICS_616_PATCH.name),
+            ("6.18", EIGHT_CORE_METRICS_618_PATCH.name),
+            ("7.2", EIGHT_CORE_METRICS_PATCH.name),
+        ):
+            case_block = builder[builder.index(f"    {kernel}.*)") :]
+            case_block = case_block[: case_block.index("        ;;")]
+            self.assertIn(f"EIGHT_CORE_PATCH=$HERE/{variant}", case_block)
         self.assertIn("bc250-amdgpu-ttm-null-page-guard.patch", builder)
         self.assertNotIn("TELEMETRY_COMMIT", builder)
         self.assertIn("METRICS_SOURCE_SHA", builder)
@@ -793,6 +815,15 @@ class DriverLifecycleTests(unittest.TestCase):
         self.assertIn("sizeof(SmuMetrics_8core_t) == 0x11c", eight_core_patch)
         self.assertIn("module_param(bc250_8core_metrics, bool, 0644)", eight_core_patch)
         self.assertIn("sizeof(union cyan_skillfish_metrics)", eight_core_patch)
+        for legacy_patch in (eight_core_616_patch, eight_core_618_patch):
+            self.assertIn(
+                "kzalloc(sizeof(union cyan_skillfish_metrics)", legacy_patch
+            )
+            self.assertIn(") << 8) /", legacy_patch)
+            self.assertIn("SmuMetricsTable_8core_t", legacy_patch)
+        self.assertIn("smu_table->gpu_metrics_table", eight_core_616_patch)
+        self.assertIn("smu_driver_table_ptr", eight_core_618_patch)
+        self.assertIn("kzalloc_obj(union cyan_skillfish_metrics)", eight_core_patch)
         self.assertIn("--fuzz=0", builder)
         self.assertNotIn("table3-probe", builder)
         self.assertNotIn("get_table3_probe", builder)

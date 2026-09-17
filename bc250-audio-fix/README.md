@@ -82,6 +82,7 @@ override.
 | `bc250-cyan-skillfish-gpu-telemetry.patch` / `-7.2.patch` | Apply bounded GC activity sampling while retaining `SmuMetrics_t` |
 | `bc250-cyan-skillfish-gfxclk.patch` / `-7.2.patch` | Apply range-checked direct SMU GFX-clock reporting |
 | `bc250-cyan-skillfish-sclk-range.patch` | Widen the kernel SCLK interface to 350-2230 MHz |
+| `bc250-cyan-skillfish-8core-metrics-6.16.patch` / `-6.18.patch` / base patch for 7.2 | Decode the widened Robin 1/3 eight-core metrics ABI using each kernel's allocation and power-sensor APIs |
 | `bc250-amdgpu-ttm-null-page-guard.patch` | Safely clean up partially populated TTM page vectors |
 | `0001-gfx1013-mmio-pasid-route.patch` | Route GFX1013 PASID invalidation through MMIO |
 | `0002-gfx1013-compute-gfxoff-guard.patch` | Manage GFXOFF across the BC-250 compute lifecycle |

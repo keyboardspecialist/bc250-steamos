@@ -249,6 +249,7 @@ step "select kernel patch variants (runbook step 7)"
 # DCN201 DSC/PCON support is included only after an explicit risk acknowledgement.
 PCON_PATCH=
 DSC_PATCH=
+EIGHT_CORE_PATCH=
 DISPLAY_COMPOSITION=stable
 case "$BASE" in
     6.16.*)
@@ -256,6 +257,7 @@ case "$BASE" in
         AUDIO_PATCH=$HERE/0002-bc250-audio.patch
         METRICS_PATCH=$HERE/bc250-cyan-skillfish-gpu-telemetry.patch
         GFXCLK_PATCH=$HERE/bc250-cyan-skillfish-gfxclk.patch
+        EIGHT_CORE_PATCH=$HERE/bc250-cyan-skillfish-8core-metrics-6.16.patch
         KFD_RUNLIST_PATCH=$HERE/bc250-kfd-flush-by-runlist-6.16.patch
         ;;
     6.18.*)
@@ -263,6 +265,7 @@ case "$BASE" in
         AUDIO_PATCH=$HERE/0002-bc250-audio.patch
         METRICS_PATCH=$HERE/bc250-cyan-skillfish-gpu-telemetry.patch
         GFXCLK_PATCH=$HERE/bc250-cyan-skillfish-gfxclk.patch
+        EIGHT_CORE_PATCH=$HERE/bc250-cyan-skillfish-8core-metrics-6.18.patch
         KFD_RUNLIST_PATCH=$HERE/bc250-kfd-flush-by-runlist-6.18.patch
         ;;
     7.2.*)
@@ -270,6 +273,7 @@ case "$BASE" in
         AUDIO_PATCH=
         METRICS_PATCH=$HERE/bc250-cyan-skillfish-gpu-telemetry-7.2.patch
         GFXCLK_PATCH=$HERE/bc250-cyan-skillfish-gfxclk-7.2.patch
+        EIGHT_CORE_PATCH=$HERE/bc250-cyan-skillfish-8core-metrics.patch
         KFD_RUNLIST_PATCH=$HERE/bc250-kfd-flush-by-runlist-6.18.patch
         if [ "$ACKNOWLEDGE_DCN201_DISPLAY_RISK" = 1 ]; then
             PCON_PATCH=$HERE/bc250-dcn201-pcon-hdmi21.patch
@@ -316,7 +320,6 @@ step "apply Cyan Skillfish GPU metrics patches"
 
 TELEMETRY_REVISION=smu-8core-metrics-r1
 METRICS_SOURCE=drivers/gpu/drm/amd/pm/swsmu/smu11/cyan_skillfish_ppt.c
-EIGHT_CORE_PATCH=$HERE/bc250-cyan-skillfish-8core-metrics.patch
 EIGHT_CORE_ALREADY=0
 
 if grep -qF "module_param(bc250_8core_metrics, bool, 0644)" "$METRICS_SOURCE"; then
