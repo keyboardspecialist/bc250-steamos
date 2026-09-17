@@ -24,6 +24,9 @@ with these integration changes:
   reboot after a cold boot, preventing failed writes or unlocks from looping.
 - Installs through `bc250-power.sh` into root-owned persistent storage and runs
   before CPU overclocking and the GPU governor.
+- Provides a separate boot-time SMU metrics injector under `smu-metrics`.
+  `cpu-unlock metrics-enable` requires eight active cores and enables the
+  matching driver decoder only after the widened firmware table verifies.
 
 `cpu-unlock test` performs only the one-time volatile write. It does not create
 or enable the boot service. After a manual reboot and stability testing,

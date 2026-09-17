@@ -134,6 +134,14 @@ EOF
 /etc/systemd/system/multi-user.target.wants/bc250-core-unlock.service
 EOF
                 fi
+                if [[ -e /etc/systemd/system/bc250-8core-metrics.service \
+                    || -L /etc/systemd/system/multi-user.target.wants/bc250-8core-metrics.service ]]; then
+                    cat << EOF
+/etc/systemd/system/bc250-8core-metrics.service
+/etc/systemd/system/bc250-8core-metrics.service.d/10-bc250-storage.conf
+/etc/systemd/system/multi-user.target.wants/bc250-8core-metrics.service
+EOF
+                fi
                 print_storage_paths
                 ;;
             ram)
@@ -248,7 +256,7 @@ component_has_state() {
 
 install_keep_list() {
     require_root
-    local requested="${1:-all}" component
+    local requested="${1:-all}" component target
     install_storage
     mkdir -p "$KEEP_DIR"
     if [[ -f "$LEGACY_KEEP_FILE" ]]; then
@@ -263,7 +271,15 @@ install_keep_list() {
     case "$requested" in
         all)
             for component in "${COMPONENTS[@]}"; do
-                if [[ "$component" == ac3 ]] && ! component_has_state ac3; then
+                if [[ ( "$component" == ac3 || "$component" == amdgpu ) ]] \
+                    && ! component_has_state "$component"; then
+                    target="$KEEP_DIR/bc250-$component.conf"
+                    if [[ -e "$target" || -L "$target" ]]; then
+                        keep_file_owned "$target" \
+                            || die "Refusing to remove unrecognized orphan keep list: $target"
+                        rm -f "$target"
+                        log "Removed orphan $component keep list with no component state."
+                    fi
                     continue
                 fi
                 write_keep_file "$component"
@@ -436,7 +452,8 @@ show_status() {
                 && grep -Fxq "$STORAGE_WANTS" "$KEEP_DIR/bc250-$component.conf" \
                 && grep -Fxq "$RECOVERY_UNIT" "$KEEP_DIR/bc250-$component.conf" \
                 && grep -Fxq "$RECOVERY_WANTS" "$KEEP_DIR/bc250-$component.conf" \
-                && keep_file_owned "$KEEP_DIR/bc250-$component.conf"; then
+                && keep_file_owned "$KEEP_DIR/bc250-$component.conf" \
+                && { [[ "$component" != amdgpu ]] || component_has_state amdgpu; }; then
                 state=installed
             elif ! keep_file_owned "$KEEP_DIR/bc250-$component.conf"; then
                 state=foreign
@@ -518,6 +535,7 @@ pause_key() {
 keep_badge() {
     if [[ -f "$KEEP_DIR/bc250-$1.conf" ]] \
         && keep_file_owned "$KEEP_DIR/bc250-$1.conf" \
+        && { [[ "$1" != amdgpu ]] || component_has_state amdgpu; } \
         && grep -Fxq "$STORAGE_UNIT" "$KEEP_DIR/bc250-$1.conf" \
         && grep -Fxq "$STORAGE_WANTS" "$KEEP_DIR/bc250-$1.conf" \
         && grep -Fxq "$RECOVERY_UNIT" "$KEEP_DIR/bc250-$1.conf" \

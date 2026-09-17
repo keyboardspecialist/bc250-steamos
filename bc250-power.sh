@@ -112,6 +112,10 @@ CORE_UNLOCK_LOCK="/run/lock/bc250-core-unlock.lock"
 CORE_UNLOCK_LIFECYCLE_LOCK="/run/lock/bc250-core-unlock-lifecycle.lock"
 CORE_UNLOCK_UNIT="/etc/systemd/system/bc250-core-unlock.service"
 CORE_UNLOCK_SVC="bc250-core-unlock.service"
+SMU_METRICS_SOURCE_DIR="$SCRIPT_DIR/core-unlock/smu-metrics"
+SMU_METRICS_DIR="$ROOT_DATA_DIR/smu-8core-metrics"
+SMU_METRICS_UNIT="/etc/systemd/system/bc250-8core-metrics.service"
+SMU_METRICS_SVC="bc250-8core-metrics.service"
 CORE_UNLOCK_EFI_SOURCE="$SCRIPT_DIR/core-unlock/bc250-unlock-cores-efi.c"
 CORE_UNLOCK_EFI_LICENSE_SOURCE="$SCRIPT_DIR/core-unlock/EFI-LICENSE"
 CORE_UNLOCK_EFI_HEADER_LICENSE_SOURCE="$SCRIPT_DIR/core-unlock/EFI-HEADERS-LICENSE"
@@ -132,6 +136,7 @@ CORE_UNLOCK_ESP_PARTUUID="${BC250_CORE_UNLOCK_ESP_PARTUUID:-}"
 CORE_UNLOCK_ESP_PARTTYPE="c12a7328-f81f-11d2-ba4b-00a0c93ec93b"
 CORE_UNLOCK_STEAMOS_EFI_PARTTYPE="ebd0a0a2-b9e5-4433-87c0-68b6b72699c7"
 CORE_UNLOCK_STEAMOS_EFI_PARTSET="${BC250_STEAMOS_EFI_PARTSET:-/dev/disk/by-partsets/self/efi}"
+CORE_UNLOCK_STEAMOS_OTHER_EFI_PARTSET="${BC250_STEAMOS_OTHER_EFI_PARTSET:-/dev/disk/by-partsets/other/efi}"
 CORE_UNLOCK_EFI_DIR="$CORE_UNLOCK_ESP_ROOT/EFI/bc250"
 CORE_UNLOCK_EFI_IMAGE="$CORE_UNLOCK_EFI_DIR/bc250-core-unlock.efi"
 CORE_UNLOCK_EFI_LABEL="BC250 Core Unlock"
@@ -266,6 +271,7 @@ resume_governor() {
 
 TEMP_DIRS=()
 TEMP_FILES=()
+TEMP_MOUNTS=()
 GRUB_LOCK_HELD=0
 CPU_MITIGATIONS_TRANSACTION_ACTIVE=0
 CPU_MITIGATIONS_TRANSACTION_CONFIG_BACKUP=""
@@ -321,11 +327,19 @@ efi_transaction_rollback() {
     return "$rc"
 }
 cleanup() {
-    local temp_dir temp_file
+    local temp_dir temp_file temp_mount
     tui_show_cursor
     cpu_mitigations_rollback || true
     efi_transaction_rollback || true
     resume_governor || true
+    for temp_mount in "${TEMP_MOUNTS[@]-}"; do
+        [[ -n "$temp_mount" ]] || continue
+        if mountpoint -q "$temp_mount" 2>/dev/null; then
+            umount "$temp_mount" 2>/dev/null \
+                || { warn "Could not unmount temporary ESP at $temp_mount"; continue; }
+        fi
+        rmdir "$temp_mount" 2>/dev/null || true
+    done
     for temp_dir in "${TEMP_DIRS[@]-}"; do
         [[ -z "$temp_dir" ]] || rm -rf "$temp_dir"
     done
@@ -2955,7 +2969,9 @@ power_is_installed() {
     other_power_payload_is_installed || [[ -e "$POWER_KEEP_FILE" ]] \
         || [[ -e "$CORE_UNLOCK_UNIT" || -e "$CORE_UNLOCK_BIN" \
             || -e "$CORE_UNLOCK_LICENSE" || -e "$CORE_UNLOCK_PENDING" \
-            || -L "$SYSTEMD_WANTS_DIR/$CORE_UNLOCK_SVC" ]] \
+            || -L "$SYSTEMD_WANTS_DIR/$CORE_UNLOCK_SVC" \
+            || -e "$SMU_METRICS_UNIT" || -e "$SMU_METRICS_DIR" \
+            || -L "$SYSTEMD_WANTS_DIR/$SMU_METRICS_SVC" ]] \
         || efi_artifacts_present
 }
 
@@ -3051,7 +3067,9 @@ cmd_uninstall() {
 
     core_unlock_lifecycle_lock || return $?
     if [[ -e "$CORE_UNLOCK_UNIT" || -e "$CORE_UNLOCK_BIN" \
-        || -e "$CORE_UNLOCK_PENDING" || -L "$SYSTEMD_WANTS_DIR/$CORE_UNLOCK_SVC" ]]; then
+        || -e "$CORE_UNLOCK_PENDING" || -L "$SYSTEMD_WANTS_DIR/$CORE_UNLOCK_SVC" \
+        || -e "$SMU_METRICS_UNIT" || -e "$SMU_METRICS_DIR" \
+        || -L "$SYSTEMD_WANTS_DIR/$SMU_METRICS_SVC" ]]; then
         core_unlock_operation_lock || return $?
         if core_unlock_auto_attempt_this_boot; then
             warn "A core-unlock automatic attempt/reboot is already in progress."
@@ -3080,8 +3098,10 @@ cmd_uninstall() {
     fi
     local service
     systemctl disable --now "$RESTORE_SVC" "$GOV_SVC" "$OC_SVC" "$CORE_UNLOCK_SVC" \
+        "$SMU_METRICS_SVC" \
         bc250-acpi-heal.service bc250-cpufreq.service >/dev/null 2>&1 || true
     for service in "$RESTORE_SVC" "$GOV_SVC" "$OC_SVC" "$CORE_UNLOCK_SVC" \
+        "$SMU_METRICS_SVC" \
         bc250-acpi-heal.service bc250-cpufreq.service; do
         if systemctl is-active --quiet "$service"; then
             warn "Could not stop $service; refusing to remove its files."
@@ -3111,11 +3131,14 @@ cmd_uninstall() {
     remove_power_unit "$RESTORE_UNIT"
     remove_power_unit "$OC_UNIT"
     remove_power_unit "$CORE_UNLOCK_UNIT"
+    remove_power_unit "$SMU_METRICS_UNIT"
     rm -f "$SYSTEMD_WANTS_DIR/$GOV_SVC" "$SYSTEMD_WANTS_DIR/$RESTORE_SVC" \
-        "$SYSTEMD_WANTS_DIR/$OC_SVC" "$SYSTEMD_WANTS_DIR/$CORE_UNLOCK_SVC"
+        "$SYSTEMD_WANTS_DIR/$OC_SVC" "$SYSTEMD_WANTS_DIR/$CORE_UNLOCK_SVC" \
+        "$SYSTEMD_WANTS_DIR/$SMU_METRICS_SVC"
     rm -f "$DBUS_POLICY"
     rm -f "$GOV_BIN" "$PERF_BIN" "$RESTORE_BIN"
     rm -f "$CORE_UNLOCK_BIN" "$CORE_UNLOCK_LICENSE" "$CORE_UNLOCK_PENDING"
+    rm -rf "$SMU_METRICS_DIR"
     rmdir "$CORE_UNLOCK_STATE_DIR" "$ROOT_DATA_DIR/licenses" 2>/dev/null || true
     rm -f "$OC_DIR/bc250_apply.py" "$OC_DIR/bc250_detect.py" \
         "$OC_DIR/bc250_limits.py" "$OC_DIR/stress_helper.py"
@@ -3169,7 +3192,7 @@ core_unlock_metrics_state() {
         actual=$(sha256sum "$module" 2>/dev/null | awk '{print $1}')
         resolved=$(modinfo -k "$rel" -F filename amdgpu 2>/dev/null || true)
         if [[ "$expected" =~ ^[0-9a-f]{64}$ && "$actual" == "$expected" \
-            && "$expected_revision" == legacy-telemetry-r1 \
+            && "$expected_revision" == smu-8core-metrics-r1 \
             && "$resolved" == */updates/amdgpu.ko* ]]; then
             echo compatible
             return 0
@@ -3198,6 +3221,76 @@ install_core_unlock_files() {
         || die "Could not install the core-unlock helper."
     install -o root -g root -m 0644 "$CORE_UNLOCK_LICENSE_SOURCE" "$CORE_UNLOCK_LICENSE" \
         || die "Could not install the core-unlock license."
+}
+
+write_smu_metrics_unit() {
+    local tmp
+    tmp=$(mktemp "${SMU_METRICS_UNIT%/*}/.bc250-8core-metrics.XXXXXX") \
+        || die "Could not stage $SMU_METRICS_UNIT"
+    cat > "$tmp" << EOF
+[Unit]
+Description=BC-250 Robin 1/3 eight-core SMU metrics
+Requires=$RECOVERY_SVC
+After=$RECOVERY_SVC systemd-modules-load.service $CORE_UNLOCK_SVC
+Before=$OC_SVC $GOV_SVC
+RequiresMountsFor=$ROOT_DATA_DIR
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=$SMU_METRICS_DIR/activate-8core-metrics.sh
+
+[Install]
+WantedBy=multi-user.target
+EOF
+    install -o root -g root -m 0644 "$tmp" "$SMU_METRICS_UNIT" \
+        || { rm -f "$tmp"; die "Could not install $SMU_METRICS_UNIT"; }
+    rm -f "$tmp"
+}
+
+install_smu_metrics_files() {
+    local file
+    for file in activate-8core-metrics.sh unlock.py patcher.py \
+        metrics-8core.hex metrics-8core-original.hex LICENSE; do
+        [[ -f "$SMU_METRICS_SOURCE_DIR/$file" \
+            && ! -L "$SMU_METRICS_SOURCE_DIR/$file" ]] \
+            || die "Eight-core SMU metrics payload missing or unsafe: $file"
+    done
+    [[ -d "$SMU_METRICS_SOURCE_DIR/bc250_smu" \
+        && ! -L "$SMU_METRICS_SOURCE_DIR/bc250_smu" ]] \
+        || die "Eight-core SMU metrics support library is missing or unsafe."
+    for file in __init__.py api.py api_q0.py api_q2.py api_q3.py \
+        errors.py mailbox.py primitives.py transport.py; do
+        [[ -f "$SMU_METRICS_SOURCE_DIR/bc250_smu/$file" \
+            && ! -L "$SMU_METRICS_SOURCE_DIR/bc250_smu/$file" ]] \
+            || die "Eight-core SMU metrics library file missing or unsafe: $file"
+    done
+
+    [[ ! -L "$SMU_METRICS_DIR" && ! -L "$SMU_METRICS_DIR/bc250_smu" ]] \
+        || die "Eight-core SMU metrics install path is unsafe."
+    install -d -o root -g root -m 0755 "$SMU_METRICS_DIR"
+    rm -rf "$SMU_METRICS_DIR/bc250_smu"
+    install -d -o root -g root -m 0755 "$SMU_METRICS_DIR/bc250_smu"
+    for file in __init__.py api.py api_q0.py api_q2.py api_q3.py \
+        errors.py mailbox.py primitives.py transport.py; do
+        install -o root -g root -m 0644 \
+            "$SMU_METRICS_SOURCE_DIR/bc250_smu/$file" \
+            "$SMU_METRICS_DIR/bc250_smu/$file"
+    done
+    for file in unlock.py patcher.py metrics-8core.hex \
+        metrics-8core-original.hex LICENSE; do
+        install -o root -g root -m 0644 "$SMU_METRICS_SOURCE_DIR/$file" \
+            "$SMU_METRICS_DIR/$file"
+    done
+    install -o root -g root -m 0755 \
+        "$SMU_METRICS_SOURCE_DIR/activate-8core-metrics.sh" \
+        "$SMU_METRICS_DIR/activate-8core-metrics.sh"
+}
+
+enable_smu_metrics_service() {
+    write_smu_metrics_unit || return $?
+    systemctl daemon-reload || return $?
+    systemctl enable "$SMU_METRICS_SVC" || return $?
 }
 
 core_unlock_secure_boot_disabled() {
@@ -3295,6 +3388,114 @@ verify_core_unlock_esp_state() {
     fi
 }
 
+CORE_UNLOCK_EFI_TEMP_MOUNT=""
+mount_core_unlock_recorded_esp() {
+    local source="$1" disk="$2" part="$3" partuuid="$4"
+    local other block_info name type parent actual_part actual_uuid parttype extra
+    local mount_root mount_listing mount_info= line target fstype options owner mode kind
+    [[ -L "$CORE_UNLOCK_STEAMOS_OTHER_EFI_PARTSET" ]] \
+        || { ESP_DISCOVERY_ERROR="SteamOS inactive EFI slot link is missing."; return 1; }
+    other=$(readlink -f "$CORE_UNLOCK_STEAMOS_OTHER_EFI_PARTSET" 2>/dev/null) \
+        || { ESP_DISCOVERY_ERROR="Could not resolve the SteamOS inactive EFI slot."; return 1; }
+    [[ "$other" == "$source" ]] \
+        || { ESP_DISCOVERY_ERROR="Recorded inactive ESP is not the current SteamOS other/efi slot."; return 1; }
+
+    block_info=$(lsblk -dnpro NAME,TYPE,PKNAME,PARTN,PARTUUID,PARTTYPE "$source" 2>/dev/null) \
+        || { ESP_DISCOVERY_ERROR="Could not inspect recorded inactive ESP block identity."; return 1; }
+    read -r name type parent actual_part actual_uuid parttype extra <<< "$block_info"
+    [[ -z "$extra" && "$name" == "$source" && "$type" == part \
+        && "$parent" == "$disk" && "$actual_part" == "$part" \
+        && "${actual_uuid,,}" == "$partuuid" \
+        && "${parttype,,}" == "$CORE_UNLOCK_STEAMOS_EFI_PARTTYPE" ]] \
+        || { ESP_DISCOVERY_ERROR="Recorded inactive ESP no longer matches its ownership identity."; return 1; }
+    mount_listing=$(findmnt -nro TARGET --source "$source" 2>/dev/null || true)
+    if [[ -n "$mount_listing" ]]; then
+        read -r mount_root extra <<< "$mount_listing"
+        read -r owner mode kind < <(LC_ALL=C stat -Lc '%u %a %F' "$mount_root" 2>/dev/null) || owner=
+        [[ -z "$extra" && "$mount_listing" != *$'\n'* \
+            && "$mount_root" =~ ^/run/bc250-core-unlock-esp\.[A-Za-z0-9]+$ \
+            && ! -L "$mount_root" && "$kind" == directory \
+            && "$owner" == 0 && "$mode" == 700 ]] \
+            || { ESP_DISCOVERY_ERROR="Recorded inactive ESP is already mounted at an unexpected path."; return 1; }
+    else
+        mount_root=$(mktemp -d /run/bc250-core-unlock-esp.XXXXXX) \
+            || { ESP_DISCOVERY_ERROR="Could not create a private inactive-ESP mountpoint."; return 1; }
+        mount -t vfat -o rw,nosuid,nodev,noexec "$source" "$mount_root" \
+            || { rmdir "$mount_root" 2>/dev/null || true; ESP_DISCOVERY_ERROR="Could not mount the recorded inactive ESP."; return 1; }
+    fi
+    TEMP_MOUNTS+=("$mount_root")
+    CORE_UNLOCK_EFI_TEMP_MOUNT="$mount_root"
+
+    mount_listing=$(findmnt -nro SOURCE,TARGET,FSTYPE,OPTIONS --target "$mount_root" 2>/dev/null) \
+        || { ESP_DISCOVERY_ERROR="Could not verify the recorded inactive ESP mount."; return 1; }
+    while IFS= read -r line; do
+        read -r name target fstype options extra <<< "$line"
+        [[ -z "$extra" && "$target" == "$mount_root" && "${fstype,,}" != autofs ]] \
+            || continue
+        [[ -z "$mount_info" ]] \
+            || { ESP_DISCOVERY_ERROR="Private inactive-ESP path has multiple concrete mounts."; return 1; }
+        mount_info="$line"
+    done <<< "$mount_listing"
+    [[ -n "$mount_info" ]] \
+        || { ESP_DISCOVERY_ERROR="Private inactive-ESP path is not a concrete mountpoint."; return 1; }
+    read -r name target fstype options extra <<< "$mount_info"
+    case "${fstype,,}" in
+        vfat|fat|fat32) ;;
+        *) ESP_DISCOVERY_ERROR="Recorded inactive ESP must use FAT/vfat, not ${fstype:-unknown}."; return 1 ;;
+    esac
+    [[ ",$options," == *,rw,* ]] \
+        || { ESP_DISCOVERY_ERROR="Recorded inactive ESP is mounted read-only."; return 1; }
+    block_info=$(lsblk -dnpro NAME,TYPE,PKNAME,PARTN,PARTUUID,PARTTYPE "$name" 2>/dev/null) \
+        || { ESP_DISCOVERY_ERROR="Could not revalidate the mounted inactive ESP."; return 1; }
+    read -r name type parent actual_part actual_uuid parttype extra <<< "$block_info"
+    [[ -z "$extra" && "$name" == "$source" && "$type" == part \
+        && "$parent" == "$disk" && "$actual_part" == "$part" \
+        && "${actual_uuid,,}" == "$partuuid" \
+        && "${parttype,,}" == "$CORE_UNLOCK_STEAMOS_EFI_PARTTYPE" ]] \
+        || { ESP_DISCOVERY_ERROR="Mounted inactive ESP differs from recorded ownership state."; return 1; }
+
+    CORE_UNLOCK_ESP_SOURCE="$source"
+    CORE_UNLOCK_ESP_DISK="$disk"
+    CORE_UNLOCK_ESP_PART="$part"
+    CORE_UNLOCK_ESP_PARTUUID="$partuuid"
+    CORE_UNLOCK_EFI_DIR="$mount_root/EFI/bc250"
+    CORE_UNLOCK_EFI_IMAGE="$CORE_UNLOCK_EFI_DIR/bc250-core-unlock.efi"
+}
+
+prepare_core_unlock_removal_esp() {
+    local record_kind="$1" active_error source disk part partuuid
+    case "$record_kind" in
+        state)
+            verify_core_unlock_esp_state && return 0
+            active_error="${ESP_DISCOVERY_ERROR:-Active ESP ownership validation failed.}"
+            source="$EFI_STATE_SOURCE" disk="$EFI_STATE_DISK"
+            part="$EFI_STATE_PART" partuuid="$EFI_STATE_PARTUUID"
+            ;;
+        recovery)
+            verify_core_unlock_recovery_esp_state && return 0
+            active_error="${ESP_DISCOVERY_ERROR:-Active ESP recovery validation failed.}"
+            source="$EFI_RECOVERY_SOURCE" disk="$EFI_RECOVERY_DISK"
+            part="$EFI_RECOVERY_PART" partuuid="$EFI_RECOVERY_PARTUUID"
+            ;;
+        *) ESP_DISCOVERY_ERROR="Unknown EFI ownership record type."; return 1 ;;
+    esac
+    if ! mount_core_unlock_recorded_esp "$source" "$disk" "$part" "$partuuid"; then
+        ESP_DISCOVERY_ERROR="$active_error Recorded inactive ESP validation failed: $ESP_DISCOVERY_ERROR"
+        return 1
+    fi
+}
+
+release_core_unlock_recorded_esp() {
+    local mount_root="$CORE_UNLOCK_EFI_TEMP_MOUNT"
+    [[ -n "$mount_root" ]] || return 0
+    sync "$mount_root" \
+        || { ESP_DISCOVERY_ERROR="Could not sync the recorded inactive ESP."; return 1; }
+    umount "$mount_root" \
+        || { ESP_DISCOVERY_ERROR="Could not unmount the recorded inactive ESP."; return 1; }
+    CORE_UNLOCK_EFI_TEMP_MOUNT=""
+    rmdir "$mount_root" 2>/dev/null || true
+}
+
 build_core_unlock_efi() {
     local work head description output
     for output in "$CORE_UNLOCK_EFI_SOURCE" "$CORE_UNLOCK_EFI_LICENSE_SOURCE" \
@@ -3351,6 +3552,8 @@ core_unlock_efi_enable() {
             die "EFI mode cannot repair incomplete or invalid partial EFI state; run '$0 cpu-unlock off', then retry." ;;
         efi)
             log "EFI core unlock is already installed and its owned Boot entry is valid."
+            install_core_unlock_files || return $?
+            install_update_persistence || return $?
             core_unlock_lifecycle_unlock
             return 0 ;;
     esac
@@ -3459,6 +3662,7 @@ core_unlock_efi_enable() {
     rm -f "$CORE_UNLOCK_EFI_RECOVERY" \
         || die "Could not remove EFI transaction recovery state."
     sync "$CORE_UNLOCK_STATE_DIR"
+    install_update_persistence || return $?
     core_unlock_lifecycle_unlock
     log "Experimental EFI core unlock installed as Boot$number at $CORE_UNLOCK_EFI_IMAGE."
     warn "EFI runs before Linux, but firmware still performs one warm reset after cold power."
@@ -3479,7 +3683,7 @@ clear_core_unlock_efi_guard() {
 }
 
 remove_core_unlock_efi() {
-    local number matches
+    local number matches record_kind
     if ! efi_owned_files_present; then
         if efi_read_boot_listing; then
             [[ -z "$(efi_matching_boot_numbers_in "$EFI_BOOT_LISTING")" ]] \
@@ -3497,10 +3701,12 @@ remove_core_unlock_efi() {
     fi
     if efi_state_read; then
         number="$EFI_STATE_BOOTNUM"
-        verify_core_unlock_esp_state \
+        record_kind=state
+        prepare_core_unlock_removal_esp "$record_kind" \
             || die "${ESP_DISCOVERY_ERROR:-ESP ownership validation failed}; retaining all EFI files and Boot entries."
     elif efi_recovery_read; then
-        verify_core_unlock_recovery_esp_state \
+        record_kind=recovery
+        prepare_core_unlock_removal_esp "$record_kind" \
             || die "${ESP_DISCOVERY_ERROR:-ESP recovery validation failed}; retaining all EFI files and Boot entries."
         number=
     else
@@ -3534,13 +3740,23 @@ remove_core_unlock_efi() {
     fi
     clear_core_unlock_efi_guard \
         || die "EFI guard removal failed after Boot entry deletion; retaining loader and ownership state."
-    rm -f "$CORE_UNLOCK_EFI_STATE" "$CORE_UNLOCK_EFI_BOOTNUM" \
-        "$CORE_UNLOCK_EFI_IMAGE_HASH" "$CORE_UNLOCK_EFI_RECOVERY" \
-        "$CORE_UNLOCK_EFI_IMAGE" \
-        "$CORE_UNLOCK_EFI_MASTER" "$CORE_UNLOCK_EFI_LICENSE" \
-        "$CORE_UNLOCK_EFI_HEADER_LICENSE" \
-        || die "Could not remove all toolkit-owned EFI core-unlock files."
+    rm -f "$CORE_UNLOCK_EFI_IMAGE" \
+        || die "Could not remove the toolkit-owned EFI loader; retaining ownership state."
     rmdir "$CORE_UNLOCK_EFI_DIR" 2>/dev/null || true
+    release_core_unlock_recorded_esp \
+        || die "$ESP_DISCOVERY_ERROR Retaining EFI ownership state for retry."
+    rm -f "$CORE_UNLOCK_EFI_MASTER" "$CORE_UNLOCK_EFI_LICENSE" \
+        "$CORE_UNLOCK_EFI_HEADER_LICENSE" \
+        || die "Could not remove toolkit-owned EFI support files; retaining ownership state."
+    rm -f "$CORE_UNLOCK_EFI_BOOTNUM" "$CORE_UNLOCK_EFI_IMAGE_HASH" \
+        || die "Could not remove EFI support state; retaining the authoritative ownership record."
+    if [[ "$record_kind" == state ]]; then
+        rm -f "$CORE_UNLOCK_EFI_RECOVERY" "$CORE_UNLOCK_EFI_STATE" \
+            || die "Could not remove EFI ownership state."
+    else
+        rm -f "$CORE_UNLOCK_EFI_STATE" "$CORE_UNLOCK_EFI_RECOVERY" \
+            || die "Could not remove EFI recovery state."
+    fi
 }
 
 write_core_unlock_unit() {
@@ -3616,6 +3832,28 @@ core_unlock_enable() {
     warn "After later cold boots, the service automatically requests one guarded warm reboot."
 }
 
+core_unlock_metrics_enable() {
+    require_root
+    core_unlock_lifecycle_lock || return $?
+    install_core_unlock_files || return $?
+    install_smu_metrics_files || return $?
+    BC250_CORE_UNLOCK_STATE_DIR="$CORE_UNLOCK_STATE_DIR" \
+        python3 -I "$CORE_UNLOCK_BIN" verify-unlocked || return $?
+    enable_smu_metrics_service || return $?
+    if ! install_update_persistence; then
+        systemctl disable "$SMU_METRICS_SVC" >/dev/null 2>&1 || true
+        warn "Update persistence failed; disabled $SMU_METRICS_SVC for safety."
+        return 1
+    fi
+    core_unlock_lifecycle_unlock
+    log "Eight-core SMU metrics boot service installed and enabled."
+    if [[ "$(core_unlock_metrics_state)" != compatible ]]; then
+        warn "Install the toolkit AMDGPU fixes, then reboot: ./bc250-toolkit.sh amdgpu"
+    else
+        warn "Reboot to run the metrics service with the matching AMDGPU decoder."
+    fi
+}
+
 core_unlock_status() {
     echo -e "${CB}=== CPU core unlock ===${C0}"
     local en ac cores metrics_state mode
@@ -3635,6 +3873,9 @@ core_unlock_status() {
     en=$(systemctl is-enabled "$CORE_UNLOCK_SVC" 2>/dev/null) || en=-
     ac=$(systemctl is-active "$CORE_UNLOCK_SVC" 2>/dev/null) || ac=-
     printf '  %-38s %s / %s\n' "$CORE_UNLOCK_SVC" "$(c_state "$en")" "$(c_state "$ac")"
+    en=$(systemctl is-enabled "$SMU_METRICS_SVC" 2>/dev/null) || en=-
+    ac=$(systemctl is-active "$SMU_METRICS_SVC" 2>/dev/null) || ac=-
+    printf '  %-38s %s / %s\n' "$SMU_METRICS_SVC" "$(c_state "$en")" "$(c_state "$ac")"
     if [[ -x "$CORE_UNLOCK_BIN" ]]; then
         BC250_CORE_UNLOCK_STATE_DIR="$CORE_UNLOCK_STATE_DIR" \
             python3 -I "$CORE_UNLOCK_BIN" status
@@ -3661,8 +3902,9 @@ core_unlock_off() {
     if core_unlock_auto_attempt_this_boot; then
         die "An automatic unlock attempt/reboot is already in progress; wait for the next boot."
     fi
-    systemctl disable --now "$CORE_UNLOCK_SVC" 2>/dev/null || true
+    systemctl disable --now "$CORE_UNLOCK_SVC" "$SMU_METRICS_SVC" 2>/dev/null || true
     if systemctl is-active --quiet "$CORE_UNLOCK_SVC" \
+        || systemctl is-active --quiet "$SMU_METRICS_SVC" \
         || core_unlock_service_enabled; then
         die "Could not fully disable $CORE_UNLOCK_SVC; automatic unlock remains enabled."
     fi
@@ -3683,16 +3925,20 @@ core_unlock_uninstall() {
         die "An automatic unlock attempt/reboot is already in progress; wait for the next boot."
     fi
     remove_core_unlock_efi
-    systemctl disable --now "$CORE_UNLOCK_SVC" 2>/dev/null || true
+    systemctl disable --now "$CORE_UNLOCK_SVC" "$SMU_METRICS_SVC" 2>/dev/null || true
     if systemctl is-active --quiet "$CORE_UNLOCK_SVC" \
+        || systemctl is-active --quiet "$SMU_METRICS_SVC" \
         || core_unlock_service_enabled; then
         die "Could not fully disable $CORE_UNLOCK_SVC; refusing to remove its files."
     fi
     remove_power_unit "$CORE_UNLOCK_UNIT" || return $?
+    remove_power_unit "$SMU_METRICS_UNIT" || return $?
     rm -f "$SYSTEMD_WANTS_DIR/$CORE_UNLOCK_SVC" "$CORE_UNLOCK_BIN" \
+        "$SYSTEMD_WANTS_DIR/$SMU_METRICS_SVC" \
         "$CORE_UNLOCK_LICENSE" "$CORE_UNLOCK_PENDING" \
         "$CORE_UNLOCK_EFI_LICENSE" "$CORE_UNLOCK_EFI_HEADER_LICENSE" \
         || die "Could not remove all core-unlock files."
+    rm -rf "$SMU_METRICS_DIR"
     [[ ! -e "$CORE_UNLOCK_UNIT" && ! -e "$CORE_UNLOCK_BIN" \
         && ! -e "$CORE_UNLOCK_LICENSE" && ! -e "$CORE_UNLOCK_PENDING" \
         && ! -e "$CORE_UNLOCK_EFI_MASTER" && ! -e "$CORE_UNLOCK_EFI_STATE" \
@@ -3702,7 +3948,9 @@ core_unlock_uninstall() {
         && ! -e "$CORE_UNLOCK_EFI_LICENSE" \
         && ! -e "$CORE_UNLOCK_EFI_HEADER_LICENSE" \
         && ! -e "$CORE_UNLOCK_UNIT.d/10-bc250-storage.conf" \
-        && ! -L "$SYSTEMD_WANTS_DIR/$CORE_UNLOCK_SVC" ]] \
+        && ! -L "$SYSTEMD_WANTS_DIR/$CORE_UNLOCK_SVC" \
+        && ! -e "$SMU_METRICS_UNIT" && ! -e "$SMU_METRICS_DIR" \
+        && ! -L "$SYSTEMD_WANTS_DIR/$SMU_METRICS_SVC" ]] \
         || die "Core-unlock files remain; refusing to report a successful uninstall."
     rmdir "$CORE_UNLOCK_STATE_DIR" "$ROOT_DATA_DIR/licenses" 2>/dev/null || true
     systemctl daemon-reload || return $?
@@ -3720,7 +3968,7 @@ core_unlock_uninstall() {
 cmd_cpu_unlock() {
     local sub="${1:-status}"
     shift || true
-    (($# == 0)) || die "Usage: $0 cpu-unlock {menu|topology|status|test|enable|efi-enable|off|uninstall}"
+    (($# == 0)) || die "Usage: $0 cpu-unlock {menu|topology|status|test|enable|efi-enable|metrics-enable|off|uninstall}"
     case "$sub" in
         menu)      menu_cpu_unlock ;;
         topology)  core_unlock_topology ;;
@@ -3728,9 +3976,10 @@ cmd_cpu_unlock() {
         test)      core_unlock_test ;;
         enable)    core_unlock_enable ;;
         efi-enable) core_unlock_efi_enable ;;
+        metrics-enable) core_unlock_metrics_enable ;;
         off)       core_unlock_off ;;
         uninstall) core_unlock_uninstall ;;
-        *) die "Usage: $0 cpu-unlock {menu|topology|status|test|enable|efi-enable|off|uninstall}" ;;
+        *) die "Usage: $0 cpu-unlock {menu|topology|status|test|enable|efi-enable|metrics-enable|off|uninstall}" ;;
     esac
 }
 
@@ -4598,6 +4847,7 @@ menu_cpu_unlock() {
             "Setup 1 - Test eight cores once||Write the volatile mask only. Manually reboot, stress-test, then return here."
             "Setup 2 - Standard Linux boot method||Recommended. Applies after Linux boots. Choose this OR EFI; they cannot be enabled together."
             "Setup 2 - EFI pre-boot method||Alternative. Applies before Linux to avoid an extra Linux boot. Choose this OR standard; they cannot be enabled together."
+            "Enable eight-core metrics||Install the boot-time SMU injector and matching driver decoder service."
             "Disable automatic unlock (keep helper)|$(badge_core_unlock "$mode")|Stop future automatic unlock; retain the helper for testing or re-enabling."
             "Uninstall all core-unlock files|$(badge_core_unlock_files "$mode")|Disable automatic unlock and remove the helper, units, EFI files, licenses, and guard state."
         )
@@ -4608,8 +4858,9 @@ menu_cpu_unlock() {
             2) run_action core_unlock_test ;;
             3) run_action core_unlock_enable ;;
             4) run_action core_unlock_efi_enable ;;
-            5) run_action core_unlock_off ;;
-            6) run_action core_unlock_uninstall ;;
+            5) run_action core_unlock_metrics_enable ;;
+            6) run_action core_unlock_off ;;
+            7) run_action core_unlock_uninstall ;;
         esac
     done
 }
@@ -4764,6 +5015,10 @@ CPU CORE UNLOCK (test before enabling persistence)
                         Boot entry. It applies the unlock before Linux, avoiding
                         one extra Linux boot, but still performs
                         one firmware warm reset after cold power.
+  cpu-unlock metrics-enable
+                        Install and enable the boot-time SMU metrics injector.
+                        Requires eight active cores and the matching AMDGPU
+                        driver patch.
   cpu-unlock status    Show none/systemd/efi/conflict/partial mode, service,
                        physical-core, and reboot-guard state.
   cpu-unlock off       Disable/remove either automatic unlock method but retain

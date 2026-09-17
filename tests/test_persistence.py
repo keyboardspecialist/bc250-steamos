@@ -230,6 +230,31 @@ class PersistenceUnitTests(unittest.TestCase):
             self.assertIn("Atomic-update keep list installed", result.stdout)
             self.assertIn("/etc/default/grub.d/bc250-amdgpu.cfg", payload)
 
+    def test_install_all_removes_owned_orphan_amdgpu_keep_list(self):
+        with tempfile.TemporaryDirectory() as directory:
+            keep = Path(directory)
+            result = subprocess.run(
+                [
+                    "bash",
+                    "-c",
+                    'script=$1; keep=$2; set -- help; source "$script" >/dev/null; '
+                    'require_root() { :; }; install_storage() { :; }; KEEP_DIR=$keep; '
+                    'LEGACY_KEEP_FILE="$keep/bc250-steamos.conf"; '
+                    'write_keep_file amdgpu; '
+                    'component_has_state() { [[ "$1" != amdgpu && "$1" != ac3 ]]; }; '
+                    "install_keep_list all",
+                    "_",
+                    str(PERSISTENCE),
+                    str(keep),
+                ],
+                check=True,
+                capture_output=True,
+                text=True,
+            )
+
+            self.assertFalse((keep / "bc250-amdgpu.conf").exists())
+            self.assertIn("Removed orphan amdgpu keep list", result.stdout)
+
     def test_ac3_keep_list_contains_udev_profile_selector(self):
         with tempfile.TemporaryDirectory() as directory:
             keep = Path(directory)

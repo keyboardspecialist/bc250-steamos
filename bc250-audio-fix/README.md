@@ -203,9 +203,17 @@ Use a custom kernel-tree path as the final argument:
 
 The build and installer verify the source revision, telemetry composition,
 kernel release, kernel configuration, and stock-module ABI before installation.
-The loaded module exposes `bc250_amdgpu_revision=legacy-telemetry-r1` in
+The loaded module exposes `bc250_amdgpu_revision=smu-8core-metrics-r1` in
 addition to the GFX1013 commit. Readiness requires both, so a newly installed
 module cannot be reported ready while the previous module remains loaded.
+
+The clean eight-core metrics layout is byte-compatible with the community BIOS
+layout consumed by MastaG's BC-250 telemetry patch. On a BIOS known to carry
+that patch, select it with `amdgpu.bc250_8core_metrics=1`; otherwise leave the
+selector disabled until the toolkit's runtime firmware patch has verified.
+Eight visible cores alone do not identify the firmware table layout.
+The toolkit's `cpu-unlock metrics-enable` action installs the matching
+boot-time SMU injector from `core-unlock/smu-metrics`.
 
 ## Rollback
 

@@ -21,6 +21,7 @@ DEFAULT_EPOCH = 315532800  # 1980-01-01, the earliest timestamp supported by ZIP
 EXECUTABLES = {
     Path("privileged-helper/bc250-fsr4.sh"),
     Path("privileged-helper/bc250-optiscaler.sh"),
+    Path("privileged-helper/core-unlock/smu-metrics/activate-8core-metrics.sh"),
 }
 
 
@@ -113,6 +114,10 @@ def stage(output: Path, epoch: int) -> None:
                 REPOSITORY / "core-unlock" / name,
                 temporary / "privileged-helper/core-unlock" / name,
             )
+        copy_tree(
+            REPOSITORY / "core-unlock/smu-metrics",
+            temporary / "privileged-helper/core-unlock/smu-metrics",
+        )
         copy_file(
             PLUGIN_SOURCE / "bootstrap.py",
             temporary / "py_modules/bootstrap.py",

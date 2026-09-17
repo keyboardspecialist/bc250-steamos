@@ -260,6 +260,7 @@ amdgpu_badge() {
     case "$(json_field "$status" state || true)" in
         ready) printf '%s' "${CG}[active]${C0}" ;;
         reboot-required) printf '%s' "${CY}[reboot needed]${C0}" ;;
+        rebuild-required) printf '%s' "${CY}[rebuild needed]${C0}" ;;
         invalid) printf '%s' "${CY}[repair needed]${C0}" ;;
         not-installed) printf '%s' "${CD}[not installed]${C0}" ;;
         *) printf '%s' "${CR}[status unavailable]${C0}" ;;
@@ -423,8 +424,12 @@ run_graphics_setup() {
         || die "Could not determine current-kernel AMDGPU state."
     amdgpu_state=$(json_field "$amdgpu_json" state || true)
     case "$amdgpu_state" in
-        not-installed)
-            log "Installing the AMDGPU prerequisite for the async-compute stack."
+        not-installed|rebuild-required)
+            if [[ "$amdgpu_state" == rebuild-required ]]; then
+                log "Rebuilding the AMDGPU prerequisite for the running kernel."
+            else
+                log "Installing the AMDGPU prerequisite for the async-compute stack."
+            fi
             bash "$AUDIO_FIX_SH"
             amdgpu_json=$(bash "$AUDIO_FIX_SH" status-json 2>/dev/null) \
                 || die "AMDGPU installation completed, but its state could not be verified."
@@ -475,7 +480,7 @@ run_auto_base_installation() {
         || die "Could not determine current-kernel AMDGPU state."
     amdgpu_state=$(json_field "$amdgpu_json" state || true)
     case "$amdgpu_state" in
-        not-installed|reboot-required|ready) ;;
+        not-installed|rebuild-required|reboot-required|ready) ;;
         invalid) die "Current-kernel AMDGPU state is incomplete or unsafe. Review '$AUDIO_FIX_SH status' before continuing." ;;
         *) die "Unknown current-kernel AMDGPU state: ${amdgpu_state:-unavailable}" ;;
     esac
@@ -872,6 +877,7 @@ show_status() {
     case "$state" in
         ready) status_row "AMDGPU kernel fixes" "active" good "patched module loaded for $(json_field "$amdgpu_output" runningKernel || true)" ;;
         reboot-required) status_row "AMDGPU kernel fixes" "reboot needed" warn "installed and selected for the running kernel" ;;
+        rebuild-required) status_row "AMDGPU kernel fixes" "rebuild needed" warn "retained configuration is valid; rebuild for the running kernel" ;;
         not-installed) status_row "AMDGPU kernel fixes" "not installed" dim "stock kernel module" ;;
         *)
             status_row "AMDGPU kernel fixes" "${state:-incomplete}" bad "current-kernel module state is invalid"

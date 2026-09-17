@@ -314,8 +314,16 @@ fi
 
 step "apply Cyan Skillfish GPU metrics patches"
 
-TELEMETRY_REVISION=legacy-telemetry-r1
+TELEMETRY_REVISION=smu-8core-metrics-r1
 METRICS_SOURCE=drivers/gpu/drm/amd/pm/swsmu/smu11/cyan_skillfish_ppt.c
+EIGHT_CORE_PATCH=$HERE/bc250-cyan-skillfish-8core-metrics.patch
+EIGHT_CORE_ALREADY=0
+
+if grep -qF "module_param(bc250_8core_metrics, bool, 0644)" "$METRICS_SOURCE"; then
+    patch -p1 -R --dry-run --fuzz=0 -s -f < "$EIGHT_CORE_PATCH" >/dev/null 2>&1 \
+        || die_tree_drift "eight-core metrics support is present but does not match the toolkit patch"
+    EIGHT_CORE_ALREADY=1
+fi
 
 case "$BASE" in
     6.16.*)
@@ -336,7 +344,9 @@ case "$BASE" in
 esac
 
 METRICS_SOURCE_SHA=$(sha256sum "$METRICS_SOURCE" | cut -d' ' -f1)
-if [ "$METRICS_SOURCE_SHA" = "$TELEMETRY_SOURCE_SHA" ] \
+if [ "$EIGHT_CORE_ALREADY" = 1 ]; then
+    echo "GPU telemetry patch already applied"
+elif [ "$METRICS_SOURCE_SHA" = "$TELEMETRY_SOURCE_SHA" ] \
    || [ "$METRICS_SOURCE_SHA" = "$GFXCLK_SOURCE_SHA" ] \
    || [ "$METRICS_SOURCE_SHA" = "$SCLK_SOURCE_SHA" ]; then
     echo "GPU telemetry patch already applied"
@@ -348,7 +358,9 @@ else
 fi
 
 METRICS_SOURCE_SHA=$(sha256sum "$METRICS_SOURCE" | cut -d' ' -f1)
-if [ "$METRICS_SOURCE_SHA" = "$GFXCLK_SOURCE_SHA" ] \
+if [ "$EIGHT_CORE_ALREADY" = 1 ]; then
+    echo "GPU clock query patch already applied"
+elif [ "$METRICS_SOURCE_SHA" = "$GFXCLK_SOURCE_SHA" ] \
    || [ "$METRICS_SOURCE_SHA" = "$SCLK_SOURCE_SHA" ]; then
     echo "GPU clock query patch already applied"
 elif patch -p1 --dry-run -s -f < "$GFXCLK_PATCH" >/dev/null 2>&1; then
@@ -360,7 +372,9 @@ fi
 
 SCLK_PATCH=$HERE/bc250-cyan-skillfish-sclk-range.patch
 METRICS_SOURCE_SHA=$(sha256sum "$METRICS_SOURCE" | cut -d' ' -f1)
-if [ "$METRICS_SOURCE_SHA" = "$SCLK_SOURCE_SHA" ]; then
+if [ "$EIGHT_CORE_ALREADY" = 1 ]; then
+    echo "Cyan Skillfish SCLK range patch already applied"
+elif [ "$METRICS_SOURCE_SHA" = "$SCLK_SOURCE_SHA" ]; then
     echo "Cyan Skillfish SCLK range patch already applied"
 elif patch -p1 --dry-run -s -f < "$SCLK_PATCH" >/dev/null 2>&1; then
     patch -p1 -s < "$SCLK_PATCH"
@@ -369,9 +383,21 @@ else
     die_tree_drift "Cyan Skillfish SCLK range patch neither applies nor reverses cleanly — tree has drifted"
 fi
 
-METRICS_SOURCE_SHA=$(sha256sum "$METRICS_SOURCE" | cut -d' ' -f1)
-[ "$METRICS_SOURCE_SHA" = "$SCLK_SOURCE_SHA" ] \
-    || die "Cyan Skillfish metrics source does not match the expected final composition"
+if [ "$EIGHT_CORE_ALREADY" = 0 ]; then
+    METRICS_SOURCE_SHA=$(sha256sum "$METRICS_SOURCE" | cut -d' ' -f1)
+    [ "$METRICS_SOURCE_SHA" = "$SCLK_SOURCE_SHA" ] \
+        || die "Cyan Skillfish metrics source does not match the expected pre-eight-core composition"
+    patch -p1 --dry-run --fuzz=0 -s -f < "$EIGHT_CORE_PATCH" >/dev/null 2>&1 \
+        || die_tree_drift "eight-core metrics patch does not apply with zero fuzz"
+    patch -p1 --fuzz=0 -s < "$EIGHT_CORE_PATCH"
+    echo "BC-250 eight-core SMU metrics ABI support applied"
+fi
+
+patch -p1 -R --dry-run --fuzz=0 -s -f < "$EIGHT_CORE_PATCH" >/dev/null 2>&1 \
+    || die "Cyan Skillfish eight-core metrics source failed final verification"
+grep -qF "static_assert(sizeof(SmuMetrics_8core_t) == 0x11c)" \
+    drivers/gpu/drm/amd/pm/swsmu/inc/pmfw_if/smu11_driver_if_cyan_skillfish.h \
+    || die "Cyan Skillfish eight-core metrics ABI assertions are missing"
 
 step "apply AMDGPU TTM cleanup guard"
 TTM_PATCH=$HERE/bc250-amdgpu-ttm-null-page-guard.patch
@@ -446,11 +472,17 @@ apply_gfx1013_patch 0002-gfx1013-compute-gfxoff-guard.patch \
 apply_gfx1013_patch 0003-gfx1013-scoped-pasid-type0.patch \
     "GFX1013 scoped PASID invalidation" "PASID-only CPU type-0 invalidation" \
     drivers/gpu/drm/amd/amdgpu/gmc_v10_0.c
-if grep -qF "bc250_gfx1013_fix" drivers/gpu/drm/amd/amdgpu/amdgpu_drv.c; then
+AMDGPU_DRV=drivers/gpu/drm/amd/amdgpu/amdgpu_drv.c
+if grep -qF "bc250_gfx1013_fix" "$AMDGPU_DRV" \
+   && grep -qF 'static char bc250_amdgpu_revision[] = "smu-8core-metrics-r1";' "$AMDGPU_DRV"; then
     echo "GFX1013 loaded-module attestation already applied"
+elif grep -qF "bc250_gfx1013_fix" "$AMDGPU_DRV" \
+     && grep -qF 'static char bc250_amdgpu_revision[] = "legacy-telemetry-r1";' "$AMDGPU_DRV"; then
+    sed -i 's/"legacy-telemetry-r1"/"smu-8core-metrics-r1"/' "$AMDGPU_DRV"
+    echo "GFX1013 loaded-module attestation upgraded for eight-core metrics"
 elif patch -p1 --dry-run -s -f < "$HERE/bc250-gfx1013-attestation.patch" >/dev/null 2>&1; then
     patch -p1 -s < "$HERE/bc250-gfx1013-attestation.patch"
-    rm -f drivers/gpu/drm/amd/amdgpu/amdgpu_drv.c.orig
+    rm -f "$AMDGPU_DRV.orig"
     echo "GFX1013 loaded-module attestation applied"
 else
     die_tree_drift "GFX1013 loaded-module attestation neither applies nor is present — tree has drifted"
@@ -458,7 +490,8 @@ fi
 grep -qF "using MMIO PASID TLB flushes" drivers/gpu/drm/amd/amdgpu/gmc_v10_0.c \
     && grep -qF "GFX1013 COMPUTE_GFXOFF_GUARD" drivers/gpu/drm/amd/amdgpu/amdgpu_amdkfd.c \
     && grep -qF "PASID-only CPU type-0 invalidation" drivers/gpu/drm/amd/amdgpu/gmc_v10_0.c \
-    && grep -qF "bc250_gfx1013_fix" drivers/gpu/drm/amd/amdgpu/amdgpu_drv.c \
+    && grep -qF "bc250_gfx1013_fix" "$AMDGPU_DRV" \
+    && grep -qF 'static char bc250_amdgpu_revision[] = "smu-8core-metrics-r1";' "$AMDGPU_DRV" \
     || die "GFX1013 compute-queue patch postcondition failed"
 
 KFD_DQM=drivers/gpu/drm/amd/amdkfd/kfd_device_queue_manager.c

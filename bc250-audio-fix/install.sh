@@ -34,7 +34,7 @@ ACTUAL_SHA=$(sha256sum "$SRC" | awk '{print $1}')
     && [[ "$ATTESTED_SHA" =~ ^[0-9a-f]{64}$ ]] \
     && [ "$ATTESTED_SHA" = "$ACTUAL_SHA" ] \
     && [[ "$ATTESTED_COMPOSITION" == stable || "$ATTESTED_COMPOSITION" == dcn201-display-unstable ]] \
-    && [ "$ATTESTED_REVISION" = legacy-telemetry-r1 ] \
+    && [ "$ATTESTED_REVISION" = smu-8core-metrics-r1 ] \
     || { echo "GFX1013 build attestation does not match amdgpu.ko.zst — rebuild with ./build.sh"; exit 1; }
 if [ "$ATTESTED_COMPOSITION" = dcn201-display-unstable ] \
    && [ "$ACKNOWLEDGE_DCN201_DISPLAY_RISK" != 1 ]; then

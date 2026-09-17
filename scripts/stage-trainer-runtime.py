@@ -37,6 +37,7 @@ EXECUTABLES = {
     Path("bc250-ram-split.sh"),
     Path("topology.sh"),
     Path("core-unlock/bc250-unlock-cores.py"),
+    Path("core-unlock/smu-metrics/activate-8core-metrics.sh"),
     Path("trainer/install.sh"),
     Path("trainer/install-flatpak.sh"),
     Path("trainer/bc250-trainer"),
@@ -97,6 +98,10 @@ def copy_host_runtime(temporary: Path) -> None:
             REPOSITORY / "core-unlock" / name,
             temporary / "core-unlock" / name,
         )
+    copy_tree(
+        REPOSITORY / "core-unlock/smu-metrics",
+        temporary / "core-unlock/smu-metrics",
+    )
     for name in ("acpi-tables", "hdmi-ac3", "smu-oc-patches"):
         copy_tree(REPOSITORY / name, temporary / name)
     for name in ("shared-service-install.sh", "bc250-desktop-control-repair"):

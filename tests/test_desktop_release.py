@@ -110,6 +110,10 @@ class DesktopReleaseTests(unittest.TestCase):
                     "core-unlock/EFI-LICENSE",
                     "core-unlock/EFI-HEADERS-LICENSE",
                     "core-unlock/LICENSE",
+                    "core-unlock/smu-metrics/activate-8core-metrics.sh",
+                    "core-unlock/smu-metrics/metrics-8core.hex",
+                    "core-unlock/smu-metrics/metrics-8core-original.hex",
+                    "core-unlock/smu-metrics/bc250_smu/api.py",
                     "desktop-control/install.sh",
                     "desktop-control/shared-service-install.sh",
                     "desktop-control/plasmoid/contents/icons/bc250-control.svg",
@@ -133,6 +137,10 @@ class DesktopReleaseTests(unittest.TestCase):
                 ):
                     mode = archive.getinfo(prefix + name).external_attr >> 16
                     self.assertEqual(mode & 0o777, 0o644)
+                mode = archive.getinfo(
+                    prefix + "core-unlock/smu-metrics/activate-8core-metrics.sh"
+                ).external_attr >> 16
+                self.assertEqual(mode & 0o777, 0o755)
 
 
 if __name__ == "__main__":

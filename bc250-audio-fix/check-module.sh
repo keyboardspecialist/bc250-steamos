@@ -27,12 +27,18 @@ esac
 
 # Guard 1: require both the disabled-by-default KFD workaround and the current
 # telemetry composition revision.
-modinfo -p "$TMPD/new.ko" | grep -q '^bc250_flush_by_runlist:' \
+modinfo -p "$TMPD/new.ko" > "$TMPD/params"
+grep -q '^bc250_flush_by_runlist:' "$TMPD/params" \
     || { echo "ERROR: module lacks the BC-250 KFD runlist workaround — rebuild it"; exit 1; }
 echo "KFD runlist workaround present (disabled by default)"
-modinfo -p "$TMPD/new.ko" | grep -q '^bc250_amdgpu_revision:' \
+grep -q '^bc250_amdgpu_revision:' "$TMPD/params" \
     || { echo "ERROR: module lacks the BC-250 composition revision — rebuild it"; exit 1; }
-echo "BC-250 composition revision present"
+command -v strings >/dev/null \
+    || { echo "WARNING: cannot verify the BC-250 composition revision (strings unavailable)"; exit 2; }
+strings "$TMPD/new.ko" \
+    | awk '$0 == "smu-8core-metrics-r1" { found=1 } END { exit !found }' \
+    || { echo "ERROR: module has the wrong BC-250 composition revision — rebuild it"; exit 1; }
+echo "BC-250 composition revision OK: smu-8core-metrics-r1"
 
 # Guard 2: refuse a module whose vermagic does not match the target kernel —
 # modprobe would reject it at boot and, with the updates/ override baked into

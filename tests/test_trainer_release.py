@@ -99,6 +99,10 @@ class TrainerReleaseTests(unittest.TestCase):
                     "core-unlock/EFI-LICENSE",
                     "core-unlock/EFI-HEADERS-LICENSE",
                     "core-unlock/LICENSE",
+                    "core-unlock/smu-metrics/activate-8core-metrics.sh",
+                    "core-unlock/smu-metrics/metrics-8core.hex",
+                    "core-unlock/smu-metrics/metrics-8core-original.hex",
+                    "core-unlock/smu-metrics/bc250_smu/api.py",
                     "topology.sh",
                 ):
                     self.assertIn(prefix + expected, names)
@@ -116,6 +120,10 @@ class TrainerReleaseTests(unittest.TestCase):
                 ):
                     mode = archive.getinfo(prefix + name).external_attr >> 16
                     self.assertEqual(mode & 0o777, 0o644)
+                mode = archive.getinfo(
+                    prefix + "core-unlock/smu-metrics/activate-8core-metrics.sh"
+                ).external_attr >> 16
+                self.assertEqual(mode & 0o777, 0o755)
 
     def test_installer_uses_absolute_exec_and_recognized_ownership(self):
         source = INSTALLER.read_text(encoding="utf-8")
@@ -223,6 +231,8 @@ class TrainerReleaseTests(unittest.TestCase):
                     "core-unlock/bc250-unlock-cores-efi.c",
                     "core-unlock/EFI-LICENSE",
                     "core-unlock/EFI-HEADERS-LICENSE",
+                    "core-unlock/smu-metrics/activate-8core-metrics.sh",
+                    "core-unlock/smu-metrics/metrics-8core-original.hex",
                 ):
                     self.assertIn(prefix + expected, names)
                 self.assertNotIn(prefix + "trainer/bc250-trainer", names)

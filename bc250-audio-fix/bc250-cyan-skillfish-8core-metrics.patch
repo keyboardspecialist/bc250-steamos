@@ -1,0 +1,297 @@
+diff --git a/drivers/gpu/drm/amd/pm/swsmu/inc/pmfw_if/smu11_driver_if_cyan_skillfish.h b/drivers/gpu/drm/amd/pm/swsmu/inc/pmfw_if/smu11_driver_if_cyan_skillfish.h
+--- a/drivers/gpu/drm/amd/pm/swsmu/inc/pmfw_if/smu11_driver_if_cyan_skillfish.h
++++ b/drivers/gpu/drm/amd/pm/swsmu/inc/pmfw_if/smu11_driver_if_cyan_skillfish.h
+@@ -76,4 +76,46 @@ typedef struct SmuMetrics_t {
+ 	uint32_t Accnt;
+ } SmuMetrics_t;
+ 
++/* Private ABI emitted by the BC-250 Robin 1/3 eight-core firmware patch. */
++typedef struct SmuMetricsTable_8core_t {
++	uint16_t CoreFrequency[8];		/* 0x00, MHz */
++	uint32_t CorePower[8];			/* 0x10, mW */
++	uint16_t CoreTemperature[8];		/* 0x30, centi-Celsius */
++	uint16_t L3Frequency[2];		/* 0x40, MHz */
++	uint16_t L3Temperature[2];		/* 0x44, centi-Celsius */
++	uint16_t C0Residency[8];		/* 0x48, percent */
++	uint16_t GfxclkFrequency;		/* 0x58, MHz */
++	uint16_t GfxTemperature;		/* 0x5a, centi-Celsius */
++	uint16_t SocclkFrequency;		/* 0x5c, MHz */
++	uint16_t VclkFrequency;			/* 0x5e, MHz */
++	uint16_t DclkFrequency;			/* 0x60, MHz */
++	uint16_t MemclkFrequency;		/* 0x62, MHz */
++	uint32_t Voltage[2];			/* 0x64, mV */
++	uint32_t Current[2];			/* 0x6c, mA */
++	uint32_t Power[2];			/* 0x74, mW */
++	uint32_t CurrentSocketPower;		/* 0x7c, mW */
++	uint16_t SocTemperature;		/* 0x80, centi-Celsius */
++	uint16_t EdgeTemperature;		/* 0x82, centi-Celsius */
++	uint16_t ThrottlerStatus;		/* 0x84 */
++	uint16_t Spare;				/* 0x86 */
++} SmuMetricsTable_8core_t;
++
++typedef struct SmuMetrics_8core_t {
++	SmuMetricsTable_8core_t Current;	/* 0x000 */
++	SmuMetricsTable_8core_t Average;	/* 0x088 */
++	uint32_t SampleStartTime;		/* 0x110 */
++	uint32_t SampleStopTime;		/* 0x114 */
++	uint32_t Accnt;				/* 0x118 */
++} SmuMetrics_8core_t;
++
++static_assert(sizeof(SmuMetricsTable_8core_t) == 0x88);
++static_assert(offsetof(SmuMetricsTable_8core_t, CorePower) == 0x10);
++static_assert(offsetof(SmuMetricsTable_8core_t, CoreTemperature) == 0x30);
++static_assert(offsetof(SmuMetricsTable_8core_t, C0Residency) == 0x48);
++static_assert(offsetof(SmuMetricsTable_8core_t, GfxclkFrequency) == 0x58);
++static_assert(offsetof(SmuMetricsTable_8core_t, ThrottlerStatus) == 0x84);
++static_assert(offsetof(SmuMetrics_8core_t, Average) == 0x88);
++static_assert(offsetof(SmuMetrics_8core_t, Accnt) == 0x118);
++static_assert(sizeof(SmuMetrics_8core_t) == 0x11c);
++
+ #endif
+diff --git a/drivers/gpu/drm/amd/pm/swsmu/smu11/cyan_skillfish_ppt.c b/drivers/gpu/drm/amd/pm/swsmu/smu11/cyan_skillfish_ppt.c
+--- a/drivers/gpu/drm/amd/pm/swsmu/smu11/cyan_skillfish_ppt.c
++++ b/drivers/gpu/drm/amd/pm/swsmu/smu11/cyan_skillfish_ppt.c
+@@ -63,6 +63,26 @@ static struct gfx_user_settings {
+ 
+ static uint32_t cyan_skillfish_sclk_default;
+ 
++/*
++ * Enable only after the matching Robin 1/3 SMU patch has been applied and
++ * verified. The transfer allocation is always widened, so either firmware
++ * layout is memory-safe while userspace switches the decoder.
++ */
++static bool bc250_8core_metrics;
++module_param(bc250_8core_metrics, bool, 0644);
++MODULE_PARM_DESC(bc250_8core_metrics,
++		 "Decode the BC-250 Robin 1/3 BIOS/runtime-patched eight-core metrics ABI");
++
++union cyan_skillfish_metrics {
++	SmuMetrics_t stock;
++	SmuMetrics_8core_t eight_core;
++};
++
++static uint16_t cyan_skillfish_gpu_metrics_power(uint32_t power)
++{
++	return min_t(uint32_t, power, 0xfffe);
++}
++
+ static uint16_t cyan_skillfish_get_gpu_activity(struct smu_context *smu)
+ {
+ 	struct amdgpu_device *adev = smu->adev;
+@@ -133,11 +148,11 @@ static int cyan_skillfish_tables_init(struct smu_context *smu)
+ 	int ret;
+ 
+ 	SMU_TABLE_INIT(tables, SMU_TABLE_SMU_METRICS,
+-				sizeof(SmuMetrics_t),
++				sizeof(union cyan_skillfish_metrics),
+ 				PAGE_SIZE,
+ 				AMDGPU_GEM_DOMAIN_VRAM);
+ 
+-	smu_table->metrics_table = kzalloc_obj(SmuMetrics_t);
++	smu_table->metrics_table = kzalloc_obj(union cyan_skillfish_metrics);
+ 	if (!smu_table->metrics_table)
+ 		goto err0_out;
+ 
+@@ -175,7 +189,7 @@ cyan_skillfish_get_smu_metrics_data(struct smu_context *smu,
+ 					uint32_t *value)
+ {
+ 	struct smu_table_context *smu_table = &smu->smu_table;
+-	SmuMetrics_t *metrics = (SmuMetrics_t *)smu_table->metrics_table;
++	union cyan_skillfish_metrics *metrics = smu_table->metrics_table;
+ 	int ret = 0;
+ 
+ 	ret = smu_cmn_get_metrics_table(smu, NULL, false);
+@@ -187,39 +202,61 @@ cyan_skillfish_get_smu_metrics_data(struct smu_context *smu,
+ 		ret = cyan_skillfish_get_gfxclk_frequency(smu, value);
+ 		break;
+ 	case METRICS_CURR_SOCCLK:
+-		*value = metrics->Current.SocclkFrequency;
++		*value = bc250_8core_metrics ?
++			metrics->eight_core.Current.SocclkFrequency :
++			metrics->stock.Current.SocclkFrequency;
+ 		break;
+ 	case METRICS_CURR_VCLK:
+-		*value = metrics->Current.VclkFrequency;
++		*value = bc250_8core_metrics ?
++			metrics->eight_core.Current.VclkFrequency :
++			metrics->stock.Current.VclkFrequency;
+ 		break;
+ 	case METRICS_CURR_DCLK:
+-		*value = metrics->Current.DclkFrequency;
++		*value = bc250_8core_metrics ?
++			metrics->eight_core.Current.DclkFrequency :
++			metrics->stock.Current.DclkFrequency;
+ 		break;
+ 	case METRICS_CURR_UCLK:
+-		*value = metrics->Current.MemclkFrequency;
++		*value = bc250_8core_metrics ?
++			metrics->eight_core.Current.MemclkFrequency :
++			metrics->stock.Current.MemclkFrequency;
+ 		break;
+ 	case METRICS_CURR_SOCKETPOWER:
+-		*value = metrics->Current.CurrentSocketPower;
++		*value = bc250_8core_metrics ?
++			metrics->eight_core.Current.CurrentSocketPower :
++			metrics->stock.Current.CurrentSocketPower;
+ 		break;
+ 	case METRICS_AVERAGE_SOCKETPOWER:
+-		*value = metrics->Average.CurrentSocketPower;
++		*value = bc250_8core_metrics ?
++			metrics->eight_core.Average.CurrentSocketPower :
++			metrics->stock.Average.CurrentSocketPower;
+ 		break;
+ 	case METRICS_TEMPERATURE_EDGE:
+-		*value = metrics->Current.GfxTemperature / 100 *
++		*value = (bc250_8core_metrics ?
++			metrics->eight_core.Current.GfxTemperature :
++			metrics->stock.Current.GfxTemperature) / 100 *
+ 				SMU_TEMPERATURE_UNITS_PER_CENTIGRADES;
+ 		break;
+ 	case METRICS_TEMPERATURE_HOTSPOT:
+-		*value = metrics->Current.SocTemperature / 100 *
++		*value = (bc250_8core_metrics ?
++			metrics->eight_core.Current.SocTemperature :
++			metrics->stock.Current.SocTemperature) / 100 *
+ 				SMU_TEMPERATURE_UNITS_PER_CENTIGRADES;
+ 		break;
+ 	case METRICS_VOLTAGE_VDDSOC:
+-		*value = metrics->Current.Voltage[0];
++		*value = bc250_8core_metrics ?
++			metrics->eight_core.Current.Voltage[0] :
++			metrics->stock.Current.Voltage[0];
+ 		break;
+ 	case METRICS_VOLTAGE_VDDGFX:
+-		*value = metrics->Current.Voltage[1];
++		*value = bc250_8core_metrics ?
++			metrics->eight_core.Current.Voltage[1] :
++			metrics->stock.Current.Voltage[1];
+ 		break;
+ 	case METRICS_THROTTLER_STATUS:
+-		*value = metrics->Current.ThrottlerStatus;
++		*value = bc250_8core_metrics ?
++			metrics->eight_core.Current.ThrottlerStatus :
++			metrics->stock.Current.ThrottlerStatus;
+ 		break;
+ 	default:
+ 		*value = UINT_MAX;
+@@ -434,7 +472,10 @@ static ssize_t cyan_skillfish_get_gpu_metrics(struct smu_context *smu,
+ 	struct gpu_metrics_v2_2 *gpu_metrics =
+ 		(struct gpu_metrics_v2_2 *)smu_driver_table_ptr(
+ 			smu, SMU_DRIVER_TABLE_GPU_METRICS);
+-	SmuMetrics_t metrics;
++	union cyan_skillfish_metrics metrics;
++	SmuMetricsTable_t *current_metrics = &metrics.stock.Current;
++	SmuMetricsTable_t *average_metrics = &metrics.stock.Average;
++	SmuMetricsTable_8core_t *current_8core = &metrics.eight_core.Current;
+ 	uint32_t gfxclk;
+ 	int i, ret = 0;
+ 
+@@ -448,39 +497,81 @@ static ssize_t cyan_skillfish_get_gpu_metrics(struct smu_context *smu,
+ 	smu_cmn_init_soft_gpu_metrics(gpu_metrics, 2, 2);
+ 
+ 	gpu_metrics->average_gfx_activity = cyan_skillfish_get_gpu_activity(smu);
+-	gpu_metrics->temperature_gfx = metrics.Current.GfxTemperature;
+-	gpu_metrics->temperature_soc = metrics.Current.SocTemperature;
+-
+-	gpu_metrics->average_socket_power = metrics.Current.CurrentSocketPower;
+-	gpu_metrics->average_soc_power = metrics.Current.Power[0];
+-	gpu_metrics->average_gfx_power = metrics.Current.Power[1];
+-
++	if (bc250_8core_metrics) {
++		gpu_metrics->temperature_gfx = current_8core->GfxTemperature;
++		gpu_metrics->temperature_soc = current_8core->SocTemperature;
++		gpu_metrics->average_socket_power = cyan_skillfish_gpu_metrics_power(
++			current_8core->CurrentSocketPower);
++		gpu_metrics->average_cpu_power = cyan_skillfish_gpu_metrics_power(
++			current_8core->Power[0]);
++		gpu_metrics->average_gfx_power = cyan_skillfish_gpu_metrics_power(
++			current_8core->Power[1]);
++		gpu_metrics->average_socclk_frequency =
++			metrics.eight_core.Average.SocclkFrequency;
++		gpu_metrics->average_uclk_frequency =
++			metrics.eight_core.Average.MemclkFrequency;
++		gpu_metrics->average_fclk_frequency =
++			metrics.eight_core.Average.MemclkFrequency;
++		gpu_metrics->average_vclk_frequency =
++			metrics.eight_core.Average.VclkFrequency;
++		gpu_metrics->average_dclk_frequency =
++			metrics.eight_core.Average.DclkFrequency;
++		gpu_metrics->current_socclk = current_8core->SocclkFrequency;
++		gpu_metrics->current_uclk = current_8core->MemclkFrequency;
++		gpu_metrics->current_fclk = current_8core->MemclkFrequency;
++		gpu_metrics->current_vclk = current_8core->VclkFrequency;
++		gpu_metrics->current_dclk = current_8core->DclkFrequency;
++		for (i = 0; i < 8; i++) {
++			gpu_metrics->temperature_core[i] =
++				current_8core->CoreTemperature[i];
++			/* The patched firmware does not maintain per-core EMA power. */
++			gpu_metrics->average_core_power[i] =
++				cyan_skillfish_gpu_metrics_power(
++					current_8core->CorePower[i]);
++			gpu_metrics->current_coreclk[i] =
++				current_8core->CoreFrequency[i];
++		}
++	} else {
++		gpu_metrics->temperature_gfx = current_metrics->GfxTemperature;
++		gpu_metrics->temperature_soc = current_metrics->SocTemperature;
++		gpu_metrics->average_socket_power = cyan_skillfish_gpu_metrics_power(
++			current_metrics->CurrentSocketPower);
++		gpu_metrics->average_soc_power = cyan_skillfish_gpu_metrics_power(
++			current_metrics->Power[0]);
++		gpu_metrics->average_gfx_power = cyan_skillfish_gpu_metrics_power(
++			current_metrics->Power[1]);
++		gpu_metrics->average_socclk_frequency = average_metrics->SocclkFrequency;
++		gpu_metrics->average_uclk_frequency = average_metrics->MemclkFrequency;
++		gpu_metrics->average_fclk_frequency = average_metrics->MemclkFrequency;
++		gpu_metrics->average_vclk_frequency = average_metrics->VclkFrequency;
++		gpu_metrics->average_dclk_frequency = average_metrics->DclkFrequency;
++		gpu_metrics->current_socclk = current_metrics->SocclkFrequency;
++		gpu_metrics->current_uclk = current_metrics->MemclkFrequency;
++		gpu_metrics->current_fclk = current_metrics->MemclkFrequency;
++		gpu_metrics->current_vclk = current_metrics->VclkFrequency;
++		gpu_metrics->current_dclk = current_metrics->DclkFrequency;
++		for (i = 0; i < 6; i++) {
++			gpu_metrics->temperature_core[i] = current_metrics->CoreTemperature[i];
++			gpu_metrics->average_core_power[i] =
++				cyan_skillfish_gpu_metrics_power(
++					average_metrics->CorePower[i]);
++			gpu_metrics->current_coreclk[i] = current_metrics->CoreFrequency[i];
++		}
++	}
++
++	/* GFXCLK comes from its dedicated mailbox in either table layout. */
+ 	gpu_metrics->average_gfxclk_frequency = gfxclk;
+-	gpu_metrics->average_socclk_frequency = metrics.Average.SocclkFrequency;
+-	gpu_metrics->average_uclk_frequency = metrics.Average.MemclkFrequency;
+-	gpu_metrics->average_fclk_frequency = metrics.Average.MemclkFrequency;
+-	gpu_metrics->average_vclk_frequency = metrics.Average.VclkFrequency;
+-	gpu_metrics->average_dclk_frequency = metrics.Average.DclkFrequency;
+-
+ 	gpu_metrics->current_gfxclk = gfxclk;
+-	gpu_metrics->current_socclk = metrics.Current.SocclkFrequency;
+-	gpu_metrics->current_uclk = metrics.Current.MemclkFrequency;
+-	gpu_metrics->current_fclk = metrics.Current.MemclkFrequency;
+-	gpu_metrics->current_vclk = metrics.Current.VclkFrequency;
+-	gpu_metrics->current_dclk = metrics.Current.DclkFrequency;
+-
+-	for (i = 0; i < 6; i++) {
+-		gpu_metrics->temperature_core[i] = metrics.Current.CoreTemperature[i];
+-		gpu_metrics->average_core_power[i] = metrics.Average.CorePower[i];
+-		gpu_metrics->current_coreclk[i] = metrics.Current.CoreFrequency[i];
+-	}
+ 
+ 	for (i = 0; i < 2; i++) {
+-		gpu_metrics->temperature_l3[i] = metrics.Current.L3Temperature[i];
+-		gpu_metrics->current_l3clk[i] = metrics.Current.L3Frequency[i];
++		gpu_metrics->temperature_l3[i] = bc250_8core_metrics ?
++			current_8core->L3Temperature[i] : current_metrics->L3Temperature[i];
++		gpu_metrics->current_l3clk[i] = bc250_8core_metrics ?
++			current_8core->L3Frequency[i] : current_metrics->L3Frequency[i];
+ 	}
+ 
+-	gpu_metrics->throttle_status = metrics.Current.ThrottlerStatus;
++	gpu_metrics->throttle_status = bc250_8core_metrics ?
++		current_8core->ThrottlerStatus : current_metrics->ThrottlerStatus;
+ 	gpu_metrics->system_clock_counter = ktime_get_boottime_ns();
+ 
+ 	*table = (void *)gpu_metrics;

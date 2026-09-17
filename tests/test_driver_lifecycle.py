@@ -30,6 +30,9 @@ METRICS_72_PATCH = (
 )
 GFXCLK_72_PATCH = ROOT / "bc250-audio-fix/bc250-cyan-skillfish-gfxclk-7.2.patch"
 SCLK_PATCH = ROOT / "bc250-audio-fix/bc250-cyan-skillfish-sclk-range.patch"
+EIGHT_CORE_METRICS_PATCH = (
+    ROOT / "bc250-audio-fix/bc250-cyan-skillfish-8core-metrics.patch"
+)
 TTM_PATCH = ROOT / "bc250-audio-fix/bc250-amdgpu-ttm-null-page-guard.patch"
 KFD_RUNLIST_616_PATCH = (
     ROOT / "bc250-audio-fix/bc250-kfd-flush-by-runlist-6.16.patch"
@@ -59,7 +62,13 @@ class DriverLifecycleTests(unittest.TestCase):
         )
         (bindir / "modinfo").chmod(0o755)
         boot_config.write_text(
-            '#!/bin/sh\n[ "$1" = present ] && [ "${BC250_TEST_BOOT_PRESENT:-0}" = 1 ]\n',
+            "#!/bin/sh\n"
+            'case "$1" in\n'
+            '  present) [ "${BC250_TEST_BOOT_PRESENT:-0}" = 1 ] ;;\n'
+            '  configured) [ "${BC250_TEST_BOOT_CONFIGURED:-0}" = 1 ] ;;\n'
+            '  runlist-configured) [ "${BC250_TEST_BOOT_RUNLIST_CONFIGURED:-0}" = 1 ] ;;\n'
+            "  *) exit 1 ;;\n"
+            "esac\n",
             encoding="utf-8",
         )
         boot_config.chmod(0o755)
@@ -88,7 +97,7 @@ class DriverLifecycleTests(unittest.TestCase):
             "BC250_GFX1013_MARKER",
         ):
             Path(env[key]).write_text(
-                f"{digest} legacy-telemetry-r1\n", encoding="ascii"
+                f"{digest} smu-8core-metrics-r1\n", encoding="ascii"
             )
 
     def audio_status_json(self, env):
@@ -144,7 +153,7 @@ class DriverLifecycleTests(unittest.TestCase):
 
             revision_active = Path(env["BC250_AMDGPU_REVISION_ACTIVE"])
             revision_active.write_text(
-                "legacy-telemetry-r1\n", encoding="ascii"
+                "smu-8core-metrics-r1\n", encoding="ascii"
             )
             status = self.audio_status_json(env)
             self.assertEqual(status["state"], "ready")
@@ -176,11 +185,20 @@ class DriverLifecycleTests(unittest.TestCase):
             self.assertTrue(status["overrideInstalled"])
             self.assertFalse(status["overrideSelected"])
 
-    def test_audio_status_json_rejects_boot_only_state_and_help_lists_command(self):
+    def test_audio_status_json_distinguishes_rebuild_from_invalid_boot_state(self):
         with tempfile.TemporaryDirectory() as directory:
             env = self.audio_status_environment(Path(directory))
             env["BC250_TEST_BOOT_PRESENT"] = "1"
             self.assertEqual(self.audio_status_json(env)["state"], "invalid")
+
+            env["BC250_TEST_BOOT_CONFIGURED"] = "1"
+            status = self.audio_status_json(env)
+            self.assertEqual(status["state"], "rebuild-required")
+            self.assertFalse(status["rebootRequired"])
+
+            env["BC250_TEST_BOOT_CONFIGURED"] = "0"
+            env["BC250_TEST_BOOT_RUNLIST_CONFIGURED"] = "1"
+            self.assertEqual(self.audio_status_json(env)["state"], "rebuild-required")
 
         help_result = subprocess.run(
             ["bash", str(AUDIO_INSTALLER), "help"],
@@ -739,6 +757,7 @@ class DriverLifecycleTests(unittest.TestCase):
         metrics_72_patch = METRICS_72_PATCH.read_text(encoding="utf-8")
         gfxclk_72_patch = GFXCLK_72_PATCH.read_text(encoding="utf-8")
         sclk_patch = SCLK_PATCH.read_text(encoding="utf-8")
+        eight_core_patch = EIGHT_CORE_METRICS_PATCH.read_text(encoding="utf-8")
         ttm_patch = TTM_PATCH.read_text(encoding="utf-8")
         gfx1013_attestation_patch = GFX1013_ATTESTATION_PATCH.read_text(
             encoding="utf-8"
@@ -752,6 +771,7 @@ class DriverLifecycleTests(unittest.TestCase):
             builder.index(str(GFXCLK_PATCH.name)),
         )
         self.assertIn("bc250-cyan-skillfish-sclk-range.patch", builder)
+        self.assertIn(EIGHT_CORE_METRICS_PATCH.name, builder)
         self.assertIn("bc250-amdgpu-ttm-null-page-guard.patch", builder)
         self.assertNotIn("TELEMETRY_COMMIT", builder)
         self.assertIn("METRICS_SOURCE_SHA", builder)
@@ -769,6 +789,13 @@ class DriverLifecycleTests(unittest.TestCase):
         self.assertIn("static const struct smu_feature_bits", gfxclk_72_patch)
         self.assertIn("CYAN_SKILLFISH_SCLK_MIN\t\t\t350", sclk_patch)
         self.assertIn("CYAN_SKILLFISH_SCLK_MAX\t\t\t2230", sclk_patch)
+        self.assertIn("SmuMetricsTable_8core_t", eight_core_patch)
+        self.assertIn("sizeof(SmuMetrics_8core_t) == 0x11c", eight_core_patch)
+        self.assertIn("module_param(bc250_8core_metrics, bool, 0644)", eight_core_patch)
+        self.assertIn("sizeof(union cyan_skillfish_metrics)", eight_core_patch)
+        self.assertIn("--fuzz=0", builder)
+        self.assertNotIn("table3-probe", builder)
+        self.assertNotIn("get_table3_probe", builder)
         for final_hash in (
             "9e6dfc7e46177925a6492bd72baf4c1de80146036eee63ebf3a0f8703bef4006",
             "4eb9a1e6b0647a4afaa405e95ee8f7df87cb09fffe13da9ca539261bc19afc7c",
@@ -787,8 +814,9 @@ class DriverLifecycleTests(unittest.TestCase):
         self.assertIn("bc250-gfx1013-attestation.patch", builder)
         self.assertIn("bc250_gfx1013_fix", gfx1013_attestation_patch)
         self.assertIn("bc250_amdgpu_revision", gfx1013_attestation_patch)
-        self.assertIn("legacy-telemetry-r1", builder)
-        self.assertIn("legacy-telemetry-r1", installer)
+        self.assertIn('"legacy-telemetry-r1"/"smu-8core-metrics-r1"', builder)
+        self.assertIn("smu-8core-metrics-r1", builder)
+        self.assertIn("smu-8core-metrics-r1", installer)
         self.assertIn(
             "BC250_AMDGPU_REVISION_ACTIVE",
             AUDIO_INSTALLER.read_text(encoding="utf-8"),
@@ -833,6 +861,7 @@ class DriverLifecycleTests(unittest.TestCase):
         self.assertIn(KFD_RUNLIST_618_PATCH.name, builder)
         self.assertIn("patch -p1 --fuzz=0", builder)
         self.assertIn("^bc250_flush_by_runlist:", checker)
+        self.assertIn('== "smu-8core-metrics-r1"', checker)
         self.assertIn(
             "kfd_flush_tlb(peer_pdd, TLB_FLUSH_HEAVYWEIGHT);", patch_616
         )
