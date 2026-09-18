@@ -63,6 +63,18 @@ class MenuGraphTests(unittest.TestCase):
         self.assertIn("child__power_foundation", {node.id for node in choices})
         self.assertIn("action__graphics_setup", {node.id for node in choices})
 
+    def test_power_and_thermals_exposes_fan_control_installers(self):
+        choices = {node.id for node in self.graph.choices("menu__cmd_power_menu")}
+        self.assertIn("action__fan_driver", choices)
+        self.assertIn("action__coolercontrol", choices)
+
+        dependencies = {
+            (edge.source, edge.target)
+            for edge in self.graph.edges
+            if edge.dependency
+        }
+        self.assertIn(("action__coolercontrol", "action__fan_driver"), dependencies)
+
     def test_graph_is_shallow_and_legacy_entries_are_explicit(self):
         depths = reachable(self.graph)
         self.assertLessEqual(max(depths.values()), 3)
@@ -142,7 +154,7 @@ class MenuGraphTests(unittest.TestCase):
     def test_documented_aggregate_metrics_are_current(self):
         graphs = self.graphs.values()
         self.assertEqual(
-            (40, 212, 228, 8),
+            (40, 212, 230, 9),
             (
                 sum(node.kind == "menu" for graph in graphs for node in graph.nodes.values()),
                 sum(

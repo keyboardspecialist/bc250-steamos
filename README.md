@@ -558,7 +558,7 @@ in [`desktop-control/README.md`](desktop-control/README.md).
 
 [`coolercontrol/`](coolercontrol/) installs the pinned official CoolerControl
 daemon AppImage and a desktop launcher for its local Web UI. Install the NCT6687
-driver first, then select **CoolerControl** under **Control interfaces** or run:
+driver first, then select **CoolerControl** under **Power & Thermals** or run:
 
 ```bash
 ./bc250-toolkit.sh coolercontrol

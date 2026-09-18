@@ -1237,7 +1237,7 @@ menu_graph_render() {
                 if [[ "$badge" == *"|"* || "$badge" == *$'\n'* ]]; then
                     die "Invalid generated menu badge: menu__cmd_power_menu"
                 fi
-                items+=("Power & Thermals|${badge}|Configure the power foundation, GPU behavior, CPU tuning, and memory sensors.")
+                items+=("Power & Thermals|${badge}|Configure power, GPU and CPU tuning, memory sensors, and fan control.")
                 targets+=("menu__cmd_power_menu")
                 badges+=("$badge")
                 if ! badge=$(menu_graph_badge menu__cmd_graphics_menu menu); then badge=; fi
@@ -1409,6 +1409,20 @@ menu_graph_render() {
                 fi
                 items+=("GDDR6 Memory Temperature|${badge}|Manage the experimental P3.0-only live SMU temperature payload.")
                 targets+=("menu__cmd_memory_temperature_menu")
+                badges+=("$badge")
+                if ! badge=$(menu_graph_badge action__fan_driver install); then badge=; fi
+                if [[ "$badge" == *"|"* || "$badge" == *$'\n'* ]]; then
+                    die "Invalid generated menu badge: action__fan_driver"
+                fi
+                items+=("NCT6687 Fan-Control Driver|${badge}|Install Linux hwmon fan-speed and PWM support.")
+                targets+=("action__fan_driver")
+                badges+=("$badge")
+                if ! badge=$(menu_graph_badge action__coolercontrol install); then badge=; fi
+                if [[ "$badge" == *"|"* || "$badge" == *$'\n'* ]]; then
+                    die "Invalid generated menu badge: action__coolercontrol"
+                fi
+                items+=("CoolerControl|${badge}|Install fan profiles, curves, and monitoring for the onboard controller.")
+                targets+=("action__coolercontrol")
                 badges+=("$badge")
                 ;;
             menu__cmd_graphics_menu)

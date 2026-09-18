@@ -4,7 +4,7 @@ flowchart TD
 menu__cmd_menu["BC-250 SteamOS toolkit [{{TOOLKIT_VERSION}}]<br/>Choose a guided workflow or a system domain."]:::root
 menu__cmd_guided_setup_menu["Manual Guided Setup<br/>Follow the safe setup order without crossing through sibling categories."]:::menu
 menu__cmd_core_system_menu["Core System<br/>Manage storage, memory allocation, swap, and update protection."]:::menu
-menu__cmd_power_menu["Power & Thermals<br/>Configure the power foundation, GPU behavior, CPU tuning, and memory sensors."]:::menu
+menu__cmd_power_menu["Power & Thermals<br/>Configure power, GPU and CPU tuning, memory sensors, and fan control."]:::menu
 menu__cmd_graphics_menu["Graphics Stack<br/>Manage AMDGPU, Mesa and RADV, FSR4, and GE-Proton."]:::menu
 menu__cmd_unlocks_menu["Hardware Unlocks<br/>Test CPU cores or GPU compute units with explicit recovery paths."]:::menu
 menu__cmd_devices_menu["Devices & Connectivity<br/>Configure HDMI audio, CEC, fan control, and hardware-specific wireless support."]:::menu
@@ -88,6 +88,8 @@ menu__cmd_power_menu --> child__power_load
 menu__cmd_power_menu --> child__power_ramp
 menu__cmd_power_menu --> child__power_cpu
 menu__cmd_power_menu --> menu__cmd_memory_temperature_menu
+menu__cmd_power_menu --> action__fan_driver
+menu__cmd_power_menu --> action__coolercontrol
 
 menu__cmd_graphics_menu --> action__amdgpu
 menu__cmd_graphics_menu --> action__graphics_setup
@@ -143,6 +145,7 @@ menu__cmd_storage_updates_menu --> child__persistence
 action__graphics_setup -.-> action__amdgpu
 action__proton_install -.-> action__graphics_setup
 action__hdmi_ac3_enable -.-> action__amdgpu
+action__coolercontrol -.-> action__fan_driver
 child__power_frequency -.-> child__power_foundation
 child__power_load -.-> child__power_foundation
 child__power_ramp -.-> child__power_foundation
