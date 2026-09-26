@@ -124,6 +124,12 @@ they exit. Installer and build entries require confirmation before starting
 their longer setup workflows.
 Each child requests administrator access only when needed.
 
+Interactive startup automatically checks stable GitHub releases. When a newer
+toolkit exists, the installed and available versions appear in the menu title
+and the **Toolkit Update** entry offers to download the release artifact,
+verify its published checksum, atomically overwrite the current installation,
+remove staging and backup files, and restart the launcher.
+
 The toolkit and standalone component menus are authored as Mermaid graphs under
 [`menus/`](menus/), with targets declared in
 [`menus/targets.json`](menus/targets.json). Regenerate all menu targets with
@@ -134,6 +140,8 @@ The toolkit and standalone component menus are authored as Mermaid graphs under
 | Command | Action |
 |---|---|
 | `./bc250-toolkit.sh` | Open the unified interactive menu |
+| `./bc250-toolkit.sh toolkit-update` | Check for, verify, and install the latest toolkit release, then restart |
+| `./bc250-toolkit.sh toolkit-update-check` | Print machine-readable toolkit update status |
 | `./bc250-toolkit.sh setup` | Open the status-aware guided setup checklist |
 | `./bc250-toolkit.sh auto-base-installation` | Run Auto Base Toolkit Installation in dependency order |
 | `./bc250-toolkit.sh graphics-setup` | Install or resume AMDGPU and Mesa / RADV in dependency order |

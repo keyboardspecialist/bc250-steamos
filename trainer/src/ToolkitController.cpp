@@ -1,5 +1,6 @@
 #include "ToolkitController.h"
 
+#include <QCoreApplication>
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
@@ -9,8 +10,10 @@
 #include <QJsonParseError>
 #include <QProcess>
 #include <QProcessEnvironment>
+#include <QRegularExpression>
 #include <QSocketNotifier>
 #include <QStandardPaths>
+#include <QTemporaryFile>
 #include <QVariantList>
 
 #include <algorithm>
@@ -39,6 +42,8 @@ constexpr qsizetype MaxOutputLines = 5000;
 constexpr qsizetype MaxQueuedInputBytes = 64 * 1024;
 constexpr int InventoryTimeoutMs = 10000;
 constexpr int CancelTimeoutMs = 2000;
+constexpr int UpdateCheckTimeoutMs = 45000;
+constexpr int UpdateInstallTimeoutMs = 15 * 60 * 1000;
 
 struct OperationDefinition {
     const char *id;
@@ -141,10 +146,11 @@ void signalChildProcessGroup(qint64 childPid, qint64 childProcessGroup, int sign
 }
 
 ToolkitController::ToolkitController(bool mockMode, const QString &toolkitDirectoryOverride,
-                                     QObject *parent)
+                                     bool automaticUpdateChecks, QObject *parent)
     : QObject(parent)
     , m_mockMode(mockMode)
     , m_toolkitDirectoryOverride(toolkitDirectoryOverride)
+    , m_automaticUpdateChecks(automaticUpdateChecks)
 {
     m_childPollTimer.setInterval(50);
     connect(&m_childPollTimer, &QTimer::timeout, this, &ToolkitController::pollChild);
@@ -172,6 +178,10 @@ ToolkitController::~ToolkitController()
     if (m_inventoryProcess) {
         m_inventoryProcess->kill();
         m_inventoryProcess->waitForFinished(1000);
+    }
+    if (m_updateProcess) {
+        m_updateProcess->kill();
+        m_updateProcess->waitForFinished(1000);
     }
     stopChildImmediately();
 }
@@ -241,12 +251,16 @@ bool ToolkitController::validateToolkit(QString *canonicalDirectory, QString *er
 
 void ToolkitController::refreshInventory()
 {
-    if (m_running || m_inventoryProcess)
+    if (m_running || m_inventoryProcess || m_updateProcess)
         return;
 
     if (m_mockMode) {
         setToolkitPath(requestedToolkitPath());
         setAvailable(true);
+        if (m_toolkitVersion != QLatin1String("development")) {
+            m_toolkitVersion = QStringLiteral("development");
+            emit updateStateChanged();
+        }
         const QVariantMap inventory = mockInventory();
         if (m_inventory != inventory) {
             m_inventory = inventory;
@@ -271,6 +285,7 @@ void ToolkitController::refreshInventory()
 
     setToolkitPath(canonicalDirectory);
     setAvailable(true);
+    setToolkitVersionFromDirectory(canonicalDirectory);
     setError(QString());
     if (!m_inventory.isEmpty()) {
         m_inventory.clear();
@@ -354,6 +369,7 @@ void ToolkitController::refreshInventory()
             }
         }
         setRefreshing(false);
+        maybeCheckForUpdates();
         process->deleteLater();
     });
 
@@ -369,6 +385,10 @@ void ToolkitController::refreshInventory()
 
 bool ToolkitController::start(const QString &operationId)
 {
+    if (m_updateProcess) {
+        setError(QStringLiteral("A toolkit update task is already running"));
+        return false;
+    }
     if (m_running) {
         setError(QStringLiteral("A toolkit operation is already running"));
         return false;
@@ -909,6 +929,235 @@ void ToolkitController::setError(const QString &error)
     m_error = cleaned;
     emit errorChanged();
     emit resultChanged();
+}
+
+void ToolkitController::setToolkitVersionFromDirectory(const QString &directory)
+{
+    QString version = QStringLiteral("unknown");
+    QFile versionFile(QDir(directory).filePath(QStringLiteral("VERSION")));
+    if (!versionFile.fileName().isEmpty() && !QFileInfo(versionFile).isSymLink()
+        && versionFile.open(QIODevice::ReadOnly)) {
+        const QString candidate = QString::fromLatin1(versionFile.readAll()).trimmed();
+        static const QRegularExpression pattern(
+            QStringLiteral("^v(?:0|[1-9][0-9]*)\\.(?:0|[1-9][0-9]*)\\.(?:0|[1-9][0-9]*)$"));
+        if (pattern.match(candidate).hasMatch())
+            version = candidate;
+    }
+    if (m_toolkitVersion == version)
+        return;
+    m_toolkitVersion = version;
+    emit updateStateChanged();
+}
+
+void ToolkitController::maybeCheckForUpdates()
+{
+    if (!m_automaticUpdateChecks || m_automaticUpdateCheckAttempted || m_mockMode
+        || !m_available || m_refreshing || m_running || m_updateProcess)
+        return;
+    m_automaticUpdateCheckAttempted = true;
+    QTimer::singleShot(0, this, [this] { checkForUpdates(); });
+}
+
+QString ToolkitController::prepareUpdateHelper()
+{
+    if (m_updateHelperFile)
+        return m_updateHelperFile->fileName();
+
+    QFile resource(QStringLiteral(":/scripts/toolkit-update.py"));
+    if (!resource.open(QIODevice::ReadOnly)) {
+        m_updateError = QStringLiteral("The embedded toolkit updater is unavailable");
+        emit updateStateChanged();
+        return {};
+    }
+    auto *temporary = new QTemporaryFile(
+        QDir::temp().filePath(QStringLiteral("bc250-toolkit-update-XXXXXX.py")), this);
+    temporary->setAutoRemove(true);
+    const QByteArray contents = resource.readAll();
+    if (!temporary->open() || temporary->write(contents) != contents.size()
+        || !temporary->flush()) {
+        delete temporary;
+        m_updateError = QStringLiteral("Could not prepare the toolkit updater");
+        emit updateStateChanged();
+        return {};
+    }
+    temporary->setPermissions(QFileDevice::ReadOwner | QFileDevice::WriteOwner);
+    temporary->close();
+    m_updateHelperFile = temporary;
+    return temporary->fileName();
+}
+
+bool ToolkitController::checkForUpdates()
+{
+    if (m_mockMode || m_running || m_refreshing || m_updateProcess || !m_available)
+        return false;
+
+    QString canonicalDirectory;
+    QString validationError;
+    if (!validateToolkit(&canonicalDirectory, &validationError)) {
+        m_updateError = cleanError(validationError);
+        emit updateStateChanged();
+        return false;
+    }
+    setToolkitVersionFromDirectory(canonicalDirectory);
+    return startUpdateHelper(QStringLiteral("check"),
+                             {QStringLiteral("--toolkit-dir"), canonicalDirectory});
+}
+
+bool ToolkitController::installUpdate()
+{
+    if (m_mockMode || m_running || m_refreshing || m_updateProcess || !m_updateAvailable
+        || m_latestToolkitVersion.isEmpty())
+        return false;
+
+    QString canonicalDirectory;
+    QString validationError;
+    if (!validateToolkit(&canonicalDirectory, &validationError)) {
+        m_updateError = cleanError(validationError);
+        emit updateStateChanged();
+        return false;
+    }
+    return startUpdateHelper(
+        QStringLiteral("install"),
+        {QStringLiteral("--toolkit-dir"), canonicalDirectory,
+         QStringLiteral("--expected-version"), m_latestToolkitVersion});
+}
+
+bool ToolkitController::startUpdateHelper(const QString &command, const QStringList &arguments)
+{
+    const QString python = QStandardPaths::findExecutable(QStringLiteral("python3"));
+    const QString helper = prepareUpdateHelper();
+    if (python.isEmpty() || helper.isEmpty()) {
+        if (python.isEmpty()) {
+            m_updateError = QStringLiteral("Python 3 is required to update the toolkit");
+            emit updateStateChanged();
+        }
+        return false;
+    }
+
+    auto *process = new QProcess(this);
+    m_updateProcess = process;
+    m_updateStdout.clear();
+    m_updateStderr.clear();
+    m_updateFailure.clear();
+    m_checkingForUpdate = command == QLatin1String("check");
+    m_updating = command == QLatin1String("install");
+    m_updateError.clear();
+    emit updateStateChanged();
+
+    process->setProgram(python);
+    process->setArguments(QStringList{QStringLiteral("-I"), helper, command} + arguments);
+    process->setWorkingDirectory(QDir::homePath());
+    process->setProcessChannelMode(QProcess::SeparateChannels);
+    QProcessEnvironment environment = QProcessEnvironment::systemEnvironment();
+    for (const QString &key : {QStringLiteral("PYTHONHOME"), QStringLiteral("PYTHONPATH"),
+                               QStringLiteral("PYTHONSTARTUP"), QStringLiteral("BASH_ENV"),
+                               QStringLiteral("ENV")})
+        environment.remove(key);
+    environment.insert(QStringLiteral("LC_ALL"), QStringLiteral("C"));
+    process->setProcessEnvironment(environment);
+
+    const auto collectOutput = [this, process] {
+        if (m_updateProcess != process)
+            return;
+        m_updateStdout += process->readAllStandardOutput();
+        m_updateStderr += process->readAllStandardError();
+        if (m_updateStdout.size() + m_updateStderr.size() > MaxInventoryBytes) {
+            m_updateFailure = QStringLiteral("Toolkit updater output exceeded the 1 MiB limit");
+            process->kill();
+        }
+    };
+    connect(process, &QProcess::readyReadStandardOutput, this, collectOutput);
+    connect(process, &QProcess::readyReadStandardError, this, collectOutput);
+    connect(process, &QProcess::errorOccurred, this,
+            [this, process](QProcess::ProcessError error) {
+        if (m_updateProcess == process && error == QProcess::FailedToStart) {
+            m_updateFailure = QStringLiteral("Could not start the toolkit updater");
+            finishUpdateHelper(process, -1, false);
+        }
+    });
+    connect(process, qOverload<int, QProcess::ExitStatus>(&QProcess::finished), this,
+            [this, process, collectOutput](int code, QProcess::ExitStatus status) {
+        if (m_updateProcess != process)
+            return;
+        collectOutput();
+        finishUpdateHelper(process, code, status == QProcess::NormalExit);
+    });
+    process->start(QIODevice::ReadOnly);
+    process->closeWriteChannel();
+    const int timeout = m_updating ? UpdateInstallTimeoutMs : UpdateCheckTimeoutMs;
+    QTimer::singleShot(timeout, process, [this, process] {
+        if (m_updateProcess == process && process->state() != QProcess::NotRunning) {
+            m_updateFailure = m_updating ? QStringLiteral("Toolkit update timed out")
+                                         : QStringLiteral("Toolkit update check timed out");
+            process->kill();
+        }
+    });
+    return true;
+}
+
+void ToolkitController::finishUpdateHelper(QProcess *process, int exitCode, bool normalExit)
+{
+    if (m_updateProcess != process)
+        return;
+    const bool wasInstalling = m_updating;
+    m_updateProcess = nullptr;
+    m_checkingForUpdate = false;
+    m_updating = false;
+
+    QString failure = m_updateFailure;
+    if (failure.isEmpty() && (!normalExit || exitCode != 0))
+        failure = cleanError(QString::fromUtf8(m_updateStderr));
+    if (failure.isEmpty() && (!normalExit || exitCode != 0))
+        failure = QStringLiteral("Toolkit updater failed with exit code %1").arg(exitCode);
+
+    QJsonParseError parseError;
+    const QJsonDocument document = QJsonDocument::fromJson(m_updateStdout, &parseError);
+    if (failure.isEmpty()
+        && (parseError.error != QJsonParseError::NoError || !document.isObject()))
+        failure = QStringLiteral("Toolkit updater returned invalid status data");
+
+    if (failure.isEmpty()) {
+        const QJsonObject object = document.object();
+        if (wasInstalling) {
+            const QString installed = object.value(QStringLiteral("installedVersion")).toString();
+            if (installed != m_latestToolkitVersion) {
+                failure = QStringLiteral("Toolkit updater reported an unexpected installed version");
+            } else {
+                m_toolkitVersion = installed;
+                m_updateAvailable = false;
+            }
+        } else {
+            const QString current = object.value(QStringLiteral("currentVersion")).toString();
+            const QString latest = object.value(QStringLiteral("latestVersion")).toString();
+            if (current.isEmpty() || latest.isEmpty()
+                || !object.value(QStringLiteral("updateAvailable")).isBool()) {
+                failure = QStringLiteral("Toolkit update check returned incomplete status data");
+            } else {
+                m_toolkitVersion = current;
+                m_latestToolkitVersion = latest;
+                m_updateAvailable = object.value(QStringLiteral("updateAvailable")).toBool();
+            }
+        }
+    }
+
+    m_updateError = cleanError(failure);
+    emit updateStateChanged();
+    process->deleteLater();
+    if (wasInstalling && failure.isEmpty())
+        QTimer::singleShot(0, this, &ToolkitController::restartApplication);
+}
+
+void ToolkitController::restartApplication()
+{
+    const QString executable = QCoreApplication::applicationFilePath();
+    const QStringList arguments = QCoreApplication::arguments().mid(1);
+    if (QProcess::startDetached(executable, arguments, QDir::homePath())) {
+        QCoreApplication::quit();
+        return;
+    }
+    m_updateError = QStringLiteral("Toolkit updated, but BC250 Trainer could not restart");
+    emit updateStateChanged();
+    refreshInventory();
 }
 
 QVariantMap ToolkitController::operationMetadata(const QString &operationId)

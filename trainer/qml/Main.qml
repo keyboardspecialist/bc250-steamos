@@ -48,6 +48,10 @@ ApplicationWindow {
         fitToScreen()
         bridge.statusPageActive = currentPage === 1
     }
+    onClosing: function(close) {
+        if (toolkitController.updating)
+            close.accepted = false
+    }
     onVisibilityChanged: function(visibility) {
         bridge.visible = visibility !== Window.Hidden && visibility !== Window.Minimized
     }
@@ -57,7 +61,7 @@ ApplicationWindow {
     }
 
     function refreshCurrentPage() {
-        if (bridge.busy || toolkitController.running)
+        if (bridge.busy || toolkitController.running || toolkitController.updating)
             return
         if (currentPage === 0)
             toolkitController.refreshInventory()
@@ -390,7 +394,7 @@ ApplicationWindow {
                 Text { text: bridge.mockMode ? "ISOLATED MOCK LINK" : bridge.serviceAvailable ? "SYSTEM BUS LINKED" : "SYSTEM BUS OFFLINE"; color: bridge.serviceAvailable ? "#49ff9a" : "#ff4d8d"; font.family: "monospace"; font.pixelSize: 8 }
             }
             C.NeonButton { text: "_"; implicitWidth: 32; onClicked: root.showMinimized(); hint: "Minimize" }
-            C.NeonButton { text: "X"; implicitWidth: 32; accent: "#ef48bb"; onClicked: root.close(); hint: "Close [Esc]" }
+            C.NeonButton { text: "X"; implicitWidth: 32; accent: "#ef48bb"; enabled: !toolkitController.updating; onClicked: root.close(); hint: toolkitController.updating ? "An update is being installed" : "Close [Esc]" }
         }
 
         RowLayout {
@@ -421,7 +425,8 @@ ApplicationWindow {
             clip: true
             Text {
                 anchors.fill: parent; anchors.margins: 6
-                text: toolkitController.running ? "TOOLKIT: " + toolkitController.activeOperationTitle
+                text: toolkitController.updating ? "TOOLKIT: downloading, verifying, and installing " + toolkitController.latestToolkitVersion + " // Trainer will restart"
+                    : toolkitController.running ? "TOOLKIT: " + toolkitController.activeOperationTitle
                     : root.currentPage === 0 && toolkitController.refreshing ? "TOOLKIT: scanning component inventory"
                     : bridge.busy ? "WORKING: " + bridge.busyLabel
                     : bridge.error ? "ERROR: " + bridge.error
@@ -445,7 +450,8 @@ ApplicationWindow {
             id: pageArea
             x: 14; y: 120; width: parent.width - 28; height: parent.height - 184
             clip: true
-            enabled: !toolkitController.running || root.currentPage === 0
+            enabled: !toolkitController.updating
+                && (!toolkitController.running || root.currentPage === 0)
             ScrollBar.horizontal.policy: ScrollBar.AlwaysOff
             Loader {
                 width: pageArea.availableWidth
@@ -471,10 +477,49 @@ ApplicationWindow {
 
         RowLayout {
             x: 14; y: parent.height - 35; width: parent.width - 28; height: 28
-            Text { text: "v" + applicationVersion; color: "#607783"; font.family: "monospace"; font.pixelSize: 8 }
+            spacing: 6
+            Text {
+                objectName: "versionStatus"
+                text: "TRAINER v" + applicationVersion + " // TOOLKIT " + toolkitController.toolkitVersion
+                color: "#607783"; font.family: "monospace"; font.pixelSize: 8
+            }
+            Text {
+                visible: toolkitController.updateAvailable
+                text: "→ " + toolkitController.latestToolkitVersion + " AVAILABLE"
+                color: "#49ff9a"; font.family: "monospace"; font.pixelSize: 8; font.bold: true
+            }
+            Text {
+                visible: toolkitController.checkingForUpdate
+                text: "CHECKING..."
+                color: "#9cdbe0"; font.family: "monospace"; font.pixelSize: 8
+            }
+            Text {
+                visible: toolkitController.updateError.length > 0
+                text: "TOOLKIT UPDATE ERROR"
+                color: "#ff8ab4"; font.family: "monospace"; font.pixelSize: 8
+                ToolTip.visible: updateErrorHover.hovered
+                ToolTip.text: toolkitController.updateError
+                HoverHandler { id: updateErrorHover }
+            }
             Item { Layout.fillWidth: true }
+            C.NeonButton {
+                objectName: "toolkitUpdateButton"
+                visible: toolkitController.updateAvailable
+                enabled: !bridge.busy && !toolkitController.running && !toolkitController.refreshing
+                    && !toolkitController.checkingForUpdate && !toolkitController.updating
+                text: toolkitController.updating ? "UPDATING..." : "UPDATE " + toolkitController.latestToolkitVersion
+                accent: "#49ff9a"
+                hint: "Install the verified toolkit release and restart BC250 Trainer"
+                onClicked: updateConfirmDialog.ask(
+                    "Update toolkit to " + toolkitController.latestToolkitVersion,
+                    "Download and verify the latest toolkit artifact, replace "
+                        + toolkitController.toolkitPath
+                        + ", remove temporary files, and restart BC250 Trainer?",
+                    false,
+                    function() { toolkitController.installUpdate() })
+            }
             C.NeonButton { visible: bridge.busy && bridge.operationId.length > 0; enabled: bridge.operationCancellable; text: bridge.operationCancellable ? "CANCEL OP" : "NON-CANCELLABLE"; accent: "#ff6aa2"; onClicked: bridge.cancelOperation() }
-            C.NeonButton { text: "REFRESH [R]"; enabled: !bridge.busy && !toolkitController.refreshing && !toolkitController.running; onClicked: root.refreshCurrentPage() }
+            C.NeonButton { text: "REFRESH [R]"; enabled: !bridge.busy && !toolkitController.refreshing && !toolkitController.running && !toolkitController.updating; onClicked: root.refreshCurrentPage() }
         }
     }
 
@@ -494,6 +539,7 @@ ApplicationWindow {
     }
 
     C.PasswordDialog { controller: toolkitController }
+    C.ConfirmDialog { id: updateConfirmDialog }
 
     Shortcut { sequence: "F1"; onActivated: root.currentPage = 0 }
     Shortcut { sequence: "F2"; onActivated: root.currentPage = 1 }
@@ -504,7 +550,7 @@ ApplicationWindow {
     Shortcut { sequence: "M"; onActivated: mediaController.muted = !mediaController.muted }
     Shortcut { sequence: "P"; onActivated: mediaController.togglePlayback() }
     Shortcut { sequence: "R"; onActivated: root.refreshCurrentPage() }
-    Shortcut { sequence: "Escape"; onActivated: root.close() }
+    Shortcut { sequence: "Escape"; enabled: !toolkitController.updating; onActivated: root.close() }
 
     Component { id: toolkitComponent; Pages.ToolkitPage { backend: bridge; controller: toolkitController } }
     Component { id: statusComponent; Pages.StatusPage { backend: bridge } }

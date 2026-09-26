@@ -87,6 +87,7 @@ class ToolkitTests(unittest.TestCase):
         self.assertEqual(
             [
                 "Auto Base Toolkit Installation",
+                "Toolkit Update",
                 "Manual Guided Setup",
                 "Core System",
                 "Power & Thermals",
@@ -108,6 +109,11 @@ class ToolkitTests(unittest.TestCase):
             "action__auto_base_installation) run_menu_action auto-base-installation",
             source,
         )
+        self.assertIn(
+            "action__toolkit_update) run_toolkit_update_menu_action",
+            source,
+        )
+        self.assertIn("check_toolkit_update || true", source)
         self.assertIn("action__system_health) run_menu_action status", source)
         self.assertIn("bc250-proton.sh", source)
         self.assertNotIn("Mesh shaders (per game)", source)

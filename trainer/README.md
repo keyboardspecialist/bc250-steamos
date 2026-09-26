@@ -62,6 +62,7 @@ does not bundle or update the complete toolkit source tree.
 
 - Status dashboard with one-second telemetry while the page is active
 - Native Toolkit task dashboard for component inventory, setup, driver builds, repairs, and per-component removal
+- Automatic main-toolkit release checks with a checksum-verified, atomic in-app update and Trainer restart, backed by the same updater as the primary CLI
 - Separate fixed install/remove actions for the private experimental native-mesh
   profile; the Trainer never enables it globally or edits Steam launch options
 - Live bounded console output with secure `sudo` prompting and protected process cancellation

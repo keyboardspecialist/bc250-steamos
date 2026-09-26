@@ -3,12 +3,14 @@
 #include <QByteArray>
 #include <QObject>
 #include <QStringConverter>
+#include <QStringList>
 #include <QTimer>
 #include <QVariantList>
 #include <QVariantMap>
 
 class QProcess;
 class QSocketNotifier;
+class QTemporaryFile;
 
 class ToolkitController final : public QObject
 {
@@ -17,6 +19,12 @@ class ToolkitController final : public QObject
     Q_PROPERTY(QString toolkitPath READ toolkitPath NOTIFY toolkitPathChanged)
     Q_PROPERTY(QVariantMap inventory READ inventory NOTIFY inventoryChanged)
     Q_PROPERTY(QVariantList operations READ operations CONSTANT)
+    Q_PROPERTY(QString toolkitVersion READ toolkitVersion NOTIFY updateStateChanged)
+    Q_PROPERTY(QString latestToolkitVersion READ latestToolkitVersion NOTIFY updateStateChanged)
+    Q_PROPERTY(bool checkingForUpdate READ checkingForUpdate NOTIFY updateStateChanged)
+    Q_PROPERTY(bool updateAvailable READ updateAvailable NOTIFY updateStateChanged)
+    Q_PROPERTY(bool updating READ updating NOTIFY updateStateChanged)
+    Q_PROPERTY(QString updateError READ updateError NOTIFY updateStateChanged)
     Q_PROPERTY(bool refreshing READ refreshing NOTIFY refreshingChanged)
     Q_PROPERTY(bool running READ running NOTIFY runningChanged)
     Q_PROPERTY(QString activeOperationId READ activeOperationId NOTIFY activeOperationChanged)
@@ -33,6 +41,7 @@ class ToolkitController final : public QObject
 public:
     explicit ToolkitController(bool mockMode = false,
                                const QString &toolkitDirectoryOverride = QString(),
+                               bool automaticUpdateChecks = false,
                                QObject *parent = nullptr);
     ~ToolkitController() override;
 
@@ -40,6 +49,12 @@ public:
     QString toolkitPath() const { return m_toolkitPath; }
     QVariantMap inventory() const { return m_inventory; }
     QVariantList operations() const;
+    QString toolkitVersion() const { return m_toolkitVersion; }
+    QString latestToolkitVersion() const { return m_latestToolkitVersion; }
+    bool checkingForUpdate() const { return m_checkingForUpdate; }
+    bool updateAvailable() const { return m_updateAvailable; }
+    bool updating() const { return m_updating; }
+    QString updateError() const { return m_updateError; }
     bool refreshing() const { return m_refreshing; }
     bool running() const { return m_running; }
     QString activeOperationId() const { return m_activeOperationId; }
@@ -54,6 +69,8 @@ public:
     QString error() const { return m_error; }
 
     Q_INVOKABLE void refreshInventory();
+    Q_INVOKABLE bool checkForUpdates();
+    Q_INVOKABLE bool installUpdate();
     Q_INVOKABLE bool start(const QString &operationId);
     Q_INVOKABLE bool cancel();
     Q_INVOKABLE bool submitPassword(const QString &password);
@@ -80,6 +97,7 @@ signals:
     void errorChanged();
     void authenticationRequested();
     void operationFinished(const QString &operationId, const QString &status, int exitCode);
+    void updateStateChanged();
 
 private:
     enum class EscapeState { Normal, Escape, Csi, Osc, OscEscape };
@@ -90,6 +108,12 @@ private:
     void setToolkitPath(const QString &path);
     void setRefreshing(bool refreshing);
     void setError(const QString &error);
+    void setToolkitVersionFromDirectory(const QString &directory);
+    void maybeCheckForUpdates();
+    bool startUpdateHelper(const QString &command, const QStringList &arguments);
+    QString prepareUpdateHelper();
+    void finishUpdateHelper(QProcess *process, int exitCode, bool normalExit);
+    void restartApplication();
     void beginOperation(const QVariantMap &metadata);
     void finishOperation(int exitCode, const QString &status, const QString &error = QString());
     void pollChild();
@@ -110,6 +134,7 @@ private:
 
     const bool m_mockMode;
     const QString m_toolkitDirectoryOverride;
+    const bool m_automaticUpdateChecks;
     bool m_available = false;
     bool m_refreshing = false;
     bool m_running = false;
@@ -130,12 +155,24 @@ private:
     QString m_markerBuffer;
     QString m_resultStatus = QStringLiteral("idle");
     QString m_error;
+    QString m_toolkitVersion = QStringLiteral("unknown");
+    QString m_latestToolkitVersion;
+    QString m_updateError;
     QByteArray m_pendingInput;
     QByteArray m_inventoryStdout;
     QByteArray m_inventoryStderr;
     QString m_inventoryFailure;
     QVariantMap m_inventory;
     QProcess *m_inventoryProcess = nullptr;
+    QProcess *m_updateProcess = nullptr;
+    QTemporaryFile *m_updateHelperFile = nullptr;
+    QByteArray m_updateStdout;
+    QByteArray m_updateStderr;
+    QString m_updateFailure;
+    bool m_automaticUpdateCheckAttempted = false;
+    bool m_checkingForUpdate = false;
+    bool m_updateAvailable = false;
+    bool m_updating = false;
     QSocketNotifier *m_readNotifier = nullptr;
     QSocketNotifier *m_writeNotifier = nullptr;
     QTimer m_childPollTimer;

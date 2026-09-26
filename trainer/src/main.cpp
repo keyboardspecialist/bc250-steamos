@@ -24,7 +24,7 @@ int main(int argc, char *argv[])
     const bool smokeTest = arguments.contains(QStringLiteral("--smoke-test"));
 
     Bc250Bridge bridge(mockMode);
-    ToolkitController toolkitController(mockMode);
+    ToolkitController toolkitController(mockMode, QString(), true);
     MediaController mediaController(nullptr, !smokeTest, QStringLiteral("bc250-trainer"),
                                     !smokeTest);
     QQmlApplicationEngine engine;

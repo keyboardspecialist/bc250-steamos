@@ -26,12 +26,18 @@ DESKTOP_INSTALL_SH="$SCRIPT_DIR/desktop-control/install.sh"
 TRAINER_RELEASE_INSTALLER="$SCRIPT_DIR/trainer/install-release.py"
 COOLERCONTROL_INSTALL_SH="$SCRIPT_DIR/coolercontrol/install.sh"
 MAINTENANCE_SH="$SCRIPT_DIR/bc250-maintenance.sh"
+TOOLKIT_UPDATE_HELPER="$SCRIPT_DIR/scripts/toolkit-update.py"
 TOOLKIT_VERSION="development"
 if [[ -f "$SCRIPT_DIR/VERSION" && ! -L "$SCRIPT_DIR/VERSION" ]]; then
     TOOLKIT_VERSION=$(< "$SCRIPT_DIR/VERSION")
 fi
 [[ "$TOOLKIT_VERSION" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] \
     || TOOLKIT_VERSION="development"
+TOOLKIT_MENU_VERSION="$TOOLKIT_VERSION"
+TOOLKIT_LATEST_VERSION=""
+TOOLKIT_UPDATE_AVAILABLE=0
+TOOLKIT_UPDATE_CHECKED=0
+TOOLKIT_UPDATE_ERROR=""
 
 C0=$'\033[0m'; CB=$'\033[1m'; CD=$'\033[2m'; CI=$'\033[7m'
 CG=$'\033[32m'; CY=$'\033[33m'; CR=$'\033[31m'; CC=$'\033[36m'
@@ -110,6 +116,111 @@ confirm_action() {
         y|Y|yes|YES) "$@" ;;
         *) log "Cancelled." ;;
     esac
+}
+
+check_toolkit_update() {
+    local force="${1:-0}" output line key value current="" latest="" available=""
+    if [[ $TOOLKIT_UPDATE_CHECKED -eq 1 && "$force" != 1 ]]; then
+        [[ -z "$TOOLKIT_UPDATE_ERROR" ]]
+        return
+    fi
+    TOOLKIT_UPDATE_CHECKED=1
+    TOOLKIT_UPDATE_AVAILABLE=0
+    TOOLKIT_LATEST_VERSION=""
+    TOOLKIT_UPDATE_ERROR=""
+    TOOLKIT_MENU_VERSION="$TOOLKIT_VERSION"
+
+    if [[ "$TOOLKIT_VERSION" == development ]]; then
+        TOOLKIT_UPDATE_ERROR="Development checkouts cannot be updated from release artifacts."
+        return 1
+    fi
+    if ! command -v python3 >/dev/null 2>&1; then
+        TOOLKIT_UPDATE_ERROR="Python 3 is required to check for toolkit updates."
+        return 1
+    fi
+    if [[ ! -f "$TOOLKIT_UPDATE_HELPER" || -L "$TOOLKIT_UPDATE_HELPER" ]]; then
+        TOOLKIT_UPDATE_ERROR="The toolkit update helper is missing or unsafe."
+        return 1
+    fi
+    if ! output=$(python3 -I "$TOOLKIT_UPDATE_HELPER" check \
+        --toolkit-dir "$SCRIPT_DIR" --format env 2>&1); then
+        TOOLKIT_UPDATE_ERROR="${output##*$'\n'}"
+        [[ -n "$TOOLKIT_UPDATE_ERROR" ]] \
+            || TOOLKIT_UPDATE_ERROR="Toolkit update check failed."
+        return 1
+    fi
+    while IFS= read -r line; do
+        [[ "$line" == *=* ]] || { TOOLKIT_UPDATE_ERROR="Toolkit update check returned invalid status."; return 1; }
+        key=${line%%=*}
+        value=${line#*=}
+        case "$key" in
+            CURRENT_VERSION) current=$value ;;
+            LATEST_VERSION) latest=$value ;;
+            UPDATE_AVAILABLE) available=$value ;;
+            *) TOOLKIT_UPDATE_ERROR="Toolkit update check returned an unknown field."; return 1 ;;
+        esac
+    done <<< "$output"
+    if [[ "$current" != "$TOOLKIT_VERSION" \
+        || ! "$latest" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ \
+        || ! "$available" =~ ^[01]$ ]]; then
+        TOOLKIT_UPDATE_ERROR="Toolkit update check returned invalid version data."
+        return 1
+    fi
+    TOOLKIT_LATEST_VERSION=$latest
+    TOOLKIT_UPDATE_AVAILABLE=$available
+    if [[ $TOOLKIT_UPDATE_AVAILABLE -eq 1 ]]; then
+        TOOLKIT_MENU_VERSION="$TOOLKIT_VERSION -> $TOOLKIT_LATEST_VERSION available"
+    fi
+}
+
+perform_toolkit_update() {
+    local result
+    require_normal_user
+    if [[ $TOOLKIT_UPDATE_AVAILABLE -ne 1 || -z "$TOOLKIT_LATEST_VERSION" ]]; then
+        log "No newer toolkit release is available." >&2
+        return 1
+    fi
+    log "Downloading and verifying toolkit $TOOLKIT_LATEST_VERSION..."
+    if ! result=$(python3 -I "$TOOLKIT_UPDATE_HELPER" install \
+        --toolkit-dir "$SCRIPT_DIR" --expected-version "$TOOLKIT_LATEST_VERSION"); then
+        log "Toolkit update failed." >&2
+        return 1
+    fi
+    if [[ "$result" != *'"installedVersion":"'"$TOOLKIT_LATEST_VERSION"'"'* ]]; then
+        log "Toolkit update completed without valid installation status." >&2
+        return 1
+    fi
+    log "Toolkit $TOOLKIT_LATEST_VERSION installed. Cleaning up and restarting..."
+    toolkit_cleanup
+    trap - EXIT
+    exec bash "$SELF" menu
+}
+
+cmd_toolkit_update() {
+    require_terminal
+    require_normal_user
+    echo
+    if ! check_toolkit_update 1; then
+        printf '%s\n' "${CY}${CB}Update check unavailable:${C0} $TOOLKIT_UPDATE_ERROR"
+        return 1
+    fi
+    if [[ $TOOLKIT_UPDATE_AVAILABLE -eq 0 ]]; then
+        printf '%s\n' "${CG}${CB}Toolkit $TOOLKIT_VERSION is up to date.${C0}"
+        return 0
+    fi
+    printf '%s\n' "${CG}${CB}Toolkit update available: $TOOLKIT_VERSION -> $TOOLKIT_LATEST_VERSION${C0}"
+    confirm_action \
+        "Download the verified artifact, overwrite this toolkit installation, clean up, and restart?" \
+        perform_toolkit_update
+}
+
+run_toolkit_update_menu_action() {
+    local rc=0
+    cmd_toolkit_update || rc=$?
+    if [[ $rc -ne 0 ]]; then
+        printf '%s\n' "${CR}${CB}[bc250-toolkit]${C0} update failed (exit $rc)"
+    fi
+    pause_key
 }
 
 install_wifi() {
@@ -1120,6 +1231,15 @@ menu_graph_badge() {
     local node="$1" style="$2"
     case "$node" in
         action__auto_base_installation) printf '%s' "${CG}[install / resume]${C0}" ;;
+        action__toolkit_update)
+            if [[ $TOOLKIT_UPDATE_AVAILABLE -eq 1 ]]; then
+                printf '%s' "${CG}[update to %s]${C0}" "$TOOLKIT_LATEST_VERSION"
+            elif [[ -n "$TOOLKIT_UPDATE_ERROR" ]]; then
+                printf '%s' "${CY}[check unavailable]${C0}"
+            else
+                printf '%s' "${CD}[up to date]${C0}"
+            fi
+            ;;
         action__amdgpu) amdgpu_badge ;;
         action__graphics_setup|child__radv) radv_badge ;;
         action__fan_driver) fan_driver_badge ;;
@@ -1150,6 +1270,7 @@ menu_graph_badge() {
 menu_graph_activate() {
     case "$1" in
         action__auto_base_installation) run_menu_action auto-base-installation ;;
+        action__toolkit_update) run_toolkit_update_menu_action ;;
         action__system_health) run_menu_action status ;;
         action__guided_overview) show_guided_setup_overview ;;
         action__amdgpu) run_menu_action amdgpu ;;
@@ -1211,13 +1332,20 @@ menu_graph_render() {
         local items=() targets=() badges=()
         case "$menu_id" in
             menu__cmd_menu)
-                title="BC-250 SteamOS toolkit [${TOOLKIT_VERSION}]"
+                title="BC-250 SteamOS toolkit [${TOOLKIT_MENU_VERSION}]"
                 if ! badge=$(menu_graph_badge action__auto_base_installation install); then badge=; fi
                 if [[ "$badge" == *"|"* || "$badge" == *$'\n'* ]]; then
                     die "Invalid generated menu badge: action__auto_base_installation"
                 fi
                 items+=("Auto Base Toolkit Installation|${badge}|Install or resume the safe foundation in dependency order.")
                 targets+=("action__auto_base_installation")
+                badges+=("$badge")
+                if ! badge=$(menu_graph_badge action__toolkit_update install); then badge=; fi
+                if [[ "$badge" == *"|"* || "$badge" == *$'\n'* ]]; then
+                    die "Invalid generated menu badge: action__toolkit_update"
+                fi
+                items+=("Toolkit Update|${badge}|Download, verify, and install the latest main toolkit release.")
+                targets+=("action__toolkit_update")
                 badges+=("$badge")
                 if ! badge=$(menu_graph_badge menu__cmd_guided_setup_menu menu); then badge=; fi
                 if [[ "$badge" == *"|"* || "$badge" == *$'\n'* ]]; then
@@ -1779,6 +1907,7 @@ menu_graph_open() {
 cmd_menu() {
     require_terminal
     require_normal_user
+    check_toolkit_update || true
     start_sudo_session
     menu_graph_open root
 }
@@ -1869,13 +1998,15 @@ cmd_storage_updates_menu() {
 
 cmd_help() {
     cat << EOF
-Usage: $0 [menu|setup|auto-base-installation|graphics-setup|status|inventory-json|action OPERATION_ID|drivers|unlocks|storage-updates|interfaces|power [ENTRY]|ram|swap|compute|cpu-unlock|cec|audio-output|hdmi-ac3-enable|hdmi-ac3-revert|storage|persistence|wifi|fan-driver|memory-temperature|amdgpu|amdgpu-clean|scheduler-policy|kfd-runlist|radv|proton|proton-install|proton-update|proton-status|proton-uninstall|decky|desktop|coolercontrol|trainer|manage|help]
+Usage: $0 [menu|toolkit-update|toolkit-update-check|setup|auto-base-installation|graphics-setup|status|inventory-json|action OPERATION_ID|drivers|unlocks|storage-updates|interfaces|power [ENTRY]|ram|swap|compute|cpu-unlock|cec|audio-output|hdmi-ac3-enable|hdmi-ac3-revert|storage|persistence|wifi|fan-driver|memory-temperature|amdgpu|amdgpu-clean|scheduler-policy|kfd-runlist|radv|proton|proton-install|proton-update|proton-status|proton-uninstall|decky|desktop|coolercontrol|trainer|manage|help]
 
 Run without arguments in a terminal to open the unified toolkit menu.
 Run the toolkit as the logged-in Deck user, not with sudo; child tools request
 administrator access when needed.
 
 Commands:
+  toolkit-update         Check, confirm, install the latest toolkit, and restart
+  toolkit-update-check   Check GitHub and print machine-readable update status
   setup                  Open the status-aware guided setup checklist
   auto-base-installation Run Auto Base Toolkit Installation
   graphics-setup [--replace-unmanaged]
@@ -1951,6 +2082,13 @@ command_name="$1"
 shift
 case "$command_name" in
     menu) (($# == 0)) || die "Usage: $0 menu"; cmd_menu ;;
+    toolkit-update) (($# == 0)) || die "Usage: $0 toolkit-update"; cmd_toolkit_update ;;
+    toolkit-update-check)
+        (($# == 0)) || die "Usage: $0 toolkit-update-check"
+        require_normal_user
+        require_script "$TOOLKIT_UPDATE_HELPER"
+        python3 -I "$TOOLKIT_UPDATE_HELPER" check --toolkit-dir "$SCRIPT_DIR"
+        ;;
     setup) (($# == 0)) || die "Usage: $0 setup"; cmd_guided_setup_menu ;;
     auto-base-installation) (($# == 0)) || die "Usage: $0 auto-base-installation"; install_auto_base_installation ;;
     graphics-setup)

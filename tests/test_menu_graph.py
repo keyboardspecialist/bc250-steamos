@@ -43,6 +43,7 @@ class MenuGraphTests(unittest.TestCase):
         self.assertEqual(
             [
                 "Auto Base Toolkit Installation",
+                "Toolkit Update",
                 "Manual Guided Setup",
                 "Core System",
                 "Power & Thermals",
@@ -149,12 +150,12 @@ class MenuGraphTests(unittest.TestCase):
             capture_output=True,
             text=True,
         )
-        self.assertIn("Selectable nodes: 51", result.stdout)
+        self.assertIn("Selectable nodes: 52", result.stdout)
 
     def test_documented_aggregate_metrics_are_current(self):
         graphs = self.graphs.values()
         self.assertEqual(
-            (40, 212, 230, 9),
+            (40, 213, 231, 9),
             (
                 sum(node.kind == "menu" for graph in graphs for node in graph.nodes.values()),
                 sum(

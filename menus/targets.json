@@ -23,7 +23,7 @@
         ["drivers", "menu__cmd_drivers_menu"],
         ["storage-updates", "menu__cmd_storage_updates_menu"]
       ],
-      "templates": ["TOOLKIT_VERSION"]
+      "templates": ["TOOLKIT_MENU_VERSION"]
     },
     {
       "name": "power",

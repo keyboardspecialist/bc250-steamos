@@ -23,5 +23,6 @@
         <file alias="qml/pages/RamPage.qml">qml/pages/RamPage.qml</file>
         <file alias="qml/pages/ToolkitPage.qml">qml/pages/ToolkitPage.qml</file>
         <file alias="assets/background.png">ChatGPT Image Jul 29, 2026, 08_44_21 PM.png</file>
+        <file alias="scripts/toolkit-update.py">../scripts/toolkit-update.py</file>
     </qresource>
 </RCC>

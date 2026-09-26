@@ -1,7 +1,7 @@
 %% menu-flow-v1
 flowchart TD
 
-menu__cmd_menu["BC-250 SteamOS toolkit [{{TOOLKIT_VERSION}}]<br/>Choose a guided workflow or a system domain."]:::root
+menu__cmd_menu["BC-250 SteamOS toolkit [{{TOOLKIT_MENU_VERSION}}]<br/>Choose a guided workflow or a system domain."]:::root
 menu__cmd_guided_setup_menu["Manual Guided Setup<br/>Follow the safe setup order without crossing through sibling categories."]:::menu
 menu__cmd_core_system_menu["Core System<br/>Manage storage, memory allocation, swap, and update protection."]:::menu
 menu__cmd_power_menu["Power & Thermals<br/>Configure power, GPU and CPU tuning, memory sensors, and fan control."]:::menu
@@ -18,6 +18,7 @@ menu__cmd_drivers_menu["Legacy Drivers Entry<br/>Direct-CLI compatibility menu f
 menu__cmd_storage_updates_menu["Legacy Storage and Updates Entry<br/>Direct-CLI compatibility menu for storage and update protection."]:::entry
 
 action__auto_base_installation["Auto Base Toolkit Installation<br/>Install or resume the safe foundation in dependency order."]:::install
+action__toolkit_update["Toolkit Update<br/>Download, verify, and install the latest main toolkit release."]:::install
 action__system_health["System Health<br/>Show operational state using the same domain names as the menu."]:::read_only
 action__guided_overview["Setup Overview<br/>Review goals, current state, and restart checkpoints."]:::read_only
 action__amdgpu["AMDGPU Kernel Fixes<br/>Build the corrected kernel module and reboot before RADV setup."]:::install
@@ -59,6 +60,7 @@ child__cec["HDMI-CEC<br/>Configure automation, everyday controls, and diagnostic
 child__manage["Manage Installed Components<br/>Review removal plans, uninstall components, or purge preserved data."]:::menu
 
 menu__cmd_menu --> action__auto_base_installation
+menu__cmd_menu --> action__toolkit_update
 menu__cmd_menu --> menu__cmd_guided_setup_menu
 menu__cmd_menu --> menu__cmd_core_system_menu
 menu__cmd_menu --> menu__cmd_power_menu
