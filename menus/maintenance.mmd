@@ -16,6 +16,7 @@ action__remove_compute["Remove GPU compute-unit unlock<br/>Review the plan and r
 action__remove_proton["Remove BC-250 GE-Proton<br/>Review the plan and remove only this component."]:::cleanup
 action__remove_native_mesh["Remove BC250 RADV R2<br/>Remove R2 and its private Proton copy while preserving prefixes, saves, and global RADV."]:::cleanup
 action__remove_mesh["Remove Mesa / RADV async compute<br/>Review the plan and remove only this component."]:::cleanup
+action__remove_video_codec["Remove VA-API video codec<br/>Remove the verified compute codec and restore stock VA-API selection."]:::cleanup
 action__remove_audio["Remove AMDGPU kernel fixes<br/>Review the plan and remove only this component."]:::cleanup
 action__remove_fan["Remove NCT6687 fan-control driver<br/>Review the plan and remove only this component."]:::cleanup
 action__remove_aic["Remove AIC8800 WiFi / Bluetooth<br/>Review the plan and remove only this component."]:::cleanup
@@ -36,6 +37,7 @@ menu__root --> action__remove_compute
 menu__root --> action__remove_proton
 menu__root --> action__remove_native_mesh
 menu__root --> action__remove_mesh
+menu__root --> action__remove_video_codec
 menu__root --> action__remove_audio
 menu__root --> action__remove_fan
 menu__root --> action__remove_aic

@@ -126,6 +126,7 @@ Check the system:
 | `./bc250-toolkit.sh ram` | Open RAM and VRAM controls |
 | `./bc250-toolkit.sh swap` | Open compressed-swap controls |
 | `./bc250-toolkit.sh proton` | Open BC-250 GE-Proton controls |
+| `./bc250-toolkit.sh video-codec` | Open VA-API video codec controls |
 | `./bc250-toolkit.sh audio-output` | Open HDMI audio controls |
 | `./bc250-toolkit.sh memory-temperature` | Open GDDR6 temperature controls |
 | `./bc250-toolkit.sh interfaces` | Open frontend installation controls |
@@ -376,6 +377,33 @@ Open the expert menu:
 
 The global runtime uses the patched 64-bit RADV ICD. SteamOS supplies the
 32-bit RADV path.
+
+### VA-API video codec
+
+Install the pinned 64-bit H.264 and HEVC codec release:
+
+```bash
+./bc250-toolkit.sh video-codec-install
+```
+
+The toolkit downloads `simpmix/bc250-encoding-decoding-fix` `v0.5.1`. It
+verifies the release archive and each installed driver and shader file. The
+runtime provides Vulkan-compute encoding and CPU-backed decoding through
+VA-API.
+
+Check or remove the runtime:
+
+```bash
+./bc250-toolkit.sh video-codec-status
+./bc250-toolkit.sh video-codec-remove
+```
+
+Sign out or reboot after installation or removal. The toolkit uses persistent
+storage and a managed environment file. It does not replace the stock
+`radeonsi` driver or enable the upstream Sunshine boot redirect.
+
+See [`video-codec/README.md`](video-codec/README.md) for paths, scope, and
+license information.
 
 ### BC250 RADV R2
 
@@ -673,6 +701,7 @@ See these documents for component development:
 | BC-250 GE-Proton and RADV | [MastaG/linux-cachyos-bc250](https://github.com/MastaG/linux-cachyos-bc250) |
 | AIC8800 | [shenmintao/aic8800d80](https://github.com/shenmintao/aic8800d80) |
 | NCT6687D | [Fred78290/nct6687d](https://github.com/Fred78290/nct6687d) |
+| BC-250 VA-API video codec | [simpmix/bc250-encoding-decoding-fix](https://github.com/simpmix/bc250-encoding-decoding-fix) · [integrated release `v0.5.1`](https://github.com/simpmix/bc250-encoding-decoding-fix/releases/tag/v0.5.1) |
 
 See [`LICENSE.md`](LICENSE.md) and the component license files for license
 terms and attribution.

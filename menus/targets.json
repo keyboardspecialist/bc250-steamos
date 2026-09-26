@@ -12,6 +12,7 @@
         ["core", "menu__cmd_core_system_menu"],
         ["power", "menu__cmd_power_menu"],
         ["graphics", "menu__cmd_graphics_menu"],
+        ["video-codec", "menu__cmd_video_codec_menu"],
         ["unlocks", "menu__cmd_unlocks_menu"],
         ["devices", "menu__cmd_devices_menu"],
         ["interfaces", "menu__cmd_interfaces_menu"],

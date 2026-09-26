@@ -49,6 +49,10 @@ class ToolkitTests(unittest.TestCase):
             "scheduler-policy",
             "kfd-runlist",
             "radv",
+            "video-codec",
+            "video-codec-status",
+            "video-codec-install",
+            "video-codec-remove",
             "proton",
             "proton-install",
             "proton-update",
@@ -137,6 +141,17 @@ class ToolkitTests(unittest.TestCase):
         interface_ids = {node.id for node in graph.choices("menu__cmd_interfaces_menu")}
         self.assertIn("action__coolercontrol", interface_ids)
         self.assertIn("action__trainer", interface_ids)
+
+        graphics_ids = {node.id for node in graph.choices("menu__cmd_graphics_menu")}
+        self.assertIn("menu__cmd_video_codec_menu", graphics_ids)
+        self.assertEqual(
+            {
+                "action__video_codec_status",
+                "action__video_codec_install",
+                "action__video_codec_remove",
+            },
+            {node.id for node in graph.choices("menu__cmd_video_codec_menu")},
+        )
 
         self.assertIn("amdgpu|audio)", source)
         self.assertIn("radv|mesh)", source)
@@ -337,6 +352,7 @@ class ToolkitTests(unittest.TestCase):
             "bc250-cec.sh",
             "bc250-update-persistence.sh",
             "bc250-mesh-shader.sh",
+            "video-codec/bc250-video-codec.sh",
             "bc250-maintenance.sh",
             "aic8800/steamdeck-setup.sh",
             "nct6687d/steamdeck-setup.sh",
@@ -379,6 +395,7 @@ class ToolkitTests(unittest.TestCase):
             "bc250-storage.sh": ("installed", 0),
             "bc250-mesh-shader.sh": ("status", 0),
             "bc250-proton.sh": ("status", 0),
+            "video-codec/bc250-video-codec.sh": ("status", 0),
             "aic8800/steamdeck-setup.sh": ("status", 0),
             "nct6687d/steamdeck-setup.sh": ("status", 0),
             "bc250-audio-fix/patch-driver.sh": ("status", 0),
@@ -427,6 +444,8 @@ class ToolkitTests(unittest.TestCase):
             "case \"$*\" in\n"
             "  'is-enabled cyan-skillfish-governor-smu.service') printf '%s\\n' enabled ;;\n"
             "  'is-active cyan-skillfish-governor-smu.service') printf '%s\\n' active ;;\n"
+            "  'is-enabled bc250-smu-oc.service') printf '%s\\n' \"${CPU_OC_ENABLED:-disabled}\" ;;\n"
+            "  'is-active bc250-smu-oc.service') printf '%s\\n' \"${CPU_OC_ACTIVE:-inactive}\" ;;\n"
             "  *) printf '%s\\n' inactive; exit 3 ;;\n"
             "esac\n",
             encoding="utf-8",
@@ -502,6 +521,14 @@ class ToolkitTests(unittest.TestCase):
         fan.parent.mkdir(parents=True, exist_ok=True)
         fan.write_text(
             "#!/usr/bin/env bash\nprintf '%s\\n' '[nct6687] state: not-installed'\nexit 1\n",
+            encoding="utf-8",
+        )
+        video_codec = root / "video-codec/bc250-video-codec.sh"
+        video_codec.parent.mkdir(parents=True, exist_ok=True)
+        video_codec.write_text(
+            "#!/usr/bin/env bash\n"
+            "printf '%s\\n' 'state: not-installed' 'release: v0.5.1' 'session: stock'\n"
+            "exit 1\n",
             encoding="utf-8",
         )
         cu_status = root / "bc250-cu-status.sh"
@@ -615,6 +642,91 @@ class ToolkitTests(unittest.TestCase):
             self.assertIn("[unlocked]", result.stdout)
             self.assertIn("8 cores / 16 threads (unlocked)", result.stdout)
             self.assertIn("EFI pre-boot method", result.stdout)
+
+    def test_cpu_overclock_status_explains_boot_apply_failure(self):
+        cases = (
+            ("failed", 1, "[apply failed]", "journalctl -u bc250-smu-oc.service -b"),
+            ("active", 0, "[enabled]", "boot profile applied successfully"),
+        )
+        for active, expected_rc, badge, detail in cases:
+            with self.subTest(active=active), tempfile.TemporaryDirectory() as directory:
+                toolkit, env = self.make_status_environment(
+                    Path(directory), "not-installed"
+                )
+                env["CPU_OC_ENABLED"] = "enabled"
+                env["CPU_OC_ACTIVE"] = active
+                result = subprocess.run(
+                    ["bash", str(toolkit), "status"],
+                    capture_output=True,
+                    text=True,
+                    env=env,
+                )
+                self.assertEqual(result.returncode, expected_rc)
+                self.assertIn("CPU overclock", result.stdout)
+                self.assertIn(badge, result.stdout)
+                self.assertIn(detail, result.stdout)
+
+    def test_update_badge_formats_latest_version(self):
+        result = subprocess.run(
+            [
+                "bash",
+                "-c",
+                'script=$1; set -- help; source "$script" >/dev/null; '
+                "TOOLKIT_UPDATE_AVAILABLE=1; TOOLKIT_LATEST_VERSION=v9.8.7; "
+                "menu_graph_badge action__toolkit_update install",
+                "_",
+                str(TOOLKIT),
+            ],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        plain = re.sub(r"\x1b\[[0-9;]*m", "", result.stdout)
+        self.assertEqual(plain, "[update to v9.8.7]")
+        self.assertNotIn("%s", plain)
+
+    def test_update_restart_reanchors_deleted_working_directory(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            installation = root / "bc250-steamos"
+            installation.mkdir()
+            toolkit = installation / "bc250-toolkit.sh"
+            shutil.copy2(TOOLKIT, toolkit)
+            helper = root / "fake-update.py"
+            helper.write_text(
+                "import json, pathlib, shutil, sys\n"
+                "args = sys.argv\n"
+                "target = pathlib.Path(args[args.index('--toolkit-dir') + 1])\n"
+                "version = args[args.index('--expected-version') + 1]\n"
+                "backup = target.with_name(target.name + '.old')\n"
+                "target.rename(backup)\n"
+                "target.mkdir()\n"
+                "launcher = target / 'bc250-toolkit.sh'\n"
+                "launcher.write_text('#!/usr/bin/env bash\\n/bin/pwd\\necho \"arg=${1:-}\"\\n')\n"
+                "launcher.chmod(0o755)\n"
+                "shutil.rmtree(backup)\n"
+                "print(json.dumps({'installedVersion': version}, separators=(',', ':')))\n",
+                encoding="utf-8",
+            )
+            result = subprocess.run(
+                [
+                    "bash",
+                    "-c",
+                    'script=$1; helper=$2; set -- help; source "$script" >/dev/null; '
+                    "TOOLKIT_UPDATE_HELPER=$helper; TOOLKIT_UPDATE_AVAILABLE=1; "
+                    "TOOLKIT_LATEST_VERSION=v9.8.7; perform_toolkit_update",
+                    "_",
+                    str(toolkit),
+                    str(helper),
+                ],
+                cwd=installation,
+                capture_output=True,
+                text=True,
+            )
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            self.assertIn(str(installation), result.stdout)
+            self.assertIn("arg=menu", result.stdout)
+            self.assertNotIn("getcwd", result.stderr)
 
     def test_interactive_status_reports_health_instead_of_action_failure(self):
         source = TOOLKIT.read_text(encoding="utf-8")
@@ -736,6 +848,11 @@ class ToolkitTests(unittest.TestCase):
                 ),
                 "aic-install": ("sudo", "aic8800/steamdeck-setup.sh", "install"),
                 "fan-install": ("sudo", "nct6687d/steamdeck-setup.sh", "install"),
+                "video-codec-install": (
+                    "sudo",
+                    "video-codec/bc250-video-codec.sh",
+                    "install",
+                ),
                 "audio-build": ("direct", "bc250-audio-fix/patch-driver.sh"),
                 "mesh-setup": ("direct", "bc250-mesh-shader.sh", "setup"),
                 "native-mesh-install": ("direct", "bc250-mesh-shader.sh", "setup", "--native-mesh"),
@@ -763,6 +880,7 @@ class ToolkitTests(unittest.TestCase):
                 "fan",
                 "audio",
                 "mesh",
+                "video-codec",
                 "decky",
                 "desktop",
                 "coolercontrol",
@@ -1020,6 +1138,7 @@ class ToolkitTests(unittest.TestCase):
                     "compute",
                     "proton",
                     "native-mesh",
+                    "video-codec",
                     "mesh",
                     "audio",
                     "fan",

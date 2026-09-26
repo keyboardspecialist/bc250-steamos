@@ -36,6 +36,7 @@ class MaintenanceTests(unittest.TestCase):
             "FAN_SH": "fan",
             "AUDIO_SH": "audio",
             "MESH_SH": "mesh",
+            "VIDEO_CODEC_SH": "video-codec",
             "PROTON_SH": "proton",
             "DECKY_SH": "decky",
             "DESKTOP_SH": "desktop",
@@ -125,7 +126,7 @@ class MaintenanceTests(unittest.TestCase):
                 text=True,
                 env=env,
             )
-            self.assertEqual(status.stdout.count("installed"), 17)
+            self.assertEqual(status.stdout.count("installed"), 18)
             self.assertIn("Saved tuning profiles", plan.stdout)
             self.assertFalse(call_log.exists())
 
@@ -160,6 +161,7 @@ class MaintenanceTests(unittest.TestCase):
                     "persistence:remove compute",
                     "proton:uninstall",
                     "native-mesh:uninstall",
+                    "video-codec:uninstall",
                     "mesh:uninstall",
                     "audio:uninstall",
                     "fan:uninstall",

@@ -14,6 +14,7 @@ menu__cmd_proton_menu["BC-250 GE-Proton<br/>Inspect, install, update, repair, or
 menu__cmd_memory_temperature_menu["GDDR6 Memory Temperature<br/>Manage the experimental P3.0-only live SMU temperature payload."]:::menu
 menu__cmd_audio_menu["HDMI Audio<br/>Enable Dolby Digital 5.1 or return to the default stereo profile."]:::menu
 menu__cmd_amdgpu_boot_menu["Advanced AMDGPU Boot Options<br/>Manage mutually exclusive scheduler and KFD runlist policies."]:::menu
+menu__cmd_video_codec_menu["VA-API Video Codec<br/>Manage verified H.264 and HEVC encoding and decoding support."]:::menu
 menu__cmd_drivers_menu["Legacy Drivers Entry<br/>Direct-CLI compatibility menu for driver workflows."]:::entry
 menu__cmd_storage_updates_menu["Legacy Storage and Updates Entry<br/>Direct-CLI compatibility menu for storage and update protection."]:::entry
 
@@ -43,6 +44,9 @@ action__hdmi_ac3_enable["Enable HDMI AC-3 5.1<br/>Encode system audio as Dolby D
 action__hdmi_ac3_revert["Revert HDMI AC-3 to Stereo<br/>Remove toolkit AC-3 configuration and restore default stereo."]:::cleanup
 action__scheduler_policy["AMDGPU Scheduler Policy<br/>Normally managed by Mesa and RADV setup."]:::advanced
 action__kfd_runlist["KFD Runlist Workaround<br/>Experimental ROCm workaround that cannot coexist with sched_policy=2."]:::experimental
+action__video_codec_status["Video Codec Status<br/>Verify the driver, shaders, environment, and current session."]:::read_only
+action__video_codec_install["Install or Repair Video Codec<br/>Download and verify the pinned upstream 64-bit VA-API release."]:::experimental
+action__video_codec_remove["Remove Video Codec<br/>Remove toolkit-managed codec files and restore stock VA-API selection."]:::cleanup
 
 child__storage["Persistent Storage<br/>Inspect or repair privileged storage and boot recovery."]:::menu
 child__ram["RAM and VRAM Split<br/>Balance the CMOS minimum and dynamic Linux TTM limit."]:::menu
@@ -96,6 +100,7 @@ menu__cmd_power_menu --> action__coolercontrol
 menu__cmd_graphics_menu --> action__amdgpu
 menu__cmd_graphics_menu --> action__graphics_setup
 menu__cmd_graphics_menu --> child__radv
+menu__cmd_graphics_menu --> menu__cmd_video_codec_menu
 menu__cmd_graphics_menu --> menu__cmd_proton_menu
 menu__cmd_graphics_menu --> menu__cmd_amdgpu_boot_menu
 
@@ -132,6 +137,10 @@ menu__cmd_audio_menu --> action__hdmi_ac3_revert
 
 menu__cmd_amdgpu_boot_menu --> action__scheduler_policy
 menu__cmd_amdgpu_boot_menu --> action__kfd_runlist
+
+menu__cmd_video_codec_menu --> action__video_codec_status
+menu__cmd_video_codec_menu --> action__video_codec_install
+menu__cmd_video_codec_menu --> action__video_codec_remove
 
 menu__cmd_drivers_menu --> action__amdgpu
 menu__cmd_drivers_menu --> action__amdgpu_clean

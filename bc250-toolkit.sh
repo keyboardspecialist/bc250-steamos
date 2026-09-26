@@ -19,6 +19,7 @@ AUDIO_CLEAN_SH="$SCRIPT_DIR/bc250-audio-fix/clean.sh"
 AMDGPU_BOOT_CONFIG_SH="$SCRIPT_DIR/bc250-audio-fix/boot-config.sh"
 HDMI_AC3_SH="$SCRIPT_DIR/hdmi-ac3/hdmi-ac3.sh"
 MESH_SHADER_SH="$SCRIPT_DIR/bc250-mesh-shader.sh"
+VIDEO_CODEC_SH="$SCRIPT_DIR/video-codec/bc250-video-codec.sh"
 PROTON_SH="${BC250_PROTON_TOOL:-$SCRIPT_DIR/bc250-proton.sh}"
 MEMORY_TEMP_SH="$SCRIPT_DIR/bc250-memory-temperature.sh"
 DECKY_INSTALL_SH="$SCRIPT_DIR/decky-plugin/install.sh"
@@ -186,6 +187,8 @@ perform_toolkit_update() {
         log "Toolkit update failed." >&2
         return 1
     fi
+    cd -- "$SCRIPT_DIR" \
+        || { log "Toolkit updated, but the new installation directory is unavailable." >&2; return 1; }
     if [[ "$result" != *'"installedVersion":"'"$TOOLKIT_LATEST_VERSION"'"'* ]]; then
         log "Toolkit update completed without valid installation status." >&2
         return 1
@@ -461,6 +464,37 @@ proton_badge() {
         *"state: incomplete"*) printf '%s' "${CR}[repair needed]${C0}" ;;
         *) printf '%s' "${CD}[not installed]${C0}" ;;
     esac
+}
+
+video_codec_badge() {
+    local status=""
+    if [[ ! -f "$VIDEO_CODEC_SH" || -L "$VIDEO_CODEC_SH" ]]; then
+        printf '%s' "${CR}[unavailable]${C0}"
+        return
+    fi
+    status=$(bash "$VIDEO_CODEC_SH" status 2>/dev/null || true)
+    case "$status" in
+        *"state: installed"*"session: active"*) printf '%s' "${CG}[active]${C0}" ;;
+        *"state: installed"*) printf '%s' "${CY}[restart needed]${C0}" ;;
+        *"state: incomplete"*) printf '%s' "${CR}[repair needed]${C0}" ;;
+        *) printf '%s' "${CD}[not installed]${C0}" ;;
+    esac
+}
+
+install_video_codec() {
+    require_normal_user
+    require_script "$VIDEO_CODEC_SH"
+    confirm_action \
+        "Install the verified upstream VA-API video codec system-wide for new sessions?" \
+        sudo bash "$VIDEO_CODEC_SH" install
+}
+
+remove_video_codec() {
+    require_normal_user
+    require_script "$VIDEO_CODEC_SH"
+    confirm_action \
+        "Remove the toolkit-managed VA-API video codec and restore stock selection for new sessions?" \
+        sudo bash "$VIDEO_CODEC_SH" uninstall
 }
 
 install_proton() {
@@ -749,6 +783,7 @@ run_machine_action() {
         persistence-install) run_sudo_script "$PERSISTENCE_SH" install all ;;
         aic-install) run_sudo_script "$AIC_SETUP_SH" install ;;
         fan-install) run_sudo_script "$FAN_SETUP_SH" install ;;
+        video-codec-install) run_sudo_script "$VIDEO_CODEC_SH" install ;;
         audio-build) run_script "$AUDIO_FIX_SH" ;;
         mesh-setup) run_script "$MESH_SHADER_SH" setup ;;
         native-mesh-install) run_script "$MESH_SHADER_SH" setup --native-mesh ;;
@@ -757,7 +792,7 @@ run_machine_action() {
         desktop-install) run_script "$DESKTOP_INSTALL_SH" install ;;
         coolercontrol-install) run_script "$COOLERCONTROL_INSTALL_SH" install ;;
         persistence-remove) run_sudo_script "$PERSISTENCE_SH" remove all ;;
-        storage-remove|power-remove|ram-remove|swap-remove|compute-remove|cec-remove|ac3-remove|proton-remove|aic-remove|fan-remove|audio-remove|mesh-remove|decky-remove|desktop-remove|coolercontrol-remove)
+        storage-remove|power-remove|ram-remove|swap-remove|compute-remove|cec-remove|ac3-remove|proton-remove|aic-remove|fan-remove|audio-remove|mesh-remove|video-codec-remove|decky-remove|desktop-remove|coolercontrol-remove)
             require_script "$MAINTENANCE_SH"
             bash "$MAINTENANCE_SH" uninstall "${operation%-remove}" --yes
             ;;
@@ -827,7 +862,7 @@ show_status() {
     local ram_output="" ram_rc=0 swap_output="" swap_rc=0
     local persistence_output="" persistence_rc=0 cpu_output="" cpu_rc=0
     local amdgpu_output="" amdgpu_rc=0 radv_output="" radv_rc=0
-    local proton_output="" proton_rc=0
+    local proton_output="" proton_rc=0 video_codec_output="" video_codec_rc=0
     local cu_output="" cu_rc=0 cec_output="" cec_rc=0
     local cec_bus_output="" cec_bus_rc=0
     local fan_output="" fan_rc=0
@@ -844,6 +879,7 @@ show_status() {
     status_script_capture amdgpu_output amdgpu_rc user "$AUDIO_FIX_SH" status-json
     status_script_capture radv_output radv_rc user "$MESH_SHADER_SH" status-json
     status_script_capture proton_output proton_rc user "$PROTON_SH" status
+    status_script_capture video_codec_output video_codec_rc user "$VIDEO_CODEC_SH" status
     status_script_capture cu_output cu_rc root "$CU_STATUS_SH" -q
     status_script_capture cec_output cec_rc user "$CEC_SH" status
     status_script_capture cec_bus_output cec_bus_rc user "$CEC_SH" scan
@@ -934,10 +970,30 @@ show_status() {
 
     enabled=$(systemctl is-enabled bc250-smu-oc.service 2>/dev/null || true)
     active=$(systemctl is-active bc250-smu-oc.service 2>/dev/null || true)
-    if [[ "$enabled" == enabled && "$active" == active ]]; then
-        status_row "CPU overclock" "active" good "enabled at boot"
-    elif [[ "$enabled" == enabled || "$active" == active ]]; then
-        status_row "CPU overclock" "partial" warn "${enabled:--} / ${active:--}"
+    if [[ "$enabled" == enabled ]]; then
+        case "$active" in
+            active)
+                status_row "CPU overclock" "enabled" good "boot profile applied successfully"
+                ;;
+            inactive)
+                status_row "CPU overclock" "enabled" warn "boot profile saved; service has not completed successfully in this boot"
+                ;;
+            activating)
+                status_row "CPU overclock" "applying" warn "boot profile service is still running"
+                ;;
+            failed)
+                status_row "CPU overclock" "apply failed" bad \
+                    "last systemd profile-apply attempt failed; inspect: journalctl -u bc250-smu-oc.service -b"
+                failed=1; failed_components+=("CPU overclock")
+                ;;
+            *)
+                status_row "CPU overclock" "incomplete" bad "enabled at boot; systemd state ${active:--}"
+                failed=1; failed_components+=("CPU overclock")
+                ;;
+        esac
+    elif [[ "$active" == active || "$active" == activating || "$active" == failed ]]; then
+        status_row "CPU overclock" "incomplete" bad "boot state ${enabled:--}; service state ${active:--}"
+        failed=1; failed_components+=("CPU overclock")
     else
         status_row "CPU overclock" "disabled" dim "stock tuning"
     fi
@@ -1012,6 +1068,23 @@ show_status() {
         *)
             status_row "BC250 RADV R2" "unavailable" bad "Mesa / RADV status probe failed"
             failed=1; failed_components+=("BC250 RADV R2") ;;
+    esac
+
+    state=$(status_value "$video_codec_output" "state: " || true)
+    detail=$(status_value "$video_codec_output" "release: " || true)
+    secondary=$(status_value "$video_codec_output" "session: " || true)
+    case "$state" in
+        installed)
+            if [[ "$secondary" == active ]]; then
+                status_row "VA-API video codec" "active" good "verified ${detail:-release}; session environment active"
+            else
+                status_row "VA-API video codec" "restart needed" warn "verified ${detail:-release}; sign out or reboot"
+            fi
+            ;;
+        not-installed) status_row "VA-API video codec" "not installed" dim "optional H.264 / HEVC compute codec" ;;
+        *)
+            status_row "VA-API video codec" "incomplete" bad "${detail:-status unavailable}"
+            failed=1; failed_components+=("VA-API video codec") ;;
     esac
 
     state=$(status_value "$proton_output" "state: " || true)
@@ -1233,7 +1306,7 @@ menu_graph_badge() {
         action__auto_base_installation) printf '%s' "${CG}[install / resume]${C0}" ;;
         action__toolkit_update)
             if [[ $TOOLKIT_UPDATE_AVAILABLE -eq 1 ]]; then
-                printf '%s' "${CG}[update to %s]${C0}" "$TOOLKIT_LATEST_VERSION"
+                printf '%s' "${CG}[update to $TOOLKIT_LATEST_VERSION]${C0}"
             elif [[ -n "$TOOLKIT_UPDATE_ERROR" ]]; then
                 printf '%s' "${CY}[check unavailable]${C0}"
             else
@@ -1242,6 +1315,7 @@ menu_graph_badge() {
             ;;
         action__amdgpu) amdgpu_badge ;;
         action__graphics_setup|child__radv) radv_badge ;;
+        action__video_codec_status|action__video_codec_install|action__video_codec_remove|menu__cmd_video_codec_menu) video_codec_badge ;;
         action__fan_driver) fan_driver_badge ;;
         action__proton_status|action__proton_install|action__proton_update|action__proton_uninstall|menu__cmd_proton_menu) proton_badge ;;
         action__hdmi_ac3_enable|menu__cmd_audio_menu) hdmi_ac3_badge ;;
@@ -1275,6 +1349,9 @@ menu_graph_activate() {
         action__guided_overview) show_guided_setup_overview ;;
         action__amdgpu) run_menu_action amdgpu ;;
         action__graphics_setup) run_menu_action graphics-setup ;;
+        action__video_codec_status) run_menu_action video-codec-status ;;
+        action__video_codec_install) run_menu_action video-codec-install ;;
+        action__video_codec_remove) run_menu_action video-codec-remove ;;
         action__amdgpu_clean) run_menu_action amdgpu-clean ;;
         action__fan_driver) run_menu_action fan-driver ;;
         action__wifi) run_menu_action wifi ;;
@@ -1576,6 +1653,13 @@ menu_graph_render() {
                 items+=("GPU Driver and FSR4 Options|${badge}|Manage Mesa and RADV, portable FSR4 DLLs, experimental BC250 RADV R2, or cleanup.")
                 targets+=("child__radv")
                 badges+=("$badge")
+                if ! badge=$(menu_graph_badge menu__cmd_video_codec_menu menu); then badge=; fi
+                if [[ "$badge" == *"|"* || "$badge" == *$'\n'* ]]; then
+                    die "Invalid generated menu badge: menu__cmd_video_codec_menu"
+                fi
+                items+=("VA-API Video Codec|${badge}|Manage verified H.264 and HEVC encoding and decoding support.")
+                targets+=("menu__cmd_video_codec_menu")
+                badges+=("$badge")
                 if ! badge=$(menu_graph_badge menu__cmd_proton_menu menu); then badge=; fi
                 if [[ "$badge" == *"|"* || "$badge" == *$'\n'* ]]; then
                     die "Invalid generated menu badge: menu__cmd_proton_menu"
@@ -1797,6 +1881,30 @@ menu_graph_render() {
                 targets+=("action__kfd_runlist")
                 badges+=("$badge")
                 ;;
+            menu__cmd_video_codec_menu)
+                title="VA-API Video Codec"
+                if ! badge=$(menu_graph_badge action__video_codec_status read_only); then badge=; fi
+                if [[ "$badge" == *"|"* || "$badge" == *$'\n'* ]]; then
+                    die "Invalid generated menu badge: action__video_codec_status"
+                fi
+                items+=("Video Codec Status|${badge}|Verify the driver, shaders, environment, and current session.")
+                targets+=("action__video_codec_status")
+                badges+=("$badge")
+                if ! badge=$(menu_graph_badge action__video_codec_install experimental); then badge=; fi
+                if [[ "$badge" == *"|"* || "$badge" == *$'\n'* ]]; then
+                    die "Invalid generated menu badge: action__video_codec_install"
+                fi
+                items+=("Install or Repair Video Codec|${badge}|Download and verify the pinned upstream 64-bit VA-API release.")
+                targets+=("action__video_codec_install")
+                badges+=("$badge")
+                if ! badge=$(menu_graph_badge action__video_codec_remove cleanup); then badge=; fi
+                if [[ "$badge" == *"|"* || "$badge" == *$'\n'* ]]; then
+                    die "Invalid generated menu badge: action__video_codec_remove"
+                fi
+                items+=("Remove Video Codec|${badge}|Remove toolkit-managed codec files and restore stock VA-API selection.")
+                targets+=("action__video_codec_remove")
+                badges+=("$badge")
+                ;;
             menu__cmd_drivers_menu)
                 title="Legacy Drivers Entry"
                 if ! badge=$(menu_graph_badge action__amdgpu install); then badge=; fi
@@ -1888,6 +1996,7 @@ menu_graph_open() {
         core) menu_graph_render menu__cmd_core_system_menu ;;
         power) menu_graph_render menu__cmd_power_menu ;;
         graphics) menu_graph_render menu__cmd_graphics_menu ;;
+        video-codec) menu_graph_render menu__cmd_video_codec_menu ;;
         unlocks) menu_graph_render menu__cmd_unlocks_menu ;;
         devices) menu_graph_render menu__cmd_devices_menu ;;
         interfaces) menu_graph_render menu__cmd_interfaces_menu ;;
@@ -1934,6 +2043,12 @@ cmd_graphics_menu() {
     require_terminal
     require_normal_user
     menu_graph_open graphics
+}
+
+cmd_video_codec_menu() {
+    require_terminal
+    require_normal_user
+    menu_graph_open video-codec
 }
 
 cmd_unlocks_menu() {
@@ -1998,7 +2113,7 @@ cmd_storage_updates_menu() {
 
 cmd_help() {
     cat << EOF
-Usage: $0 [menu|toolkit-update|toolkit-update-check|setup|auto-base-installation|graphics-setup|status|inventory-json|action OPERATION_ID|drivers|unlocks|storage-updates|interfaces|power [ENTRY]|ram|swap|compute|cpu-unlock|cec|audio-output|hdmi-ac3-enable|hdmi-ac3-revert|storage|persistence|wifi|fan-driver|memory-temperature|amdgpu|amdgpu-clean|scheduler-policy|kfd-runlist|radv|proton|proton-install|proton-update|proton-status|proton-uninstall|decky|desktop|coolercontrol|trainer|manage|help]
+Usage: $0 [menu|toolkit-update|toolkit-update-check|setup|auto-base-installation|graphics-setup|status|inventory-json|action OPERATION_ID|drivers|unlocks|storage-updates|interfaces|power [ENTRY]|ram|swap|compute|cpu-unlock|cec|audio-output|hdmi-ac3-enable|hdmi-ac3-revert|storage|persistence|wifi|fan-driver|memory-temperature|amdgpu|amdgpu-clean|scheduler-policy|kfd-runlist|radv|video-codec|video-codec-status|video-codec-install|video-codec-remove|proton|proton-install|proton-update|proton-status|proton-uninstall|decky|desktop|coolercontrol|trainer|manage|help]
 
 Run without arguments in a terminal to open the unified toolkit menu.
 Run the toolkit as the logged-in Deck user, not with sudo; child tools request
@@ -2038,6 +2153,10 @@ Commands:
   scheduler-policy       Advanced: toggle policy only after RADV is installed
   kfd-runlist            Experimental: toggle the KFD HWS TLB-flush workaround
   radv                   Open the global Mesa / RADV async-compute patch
+  video-codec            Open verified VA-API video codec controls
+  video-codec-status     Verify the codec runtime and current session
+  video-codec-install    Confirm, download, verify, and install the codec
+  video-codec-remove     Confirm and restore stock VA-API selection
   proton                 Open BC-250 GE-Proton installation and cleanup
   proton-install         Confirm and install the latest verified GE-Proton build
   proton-update          Confirm and update or repair GE-Proton
@@ -2057,6 +2176,7 @@ Action operation IDs:
   swap-zram-install      swap-zswap-install     compute-build
   cec-setup              persistence-install
   aic-install            fan-install             audio-build
+  video-codec-install
   mesh-setup             native-mesh-install
   decky-install          desktop-install         coolercontrol-install
   storage-repair         cec-repair
@@ -2064,7 +2184,7 @@ Action operation IDs:
   swap-remove
   compute-remove         cec-remove             persistence-remove
   aic-remove             fan-remove             audio-remove
-  mesh-remove            native-mesh-remove
+  mesh-remove            native-mesh-remove      video-codec-remove
   decky-remove           desktop-remove          coolercontrol-remove
 EOF
 }
@@ -2150,6 +2270,10 @@ case "$command_name" in
     scheduler-policy) (($# == 0)) || die "Usage: $0 scheduler-policy"; toggle_scheduler_policy ;;
     kfd-runlist) (($# == 0)) || die "Usage: $0 kfd-runlist"; toggle_kfd_runlist ;;
     radv|mesh) (($# == 0)) || die "Usage: $0 radv"; require_normal_user; run_script "$MESH_SHADER_SH" menu ;;
+    video-codec) (($# == 0)) || die "Usage: $0 video-codec"; cmd_video_codec_menu ;;
+    video-codec-status) (($# == 0)) || die "Usage: $0 video-codec-status"; require_normal_user; run_script "$VIDEO_CODEC_SH" status ;;
+    video-codec-install) (($# == 0)) || die "Usage: $0 video-codec-install"; install_video_codec ;;
+    video-codec-remove) (($# == 0)) || die "Usage: $0 video-codec-remove"; remove_video_codec ;;
     proton) (($# == 0)) || die "Usage: $0 proton"; cmd_proton_menu ;;
     proton-install) (($# == 0)) || die "Usage: $0 proton-install"; install_proton ;;
     proton-update) (($# == 0)) || die "Usage: $0 proton-update"; update_proton ;;

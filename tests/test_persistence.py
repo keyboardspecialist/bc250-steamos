@@ -849,6 +849,7 @@ grep -Fxq "daemon-reload" "$SYSTEMCTL_LOG"
             "nct6687d/steamdeck-setup.sh",
             "nct6687d/fetch-source.sh",
             "nct6687d/nct6687-ensure-module.sh",
+            "video-codec/bc250-video-codec.sh",
             "coolercontrol/install.sh",
             "fetch-steamos-package.sh",
             "bc250-audio-fix/fetch-sources.sh",

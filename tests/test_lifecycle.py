@@ -113,6 +113,12 @@ class LifecycleTests(unittest.TestCase):
         self.assertNotIn('rm -rf "$UMR_PREFIX"', compute_uninstall)
         self.assertNotIn('rm -f "$SERVICE_CONF"', compute_uninstall)
 
+    def test_cpu_overclock_enable_clears_stale_systemd_failure(self):
+        power = POWER.read_text(encoding="utf-8")
+        enable = power[power.index("oc_enable() {") : power.index("oc_off() {")]
+        self.assertLess(enable.index("oc_apply"), enable.index("systemctl reset-failed"))
+        self.assertIn('systemctl reset-failed "$OC_SVC"', enable)
+
     def test_power_uninstall_removes_payload_but_preserves_tuning(self):
         with tempfile.TemporaryDirectory() as directory:
             result = subprocess.run(

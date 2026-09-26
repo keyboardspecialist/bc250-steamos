@@ -17,6 +17,7 @@ AUDIO_SH="${AUDIO_SH:-$SCRIPT_DIR/bc250-audio-fix/patch-driver.sh}"
 AUDIO_CLEAN_SH="${AUDIO_CLEAN_SH:-$SCRIPT_DIR/bc250-audio-fix/clean.sh}"
 HDMI_AC3_SH="${HDMI_AC3_SH:-$SCRIPT_DIR/hdmi-ac3/hdmi-ac3.sh}"
 MESH_SH="${MESH_SH:-$SCRIPT_DIR/bc250-mesh-shader.sh}"
+VIDEO_CODEC_SH="${VIDEO_CODEC_SH:-$SCRIPT_DIR/video-codec/bc250-video-codec.sh}"
 PROTON_SH="${PROTON_SH:-$SCRIPT_DIR/bc250-proton.sh}"
 DECKY_SH="${DECKY_SH:-$SCRIPT_DIR/decky-plugin/install.sh}"
 DESKTOP_SH="${DESKTOP_SH:-$SCRIPT_DIR/desktop-control/install.sh}"
@@ -25,8 +26,8 @@ TRAINER_FLATPAK_SH="${TRAINER_FLATPAK_SH:-$SCRIPT_DIR/trainer/install-flatpak.sh
 COOLERCONTROL_SH="${COOLERCONTROL_SH:-$SCRIPT_DIR/coolercontrol/install.sh}"
 SERVICE_CLIENT_DIR="${BC250_SERVICE_CLIENT_DIR:-/var/lib/bc250-control/service-clients}"
 
-COMPONENTS=(trainer desktop decky coolercontrol cec ac3 power ram swap compute proton native-mesh mesh audio fan aic)
-UNINSTALL_ORDER=(trainer desktop decky coolercontrol cec ac3 power ram swap compute proton native-mesh mesh audio fan aic)
+COMPONENTS=(trainer desktop decky coolercontrol cec ac3 power ram swap compute proton native-mesh video-codec mesh audio fan aic)
+UNINSTALL_ORDER=(trainer desktop decky coolercontrol cec ac3 power ram swap compute proton native-mesh video-codec mesh audio fan aic)
 MESH_STATE_DIR="${BC250_MESH_STATE_DIR:-$HOME/.local/share/bc250-mesh-shader}"
 MESH_LOCK_FILE="${BC250_MESH_LOCK_FILE:-$HOME/.cache/bc250-mesh-shader.lock}"
 MESH_GENERATOR="${BC250_GFX1013_GENERATOR:-/usr/lib/systemd/user-environment-generators/60-bc250-gfx1013}"
@@ -59,6 +60,7 @@ component_label() {
         swap) echo "Compressed swap" ;;
         compute) echo "GPU compute-unit unlock" ;;
         mesh) echo "Mesa / RADV async compute" ;;
+        video-codec) echo "VA-API video codec" ;;
         native-mesh) echo "BC250 RADV R2" ;;
         proton) echo "BC-250 GE-Proton" ;;
         audio) echo "AMDGPU kernel fixes" ;;
@@ -82,6 +84,7 @@ component_script() {
         swap) echo "$SWAP_SH" ;;
         compute) echo "$COMPUTE_SH" ;;
         mesh|native-mesh) echo "$MESH_SH" ;;
+        video-codec) echo "$VIDEO_CODEC_SH" ;;
         proton) echo "$PROTON_SH" ;;
         audio) echo "$AUDIO_SH" ;;
         aic) echo "$AIC_SH" ;;
@@ -106,7 +109,7 @@ component_probe() {
             ;;
         native-mesh) bash "$script" status-json 2>/dev/null | grep -qF '"nativeMeshState":"ready"' ;;
         mesh) bash "$script" status-json 2>/dev/null | grep -qF '"runtimeState":"ready"' ;;
-        desktop|decky|coolercontrol|proton|audio|aic|fan|ac3) bash "$script" status >/dev/null 2>&1 ;;
+        desktop|decky|coolercontrol|proton|video-codec|audio|aic|fan|ac3) bash "$script" status >/dev/null 2>&1 ;;
         storage) bash "$script" installed >/dev/null 2>&1 ;;
     esac
 }
@@ -191,6 +194,12 @@ component_has_artifacts() {
                 || -e "$MESH_GENERATOR" || -L "$MESH_GENERATOR" \
                 || -e /usr/lib/libvulkan_radeon_driconf.so ]] \
                 || grep -qF '<!-- BEGIN BC250 MESH SHADER MANAGED -->' "$HOME/.drirc" 2>/dev/null
+            ;;
+        video-codec)
+            [[ -e /var/lib/bc250-control/video-codec/runtime \
+                || -L /var/lib/bc250-control/video-codec/runtime \
+                || -e /etc/environment.d/90-bc250-video-codec.conf \
+                || -L /etc/environment.d/90-bc250-video-codec.conf ]]
             ;;
         native-mesh)
             [[ -e "$MESH_STATE_DIR/native-mesh" || -L "$MESH_STATE_DIR/native-mesh" \
@@ -330,6 +339,7 @@ plan_component() {
         swap) echo "  Disable toolkit swap boot integration and safely remove its inactive disk swapfile after any required reboot." ;;
         compute) echo "  Restore stock CU dispatch when possible and remove boot integration; preserve the WGP profile and UMR." ;;
         mesh) echo "  Remove the alternate RADV ICD and global user environment generator; preserve build caches." ;;
+        video-codec) echo "  Remove the verified VA-API driver, shaders, and managed environment selection." ;;
         native-mesh) echo "  Remove BC250 RADV R2 and its private Proton copy; preserve global RADV, prefixes, saves, and the original Proton." ;;
         proton) echo "  Remove only BC-250 GE-Proton; preserve Steam prefixes, game saves, and game data." ;;
         audio) echo "  Restore stock AMDGPU modules for every patched kernel; preserve source and build caches." ;;
@@ -407,7 +417,7 @@ run_component_uninstall() {
             ;;
         native-mesh) bash "$script" uninstall --native-mesh || rc=$? ;;
         desktop|decky|coolercontrol|cec|mesh|proton|audio|ac3) bash "$script" uninstall || rc=$? ;;
-        power|ram|swap|compute|aic|fan|storage) sudo bash "$script" uninstall || rc=$? ;;
+        power|ram|swap|compute|video-codec|aic|fan|storage) sudo bash "$script" uninstall || rc=$? ;;
         *) die "Unknown component: $component" ;;
     esac
     [[ $rc -eq 0 ]] || return "$rc"
@@ -599,6 +609,7 @@ maintenance_menu_graph_badge() {
         action__remove_proton) state_badge "$(component_state proton)" ;;
         action__remove_native_mesh) state_badge "$(component_state native-mesh)" ;;
         action__remove_mesh) state_badge "$(component_state mesh)" ;;
+        action__remove_video_codec) state_badge "$(component_state video-codec)" ;;
         action__remove_audio) state_badge "$(component_state audio)" ;;
         action__remove_fan) state_badge "$(component_state fan)" ;;
         action__remove_aic) state_badge "$(component_state aic)" ;;
@@ -624,6 +635,7 @@ maintenance_menu_graph_activate() {
         action__remove_proton) run_menu_action uninstall proton ;;
         action__remove_native_mesh) run_menu_action uninstall native-mesh ;;
         action__remove_mesh) run_menu_action uninstall mesh ;;
+        action__remove_video_codec) run_menu_action uninstall video-codec ;;
         action__remove_audio) run_menu_action uninstall audio ;;
         action__remove_fan) run_menu_action uninstall fan ;;
         action__remove_aic) run_menu_action uninstall aic ;;
@@ -742,6 +754,13 @@ maintenance_menu_graph_render() {
                 items+=("Remove Mesa / RADV async compute|${badge}|Review the plan and remove only this component.")
                 targets+=("action__remove_mesh")
                 badges+=("$badge")
+                if ! badge=$(maintenance_menu_graph_badge action__remove_video_codec cleanup); then badge=; fi
+                if [[ "$badge" == *"|"* || "$badge" == *$'\n'* ]]; then
+                    die "Invalid generated menu badge: action__remove_video_codec"
+                fi
+                items+=("Remove VA-API video codec|${badge}|Remove the verified compute codec and restore stock VA-API selection.")
+                targets+=("action__remove_video_codec")
+                badges+=("$badge")
                 if ! badge=$(maintenance_menu_graph_badge action__remove_audio cleanup); then badge=; fi
                 if [[ "$badge" == *"|"* || "$badge" == *$'\n'* ]]; then
                     die "Invalid generated menu badge: action__remove_audio"
@@ -812,7 +831,7 @@ cmd_help() {
     cat << EOF
 Usage: $0 {menu|status|status-json|plan [COMPONENT|all]|uninstall COMPONENT|all [--yes]|purge [--yes]|help}
 
-Components: trainer, desktop, decky, coolercontrol, cec, ac3, power, ram, compute, proton, native-mesh, mesh, audio, fan, aic, storage
+Components: trainer, desktop, decky, coolercontrol, cec, ac3, power, ram, swap, compute, proton, native-mesh, video-codec, mesh, audio, fan, aic, storage
 
   status                 Show lifecycle state for every component.
   status-json            Emit versioned JSON lifecycle state for automation.

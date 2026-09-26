@@ -150,12 +150,12 @@ class MenuGraphTests(unittest.TestCase):
             capture_output=True,
             text=True,
         )
-        self.assertIn("Selectable nodes: 52", result.stdout)
+        self.assertIn("Selectable nodes: 56", result.stdout)
 
     def test_documented_aggregate_metrics_are_current(self):
         graphs = self.graphs.values()
         self.assertEqual(
-            (40, 213, 231, 9),
+            (41, 218, 236, 9),
             (
                 sum(node.kind == "menu" for graph in graphs for node in graph.nodes.values()),
                 sum(

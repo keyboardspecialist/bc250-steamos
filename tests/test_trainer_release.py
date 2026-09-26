@@ -466,7 +466,7 @@ class TrainerReleaseTests(unittest.TestCase):
             'cp MENU-GRAPH.md "$package_dir/"',
             "trainer/install-release.py trainer/install.sh trainer/install-flatpak.sh",
             "acpi-tables decky-plugin desktop-control coolercontrol core-unlock backend hdmi-ac3 menus scripts topology.sh",
-            "bc250-mesa-patches memory-temperature nct6687d",
+            "bc250-mesa-patches memory-temperature nct6687d video-codec",
             'rm "$package_dir/scripts/stage-trainer-runtime.py"',
         ):
             self.assertIn(expected, workflow)

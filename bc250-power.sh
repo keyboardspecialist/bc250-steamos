@@ -4479,6 +4479,8 @@ EOF
     install_update_persistence
     log "CPU OC enabled at boot (ordered before the GPU governor)."
     oc_apply
+    systemctl reset-failed "$OC_SVC" >/dev/null 2>&1 \
+        || warn "The CPU OC profile applied, but the previous systemd failure state could not be cleared."
 }
 
 oc_off() {
