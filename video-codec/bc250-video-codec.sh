@@ -5,10 +5,23 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 RELEASE=v0.5.1
 SOURCE_COMMIT=180aab87fa84b68f8d4a9d6bf8d4c1fb0cac940e
-ARCHIVE_NAME=bc250-driver-linux-x86_64.tar.gz
-ARCHIVE_SHA256=b38347ffa7bbc2d9365edcf83ac5b161516eb3625946abeaa1cb600aef2d2b05
-ARCHIVE_URL="https://github.com/simpmix/bc250-encoding-decoding-fix/releases/download/$RELEASE/$ARCHIVE_NAME"
-PAYLOAD_MANIFEST="$SCRIPT_DIR/$RELEASE.sha256"
+SOURCE_ARCHIVE_NAME="bc250-encoding-decoding-fix-$SOURCE_COMMIT.tar.gz"
+SOURCE_ARCHIVE_SHA256=c735c3c566882b1e8594eff7e163feb0d62e2ad52d83c104c5178a34f5a2784a
+SOURCE_ARCHIVE_URL="https://codeload.github.com/simpmix/bc250-encoding-decoding-fix/tar.gz/$SOURCE_COMMIT"
+SOURCE_ROOT_NAME="bc250-encoding-decoding-fix-$SOURCE_COMMIT"
+SHADER_NAMES=(
+    color_convert.comp.spv
+    dct_transform.comp.spv
+    deblock_filter.comp.spv
+    entropy_encode.comp.spv
+    intra_wavefront.comp.spv
+    motion_estimation.comp.spv
+    quantize.comp.spv
+    reconstruct.comp.spv
+    residual_predict.comp.spv
+    video_proc.comp.spv
+    video_proc10.comp.spv
+)
 
 DATA_DIR="${BC250_VIDEO_DATA_DIR:-/var/lib/bc250-control/video-codec}"
 RUNTIME_DIR="$DATA_DIR/runtime"
@@ -41,6 +54,8 @@ runtime_marker() {
 $MANAGED_MARKER
 release=$RELEASE
 source_commit=$SOURCE_COMMIT
+source_sha256=$SOURCE_ARCHIVE_SHA256
+build=local-source
 EOF
 }
 
@@ -79,18 +94,46 @@ runtime_valid() {
         || return 1
     [[ -f "$RUNTIME_DIR/manifest.sha256" && ! -L "$RUNTIME_DIR/manifest.sha256" ]] \
         || return 1
-    cmp -s "$PAYLOAD_MANIFEST" "$RUNTIME_DIR/manifest.sha256" || return 1
+    manifest_layout_valid "$RUNTIME_DIR/manifest.sha256" || return 1
     (cd "$RUNTIME_DIR" && sha256sum -c --quiet manifest.sha256) >/dev/null 2>&1 \
         || return 1
     [[ -x "$RUNTIME_DIR/dri/bc250_drv_video.so" ]] || return 1
     runtime_dependencies_valid "$RUNTIME_DIR/dri/bc250_drv_video.so" || return 1
 }
 
+manifest_paths() {
+    local shader
+    echo "dri/bc250_drv_video.so"
+    for shader in "${SHADER_NAMES[@]}"; do
+        echo "shaders/$shader"
+    done
+    echo "LICENSE.upstream"
+    echo "README.upstream.md"
+}
+
+manifest_layout_valid() {
+    local manifest="$1" expected actual
+    expected=$(manifest_paths)
+    actual=$(sed -nE 's/^[0-9a-f]{64}  //p' "$manifest")
+    [[ "$actual" == "$expected" ]] \
+        && [[ $(wc -l < "$manifest") -eq 14 ]] \
+        && ! grep -Evq '^[0-9a-f]{64}  (dri/bc250_drv_video\.so|shaders/[a-z0-9_]+\.comp\.spv|LICENSE\.upstream|README\.upstream\.md)$' "$manifest"
+}
+
+write_runtime_manifest() {
+    local runtime="$1" path
+    : > "$runtime/manifest.sha256"
+    while IFS= read -r path; do
+        (cd "$runtime" && sha256sum "$path") >> "$runtime/manifest.sha256"
+    done < <(manifest_paths)
+    chmod 0644 "$runtime/manifest.sha256"
+}
+
 runtime_dependencies_valid() {
     local output
     command -v ldd >/dev/null 2>&1 || return 1
     output=$(ldd "$1" 2>&1) || return 1
-    [[ "$output" != *"not found"* ]]
+    [[ "$output" != *"not found"* && "$output" != *"libx264"* ]]
 }
 
 environment_valid() {
@@ -119,7 +162,7 @@ show_status() {
     if runtime_valid && environment_valid; then
         echo "state: installed"
         echo "release: $RELEASE"
-        echo "driver: verified"
+        echo "driver: verified local source build"
         echo "shaders: 11 verified"
         echo "configuration: installed"
         if session_active; then
@@ -155,9 +198,9 @@ validate_elf64() {
     [[ "$class" == 2 ]] || die "The release driver is not a 64-bit ELF file."
 }
 
-extract_payload() {
+extract_source() {
     local archive="$1" destination="$2"
-    python3 - "$archive" "$destination" <<'PY'
+    python3 - "$archive" "$destination" "$SOURCE_ROOT_NAME" <<'PY'
 import pathlib
 import shutil
 import sys
@@ -165,57 +208,130 @@ import tarfile
 
 archive = pathlib.Path(sys.argv[1])
 destination = pathlib.Path(sys.argv[2])
-shader_names = (
-    "color_convert.comp.spv",
-    "dct_transform.comp.spv",
-    "deblock_filter.comp.spv",
-    "entropy_encode.comp.spv",
-    "intra_wavefront.comp.spv",
-    "motion_estimation.comp.spv",
-    "quantize.comp.spv",
-    "reconstruct.comp.spv",
-    "residual_predict.comp.spv",
-    "video_proc.comp.spv",
-    "video_proc10.comp.spv",
-)
-expected = {
-    "bc250-driver/bc250_drv_video.so": "dri/bc250_drv_video.so",
-    "bc250-driver/LICENSE": "LICENSE.upstream",
-    "bc250-driver/README.md": "README.upstream.md",
-}
-expected.update({
-    f"bc250-driver/shaders/{name}": f"shaders/{name}" for name in shader_names
-})
+expected_root = sys.argv[3]
+member_limit = 2000
+size_limit = 128 * 1024 * 1024
 
 with tarfile.open(archive, "r:gz") as bundle:
-    members = {}
-    for member in bundle.getmembers():
+    members = bundle.getmembers()
+    if not members or len(members) > member_limit:
+        raise SystemExit("source archive has an invalid member count")
+    total = 0
+    seen = set()
+    for member in members:
         path = pathlib.PurePosixPath(member.name)
-        if path.is_absolute() or ".." in path.parts:
-            raise SystemExit(f"unsafe archive path: {member.name}")
+        if (
+            path.is_absolute()
+            or ".." in path.parts
+            or not path.parts
+            or path.parts[0] != expected_root
+        ):
+            raise SystemExit(f"unsafe source archive path: {member.name}")
         if not member.isdir() and not member.isreg():
-            raise SystemExit(f"unsafe archive entry type: {member.name}")
-        if member.name in members:
-            raise SystemExit(f"duplicate archive entry: {member.name}")
-        members[member.name] = member
+            raise SystemExit(f"unsafe source archive entry type: {member.name}")
+        if member.name in seen:
+            raise SystemExit(f"duplicate source archive entry: {member.name}")
+        seen.add(member.name)
+        total += member.size
+        if total > size_limit:
+            raise SystemExit("source archive exceeds the extraction safety limit")
 
-    for source, relative in expected.items():
-        member = members.get(source)
-        if member is None or not member.isreg() or member.size > 64 * 1024 * 1024:
-            raise SystemExit(f"missing or invalid release file: {source}")
-        target = destination / relative
+    required = {
+        f"{expected_root}/LICENSE",
+        f"{expected_root}/README.md",
+        f"{expected_root}/approach1-compute-encoder/CMakeLists.txt",
+    }
+    if not required.issubset(seen):
+        raise SystemExit("source archive is missing required build files")
+
+    for member in members:
+        relative = pathlib.PurePosixPath(member.name).relative_to(expected_root)
+        if not relative.parts:
+            continue
+        target = destination.joinpath(*relative.parts)
+        if member.isdir():
+            target.mkdir(parents=True, exist_ok=True)
+            target.chmod(0o755)
+            continue
         target.parent.mkdir(parents=True, exist_ok=True)
         stream = bundle.extractfile(member)
         if stream is None:
-            raise SystemExit(f"could not read release file: {source}")
+            raise SystemExit(f"could not read source archive file: {member.name}")
         with stream, target.open("xb") as output:
             shutil.copyfileobj(stream, output)
-
-(destination / "dri/bc250_drv_video.so").chmod(0o755)
-for path in destination.rglob("*"):
-    if path.is_file() and path.name != "bc250_drv_video.so":
-        path.chmod(0o644)
+        target.chmod(0o644)
 PY
+}
+
+build_prerequisites_ready() {
+    local command
+    for command in cmake gcc make pkg-config glslangValidator; do
+        command -v "$command" >/dev/null 2>&1 || return 1
+    done
+    pkg-config --exists libva libdrm || return 1
+    [[ -r /usr/include/vulkan/vulkan.h ]] || return 1
+}
+
+install_build_prerequisites() (
+    local readonly_was_enabled=0
+    restore_readonly() {
+        local rc=${1:-$?}
+        trap - EXIT INT TERM HUP
+        if [[ $readonly_was_enabled -eq 1 ]]; then
+            steamos-readonly enable || rc=1
+        fi
+        exit "$rc"
+    }
+    trap restore_readonly EXIT
+    trap 'restore_readonly 130' INT
+    trap 'restore_readonly 143' TERM
+    trap 'restore_readonly 129' HUP
+
+    for command in steamos-readonly pacman pacman-key; do
+        command -v "$command" >/dev/null 2>&1 \
+            || die "$command is required to install the verified source-build prerequisites."
+    done
+    if steamos-readonly status 2>/dev/null | grep -qi enabled; then
+        steamos-readonly disable
+        readonly_was_enabled=1
+    fi
+    pacman-key --init
+    pacman-key --populate archlinux holo 2>/dev/null || pacman-key --populate
+    pacman -S --needed --noconfirm \
+        base-devel cmake pkgconf libva libdrm vulkan-headers vulkan-icd-loader glslang
+    if [[ $readonly_was_enabled -eq 1 ]]; then
+        steamos-readonly enable
+        readonly_was_enabled=0
+    fi
+)
+
+ensure_build_prerequisites() {
+    if ! build_prerequisites_ready; then
+        log "Installing signed SteamOS source-build prerequisites..."
+        install_build_prerequisites
+    fi
+    build_prerequisites_ready \
+        || die "SteamOS did not provide the required VA-API codec build tools and headers."
+}
+
+build_runtime() {
+    local source="$1" build="$2" runtime="$3" shader
+    cmake -S "$source/approach1-compute-encoder" -B "$build" \
+        -DCMAKE_BUILD_TYPE=Release \
+        -DBUILD_TESTS=OFF \
+        -DBC250_WITH_X264=OFF
+    cmake --build "$build" --parallel "$(getconf _NPROCESSORS_ONLN 2>/dev/null || echo 1)"
+
+    install -d -m 0755 "$runtime/dri" "$runtime/shaders"
+    install -m 0755 "$build/bc250_drv_video.so" "$runtime/dri/bc250_drv_video.so"
+    for shader in "${SHADER_NAMES[@]}"; do
+        [[ -f "$build/$shader" && ! -L "$build/$shader" ]] \
+            || die "The source build did not produce shader $shader."
+        install -m 0644 "$build/$shader" "$runtime/shaders/$shader"
+    done
+    install -m 0644 "$source/LICENSE" "$runtime/LICENSE.upstream"
+    install -m 0644 "$source/README.md" "$runtime/README.upstream.md"
+    write_runtime_manifest "$runtime"
 }
 
 write_environment_atomically() {
@@ -230,11 +346,9 @@ write_environment_atomically() {
 }
 
 install_codec() {
-    local archive actual parent dependency_status="" backup=""
+    local archive actual parent source build dependency_status="" backup=""
     require_root
     for command in curl flock ldd od python3 sha256sum; do require_command "$command"; done
-    [[ -f "$PAYLOAD_MANIFEST" && ! -L "$PAYLOAD_MANIFEST" ]] \
-        || die "The pinned payload manifest is missing or unsafe."
     detect_bc250 || die "AMD BC-250 PCI device 1002:13fe was not detected."
     [[ "$DATA_DIR" == /* && "$DATA_DIR" != / ]] || die "The runtime path is invalid."
     [[ ! -L "$DATA_DIR" ]] || die "Refusing symlinked runtime directory: $DATA_DIR"
@@ -251,29 +365,36 @@ install_codec() {
     install -d -m 0755 "$(dirname "$LOCK_FILE")"
     exec 9> "$LOCK_FILE"
     flock 9
+    ensure_build_prerequisites
 
     parent=$(dirname "$DATA_DIR")
     STAGE=$(mktemp -d "$parent/.bc250-video-codec.XXXXXX")
-    archive="$STAGE/$ARCHIVE_NAME"
-    log "Downloading verified upstream release $RELEASE..."
+    archive="$STAGE/$SOURCE_ARCHIVE_NAME"
+    source="$STAGE/source"
+    build="$STAGE/build"
+    log "Downloading verified upstream source $RELEASE..."
     curl --proto '=https' --tlsv1.2 --fail --location --silent --show-error \
-        --output "$archive" "$ARCHIVE_URL"
+        --output "$archive" "$SOURCE_ARCHIVE_URL"
     actual=$(sha256sum "$archive" | awk '{print $1}')
-    [[ "$actual" == "$ARCHIVE_SHA256" ]] \
-        || die "Release archive checksum mismatch."
+    [[ "$actual" == "$SOURCE_ARCHIVE_SHA256" ]] \
+        || die "Source archive checksum mismatch."
 
-    mkdir "$STAGE/runtime"
-    extract_payload "$archive" "$STAGE/runtime"
-    install -m 0644 "$PAYLOAD_MANIFEST" "$STAGE/runtime/manifest.sha256"
+    mkdir "$source" "$STAGE/runtime"
+    extract_source "$archive" "$source"
+    log "Building the driver against this SteamOS image (libx264-independent)..."
+    build_runtime "$source" "$build" "$STAGE/runtime"
     runtime_marker > "$STAGE/runtime/.bc250-toolkit-managed"
     chmod 0644 "$STAGE/runtime/.bc250-toolkit-managed"
+    manifest_layout_valid "$STAGE/runtime/manifest.sha256" \
+        || die "The locally built runtime manifest is invalid."
     (cd "$STAGE/runtime" && sha256sum -c --quiet manifest.sha256) \
-        || die "Extracted release files failed verification."
+        || die "Locally built runtime files failed verification."
     validate_elf64 "$STAGE/runtime/dri/bc250_drv_video.so"
     if ! dependency_status=$(ldd "$STAGE/runtime/dri/bc250_drv_video.so" 2>&1) \
-        || [[ "$dependency_status" == *"not found"* ]]; then
+        || [[ "$dependency_status" == *"not found"* \
+            || "$dependency_status" == *"libx264"* ]]; then
         printf '%s\n' "$dependency_status" >&2
-        die "The upstream release has unavailable runtime dependencies. No driver was activated."
+        die "The local source build has unavailable runtime dependencies. No driver was activated."
     fi
     chmod 0755 "$STAGE/runtime" "$STAGE/runtime/dri" "$STAGE/runtime/shaders"
 
@@ -293,7 +414,7 @@ install_codec() {
         die "The installed runtime failed final verification."
     fi
     [[ -z "$backup" ]] || rm -rf -- "$backup"
-    log "Installed BC-250 VA-API video codec $RELEASE."
+    log "Installed BC-250 VA-API video codec $RELEASE from verified source."
     log "Sign out or reboot before using the new VA-API selection."
 }
 
@@ -327,7 +448,7 @@ usage() {
     cat <<EOF
 Usage: $0 {install|status|uninstall}
 
-  install    Download, verify, and install upstream $RELEASE
+  install    Download verified source, build for SteamOS, and install $RELEASE
   status     Verify the runtime, environment, and current session
   uninstall  Remove only toolkit-managed codec files
 EOF

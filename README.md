@@ -386,10 +386,11 @@ Install the pinned 64-bit H.264 and HEVC codec release:
 ./bc250-toolkit.sh video-codec-install
 ```
 
-The toolkit downloads `simpmix/bc250-encoding-decoding-fix` `v0.5.1`. It
-verifies the release archive and each installed driver and shader file. The
-runtime provides Vulkan-compute encoding and CPU-backed decoding through
-VA-API.
+The toolkit downloads the pinned `simpmix/bc250-encoding-decoding-fix`
+`v0.5.1` source, verifies it, and builds it against the active SteamOS image.
+The runtime provides Vulkan-compute encoding and CPU-backed decoding through
+VA-API. The build disables the optional libx264 backend to avoid coupling the
+driver to another distribution's libx264 ABI.
 
 Check or remove the runtime:
 

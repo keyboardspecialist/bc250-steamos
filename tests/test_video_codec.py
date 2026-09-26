@@ -1,6 +1,6 @@
 import os
-import re
 import subprocess
+import tarfile
 import tempfile
 import unittest
 from pathlib import Path
@@ -8,7 +8,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 SCRIPT = ROOT / "video-codec/bc250-video-codec.sh"
-MANIFEST = ROOT / "video-codec/v0.5.1.sha256"
+SOURCE_ROOT = "bc250-encoding-decoding-fix-180aab87fa84b68f8d4a9d6bf8d4c1fb0cac940e"
 
 
 class VideoCodecTests(unittest.TestCase):
@@ -53,7 +53,7 @@ class VideoCodecTests(unittest.TestCase):
             self.assertIn("state: incomplete", partial.stdout)
             self.assertIn("driver: missing-or-invalid", partial.stdout)
 
-    def test_release_and_payload_digests_are_pinned(self):
+    def test_source_commit_and_archive_digest_are_pinned(self):
         source = SCRIPT.read_text(encoding="utf-8")
         self.assertIn("RELEASE=v0.5.1", source)
         self.assertIn(
@@ -61,44 +61,78 @@ class VideoCodecTests(unittest.TestCase):
             source,
         )
         self.assertIn(
-            "ARCHIVE_SHA256=b38347ffa7bbc2d9365edcf83ac5b161516eb3625946abeaa1cb600aef2d2b05",
+            "SOURCE_ARCHIVE_SHA256=c735c3c566882b1e8594eff7e163feb0d62e2ad52d83c104c5178a34f5a2784a",
             source,
         )
-        self.assertIn("releases/download/$RELEASE/$ARCHIVE_NAME", source)
-
-        entries = MANIFEST.read_text(encoding="utf-8").splitlines()
-        self.assertEqual(len(entries), 14)
-        self.assertTrue(
-            all(re.fullmatch(r"[0-9a-f]{64}  [^/].+", entry) for entry in entries)
-        )
-        self.assertEqual(
-            sum(entry.endswith(".spv") for entry in entries),
-            11,
-        )
-        self.assertTrue(any(entry.endswith("dri/bc250_drv_video.so") for entry in entries))
-        self.assertTrue(any(entry.endswith("LICENSE.upstream") for entry in entries))
+        self.assertIn("codeload.github.com/simpmix/bc250-encoding-decoding-fix/tar.gz/$SOURCE_COMMIT", source)
+        self.assertIn("-DBC250_WITH_X264=OFF", source)
+        self.assertIn('"$output" != *"libx264"*', source)
+        self.assertIn("build=local-source", source)
+        self.assertIn("write_runtime_manifest", source)
+        self.assertEqual(source.count(".comp.spv\n"), 11)
 
     def test_installer_uses_safe_verified_persistent_layout(self):
         source = SCRIPT.read_text(encoding="utf-8")
         for required in (
             "curl --proto '=https' --tlsv1.2 --fail --location",
-            '[[ "$actual" == "$ARCHIVE_SHA256" ]]',
-            "unsafe archive path",
-            "unsafe archive entry type",
-            "duplicate archive entry",
+            '[[ "$actual" == "$SOURCE_ARCHIVE_SHA256" ]]',
+            "unsafe source archive path",
+            "unsafe source archive entry type",
+            "duplicate source archive entry",
             "sha256sum -c --quiet manifest.sha256",
             "validate_elf64",
             "runtime_dependencies_valid",
             "unavailable runtime dependencies",
+            "pacman -S --needed --noconfirm",
+            "steamos-readonly disable",
+            "steamos-readonly enable",
             "/var/lib/bc250-control/video-codec",
             "/etc/environment.d/90-bc250-video-codec.conf",
             "Refusing to replace an unrecognized runtime",
             "Refusing to remove an unrecognized runtime",
         ):
             self.assertIn(required, source)
-        self.assertNotIn("steamos-readonly disable", source)
         self.assertNotIn("radeonsi_drv_video.so", source)
-        self.assertNotIn("/usr/lib", source)
+
+    def test_source_extraction_rejects_traversal(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            archive = root / "source.tar.gz"
+            with tarfile.open(archive, "w:gz") as bundle:
+                for relative, content in (
+                    ("LICENSE", b"license\n"),
+                    ("README.md", b"readme\n"),
+                    ("approach1-compute-encoder/CMakeLists.txt", b"cmake\n"),
+                ):
+                    path = root / relative
+                    path.parent.mkdir(parents=True, exist_ok=True)
+                    path.write_bytes(content)
+                    bundle.add(path, arcname=f"{SOURCE_ROOT}/{relative}")
+                traversal = tarfile.TarInfo(f"{SOURCE_ROOT}/../escape")
+                traversal.size = 1
+                import io
+
+                bundle.addfile(traversal, io.BytesIO(b"x"))
+
+            destination = root / "extract"
+            destination.mkdir()
+            result = subprocess.run(
+                [
+                    "bash",
+                    "-c",
+                    'helper=$1; archive=$2; destination=$3; set -- help; '
+                    'source "$helper" >/dev/null; extract_source "$archive" "$destination"',
+                    "_",
+                    str(SCRIPT),
+                    str(archive),
+                    str(destination),
+                ],
+                capture_output=True,
+                text=True,
+            )
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("unsafe source archive path", result.stderr)
+            self.assertFalse((root / "escape").exists())
 
     def test_toolkit_release_and_maintenance_include_component(self):
         workflow = (ROOT / ".github/workflows/release-artifacts.yml").read_text(

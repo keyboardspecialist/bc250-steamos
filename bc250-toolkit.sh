@@ -1894,7 +1894,7 @@ menu_graph_render() {
                 if [[ "$badge" == *"|"* || "$badge" == *$'\n'* ]]; then
                     die "Invalid generated menu badge: action__video_codec_install"
                 fi
-                items+=("Install or Repair Video Codec|${badge}|Download and verify the pinned upstream 64-bit VA-API release.")
+                items+=("Install or Repair Video Codec|${badge}|Verify pinned upstream source and build it for the active SteamOS image.")
                 targets+=("action__video_codec_install")
                 badges+=("$badge")
                 if ! badge=$(menu_graph_badge action__video_codec_remove cleanup); then badge=; fi
