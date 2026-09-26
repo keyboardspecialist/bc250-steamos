@@ -26,9 +26,11 @@ SHADER_NAMES=(
 DATA_DIR="${BC250_VIDEO_DATA_DIR:-/var/lib/bc250-control/video-codec}"
 RUNTIME_DIR="$DATA_DIR/runtime"
 ENV_FILE="${BC250_VIDEO_ENV_FILE:-/etc/environment.d/90-bc250-video-codec.conf}"
+PROFILE_FILE="${BC250_VIDEO_PROFILE_FILE:-/etc/profile.d/90-bc250-video-codec.sh}"
 LOCK_FILE="${BC250_VIDEO_LOCK_FILE:-/run/lock/bc250-video-codec.lock}"
 MANAGED_MARKER="bc250-toolkit-video-codec-v1"
 ENV_MARKER="# BC-250 toolkit managed VA-API video codec"
+PROFILE_MARKER="# BC-250 toolkit managed VA-API video codec shell environment"
 STAGE=""
 
 log() { echo "[bc250-video-codec] $*"; }
@@ -75,6 +77,22 @@ OMP_DYNAMIC=FALSE
 EOF
 }
 
+profile_config() {
+    cat <<EOF
+$PROFILE_MARKER
+export LIBVA_DRIVER_NAME=bc250
+export LIBVA_DRIVERS_PATH=$RUNTIME_DIR/dri
+export BC250_SHADER_DIR=$RUNTIME_DIR/shaders
+export BC250_FAST_MODE=1
+export BC250_SLICES_PER_FRAME=4
+export BC250_HEVC_SLICES=4
+export OMP_WAIT_POLICY=PASSIVE
+export GOMP_SPINCOUNT=0
+export OMP_NUM_THREADS=2
+export OMP_DYNAMIC=FALSE
+EOF
+}
+
 is_managed_runtime() {
     [[ -d "$RUNTIME_DIR" && ! -L "$RUNTIME_DIR" \
         && -f "$RUNTIME_DIR/.bc250-toolkit-managed" \
@@ -86,6 +104,13 @@ is_managed_environment() {
     [[ -f "$ENV_FILE" && ! -L "$ENV_FILE" ]] \
         && IFS= read -r first_line < "$ENV_FILE" \
         && [[ "$first_line" == "$ENV_MARKER" ]]
+}
+
+is_managed_profile() {
+    local first_line
+    [[ -f "$PROFILE_FILE" && ! -L "$PROFILE_FILE" ]] \
+        && IFS= read -r first_line < "$PROFILE_FILE" \
+        && [[ "$first_line" == "$PROFILE_MARKER" ]]
 }
 
 runtime_valid() {
@@ -132,25 +157,39 @@ write_runtime_manifest() {
 runtime_dependencies_valid() {
     local output
     command -v ldd >/dev/null 2>&1 || return 1
-    output=$(ldd "$1" 2>&1) || return 1
-    [[ "$output" != *"not found"* && "$output" != *"libx264"* ]]
+    output=$(ldd -r "$1" 2>&1) || return 1
+    [[ "$output" != *"not found"* \
+        && "$output" != *"undefined symbol"* \
+        && "$output" != *"libx264"* ]]
 }
 
 environment_valid() {
     is_managed_environment || return 1
-    diff -q <(environment_config) "$ENV_FILE" >/dev/null 2>&1
+    diff -q <(environment_config) "$ENV_FILE" >/dev/null 2>&1 || return 1
+    is_managed_profile || return 1
+    diff -q <(profile_config) "$PROFILE_FILE" >/dev/null 2>&1
 }
 
-session_active() {
+shell_environment_active() {
     [[ "${LIBVA_DRIVER_NAME:-}" == bc250 \
         && "${LIBVA_DRIVERS_PATH:-}" == "$RUNTIME_DIR/dri" \
         && "${BC250_SHADER_DIR:-}" == "$RUNTIME_DIR/shaders" ]]
 }
 
+manager_environment_active() {
+    local environment
+    command -v systemctl >/dev/null 2>&1 || return 1
+    environment=$(systemctl --user show-environment 2>/dev/null) || return 1
+    grep -qxF "LIBVA_DRIVER_NAME=bc250" <<< "$environment" \
+        && grep -qxF "LIBVA_DRIVERS_PATH=$RUNTIME_DIR/dri" <<< "$environment" \
+        && grep -qxF "BC250_SHADER_DIR=$RUNTIME_DIR/shaders" <<< "$environment"
+}
+
 show_status() {
     local runtime_present=0 environment_present=0
     [[ -e "$RUNTIME_DIR" || -L "$RUNTIME_DIR" ]] && runtime_present=1
-    [[ -e "$ENV_FILE" || -L "$ENV_FILE" ]] && environment_present=1
+    [[ -e "$ENV_FILE" || -L "$ENV_FILE" \
+        || -e "$PROFILE_FILE" || -L "$PROFILE_FILE" ]] && environment_present=1
 
     if [[ $runtime_present -eq 0 && $environment_present -eq 0 ]]; then
         echo "state: not-installed"
@@ -165,8 +204,10 @@ show_status() {
         echo "driver: verified local source build"
         echo "shaders: 11 verified"
         echo "configuration: installed"
-        if session_active; then
+        if shell_environment_active; then
             echo "session: active"
+        elif manager_environment_active; then
+            echo "session: manager-active"
         else
             echo "session: restart-required"
         fi
@@ -190,6 +231,38 @@ detect_bc250() {
     done
     command -v lspci >/dev/null 2>&1 \
         && lspci -Dn 2>/dev/null | grep -Eqi '1002:13fe([[:space:]]|$)'
+}
+
+bc250_render_node() {
+    local node vendor device
+    for node in /sys/class/drm/renderD*; do
+        [[ -e "$node" ]] || continue
+        vendor="$node/device/vendor"
+        device="$node/device/device"
+        [[ -r "$vendor" && -r "$device" \
+            && "$(<"$vendor")" == 0x1002 \
+            && "$(<"$device")" == 0x13fe ]] || continue
+        printf '/dev/dri/%s\n' "${node##*/}"
+        return 0
+    done
+    return 1
+}
+
+verify_vaapi_initialization() {
+    local runtime="$1" render_node output
+    render_node=$(bc250_render_node) \
+        || die "Could not identify the BC-250 DRM render node."
+    if ! output=$(env \
+        LIBVA_DRIVER_NAME=bc250 \
+        LIBVA_DRIVERS_PATH="$runtime/dri" \
+        BC250_SHADER_DIR="$runtime/shaders" \
+        vainfo --display drm --device "$render_node" 2>&1); then
+        printf '%s\n' "$output" >&2
+        die "The locally built driver failed explicit VA-API initialization. No driver was activated."
+    fi
+    grep -qF "AMD BC-250 Compute VA-API Driver" <<< "$output" \
+        || { printf '%s\n' "$output" >&2; die "VA-API initialized without the BC-250 driver. No driver was activated."; }
+    log "Verified VA-API initialization on $render_node."
 }
 
 validate_elf64() {
@@ -265,7 +338,7 @@ PY
 
 missing_build_prerequisites() {
     local command package
-    for command in cmake gcc make pkg-config glslangValidator; do
+    for command in cmake gcc make pkg-config glslangValidator vainfo; do
         command -v "$command" >/dev/null 2>&1 || echo "command:$command"
     done
     if command -v pkg-config >/dev/null 2>&1; then
@@ -325,7 +398,7 @@ install_build_prerequisites() (
     # Force a signed reinstall instead of trusting pacman's --needed state.
     pacman -S --noconfirm \
         cmake make gcc binutils glibc pkgconf libva libdrm \
-        vulkan-headers vulkan-icd-loader glslang
+        vulkan-headers vulkan-icd-loader glslang libva-utils
     if [[ $readonly_was_enabled -eq 1 ]]; then
         steamos-readonly enable
         readonly_was_enabled=0
@@ -368,14 +441,27 @@ build_runtime() {
 }
 
 write_environment_atomically() {
-    local environment_dir temporary
+    local environment_dir profile_dir temporary profile_temporary
     environment_dir=$(dirname "$ENV_FILE")
+    profile_dir=$(dirname "$PROFILE_FILE")
     [[ ! -L "$environment_dir" ]] || die "Refusing symlinked environment directory: $environment_dir"
+    [[ ! -L "$profile_dir" ]] || die "Refusing symlinked profile directory: $profile_dir"
     install -d -m 0755 "$environment_dir"
+    install -d -m 0755 "$profile_dir"
     temporary=$(mktemp "$environment_dir/.bc250-video-codec.XXXXXX")
+    profile_temporary=$(mktemp "$profile_dir/.bc250-video-codec.XXXXXX")
     environment_config > "$temporary"
+    profile_config > "$profile_temporary"
     chmod 0644 "$temporary"
-    mv -f -- "$temporary" "$ENV_FILE"
+    chmod 0644 "$profile_temporary"
+    if ! mv -f -- "$temporary" "$ENV_FILE"; then
+        rm -f -- "$temporary" "$profile_temporary"
+        return 1
+    fi
+    if ! mv -f -- "$profile_temporary" "$PROFILE_FILE"; then
+        rm -f -- "$profile_temporary"
+        return 1
+    fi
 }
 
 install_codec() {
@@ -392,6 +478,10 @@ install_codec() {
     if [[ -e "$ENV_FILE" || -L "$ENV_FILE" ]]; then
         is_managed_environment \
             || die "Refusing to replace an unrecognized environment file: $ENV_FILE"
+    fi
+    if [[ -e "$PROFILE_FILE" || -L "$PROFILE_FILE" ]]; then
+        is_managed_profile \
+            || die "Refusing to replace an unrecognized shell profile: $PROFILE_FILE"
     fi
 
     install -d -m 0755 "$DATA_DIR"
@@ -423,12 +513,14 @@ install_codec() {
     (cd "$STAGE/runtime" && sha256sum -c --quiet manifest.sha256) \
         || die "Locally built runtime files failed verification."
     validate_elf64 "$STAGE/runtime/dri/bc250_drv_video.so"
-    if ! dependency_status=$(ldd "$STAGE/runtime/dri/bc250_drv_video.so" 2>&1) \
+    if ! dependency_status=$(ldd -r "$STAGE/runtime/dri/bc250_drv_video.so" 2>&1) \
         || [[ "$dependency_status" == *"not found"* \
+            || "$dependency_status" == *"undefined symbol"* \
             || "$dependency_status" == *"libx264"* ]]; then
         printf '%s\n' "$dependency_status" >&2
         die "The local source build has unavailable runtime dependencies. No driver was activated."
     fi
+    verify_vaapi_initialization "$STAGE/runtime"
     chmod 0755 "$STAGE/runtime" "$STAGE/runtime/dri" "$STAGE/runtime/shaders"
 
     if [[ -d "$RUNTIME_DIR" ]]; then
@@ -462,6 +554,11 @@ uninstall_codec() {
         is_managed_environment \
             || die "Refusing to remove an unrecognized environment file: $ENV_FILE"
         rm -f -- "$ENV_FILE"
+    fi
+    if [[ -e "$PROFILE_FILE" || -L "$PROFILE_FILE" ]]; then
+        is_managed_profile \
+            || die "Refusing to remove an unrecognized shell profile: $PROFILE_FILE"
+        rm -f -- "$PROFILE_FILE"
     fi
     if [[ -e "$RUNTIME_DIR" || -L "$RUNTIME_DIR" ]]; then
         [[ -d "$RUNTIME_DIR" && ! -L "$RUNTIME_DIR" \

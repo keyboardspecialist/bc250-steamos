@@ -400,7 +400,7 @@ Check or remove the runtime:
 ```
 
 Sign out or reboot after installation or removal. The toolkit uses persistent
-storage and a managed environment file. It does not replace the stock
+storage plus managed systemd and shell environment files. It does not replace the stock
 `radeonsi` driver or enable the upstream Sunshine boot redirect.
 
 See [`video-codec/README.md`](video-codec/README.md) for paths, scope, and

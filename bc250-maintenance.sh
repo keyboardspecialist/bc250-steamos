@@ -199,7 +199,9 @@ component_has_artifacts() {
             [[ -e /var/lib/bc250-control/video-codec/runtime \
                 || -L /var/lib/bc250-control/video-codec/runtime \
                 || -e /etc/environment.d/90-bc250-video-codec.conf \
-                || -L /etc/environment.d/90-bc250-video-codec.conf ]]
+                || -L /etc/environment.d/90-bc250-video-codec.conf \
+                || -e /etc/profile.d/90-bc250-video-codec.sh \
+                || -L /etc/profile.d/90-bc250-video-codec.sh ]]
             ;;
         native-mesh)
             [[ -e "$MESH_STATE_DIR/native-mesh" || -L "$MESH_STATE_DIR/native-mesh" \

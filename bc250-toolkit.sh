@@ -474,7 +474,7 @@ video_codec_badge() {
     fi
     status=$(bash "$VIDEO_CODEC_SH" status 2>/dev/null || true)
     case "$status" in
-        *"state: installed"*"session: active"*) printf '%s' "${CG}[active]${C0}" ;;
+        *"state: installed"*"session: active"*|*"state: installed"*"session: manager-active"*) printf '%s' "${CG}[active]${C0}" ;;
         *"state: installed"*) printf '%s' "${CY}[restart needed]${C0}" ;;
         *"state: incomplete"*) printf '%s' "${CR}[repair needed]${C0}" ;;
         *) printf '%s' "${CD}[not installed]${C0}" ;;
@@ -1075,8 +1075,9 @@ show_status() {
     secondary=$(status_value "$video_codec_output" "session: " || true)
     case "$state" in
         installed)
-            if [[ "$secondary" == active ]]; then
-                status_row "VA-API video codec" "active" good "verified ${detail:-release}; session environment active"
+            if [[ "$secondary" == active || "$secondary" == manager-active ]]; then
+                status_row "VA-API video codec" "active" good \
+                    "verified ${detail:-release}; ${secondary//-/ } environment"
             else
                 status_row "VA-API video codec" "restart needed" warn "verified ${detail:-release}; sign out or reboot"
             fi

@@ -18,6 +18,9 @@ class VideoCodecTests(unittest.TestCase):
             {
                 "BC250_VIDEO_DATA_DIR": str(data_dir),
                 "BC250_VIDEO_ENV_FILE": str(env_file),
+                "BC250_VIDEO_PROFILE_FILE": str(
+                    env_file.parent.parent / "profile.d/90-bc250-video-codec.sh"
+                ),
                 "BC250_VIDEO_LOCK_FILE": str(data_dir.parent / "codec.lock"),
             }
         )
@@ -83,6 +86,9 @@ class VideoCodecTests(unittest.TestCase):
             "validate_elf64",
             "runtime_dependencies_valid",
             "unavailable runtime dependencies",
+            "ldd -r",
+            "verify_vaapi_initialization",
+            "vainfo --display drm --device",
             "pacman -S --needed --noconfirm",
             "pacman -S --noconfirm",
             "cmake make gcc binutils glibc pkgconf libva libdrm",
@@ -92,6 +98,7 @@ class VideoCodecTests(unittest.TestCase):
             "steamos-readonly enable",
             "/var/lib/bc250-control/video-codec",
             "/etc/environment.d/90-bc250-video-codec.conf",
+            "/etc/profile.d/90-bc250-video-codec.sh",
             "Refusing to replace an unrecognized runtime",
             "Refusing to remove an unrecognized runtime",
         ):
@@ -145,6 +152,7 @@ class VideoCodecTests(unittest.TestCase):
         maintenance = (ROOT / "bc250-maintenance.sh").read_text(encoding="utf-8")
         self.assertIn("nct6687d video-codec", workflow)
         self.assertIn("video-codec) echo \"VA-API video codec\"", maintenance)
+        self.assertIn("/etc/profile.d/90-bc250-video-codec.sh", maintenance)
         self.assertIn("sudo bash \"$script\" uninstall", maintenance)
 
     def test_help_is_non_privileged(self):

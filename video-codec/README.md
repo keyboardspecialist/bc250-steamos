@@ -35,10 +35,22 @@ module, or compiler/link check that remains unavailable. Runtime files remain
 in persistent storage.
 
 Runtime files use `/var/lib/bc250-control/video-codec/runtime`. The managed
-environment file is `/etc/environment.d/90-bc250-video-codec.conf`.
+environment files are `/etc/environment.d/90-bc250-video-codec.conf` and
+`/etc/profile.d/90-bc250-video-codec.sh`.
 
 Sign out or reboot after installation or removal. New processes then use the
 new VA-API selection.
+
+Test the selected driver explicitly:
+
+```bash
+source /etc/profile.d/90-bc250-video-codec.sh
+vainfo --display drm --device /dev/dri/renderD128
+```
+
+The installer runs this initialization test against the staged runtime before
+changing the system environment. It also checks relocated symbols with
+`ldd -r`; failed initialization leaves the previous runtime active.
 
 ## Scope
 
