@@ -356,7 +356,7 @@ install_proton() {
     require_normal_user
     require_script "$PROTON_SH"
     confirm_action \
-        "Download and install the pinned BC-250 GE-Proton build with FSR4?" \
+        "Discover and install the latest verified BC-250 GE-Proton build with FSR4?" \
         bash "$PROTON_SH" install
 }
 
@@ -1452,7 +1452,7 @@ menu_graph_render() {
                 if [[ "$badge" == *"|"* || "$badge" == *$'\n'* ]]; then
                     die "Invalid generated menu badge: menu__cmd_proton_menu"
                 fi
-                items+=("BC-250 GE-Proton|${badge}|Inspect, install, repair, or remove the pinned compatibility tool.")
+                items+=("BC-250 GE-Proton|${badge}|Inspect, install, update, repair, or remove the verified compatibility tool.")
                 targets+=("menu__cmd_proton_menu")
                 badges+=("$badge")
                 if ! badge=$(menu_graph_badge menu__cmd_amdgpu_boot_menu menu); then badge=; fi
@@ -1572,7 +1572,7 @@ menu_graph_render() {
                 if [[ "$badge" == *"|"* || "$badge" == *$'\n'* ]]; then
                     die "Invalid generated menu badge: action__proton_status"
                 fi
-                items+=("Status|${badge}|Verify the pinned compatibility tool and required files.")
+                items+=("Status|${badge}|Verify the installed compatibility tool and required files.")
                 targets+=("action__proton_status")
                 badges+=("$badge")
                 if ! badge=$(menu_graph_badge action__proton_install install); then badge=; fi
@@ -1908,7 +1908,7 @@ Commands:
   kfd-runlist            Experimental: toggle the KFD HWS TLB-flush workaround
   radv                   Open the global Mesa / RADV async-compute patch
   proton                 Open BC-250 GE-Proton installation and cleanup
-  proton-install         Confirm and install the pinned GE-Proton build
+  proton-install         Confirm and install the latest verified GE-Proton build
   proton-update          Confirm and update or repair GE-Proton
   proton-status          Verify the installed GE-Proton compatibility tool
   proton-uninstall       Confirm and remove GE-Proton; preserve prefixes/saves

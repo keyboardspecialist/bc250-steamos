@@ -96,7 +96,7 @@ constexpr OperationDefinition Operations[] = {
     {"audio-remove", "Remove AMDGPU kernel fixes", "audio", "REMOVE",
      "Restore stock AMDGPU module overrides and preserve build caches.", false, true},
     {"proton-install", "Install BC-250 GE-Proton", "proton", "INSTALL",
-     "Download, verify, and install the pinned BC-250 GE-Proton build with FSR4 support.", false, false},
+     "Discover, verify, and install the latest BC-250 GE-Proton build with FSR4 support.", false, false},
     {"proton-update", "Update BC-250 GE-Proton", "proton", "UPDATE",
      "Verify and update the managed BC-250 GE-Proton compatibility tool.", false, false},
     {"proton-remove", "Remove BC-250 GE-Proton", "proton", "REMOVE",

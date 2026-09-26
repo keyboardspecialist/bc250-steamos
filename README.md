@@ -108,7 +108,7 @@ sudo ./bc250-power.sh status
 | [`bc250-audio-fix/`](#amdgpu-driver) | DisplayPort clock, GPU telemetry, and GFX1013 compute repair |
 | [`hdmi-ac3/`](#hdmi-ac-3-surround-encoding-optional) | Real-time Dolby Digital 5.1 encoding over HDMI/DisplayPort |
 | [`bc250-mesh-shader.sh`](#mesa--radv-async-compute-and-fsr4) | Mesa / RADV build with GFX1013 async compute and integrated BC-250 FSR4 patches |
-| `bc250-proton.sh` | Transactional user-local installer for the checksum-pinned BC-250 GE-Proton build |
+| `bc250-proton.sh` | Transactional user-local installer for the latest checksum-verified BC-250 GE-Proton build |
 | [`bc250-memory-temperature.sh`](#gddr6-memory-temperature-experimental) | Guarded, checksum-pinned live SMU payload for reading all eight GDDR6 chip temperatures |
 | [`nct6687d/`](#nct6687d-fan-control-driver) | Optional NCT6683/6686/6687 hwmon fan tachometer and PWM driver |
 | [`aic8800/`](#wifi-and-bluetooth) | AIC8800 USB WiFi and Bluetooth driver |
@@ -148,7 +148,7 @@ The toolkit and standalone component menus are authored as Mermaid graphs under
 | `./bc250-toolkit.sh amdgpu` | Build the AMDGPU kernel fixes |
 | `./bc250-toolkit.sh radv` | Open the global Mesa / RADV async-compute menu |
 | `./bc250-toolkit.sh proton` | Open BC-250 GE-Proton status, installation, update, and removal |
-| `./bc250-toolkit.sh proton-install` | Install the pinned GE-Proton build after FSR4 RADV is active |
+| `./bc250-toolkit.sh proton-install` | Discover and install the latest GE-Proton build after FSR4 RADV is active |
 | `./bc250-toolkit.sh audio-output` | Open HDMI AC-3 enable and stereo-revert options |
 | `./bc250-toolkit.sh fan-driver` | Build and install NCT6687 hwmon fan/PWM support for the onboard controller |
 | `./bc250-toolkit.sh memory-temperature` | Open the experimental GDDR6 temperature workflow |
@@ -890,19 +890,20 @@ logged-in Deck user:
 ./bc250-toolkit.sh proton-install
 ```
 
-The manager downloads
-`protonge-latest-bc250-11.6-166-x86_64.pkg.tar.zst` from the pinned upstream
-release and requires SHA-256
-`193e0e3b275024231bce8c0b01ed4220507257f86befc7c6fbb940e55a035640`.
-It extracts only the compatibility tool and license payload. CachyOS package
-metadata, pacman hooks, kernel modules, and host integration are not installed.
-The resulting tool lives at
+The manager queries the upstream `repo` rolling release through the GitHub API,
+selects the highest valid
+`protonge-latest-bc250-<version>-x86_64.pkg.tar.zst` asset, and validates its
+canonical download URL, size, and GitHub-provided SHA-256 digest. The archive is
+verified against that digest before extraction, so a replaced or incomplete
+asset is never installed. It extracts only the compatibility tool and license
+payload. CachyOS package metadata, pacman hooks, kernel modules, and host
+integration are not installed. The resulting tool lives at
 `~/.local/share/Steam/compatibilitytools.d/protonge-latest-bc250` and continues
 to use Steam Linux Runtime rather than CachyOS host libraries.
 
-Restart Steam, open an eligible game's compatibility settings, and select
-**GE-Proton 11-6 (BC-250 FSR4)**. Do not enable DLL injection or FSR4 upgrade
-for online or anti-cheat games; use ordinary Proton or set
+Restart Steam, open an eligible game's compatibility settings, and select the
+newly installed **BC-250 GE-Proton** entry. Do not enable DLL injection or FSR4
+upgrade for online or anti-cheat games; use ordinary Proton or set
 `PROTON_FSR4_UPGRADE=0`. Installation and updates are transactional. Removal
 deletes only this compatibility tool and preserves Steam prefixes, saves, and
 game data:
@@ -1113,7 +1114,7 @@ Run the normal component setup commands afterward to regenerate services for the
 | BC-250 GFX1013 Fix | [Repository](https://github.com/DryhoppedIPA/bc250-gfx1013-fix) · [integrated commit](https://github.com/DryhoppedIPA/bc250-gfx1013-fix/commit/d3e6dc062c34d2523db0abe5741d1f5b0dea00d9) | Kernel compute lifecycle repair and pinned alternate RADV build by DryhoppedIPA |
 | OptiScaler | [Repository](https://github.com/optiscaler/OptiScaler) · [release](https://github.com/optiscaler/OptiScaler/releases/tag/v0.9.4) | Checksum-pinned per-game installation with collision backups and guarded rollback |
 | BC-250 FSR4 RC9 | [Repository](https://github.com/daniel-h-0/bc250-fsr4-fork) · [release](https://github.com/daniel-h-0/bc250-fsr4-fork/releases/tag/v4.0.0-rc9) | Integrity-checked portable FSR 4.1.1 INT8 DLL with per-target rollback |
-| CachyOS BC-250 GE-Proton and RADV | [Repository](https://github.com/MastaG/linux-cachyos-bc250) · [release assets](https://github.com/MastaG/linux-cachyos-bc250/releases/tag/repo) | Checksum-pinned GE compatibility tool and FSR4 Mesa patch series adapted for user-local SteamOS installation |
+| CachyOS BC-250 GE-Proton and RADV | [Repository](https://github.com/MastaG/linux-cachyos-bc250) · [release assets](https://github.com/MastaG/linux-cachyos-bc250/releases/tag/repo) | Dynamically discovered, checksum-verified GE compatibility tool and FSR4 Mesa patch series adapted for user-local SteamOS installation |
 | BC-250 HDMI AC-3 encoding | [Implementation guide and scripts](https://github.com/rpf16rj/bc250-steamos-real-toolkit/tree/main/extras/hdmi-ac3-encoding) | ALSA `a52` routing and WirePlumber profile behavior adapted by `hdmi-ac3/hdmi-ac3.sh` |
 | Valve kernel mirror | [Repository](https://github.com/Evlav/linux-integration) | `bc250-audio-fix/fetch-sources.sh` |
 | SteamOS package mirror | [Package index](https://steamdeck-packages.steamos.cloud/archlinux-mirror/) | Audio, AIC8800, and NCT6687 build scripts; stable channels are discovered automatically |

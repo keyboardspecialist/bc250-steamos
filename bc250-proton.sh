@@ -1,13 +1,17 @@
 #!/usr/bin/env bash
-# Install the pinned BC-250 GE-Proton build as a user-local Steam compatibility tool.
+# Install the latest verified BC-250 GE-Proton build as a user-local Steam compatibility tool.
 set -euo pipefail
 
 SELF="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/$(basename "${BASH_SOURCE[0]}")"
 TOOL_NAME=protonge-latest-bc250
-PACKAGE_VERSION="${BC250_PROTON_PACKAGE_VERSION:-11.6-166}"
-PACKAGE_NAME="${BC250_PROTON_PACKAGE_NAME:-protonge-latest-bc250-11.6-166-x86_64.pkg.tar.zst}"
-PACKAGE_URL="${BC250_PROTON_PACKAGE_URL:-https://github.com/MastaG/linux-cachyos-bc250/releases/download/repo/$PACKAGE_NAME}"
-PACKAGE_SHA256="${BC250_PROTON_PACKAGE_SHA256:-193e0e3b275024231bce8c0b01ed4220507257f86befc7c6fbb940e55a035640}"
+RELEASE_REPOSITORY=MastaG/linux-cachyos-bc250
+RELEASE_TAG=repo
+RELEASE_API="${BC250_PROTON_RELEASE_API:-https://api.github.com/repos/$RELEASE_REPOSITORY/releases/tags/$RELEASE_TAG}"
+PACKAGE_VERSION="${BC250_PROTON_PACKAGE_VERSION:-}"
+PACKAGE_NAME="${BC250_PROTON_PACKAGE_NAME:-}"
+PACKAGE_URL="${BC250_PROTON_PACKAGE_URL:-}"
+PACKAGE_SHA256="${BC250_PROTON_PACKAGE_SHA256:-}"
+PACKAGE_SIZE=
 COMPAT_ROOT="${BC250_PROTON_COMPAT_DIR:-$HOME/.local/share/Steam/compatibilitytools.d}"
 TARGET="$COMPAT_ROOT/$TOOL_NAME"
 STATE_DIR="${BC250_PROTON_STATE_DIR:-$HOME/.local/share/bc250-proton}"
@@ -23,6 +27,101 @@ MESH_TOOL="${BC250_MESH_TOOL:-${SELF%/*}/bc250-mesh-shader.sh}"
 log() { printf '[bc250-proton] %s\n' "$*"; }
 die() { log "$*" >&2; exit 1; }
 sha256_file() { sha256sum "$1" | awk '{print $1}'; }
+
+validate_package_metadata() {
+    [[ "$PACKAGE_VERSION" =~ ^[0-9][0-9A-Za-z._-]*$ ]] \
+        || die "Invalid GE-Proton package version."
+    [[ "$PACKAGE_NAME" =~ ^[0-9A-Za-z][0-9A-Za-z._+-]*$ ]] \
+        || die "Invalid GE-Proton package name."
+    [[ "$PACKAGE_SHA256" =~ ^[0-9a-f]{64}$ ]] \
+        || die "Invalid GE-Proton package checksum."
+}
+
+parse_release_metadata() {
+    local metadata=$1
+    python3 -I - "$metadata" "$RELEASE_REPOSITORY" "$RELEASE_TAG" <<'PY'
+import json
+import re
+import sys
+
+path, repository, wanted_tag = sys.argv[1:]
+with open(path, "r", encoding="utf-8") as stream:
+    release = json.load(stream)
+if release.get("draft") or release.get("prerelease"):
+    raise SystemExit("rolling release is not a stable published release")
+if release.get("tag_name") != wanted_tag:
+    raise SystemExit("unexpected rolling release tag")
+
+pattern = re.compile(
+    r"^protonge-latest-bc250-([0-9]+)\.([0-9]+)-([0-9]+)-x86_64\.pkg\.tar\.zst$"
+)
+candidates = []
+for asset in release.get("assets", []):
+    name = asset.get("name")
+    match = pattern.fullmatch(name) if isinstance(name, str) else None
+    if match and asset.get("state") == "uploaded":
+        candidates.append((tuple(map(int, match.groups())), asset))
+if not candidates:
+    raise SystemExit("rolling release has no valid GE-Proton package asset")
+
+version_key = max(key for key, _ in candidates)
+latest = [asset for key, asset in candidates if key == version_key]
+if len(latest) != 1:
+    raise SystemExit("rolling release has ambiguous latest GE-Proton assets")
+asset = latest[0]
+name = asset["name"]
+version = f"{version_key[0]}.{version_key[1]}-{version_key[2]}"
+url = asset.get("browser_download_url")
+digest = asset.get("digest")
+size = asset.get("size")
+expected_url = f"https://github.com/{repository}/releases/download/{wanted_tag}/{name}"
+if url != expected_url:
+    raise SystemExit("unexpected GE-Proton release download URL")
+if not isinstance(digest, str) or not re.fullmatch(r"sha256:[0-9a-f]{64}", digest):
+    raise SystemExit("GE-Proton release asset has no valid SHA-256 digest")
+if not isinstance(size, int) or size <= 0 or size > 2 * 1024 * 1024 * 1024:
+    raise SystemExit("GE-Proton release asset size is invalid")
+print(version, name, url, digest.split(":", 1)[1], size, sep="\t")
+PY
+}
+
+resolve_package_metadata() {
+    local metadata
+    if [[ -n "$PACKAGE_VERSION" || -n "$PACKAGE_NAME" || -n "$PACKAGE_URL" \
+        || -n "$PACKAGE_SHA256" ]]; then
+        [[ -n "$PACKAGE_VERSION" && -n "$PACKAGE_NAME" && -n "$PACKAGE_URL" \
+            && -n "$PACKAGE_SHA256" ]] \
+            || die "Set all GE-Proton package overrides (version, name, URL, and checksum)."
+        [[ "$PACKAGE_URL" == https://* ]] || die "The GE-Proton package URL must use HTTPS."
+        validate_package_metadata
+        return 0
+    fi
+
+    command -v curl >/dev/null 2>&1 || die "curl is required."
+    metadata=$(mktemp "${TMPDIR:-/tmp}/bc250-proton-release.XXXXXX.json")
+    if ! curl --proto '=https' --tlsv1.2 --retry 3 --retry-all-errors -fsSL \
+        -H 'Accept: application/vnd.github+json' \
+        -H 'X-GitHub-Api-Version: 2022-11-28' \
+        "$RELEASE_API" -o "$metadata"; then
+        rm -f "$metadata"
+        die "Could not fetch the current GE-Proton release metadata."
+    fi
+    if ! IFS=$'\t' read -r PACKAGE_VERSION PACKAGE_NAME PACKAGE_URL \
+        PACKAGE_SHA256 PACKAGE_SIZE < <(parse_release_metadata "$metadata"); then
+        rm -f "$metadata"
+        die "Could not validate the current GE-Proton release metadata."
+    fi
+    rm -f "$metadata"
+    validate_package_metadata
+}
+
+prepare_local_package_metadata() {
+    local archive=$1
+    [[ -n "$PACKAGE_VERSION" && -n "$PACKAGE_SHA256" ]] \
+        || die "A local GE-Proton archive requires package version and checksum overrides."
+    [[ -n "$PACKAGE_NAME" ]] || PACKAGE_NAME=${archive##*/}
+    validate_package_metadata
+}
 
 require_normal_user() {
     [[ $EUID -ne 0 ]] || die "Run as the logged-in Deck user, not with sudo."
@@ -215,8 +314,9 @@ PY
 
 verify_current_tool() {
     verify_tool "$TARGET" \
-        && [[ "$MARKER_VERSION" == "$PACKAGE_VERSION" \
-            && "$MARKER_PACKAGE_SHA" == "$PACKAGE_SHA256" ]]
+        && { [[ -z "$PACKAGE_VERSION" && -z "$PACKAGE_SHA256" ]] \
+            || [[ "$MARKER_VERSION" == "$PACKAGE_VERSION" \
+                && "$MARKER_PACKAGE_SHA" == "$PACKAGE_SHA256" ]]; }
 }
 
 fsync_paths() {
@@ -416,6 +516,8 @@ stage_package() {
 
 install_tool() {
     local supplied=${BC250_PROTON_ARCHIVE:-} archive= temporary= stage old=0 committed=0
+    local size_mib
+    local -a download_args
     require_normal_user
     ensure_paths
     exec 9> "$LOCK_FILE"
@@ -423,6 +525,11 @@ install_tool() {
     recover_removal
     recover_transaction
     require_production_radv
+    if [[ -n "$supplied" ]]; then
+        prepare_local_package_metadata "$supplied"
+    else
+        resolve_package_metadata
+    fi
     if verify_current_tool; then
         log "GE-Proton $PACKAGE_VERSION is already installed and verified."
         return 0
@@ -446,8 +553,15 @@ install_tool() {
     else
         temporary=$(mktemp "${TMPDIR:-/tmp}/bc250-proton.XXXXXX.pkg.tar.zst")
         archive=$temporary
-        log "Downloading GE-Proton $PACKAGE_VERSION (about 731 MB)."
-        curl --retry 3 --retry-all-errors -fL "$PACKAGE_URL" -o "$archive" \
+        if [[ -n "$PACKAGE_SIZE" ]]; then
+            size_mib=$(( (PACKAGE_SIZE + 1024 * 1024 - 1) / (1024 * 1024) ))
+            log "Downloading GE-Proton $PACKAGE_VERSION (about $size_mib MiB)."
+        else
+            log "Downloading GE-Proton $PACKAGE_VERSION."
+        fi
+        download_args=(--proto '=https' --tlsv1.2 --retry 3 --retry-all-errors -fL)
+        [[ -z "$PACKAGE_SIZE" ]] || download_args+=(--max-filesize "$PACKAGE_SIZE")
+        curl "${download_args[@]}" "$PACKAGE_URL" -o "$archive" \
             || die "Could not download $PACKAGE_URL"
     fi
     [[ "$(sha256_file "$archive")" == "$PACKAGE_SHA256" ]] \
@@ -488,7 +602,7 @@ install_tool() {
     [[ -z "${temporary:-}" ]] || rm -f "$temporary"
     trap - EXIT INT TERM HUP
     log "Installed GE-Proton $PACKAGE_VERSION at $TARGET"
-    log "Restart Steam, then select 'GE-Proton 11-6 (BC-250 FSR4)' per game."
+    log "Restart Steam, then select the newly installed BC-250 GE-Proton entry per game."
     log "Do not use FSR4 injection with anti-cheat games; use ordinary Proton or PROTON_FSR4_UPGRADE=0."
 }
 
@@ -536,7 +650,7 @@ print(json.dumps({
     "schemaVersion": 1,
     "state": state,
     "installedVersion": installed or None,
-    "currentVersion": current,
+    "currentVersion": current or None,
     "toolPath": path,
 }, ensure_ascii=True, separators=(",", ":")))
 PY
@@ -575,9 +689,10 @@ usage() {
     cat <<EOF
 Usage: $0 {install|update|status|status-json|uninstall|help}
 
-Installs the checksum-pinned BC-250 GE-Proton $PACKAGE_VERSION build beneath
-$COMPAT_ROOT. FSR4 RADV must already be active. No root filesystem
-changes are made, and Steam prefixes and saves are never removed.
+Discovers the latest BC-250 GE-Proton package from the upstream rolling release,
+validates its GitHub-provided SHA-256 digest, and installs it beneath $COMPAT_ROOT.
+FSR4 RADV must already be active. No root filesystem changes are made, and Steam
+prefixes and saves are never removed.
 EOF
 }
 

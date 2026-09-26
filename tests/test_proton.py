@@ -61,8 +61,31 @@ class ProtonManagerTests(unittest.TestCase):
             "'{\"runtimeState\":\"ready\",\"globalEnabled\":true}'\n",
             encoding="ascii",
         )
+        self.bindir = self.root / "bin"
+        self.bindir.mkdir()
+        flock = self.bindir / "flock"
+        flock.write_text("#!/bin/sh\nexit 0\n", encoding="ascii")
+        flock.chmod(0o755)
+        stat = self.bindir / "stat"
+        stat.write_text(
+            """#!/bin/sh
+if [ "${1:-}" = -c ] && [ "${2:-}" = %a ]; then
+    python3 - "$3" <<'PY'
+import os
+import stat
+import sys
+print(format(stat.S_IMODE(os.stat(sys.argv[1]).st_mode), "o"))
+PY
+else
+    exec /usr/bin/stat "$@"
+fi
+""",
+            encoding="ascii",
+        )
+        stat.chmod(0o755)
         self.env = {
             **os.environ,
+            "PATH": f"{self.bindir}:{os.environ['PATH']}",
             "HOME": str(self.root / "home"),
             "BC250_PROTON_COMPAT_DIR": str(self.root / "compatibilitytools.d"),
             "BC250_PROTON_STATE_DIR": str(self.root / "state"),
@@ -81,22 +104,15 @@ class ProtonManagerTests(unittest.TestCase):
         self.assertTrue(os.access(PROTON, os.X_OK))
         self.assertIn("cp README.md bc250-*.sh", workflow)
 
-    def test_default_package_pin_matches_available_upstream_asset(self):
+    def test_default_package_is_discovered_from_verified_release_metadata(self):
         source = PROTON.read_text(encoding="ascii")
         self.assertIn(
-            'PACKAGE_VERSION="${BC250_PROTON_PACKAGE_VERSION:-11.6-166}"', source
-        )
-        self.assertIn(
-            "protonge-latest-bc250-11.6-166-x86_64.pkg.tar.zst", source
-        )
-        self.assertIn(
-            "https://github.com/MastaG/linux-cachyos-bc250/releases/download/repo/",
+            "https://api.github.com/repos/$RELEASE_REPOSITORY/releases/tags/$RELEASE_TAG",
             source,
         )
-        self.assertIn(
-            "193e0e3b275024231bce8c0b01ed4220507257f86befc7c6fbb940e55a035640",
-            source,
-        )
+        self.assertIn('asset.get("digest")', source)
+        self.assertIn("unexpected GE-Proton release download URL", source)
+        self.assertNotIn("11.6-166", source)
 
     def tearDown(self):
         self.temporary.cleanup()
@@ -109,6 +125,114 @@ class ProtonManagerTests(unittest.TestCase):
             text=True,
             check=check,
         )
+
+    def dynamic_release_env(self, assets):
+        metadata = self.root / "release.json"
+        metadata.write_text(
+            json.dumps(
+                {
+                    "tag_name": "repo",
+                    "draft": False,
+                    "prerelease": False,
+                    "assets": assets,
+                }
+            ),
+            encoding="utf-8",
+        )
+        bindir = self.root / "dynamic-bin"
+        bindir.mkdir(exist_ok=True)
+        curl = bindir / "curl"
+        curl.write_text(
+            """#!/bin/sh
+set -eu
+output=
+url=
+while [ "$#" -gt 0 ]; do
+    case "$1" in
+        -o) output=$2; shift 2 ;;
+        https://*) url=$1; shift ;;
+        *) shift ;;
+    esac
+done
+case "$url" in
+    https://api.example.invalid/*) cp "$BC250_TEST_METADATA" "$output" ;;
+    https://github.com/MastaG/linux-cachyos-bc250/releases/download/repo/*)
+        cp "$BC250_TEST_ARCHIVE" "$output" ;;
+    *) exit 22 ;;
+esac
+""",
+            encoding="ascii",
+        )
+        curl.chmod(0o755)
+        env = {
+            key: value
+            for key, value in self.env.items()
+            if key
+            not in {
+                "BC250_PROTON_ARCHIVE",
+                "BC250_PROTON_PACKAGE_VERSION",
+                "BC250_PROTON_PACKAGE_NAME",
+                "BC250_PROTON_PACKAGE_URL",
+                "BC250_PROTON_PACKAGE_SHA256",
+            }
+        }
+        env.update(
+            {
+                "PATH": f"{bindir}:{env['PATH']}",
+                "BC250_PROTON_RELEASE_API": "https://api.example.invalid/release",
+                "BC250_TEST_METADATA": str(metadata),
+                "BC250_TEST_ARCHIVE": str(self.archive),
+            }
+        )
+        return env
+
+    def release_asset(self, version, *, digest=None, url=None):
+        name = f"protonge-latest-bc250-{version}-x86_64.pkg.tar.zst"
+        return {
+            "id": 123,
+            "name": name,
+            "state": "uploaded",
+            "size": self.archive.stat().st_size,
+            "digest": digest or f"sha256:{self.sha256}",
+            "browser_download_url": url
+            or (
+                "https://github.com/MastaG/linux-cachyos-bc250/"
+                f"releases/download/repo/{name}"
+            ),
+        }
+
+    def test_install_discovers_highest_valid_rolling_release_asset(self):
+        env = self.dynamic_release_env(
+            [self.release_asset("11.7-185"), self.release_asset("11.8-200")]
+        )
+        result = self.run_manager("install", env=env, check=True)
+        self.assertIn("Downloading GE-Proton 11.8-200", result.stdout)
+        self.assertIn("Installed GE-Proton 11.8-200", result.stdout)
+        marker = (
+            Path(env["BC250_PROTON_COMPAT_DIR"])
+            / "protonge-latest-bc250/.bc250-steamos-install"
+        )
+        self.assertEqual(marker.read_text(encoding="ascii"), f"11.8-200 {self.sha256}\n")
+
+    def test_dynamic_release_rejects_noncanonical_download_url(self):
+        asset = self.release_asset(
+            "11.8-200", url="https://example.invalid/untrusted.pkg.tar.zst"
+        )
+        env = self.dynamic_release_env([asset])
+        result = self.run_manager("install", env=env)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("Could not validate", result.stderr)
+        target = Path(env["BC250_PROTON_COMPAT_DIR"]) / "protonge-latest-bc250"
+        self.assertFalse(target.exists())
+
+    def test_dynamic_release_requires_github_sha256_digest(self):
+        asset = self.release_asset("11.8-200", digest="sha512:not-accepted")
+        env = self.dynamic_release_env([asset])
+        result = self.run_manager("install", env=env)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("no valid SHA-256 digest", result.stderr)
+        target = Path(env["BC250_PROTON_COMPAT_DIR"]) / "protonge-latest-bc250"
+        self.assertFalse(target.exists())
 
     def test_install_status_update_and_uninstall(self):
         missing = self.run_manager("status")
