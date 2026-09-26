@@ -325,21 +325,51 @@ def replace_installation(target, replacement):
     backup = target.parent / ".{}.previous-{}".format(target.name, os.getpid())
     if backup.exists() or backup.is_symlink():
         raise UpdateError("Toolkit update backup path already exists")
+    if not target.is_dir() or target.is_symlink():
+        raise UpdateError("Toolkit installation directory is missing or unsafe")
+    if not replacement.is_dir() or replacement.is_symlink():
+        raise UpdateError("Toolkit replacement directory is missing or unsafe")
     try:
-        os.replace(str(target), str(backup))
+        backup.mkdir(mode=0o700)
     except OSError as error:
-        raise UpdateError("Could not stage the previous toolkit installation") from error
+        raise UpdateError("Could not create the toolkit update backup") from error
+
+    previous_entries = []
+    replacement_entries = []
     try:
-        os.replace(str(replacement), str(target))
+        for entry in list(target.iterdir()):
+            os.replace(str(entry), str(backup / entry.name))
+            previous_entries.append(entry.name)
     except OSError as error:
         try:
-            os.replace(str(backup), str(target))
+            for name in reversed(previous_entries):
+                os.replace(str(backup / name), str(target / name))
+            backup.rmdir()
+        except OSError as restore_error:
+            raise UpdateError(
+                "Could not stage or restore the previous toolkit installation"
+            ) from restore_error
+        raise UpdateError("Could not stage the previous toolkit installation") from error
+
+    try:
+        for entry in list(replacement.iterdir()):
+            os.replace(str(entry), str(target / entry.name))
+            replacement_entries.append(entry.name)
+    except OSError as error:
+        try:
+            for name in reversed(replacement_entries):
+                os.replace(str(target / name), str(replacement / name))
+            for name in previous_entries:
+                os.replace(str(backup / name), str(target / name))
+            backup.rmdir()
         except OSError as restore_error:
             raise UpdateError(
                 "Toolkit replacement failed and the previous installation could not be restored"
             ) from restore_error
         raise UpdateError("Could not activate the new toolkit installation") from error
+
     try:
+        replacement.rmdir()
         shutil.rmtree(str(backup))
     except OSError as error:
         raise UpdateError("Toolkit updated, but the previous installation could not be removed") from error

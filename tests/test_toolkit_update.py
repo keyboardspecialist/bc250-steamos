@@ -2,11 +2,13 @@
 """Tests for the Trainer's main toolkit release updater."""
 
 import importlib.util
+import os
 import stat
 import tempfile
 import unittest
 import zipfile
 from pathlib import Path
+from unittest import mock
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -128,7 +130,7 @@ class ToolkitUpdateTests(unittest.TestCase):
                         archive_path, Path(temporary) / "extracted", "v2.0.0"
                     )
 
-    def test_replacement_is_atomic_and_removes_previous_install(self):
+    def test_replacement_is_transactional_and_preserves_install_directory(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             target = root / "bc250-steamos"
@@ -136,10 +138,50 @@ class ToolkitUpdateTests(unittest.TestCase):
             write_install(target, "v1.0.0")
             (target / "old-file").write_text("old", encoding="ascii")
             write_install(replacement, "v2.0.0")
-            UPDATER.replace_installation(target, replacement)
+            original_inode = target.stat().st_ino
+            previous_cwd = Path.cwd()
+            os.chdir(target)
+            try:
+                UPDATER.replace_installation(target, replacement)
+                self.assertTrue(Path.cwd().samefile(target))
+            finally:
+                os.chdir(previous_cwd)
+            self.assertEqual(target.stat().st_ino, original_inode)
             self.assertEqual((target / "VERSION").read_text(encoding="ascii"), "v2.0.0\n")
             self.assertFalse((target / "old-file").exists())
             self.assertFalse(replacement.exists())
+            self.assertEqual(list(root.glob(".bc250-steamos.previous-*")), [])
+
+    def test_replacement_failure_restores_previous_install(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            target = root / "bc250-steamos"
+            replacement = root / "staged"
+            write_install(target, "v1.0.0")
+            (target / "old-file").write_text("old", encoding="ascii")
+            write_install(replacement, "v2.0.0")
+            original_replace = os.replace
+            failed_source = replacement / "bc250-toolkit.sh"
+
+            def fail_during_activation(source, destination):
+                if Path(source) == failed_source:
+                    raise OSError("injected activation failure")
+                return original_replace(source, destination)
+
+            with mock.patch.object(
+                UPDATER.os, "replace", side_effect=fail_during_activation
+            ):
+                with self.assertRaises(UPDATER.UpdateError):
+                    UPDATER.replace_installation(target, replacement)
+
+            self.assertEqual(
+                (target / "VERSION").read_text(encoding="ascii"), "v1.0.0\n"
+            )
+            self.assertEqual((target / "old-file").read_text(encoding="ascii"), "old")
+            self.assertEqual(
+                (replacement / "VERSION").read_text(encoding="ascii"), "v2.0.0\n"
+            )
+            self.assertTrue((replacement / "bc250-toolkit.sh").exists())
             self.assertEqual(list(root.glob(".bc250-steamos.previous-*")), [])
 
 
