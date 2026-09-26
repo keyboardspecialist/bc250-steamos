@@ -723,8 +723,8 @@ void Bc250Bridge::makeMockSnapshot()
         {QStringLiteral("fsr4DllState"), QStringLiteral("ready")},
         {QStringLiteral("fsr4DllInstallCount"), 1},
         {QStringLiteral("nativeMeshState"), QStringLiteral("ready")},
-        {QStringLiteral("nativeMeshIcdPath"), QStringLiteral("/home/deck/.local/share/bc250-mesh-shader/native-mesh/radeon_native_mesh_icd.x86_64.json")},
-        {QStringLiteral("nativeMeshRunnerPath"), QStringLiteral("/home/deck/.local/share/bc250-mesh-shader/native-mesh/bc250-native-mesh-run")}
+        {QStringLiteral("nativeMeshIcdPath"), QStringLiteral("/home/deck/.local/share/bc250-mesh-shader/native-mesh/icd.json")},
+        {QStringLiteral("nativeMeshRunnerPath"), QStringLiteral("/home/deck/.local/share/bc250-mesh-shader/native-mesh/bc250-r2")}
     };
     const auto mockCore = [](int core, int ccx) {
         return QVariantMap{{QStringLiteral("packageId"), 0}, {QStringLiteral("coreId"), core},

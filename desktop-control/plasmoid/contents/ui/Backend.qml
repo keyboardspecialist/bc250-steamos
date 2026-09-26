@@ -209,7 +209,7 @@ QtObject {
 
     function setNativeMeshEnabled(enabled) {
         _startMutation(enabled ? "InstallNativeMesh" : "UninstallNativeMesh", "", [],
-            (enabled ? "Installing" : "Removing") + " private native mesh");
+            (enabled ? "Installing" : "Removing") + " BC250 RADV R2");
     }
 
     function installOptiscaler(candidateId, proxy) {

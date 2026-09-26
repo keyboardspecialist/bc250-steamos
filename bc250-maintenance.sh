@@ -32,6 +32,7 @@ MESH_LOCK_FILE="${BC250_MESH_LOCK_FILE:-$HOME/.cache/bc250-mesh-shader.lock}"
 MESH_GENERATOR="${BC250_GFX1013_GENERATOR:-/usr/lib/systemd/user-environment-generators/60-bc250-gfx1013}"
 PROTON_STATE_DIR="${BC250_PROTON_STATE_DIR:-$HOME/.local/share/bc250-proton}"
 PROTON_COMPAT_DIR="${BC250_PROTON_COMPAT_DIR:-$HOME/.local/share/Steam/compatibilitytools.d}"
+R2_COMPAT_DIR="${BC250_R2_COMPAT_DIR:-$HOME/.local/share/Steam/compatibilitytools.d}"
 
 C0=$'\033[0m'; CB=$'\033[1m'; CD=$'\033[2m'; CI=$'\033[7m'
 CG=$'\033[32m'; CY=$'\033[33m'; CR=$'\033[31m'; CC=$'\033[36m'
@@ -58,7 +59,7 @@ component_label() {
         swap) echo "Compressed swap" ;;
         compute) echo "GPU compute-unit unlock" ;;
         mesh) echo "Mesa / RADV async compute" ;;
-        native-mesh) echo "Private native-mesh profile" ;;
+        native-mesh) echo "BC250 RADV R2" ;;
         proton) echo "BC-250 GE-Proton" ;;
         audio) echo "AMDGPU kernel fixes" ;;
         aic) echo "AIC8800 WiFi / Bluetooth" ;;
@@ -194,7 +195,8 @@ component_has_artifacts() {
         native-mesh)
             [[ -e "$MESH_STATE_DIR/native-mesh" || -L "$MESH_STATE_DIR/native-mesh" \
                 || -e "$MESH_STATE_DIR/native-mesh-install-transaction" \
-                || -L "$MESH_STATE_DIR/native-mesh-install-transaction" ]]
+                || -L "$MESH_STATE_DIR/native-mesh-install-transaction" \
+                || -e "$R2_COMPAT_DIR/BC250-R2" || -L "$R2_COMPAT_DIR/BC250-R2" ]]
             ;;
         proton)
             [[ -e "$PROTON_COMPAT_DIR/protonge-latest-bc250" \
@@ -328,7 +330,7 @@ plan_component() {
         swap) echo "  Disable toolkit swap boot integration and safely remove its inactive disk swapfile after any required reboot." ;;
         compute) echo "  Restore stock CU dispatch when possible and remove boot integration; preserve the WGP profile and UMR." ;;
         mesh) echo "  Remove the alternate RADV ICD and global user environment generator; preserve build caches." ;;
-        native-mesh) echo "  Remove only the private experimental profile; leave global RADV and Steam configuration unchanged." ;;
+        native-mesh) echo "  Remove BC250 RADV R2 and its private Proton copy; preserve global RADV, prefixes, saves, and the original Proton." ;;
         proton) echo "  Remove only BC-250 GE-Proton; preserve Steam prefixes, game saves, and game data." ;;
         audio) echo "  Restore stock AMDGPU modules for every patched kernel; preserve source and build caches." ;;
         aic) echo "  Disable module repair, unload drivers when possible, and remove installed modules, firmware, and device rules." ;;
@@ -730,7 +732,7 @@ maintenance_menu_graph_render() {
                 if [[ "$badge" == *"|"* || "$badge" == *$'\n'* ]]; then
                     die "Invalid generated menu badge: action__remove_native_mesh"
                 fi
-                items+=("Remove Private native-mesh profile|${badge}|Review the plan and remove only this component.")
+                items+=("Remove BC250 RADV R2|${badge}|Remove R2 and its private Proton copy while preserving prefixes, saves, and global RADV.")
                 targets+=("action__remove_native_mesh")
                 badges+=("$badge")
                 if ! badge=$(maintenance_menu_graph_badge action__remove_mesh cleanup); then badge=; fi

@@ -1,6 +1,7 @@
 import hashlib
 import json
 import os
+import shutil
 import struct
 import subprocess
 import tarfile
@@ -16,10 +17,8 @@ UPSTREAM_COMMIT = "d3e6dc062c34d2523db0abe5741d1f5b0dea00d9"
 AMDGPU_REVISION = "smu-8core-metrics-r1"
 MESA_TAG = "mesa-26.2.2"
 RADV_PROFILE_REVISION = "production-fsr4-v4"
-NATIVE_MESH_COMMIT = "d67c00d4aad5797364abc3401d419e76afb04edd"
-NATIVE_MESH_REBASE_SHA256 = (
-    "2dabe48622732d9761efefc1a655909ee775cc36efb49deeaccda585d0fab0ea"
-)
+NATIVE_MESH_RELEASE = "r2-20260921"
+NATIVE_MESH_COMMIT = "3367cd5eed23ab38fddfc0fb52dbc4e17adf6e11"
 
 
 class MeshShaderTests(unittest.TestCase):
@@ -36,6 +35,7 @@ class MeshShaderTests(unittest.TestCase):
             "modinfo": '#!/bin/sh\nprintf "%s\\n" "$BC250_GFX1013_MODULE"\n',
             "stat": '#!/bin/sh\n[ "$2" = %u ] && { echo 0; exit; }\n[ "$2" = %a ] && { echo 644; exit; }\nexec /usr/bin/stat "$@"\n',
             "steamos-readonly": '#!/bin/sh\n[ "$1" != status ] || echo disabled\n',
+            "ldd": "#!/bin/sh\necho 'mock linked dependencies'\n",
         }.items():
             path = bindir / name
             path.write_text(source, encoding="utf-8")
@@ -67,6 +67,17 @@ class MeshShaderTests(unittest.TestCase):
             '#!/bin/sh\nexec shasum -a 256 "$@"\n', encoding="utf-8"
         )
         sha256sum.chmod(0o755)
+        copy = bindir / "cp"
+        copy.write_text(
+            "#!/usr/bin/env bash\n"
+            "args=()\n"
+            "for arg in \"$@\"; do\n"
+            "  [[ \"$arg\" == --reflink=auto ]] || args+=(\"$arg\")\n"
+            "done\n"
+            'exec /bin/cp "${args[@]}"\n',
+            encoding="utf-8",
+        )
+        copy.chmod(0o755)
         module = root / "modules" / "amdgpu.ko.zst"
         marker = root / "modules" / ".bc250-gfx1013-fix"
         audio_marker = root / "modules" / ".bc250-audio-fix"
@@ -108,6 +119,8 @@ class MeshShaderTests(unittest.TestCase):
             "BC250_AMDGPU_REVISION_ACTIVE": str(revision_active),
             "BC250_SCHED_POLICY_PARAM": str(policy),
             "BC250_AMDGPU_BOOT_CONFIG": str(boot_config),
+            "BC250_R2_COMPAT_DIR": str(root / "compatibilitytools.d"),
+            "BC250_R2_STEAM_ROOT": str(root / "steam"),
         }
 
     def install_runtime(self, env, commit=UPSTREAM_COMMIT):
@@ -248,18 +261,63 @@ class MeshShaderTests(unittest.TestCase):
         state = Path(env["BC250_MESH_STATE_DIR"])
         profile = state / "native-mesh"
         profile.mkdir(parents=True)
+        tool = Path(env["BC250_R2_COMPAT_DIR"]) / "BC250-R2"
+        dll = tool / "files/lib/wine/vkd3d-proton/x86_64-windows/d3d12core.dll"
+        dll.parent.mkdir(parents=True)
         driver = profile / "libvulkan_radeon.so"
-        icd = profile / "radeon_native_mesh_icd.x86_64.json"
-        runner = profile / "bc250-native-mesh-run"
-        license_file = profile / "LONEWOLF-LICENSE.md"
-        readme = profile / "LONEWOLF-README.md"
-        limitations = profile / "LONEWOLF-KNOWN_LIMITATIONS.md"
-        driver.write_bytes(b"native mesh driver\n")
+        icd = profile / "icd.json"
+        runner = profile / "bc250-r2"
+        upstream_runner = profile / "run-r2.sh"
+        license_file = profile / "LICENSE"
+        readme = profile / "README.md"
+        third_party = profile / "THIRD-PARTY.md"
+        limitations = profile / "VALIDATION.md"
+        config = profile / "config.json"
+        upstream_manifest = profile / "manifest.json"
+        licenses = profile / "licenses"
+        licenses.mkdir()
+        driver.write_bytes(b"R2 native mesh driver\n")
+        dll.write_bytes(b"R2 patched vkd3d\n")
+        driver_sha = hashlib.sha256(driver.read_bytes()).hexdigest()
+        dll_sha = hashlib.sha256(dll.read_bytes()).hexdigest()
+        env["BC250_R2_DRIVER_SHA256"] = driver_sha
+        env["BC250_R2_VKD3D_SHA256"] = dll_sha
+        env["BC250_R2_ARCHIVE_SHA256"] = "a" * 64
         icd.write_text(
-            '{"file_format_version":"1.0.1","ICD":'
-            '{"library_path": "%s", "library_arch": "64"}}\n' % driver,
+            '{"file_format_version":"1.0.0","ICD":'
+            '{"library_path": "%s", "api_version": "1.3.0"}}\n' % driver,
             encoding="utf-8",
         )
+        (tool / "proton").write_text("#!/bin/sh\nexit 0\n", encoding="ascii")
+        (tool / "proton").chmod(0o755)
+        (tool / "version").write_text("proton-11.0-2c-x86_64\n", encoding="ascii")
+        (tool / "compatibilitytool.vdf").write_text('"BC250-R2"\n', encoding="ascii")
+        (tool / ".bc250-r2-managed").write_text(
+            NATIVE_MESH_RELEASE + "\n", encoding="ascii"
+        )
+        config.write_text(json.dumps({"proton": str(tool / "proton")}), encoding="utf-8")
+        upstream_manifest.write_text(
+            json.dumps(
+                {
+                    "release": NATIVE_MESH_RELEASE,
+                    "proton_base": "proton-11.0-2c-x86_64",
+                    "payload_sha256": {
+                        "payload/libvulkan_radeon.so": driver_sha,
+                        "payload/d3d12core.dll": dll_sha,
+                    },
+                }
+            ),
+            encoding="utf-8",
+        )
+        upstream_runner.write_text(
+            "#!/bin/sh\n"
+            "export RADV_BC250_NATIVE_TASK=0 RADV_BC250_HYBRID_TASK=1\n"
+            "export BC250_COMPACT_VERTICES=false\n"
+            "export VKD3D_BC250_QUEUE_PROBE=compute-to-graphics\n"
+            'exec "$@"\n',
+            encoding="ascii",
+        )
+        upstream_runner.chmod(0o755)
         subprocess.run(
             [
                 "bash",
@@ -274,15 +332,130 @@ class MeshShaderTests(unittest.TestCase):
             env=env,
         )
         runner.chmod(0o755)
-        license_file.write_text("LoneWolf license\n", encoding="utf-8")
-        readme.write_text("LoneWolf README\n", encoding="utf-8")
-        limitations.write_text("LoneWolf limitations\n", encoding="utf-8")
+        license_file.write_text("R2 license\n", encoding="utf-8")
+        readme.write_text("R2 README\n", encoding="utf-8")
+        third_party.write_text("R2 third party\n", encoding="utf-8")
+        limitations.write_text("R2 validation\n", encoding="utf-8")
+        for name in (
+            "mesa-license.rst",
+            "vkd3d-COPYING.txt",
+            "vkd3d-LGPL-2.1.txt",
+        ):
+            (licenses / name).write_text(name + "\n", encoding="utf-8")
         digest = lambda path: hashlib.sha256(path.read_bytes()).hexdigest()
         (profile / "install.conf").write_text(
-            f"{digest(driver)} {digest(icd)} {digest(runner)} "
-            f"{digest(license_file)} {digest(readme)} {digest(limitations)} {MESA_TAG} "
-            f"3281a69a8bfd9f997e91c15ed0e6290cae12dd32 {NATIVE_MESH_COMMIT} "
-            f"{NATIVE_MESH_REBASE_SHA256}\n",
+            f"2 {'a' * 64} {driver_sha} {dll_sha} {digest(icd)} {digest(runner)} "
+            f"{digest(upstream_runner)} {digest(config)} {digest(upstream_manifest)} "
+            f"{digest(license_file)} {digest(readme)} {digest(third_party)} "
+            f"{digest(limitations)} {digest(licenses / 'mesa-license.rst')} "
+            f"{digest(licenses / 'vkd3d-COPYING.txt')} "
+            f"{digest(licenses / 'vkd3d-LGPL-2.1.txt')} "
+            f"{NATIVE_MESH_RELEASE} {NATIVE_MESH_COMMIT}\n",
+            encoding="ascii",
+        )
+
+    def make_r2_archive(self, env, root):
+        bundle = root / "bundle/bc250-r2-linux-x86_64"
+        payload = bundle / "payload"
+        licenses = bundle / "licenses"
+        payload.mkdir(parents=True)
+        licenses.mkdir()
+        driver = payload / "libvulkan_radeon.so"
+        dll = payload / "d3d12core.dll"
+        driver_image = bytearray(64)
+        driver_image[:7] = b"\x7fELF\x02\x01\x01"
+        struct.pack_into("<H", driver_image, 18, 62)
+        driver.write_bytes(driver_image)
+        dll_image = bytearray(128)
+        dll_image[:2] = b"MZ"
+        struct.pack_into("<I", dll_image, 0x3C, 64)
+        dll_image[64:68] = b"PE\0\0"
+        struct.pack_into("<H", dll_image, 68, 0x8664)
+        dll.write_bytes(dll_image)
+        driver_sha = hashlib.sha256(driver.read_bytes()).hexdigest()
+        dll_sha = hashlib.sha256(dll.read_bytes()).hexdigest()
+        manifest = {
+            "release": NATIVE_MESH_RELEASE,
+            "mesa_commit": "424ccf62d2247ad9aff09195e95dac6ff6c4db9f",
+            "mesa_base": "da14d65e4499e66468094be52bff9ea0915a695e",
+            "vkd3d_commit": "3dc6c269a9eaa66aca6b5e6ff958326a3bcffcb0",
+            "vkd3d_base": "212991fc2c266bc0d59f4c4ce8f80f7126508d71",
+            "proton_base": "proton-11.0-2c-x86_64",
+            "payload_sha256": {
+                "payload/libvulkan_radeon.so": driver_sha,
+                "payload/d3d12core.dll": dll_sha,
+            },
+        }
+        (bundle / "manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
+        (bundle / "run.sh").write_text(
+            "#!/bin/sh\n"
+            "export RADV_BC250_NATIVE_TASK=0 RADV_BC250_HYBRID_TASK=1\n"
+            "export BC250_COMPACT_VERTICES=false\n"
+            "export VKD3D_BC250_QUEUE_PROBE=compute-to-graphics\n"
+            'exec "$@"\n',
+            encoding="ascii",
+        )
+        (bundle / "run.sh").chmod(0o755)
+        for name in ("LICENSE", "README.md", "THIRD-PARTY.md", "VALIDATION.md"):
+            (bundle / name).write_text(name + "\n", encoding="utf-8")
+        for name in (
+            "mesa-license.rst",
+            "vkd3d-COPYING.txt",
+            "vkd3d-LGPL-2.1.txt",
+        ):
+            (licenses / name).write_text(name + "\n", encoding="utf-8")
+        archive = root / "bc250-r2-linux-x86_64.tar.gz"
+        with tarfile.open(archive, "w:gz") as output:
+            output.add(bundle, arcname=bundle.name)
+        archive_sha = hashlib.sha256(archive.read_bytes()).hexdigest()
+        proton = root / "Proton 11.0"
+        base_dll = proton / "files/lib/wine/vkd3d-proton/x86_64-windows/d3d12core.dll"
+        base_dll.parent.mkdir(parents=True)
+        base_dll.write_bytes(b"stock vkd3d\n")
+        (proton / "proton").write_text("#!/bin/sh\nexit 0\n", encoding="ascii")
+        (proton / "proton").chmod(0o755)
+        (proton / "toolmanifest.vdf").write_text("stock\n", encoding="ascii")
+        (proton / "version").write_text("proton-11.0-2c-x86_64\n", encoding="ascii")
+        env.update(
+            {
+                "BC250_R2_ARCHIVE": str(archive),
+                "BC250_R2_ARCHIVE_SHA256": archive_sha,
+                "BC250_R2_DRIVER_SHA256": driver_sha,
+                "BC250_R2_VKD3D_SHA256": dll_sha,
+                "BC250_R2_PROTON_BASE": str(proton),
+            }
+        )
+        return archive, proton, driver_sha, dll_sha
+
+    def install_legacy_native_mesh_runtime(self, env):
+        profile = Path(env["BC250_MESH_STATE_DIR"]) / "native-mesh"
+        profile.mkdir(parents=True)
+        files = {
+            "libvulkan_radeon.so": b"legacy driver\n",
+            "radeon_native_mesh_icd.x86_64.json": b"legacy icd\n",
+            "bc250-native-mesh-run": b"#!/bin/sh\nexec \"$@\"\n",
+            "LONEWOLF-LICENSE.md": b"legacy license\n",
+            "LONEWOLF-README.md": b"legacy readme\n",
+            "LONEWOLF-KNOWN_LIMITATIONS.md": b"legacy limitations\n",
+        }
+        for name, content in files.items():
+            (profile / name).write_bytes(content)
+        (profile / "bc250-native-mesh-run").chmod(0o755)
+        digests = [
+            hashlib.sha256((profile / name).read_bytes()).hexdigest()
+            for name in files
+        ]
+        (profile / "install.conf").write_text(
+            " ".join(
+                [
+                    *digests,
+                    MESA_TAG,
+                    "3281a69a8bfd9f997e91c15ed0e6290cae12dd32",
+                    "d67c00d4aad5797364abc3401d419e76afb04edd",
+                    "2dabe48622732d9761efefc1a655909ee775cc36efb49deeaccda585d0fab0ea",
+                ]
+            )
+            + "\n",
             encoding="ascii",
         )
 
@@ -1144,7 +1317,97 @@ refresh_current_generator
                     result.stderr,
                 )
 
-    def test_native_mesh_runner_is_private_attested_and_uses_exact_flags(self):
+    def test_native_mesh_setup_installs_verified_r2_pair_and_uninstalls_cleanly(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            env = self.environment(root)
+            self.install_runtime(env)
+            self.install_legacy_native_mesh_runtime(env)
+            _, proton, _, dll_sha = self.make_r2_archive(env, root)
+            original_proton = hashlib.sha256((proton / "proton").read_bytes()).hexdigest()
+            installed = subprocess.run(
+                [
+                    "bash",
+                    "-c",
+                    'script=$1; set -- help; source "$script" >/dev/null; '
+                    "require_native_mesh_host() { :; }; "
+                    "require_production_kernel_paths() { :; }; cmd_setup_native_mesh",
+                    "_",
+                    str(MESH),
+                ],
+                check=True,
+                capture_output=True,
+                text=True,
+                env=env,
+            )
+            self.assertIn("Installed BC250 RADV R2", installed.stdout)
+            self.assertFalse(
+                (
+                    Path(env["BC250_MESH_STATE_DIR"])
+                    / "native-mesh/LONEWOLF-README.md"
+                ).exists()
+            )
+            status = self.run_status_json(env)
+            self.assertEqual(status["nativeMeshState"], "ready")
+            self.assertTrue(status["nativeMeshRunnerPath"].endswith("/bc250-r2"))
+            tool = Path(env["BC250_R2_COMPAT_DIR"]) / "BC250-R2"
+            patched = tool / "files/lib/wine/vkd3d-proton/x86_64-windows/d3d12core.dll"
+            self.assertEqual(hashlib.sha256(patched.read_bytes()).hexdigest(), dll_sha)
+            self.assertEqual(
+                hashlib.sha256((proton / "proton").read_bytes()).hexdigest(),
+                original_proton,
+            )
+
+            subprocess.run(
+                ["bash", str(MESH), "uninstall", "--native-mesh"],
+                check=True,
+                capture_output=True,
+                text=True,
+                env=env,
+            )
+            self.assertFalse(tool.exists())
+            self.assertFalse(
+                (Path(env["BC250_MESH_STATE_DIR"]) / "native-mesh").exists()
+            )
+            self.assertTrue(proton.exists())
+
+    def test_native_mesh_archive_rejects_links_before_extraction(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            archive = root / "unsafe.tar.gz"
+            with tarfile.open(archive, "w:gz") as output:
+                directory_info = tarfile.TarInfo("bc250-r2-linux-x86_64")
+                directory_info.type = tarfile.DIRTYPE
+                output.addfile(directory_info)
+                link = tarfile.TarInfo(
+                    "bc250-r2-linux-x86_64/payload/libvulkan_radeon.so"
+                )
+                link.type = tarfile.SYMTYPE
+                link.linkname = "../../escaped"
+                output.addfile(link)
+            destination = root / "extract"
+            result = subprocess.run(
+                [
+                    "bash",
+                    "-c",
+                    'script=$1; archive=$2; destination=$3; set -- help; '
+                    'source "$script" >/dev/null; '
+                    'validate_native_mesh_archive "$archive"; '
+                    'extract_native_mesh_archive "$archive" "$destination"',
+                    "_",
+                    str(MESH),
+                    str(archive),
+                    str(destination),
+                ],
+                capture_output=True,
+                text=True,
+            )
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("unsupported BC250 R2 archive entry", result.stderr)
+            self.assertFalse(destination.exists())
+            self.assertFalse((root / "escaped").exists())
+
+    def test_native_mesh_runner_is_private_attested_and_uses_r2_policy(self):
         with tempfile.TemporaryDirectory() as directory:
             env = self.environment(Path(directory))
             self.install_runtime(env)
@@ -1153,39 +1416,22 @@ refresh_current_generator
             self.assertEqual(status["nativeMeshState"], "ready")
             self.assertNotIn(status["nativeMeshIcdPath"], env["VK_DRIVER_FILES"])
 
-            command = "printf '%s|%s|%s|%s' \"$RADV_EXPERIMENTAL\" \"${RADV_BC250_ADVERTISE_TASK-unset}\" \"${RADV_BC250_EXPOSE_FSR-unset}\" \"$VK_DRIVER_FILES\""
-            inherited = {
-                **env,
-                "RADV_EXPERIMENTAL": "foreign,flags",
-                "RADV_BC250_ADVERTISE_TASK": "9",
-                "RADV_BC250_EXPOSE_FSR": "9",
-            }
-            default = subprocess.run(
+            command = (
+                "printf '%s|%s|%s|%s' \"$RADV_BC250_NATIVE_TASK\" "
+                "\"$RADV_BC250_HYBRID_TASK\" \"$BC250_COMPACT_VERTICES\" "
+                "\"$VKD3D_BC250_QUEUE_PROBE\""
+            )
+            launched = subprocess.run(
                 [status["nativeMeshRunnerPath"], "sh", "-c", command],
                 check=True,
                 capture_output=True,
                 text=True,
-                env=inherited,
+                env=env,
             )
-            fields = default.stdout.split("|")
-            self.assertEqual(fields[:3], ["bc250_mesh", "unset", "unset"])
-            self.assertIn(status["nativeMeshIcdPath"], fields[3])
-            self.assertIn(env["BC250_MESH_32BIT_ICD"], fields[3])
-
-            ff7 = subprocess.run(
-                [
-                    status["nativeMeshRunnerPath"],
-                    "--ff7-capabilities",
-                    "sh",
-                    "-c",
-                    command,
-                ],
-                check=True,
-                capture_output=True,
-                text=True,
-                env=inherited,
+            self.assertEqual(
+                launched.stdout.split("|"),
+                ["0", "1", "false", "compute-to-graphics"],
             )
-            self.assertEqual(ff7.stdout.split("|")[:3], ["bc250_mesh", "1", "1"])
 
     def test_native_mesh_runner_requires_current_kernel_and_scheduler(self):
         for target in ("active", "revision", "policy"):
@@ -1207,7 +1453,7 @@ refresh_current_generator
                         "0\n", encoding="ascii"
                     )
                 result = subprocess.run(
-                    [str(state / "native-mesh/bc250-native-mesh-run"), "true"],
+                    [str(state / "native-mesh/bc250-r2"), "true"],
                     capture_output=True,
                     text=True,
                     env=env,
@@ -1216,9 +1462,11 @@ refresh_current_generator
 
     def test_native_mesh_notices_are_attested_by_status_and_runner(self):
         for name in (
-            "LONEWOLF-LICENSE.md",
-            "LONEWOLF-README.md",
-            "LONEWOLF-KNOWN_LIMITATIONS.md",
+            "LICENSE",
+            "README.md",
+            "THIRD-PARTY.md",
+            "VALIDATION.md",
+            "licenses/vkd3d-LGPL-2.1.txt",
         ):
             with self.subTest(name=name), tempfile.TemporaryDirectory() as directory:
                 env = self.environment(Path(directory))
@@ -1228,13 +1476,38 @@ refresh_current_generator
                 (profile / name).write_text("tampered\n", encoding="utf-8")
                 self.assertEqual(self.run_status_json(env)["nativeMeshState"], "invalid")
                 result = subprocess.run(
-                    [str(profile / "bc250-native-mesh-run"), "true"],
+                    [str(profile / "bc250-r2"), "true"],
                     capture_output=True,
                     text=True,
                     env=env,
                 )
                 self.assertNotEqual(result.returncode, 0)
                 self.assertIn("failed hash verification", result.stderr)
+
+    def test_native_mesh_tampered_vkd3d_is_invalid_and_not_removed(self):
+        with tempfile.TemporaryDirectory() as directory:
+            env = self.environment(Path(directory))
+            self.install_runtime(env)
+            self.install_native_mesh_runtime(env)
+            tool = Path(env["BC250_R2_COMPAT_DIR"]) / "BC250-R2"
+            dll = tool / "files/lib/wine/vkd3d-proton/x86_64-windows/d3d12core.dll"
+            dll.write_bytes(b"tampered\n")
+
+            self.assertEqual(self.run_status_json(env)["nativeMeshState"], "invalid")
+            runner = Path(env["BC250_MESH_STATE_DIR"]) / "native-mesh/bc250-r2"
+            launched = subprocess.run(
+                [str(runner), "true"], capture_output=True, text=True, env=env
+            )
+            self.assertNotEqual(launched.returncode, 0)
+            removed = subprocess.run(
+                ["bash", str(MESH), "uninstall", "--native-mesh"],
+                capture_output=True,
+                text=True,
+                env=env,
+            )
+            self.assertNotEqual(removed.returncode, 0)
+            self.assertIn("not a recorded toolkit install", removed.stderr)
+            self.assertTrue(tool.exists())
 
     def test_uninstall_native_mesh_preserves_global_profile(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -1261,31 +1534,29 @@ refresh_current_generator
             for path, expected in preserved.items():
                 self.assertEqual(hashlib.sha256(path.read_bytes()).hexdigest(), expected)
 
-    def test_native_mesh_rebase_is_pinned_and_never_uses_fuzzy_setup(self):
+    def test_native_mesh_r2_release_is_pinned_and_installs_both_payloads(self):
         script = MESH.read_text(encoding="utf-8")
         setup = script.split("cmd_setup_native_mesh() (", 1)[1].split(
             "\n)\n\nmanage_games", 1
         )[0]
-        patch = ROOT / "bc250-mesa-patches/0010-lonewolf-native-mesh-mesa-26.2.2-rebase.patch"
-        self.assertEqual(hashlib.sha256(patch.read_bytes()).hexdigest(), NATIVE_MESH_REBASE_SHA256)
         self.assertIn(f'NATIVE_MESH_COMMIT="{NATIVE_MESH_COMMIT}"', script)
-        self.assertIn("0001-gfx1013-compute-queue-fix.patch", setup)
-        for number in range(5, 10):
-            self.assertIn(f"000{number}-", setup)
-        self.assertIn('git -C "$source" apply --check "$NATIVE_MESH_REBASE"', setup)
-        self.assertNotIn("--3way", setup)
-        self.assertNotIn("--3-way", setup)
-        self.assertNotIn("--fuzz", setup[setup.index('git -C "$source" apply --check'):])
+        self.assertIn('NATIVE_MESH_RELEASE="r2-20260921"', script)
+        self.assertIn(
+            "36188f341adbbd3f61069155601b18eda2e90d557bf4d16005a0b44b177e5a40",
+            script,
+        )
+        self.assertIn('validate_native_mesh_archive "$archive"', setup)
+        self.assertIn('validate_native_mesh_bundle "$bundle"', setup)
+        self.assertIn('"$bundle/payload/libvulkan_radeon.so"', setup)
+        self.assertIn('"$bundle/payload/d3d12core.dll"', setup)
+        self.assertIn('cp -a --reflink=auto "$proton_base/."', setup)
+        self.assertNotIn("meson setup", setup)
         runner = script.split("render_native_mesh_runner() {", 1)[1].split(
             "\n}\n\nread_native_mesh_manifest", 1
         )[0]
         self.assertNotIn("GENERATOR", runner)
-        self.assertIn("export RADV_EXPERIMENTAL=bc250_mesh", runner)
-        for notice in (
-            "LONEWOLF-LICENSE.md",
-            "LONEWOLF-README.md",
-            "LONEWOLF-KNOWN_LIMITATIONS.md",
-        ):
+        self.assertIn('exec "\\$UPSTREAM_RUNNER" "\\$@"', runner)
+        for notice in ("LICENSE", "README.md", "THIRD-PARTY.md", "VALIDATION.md"):
             self.assertIn(f'sha256_file "$profile_stage/{notice}"', setup)
 
     def test_all_generated_activation_scripts_attest_amdgpu_revision(self):
@@ -1694,17 +1965,18 @@ refresh_current_generator
             profile = state / "native-mesh"
             transaction = state / "native-mesh-install-transaction"
             previous = transaction / "previous"
-            previous.mkdir(parents=True)
+            transaction.mkdir(parents=True)
             expected = {}
-            for source in profile.iterdir():
-                backup = previous / source.name
-                backup.write_bytes(source.read_bytes())
-                backup.chmod(source.stat().st_mode)
-                expected[source.name] = hashlib.sha256(source.read_bytes()).hexdigest()
+            shutil.copytree(profile, previous)
+            for source in profile.rglob("*"):
+                if source.is_file():
+                    expected[source.relative_to(profile).as_posix()] = hashlib.sha256(
+                        source.read_bytes()
+                    ).hexdigest()
             (transaction / "transaction.conf").write_text(
                 "swapping 1\n", encoding="ascii"
             )
-            (profile / "LONEWOLF-README.md").write_text(
+            (profile / "README.md").write_text(
                 "interrupted\n", encoding="utf-8"
             )
 
@@ -1727,8 +1999,11 @@ refresh_current_generator
             self.assertEqual(self.run_status_json(env)["nativeMeshState"], "ready")
             self.assertEqual(
                 {
-                    path.name: hashlib.sha256(path.read_bytes()).hexdigest()
-                    for path in profile.iterdir()
+                    path.relative_to(profile).as_posix(): hashlib.sha256(
+                        path.read_bytes()
+                    ).hexdigest()
+                    for path in profile.rglob("*")
+                    if path.is_file()
                 },
                 expected,
             )
@@ -1742,15 +2017,11 @@ refresh_current_generator
             profile = state / "native-mesh"
             transaction = state / "native-mesh-install-transaction"
             previous = transaction / "previous"
-            previous.mkdir(parents=True)
-            for source in profile.iterdir():
-                backup = previous / source.name
-                backup.write_bytes(source.read_bytes())
-                backup.chmod(source.stat().st_mode)
+            shutil.copytree(profile, previous)
             (transaction / "transaction.conf").write_text(
                 "swapping 1\n", encoding="ascii"
             )
-            (previous / "LONEWOLF-KNOWN_LIMITATIONS.md").write_text(
+            (previous / "VALIDATION.md").write_text(
                 "tampered backup\n", encoding="utf-8"
             )
             current = profile / "libvulkan_radeon.so"
@@ -2175,7 +2446,7 @@ ensure_radv_prerequisites
     def test_interactive_menu_can_remove_only_native_mesh(self):
         script = MESH.read_text(encoding="utf-8")
         graph = (ROOT / "menus/mesh-shader.mmd").read_text(encoding="utf-8")
-        self.assertIn("Remove private LoneWolf native mesh", graph)
+        self.assertIn("Remove BC250 RADV R2", graph)
         self.assertIn(
             "action__native_mesh_remove)", script
         )

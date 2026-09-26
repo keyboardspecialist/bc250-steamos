@@ -697,14 +697,15 @@ query patches `0002` through `0004` are not downloaded or applied. Build output
 must contain the FSR4 feature markers and pass ELF, linkage, and
 dependency checks before installation.
 
-A separate, opt-in private profile adds LoneWolf's physical-GFX10 native-mesh
-backend from commit `d67c00d4aad5797364abc3401d419e76afb04edd`. The toolkit
-maintains a deterministic Mesa 26.2.2 rebase on top of the same `0001` and
-`0005`-`0009` composition; this rebase is not represented as an upstream
-LoneWolf release. Setup verifies the original and rebased patch hashes and
-uses strict application without fuzz or 3-way fallback. LoneWolf's license and
-known-limitations notices are retained in `bc250-mesa-patches/` and in the
-installed private profile.
+A separate, opt-in profile installs
+[`luckiskind/bc250-radv-r2`](https://github.com/luckiskind/bc250-radv-r2)
+release `r2-20260921` at commit
+`3367cd5eed23ab38fddfc0fb52dbc4e17adf6e11`. Unlike the retired LoneWolf-only
+profile, R2 is not just a Mesa patch: D3D12 games require its RADV driver and
+patched vkd3d core together. The toolkit verifies the release archive and both
+payload hashes, then installs the driver alongside a private copy of the exact
+tested Proton `11.0-2c` base. The original Proton and system Mesa remain
+unchanged.
 
 Open the menu as the logged-in user:
 
@@ -739,25 +740,26 @@ strictly verifies that signed SteamOS fallback package when needed. This also
 supports games
 that launch a mixture of 64-bit and 32-bit Vulkan processes.
 
-The native-mesh profile has its own x86-64 driver, ICD, attested runner,
-manifest, and transaction. It never references the global environment
-generator and does not change Steam configuration. Its 32-bit fallback remains
-SteamOS's signed stock RADV. The current patched compute kernel and active
-`amdgpu.sched_policy=2` are mandatory because the private profile includes the
-same async-compute changes. After `setup --native-mesh`, use one of these Steam
-launch options manually:
+The R2 profile has its own x86-64 driver, ICD, attested runner, private Proton
+copy, patched `d3d12core.dll`, manifest, and transaction. It never references
+the global environment generator and does not alter game settings. The current
+patched compute kernel and active `amdgpu.sched_policy=2` are mandatory. Flatpak
+Steam and 32-bit games are not qualified by upstream. Install Proton 11.0-2c
+through native Steam before setup, then restart Steam and select
+**BC250 R2 (experimental)** in the eligible game's Compatibility settings. Add
+this launch option manually. If Proton is outside Steam's default library, set
+`BC250_R2_PROTON_BASE="/absolute/path/to/Proton 11.0"` while running setup.
 
 ```text
-~/.local/share/bc250-mesh-shader/native-mesh/bc250-native-mesh-run %command%
-~/.local/share/bc250-mesh-shader/native-mesh/bc250-native-mesh-run --ff7-capabilities %command%
+~/.local/share/bc250-mesh-shader/native-mesh/bc250-r2 %command%
 ```
 
-The default runner sets `RADV_EXPERIMENTAL` to exactly `bc250_mesh` and clears
-the FF7 capability switches. `--ff7-capabilities` additionally sets
-`RADV_BC250_ADVERTISE_TASK=1` and `RADV_BC250_EXPOSE_FSR=1`. Here `FSR` means
-fragment shading rate, not FidelityFX Super Resolution. Task capability
-advertisement does not implement safe Task execution. Remove only this private
-profile with `./bc250-mesh-shader.sh uninstall --native-mesh`.
+Both the compatibility-tool selection and launch option are required. R2 uses
+native direct mesh dispatch where eligible, compute-emulated TASK, and a patched
+vkd3d compute-to-graphics queue-routing workaround. Compact vertices and native
+TASK remain disabled in the preserved recovery policy. Remove R2 and only its
+private Proton copy with `./bc250-mesh-shader.sh uninstall --native-mesh`;
+prefixes, saves, the original Proton, and global RADV remain untouched.
 
 Do not use this ICD with the stock kernel module. The alternate driver exposes
 dedicated compute queues that require the kernel lifecycle repair, and upstream
@@ -783,13 +785,11 @@ do not create per-game records.
 
 The global alternate build remains x86-64 only. Its async-compute and FSR4
 changes therefore do not apply to 32-bit processes; those processes use the
-stock SteamOS RADV fallback instead. The global profile still does not apply
-the old optional GFX1013 mesh/task and query patches, which upstream disabled
-after mesh/task workloads caused an unrecoverable GPU hang. LoneWolf's newer
-private physical-GFX10 implementation is isolated behind explicit runner
-opt-in and retains fail-closed limitations for unsupported Task, CullPrimitive,
-GPL, shader-object, DGC, query, and special-output paths. It remains an
-experimental preview rather than full `VK_EXT_mesh_shader` conformance.
+stock SteamOS RADV fallback instead. The global profile still omits the old
+unsafe mesh/task and query patches. R2 is separately isolated behind explicit
+compatibility-tool and runner opt-in. It is an experimental prerelease, not
+Vulkan/D3D conformance certification: board hangs, GPU context loss, visual
+errors, memory pressure, and queue-sensitive failures remain possible.
 
 An existing environment generator or legacy V3 runner from an older toolkit
 cannot be deactivated merely by replacing these scripts. After upgrading, run

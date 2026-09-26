@@ -402,7 +402,7 @@ show_auto_base_installation_plan() {
     printf '%s\n' "    - AMDGPU kernel fixes"
     printf '%s\n' "    - Mesa / RADV async compute and its scheduler policy"
     printf '%s\n' "    - Required signed packages, storage, and update protection"
-    printf '%s\n' "  Excludes hardware unlocks, tuning, swap, device-specific drivers, interfaces, FSR4, and private native mesh."
+    printf '%s\n' "  Excludes hardware unlocks, tuning, swap, device-specific drivers, interfaces, FSR4, and BC250 RADV R2."
     printf '%s\n' "  Re-run this same option after each requested reboot to resume."
 }
 
@@ -893,14 +893,14 @@ show_status() {
     state=$(json_field "$radv_output" nativeMeshState || true)
     detail=$(json_field "$radv_output" nativeMeshRunnerPath || true)
     case "$state" in
-        ready) status_row "Private native-mesh profile" "installed" good "manual per-game runner: $detail" ;;
-        not-installed) status_row "Private native-mesh profile" "not installed" dim "optional; never globally enabled or added to Steam" ;;
+        ready) status_row "BC250 RADV R2" "installed" good "private Proton + per-game runner: $detail" ;;
+        not-installed) status_row "BC250 RADV R2" "not installed" dim "optional experimental per-game RADV/vkd3d pair" ;;
         invalid)
-            status_row "Private native-mesh profile" "incomplete" bad "repair or remove the private profile"
-            failed=1; failed_components+=("Private native-mesh profile") ;;
+            status_row "BC250 RADV R2" "incomplete" bad "repair or remove R2 and its private Proton copy"
+            failed=1; failed_components+=("BC250 RADV R2") ;;
         *)
-            status_row "Private native-mesh profile" "unavailable" bad "Mesa / RADV status probe failed"
-            failed=1; failed_components+=("Private native-mesh profile") ;;
+            status_row "BC250 RADV R2" "unavailable" bad "Mesa / RADV status probe failed"
+            failed=1; failed_components+=("BC250 RADV R2") ;;
     esac
 
     state=$(status_value "$proton_output" "state: " || true)
@@ -1445,7 +1445,7 @@ menu_graph_render() {
                 if [[ "$badge" == *"|"* || "$badge" == *$'\n'* ]]; then
                     die "Invalid generated menu badge: child__radv"
                 fi
-                items+=("GPU Driver and FSR4 Options|${badge}|Manage Mesa and RADV, portable FSR4 DLLs, native mesh, or cleanup.")
+                items+=("GPU Driver and FSR4 Options|${badge}|Manage Mesa and RADV, portable FSR4 DLLs, experimental BC250 RADV R2, or cleanup.")
                 targets+=("child__radv")
                 badges+=("$badge")
                 if ! badge=$(menu_graph_badge menu__cmd_proton_menu menu); then badge=; fi

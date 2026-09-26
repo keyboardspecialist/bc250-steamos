@@ -1429,7 +1429,7 @@ class BackendMutationTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(status["fsr4DllState"], "not-installed")
         self.assertEqual(status["fsr4DllInstallCount"], 0)
         self.assertEqual(status["nativeMeshState"], "not-installed")
-        self.assertTrue(status["nativeMeshRunnerPath"].endswith("/bc250-native-mesh-run"))
+        self.assertTrue(status["nativeMeshRunnerPath"].endswith("/bc250-r2"))
         self.assertEqual(
             status["icdPath"], "/home/deck/radeon_driconf_icd.x86_64.json"
         )
@@ -1458,8 +1458,8 @@ class BackendMutationTests(unittest.IsolatedAsyncioTestCase):
                     "fsr4DllState": "ready",
                     "fsr4DllInstallCount": 2,
                     "nativeMeshState": "ready",
-                    "nativeMeshIcdPath": "/home/deck/.local/share/bc250-mesh-shader/native-mesh/radeon_native_mesh_icd.x86_64.json",
-                    "nativeMeshRunnerPath": "/home/deck/.local/share/bc250-mesh-shader/native-mesh/bc250-native-mesh-run",
+                    "nativeMeshIcdPath": "/home/deck/.local/share/bc250-mesh-shader/native-mesh/icd.json",
+                    "nativeMeshRunnerPath": "/home/deck/.local/share/bc250-mesh-shader/native-mesh/bc250-r2",
                     "error": None,
                     "games": [
                         {
@@ -1484,7 +1484,7 @@ class BackendMutationTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(status["fsr4DllState"], "ready")
         self.assertTrue(status["fsr4RunnerPath"].endswith("/bc250-fsr4-run"))
         self.assertEqual(status["nativeMeshState"], "ready")
-        self.assertTrue(status["nativeMeshRunnerPath"].endswith("/bc250-native-mesh-run"))
+        self.assertTrue(status["nativeMeshRunnerPath"].endswith("/bc250-r2"))
         self.assertEqual(status["games"][0]["executable"], "bc250-steam-1462040")
         backend._user_tool.assert_awaited_once_with(
             "bc250-mesh-shader.sh", "status-json", timeout=30

@@ -35,36 +35,32 @@ markers in the final ELF driver. Patches `0002` through `0004` are deliberately
 omitted because the mesh/task path is unsafe on this hardware and the broad
 GFX10.3 override is not required by the FSR4 profile.
 
-## LoneWolf Native-Mesh Profile
+## BC250 RADV R2 Native-Mesh Profile
 
-The optional private profile combines that unchanged Mesa `mesa-26.2.2`,
-async-compute, and FSR4 composition with LoneWolf's physical-GFX10 native-mesh
-work from
-[`lonewolf0622/BC250-Native-Mesh-Shaders-`](https://github.com/lonewolf0622/BC250-Native-Mesh-Shaders-)
-at commit `d67c00d4aad5797364abc3401d419e76afb04edd`. The upstream patch is
-SHA-256 `bb3561153c97413b9c4a348b09a1219e7971b5f1490963c28a238733cc946fed`
-and targets Mesa 26.1.4 commit
-`6dfbc555b4128ee51139c5f78c5aba2594c9701b`.
+The optional private profile consumes
+[`luckiskind/bc250-radv-r2`](https://github.com/luckiskind/bc250-radv-r2)
+prerelease `r2-20260921` at commit
+`3367cd5eed23ab38fddfc0fb52dbc4e17adf6e11`. The release archive SHA-256 is
+`36188f341adbbd3f61069155601b18eda2e90d557bf4d16005a0b44b177e5a40`.
+Its RADV driver SHA-256 is
+`ee8b43e646036e6fde20040dbd18afb40da63f12b79d5c0826fcbdd9c0fae58e`,
+and its patched vkd3d core SHA-256 is
+`1dd2de3737fa70b2131368304c36d8fae0797fb7f3bfe1357b207c59739686c5`.
+Both values must also match the release manifest.
 
-`0010-lonewolf-native-mesh-mesa-26.2.2-rebase.patch` is a
-**toolkit-maintained rebase**, not an upstream LoneWolf release. Its SHA-256 is
-`2dabe48622732d9761efefc1a655909ee775cc36efb49deeaccda585d0fab0ea`.
-It adapts LoneWolf's patch to Mesa 26.2's compiler-info/API changes and to the
-already-applied `0001` plus `0005` through `0009` composition. Setup verifies
-both upstream and rebased patch hashes, applies every patch without fuzz or
-3-way fallback, and retains LoneWolf's license, README, and known-limitations
-notices.
+R2 substantially extends the earlier LoneWolf baseline. Native mesh-only draws
+use direct dispatch where eligible, while application TASK shaders use a
+compute-emulated producer/native-mesh-consumer path. The patched vkd3d core
+contains the matching compute-to-graphics queue workaround, so the toolkit
+installs both payloads and creates a private copy of exactly Proton 11.0-2c.
+Using the RADV payload alone is not the supported D3D12 configuration.
 
-This profile is x86-64 and private. Its attested runner routes 32-bit processes
-to the stock SteamOS i686 RADV ICD and sets `RADV_EXPERIMENTAL` to exactly
-`bc250_mesh`. `--ff7-capabilities` additionally sets
-`RADV_BC250_ADVERTISE_TASK=1` and `RADV_BC250_EXPOSE_FSR=1`; the latter means
-fragment shading rate, not FidelityFX Super Resolution. Capability
-advertisement does not make Task execution safe. The current patched compute
-kernel and active `amdgpu.sched_policy=2` are required because this combined
-profile also contains async compute. It has independent install, transaction,
-status, uninstall, and purge gates, is never exported globally, and does not
-edit Steam launch options.
+The current patched compute kernel and active `amdgpu.sched_policy=2` remain
+required. R2 is x86-64, never exported globally, and requires native Steam,
+explicit compatibility-tool selection, plus its per-game runner. Flatpak Steam
+and 32-bit games are not qualified. Compact vertices and native TASK remain
+disabled. The old LoneWolf manifest constants remain only to recognize,
+replace, or safely remove toolkit-owned legacy profiles.
 
 The GFX1013 async-compute kernel lifecycle remains based on
 `DryhoppedIPA/bc250-gfx1013-fix` commit
@@ -96,6 +92,6 @@ All FSR4 paths remain experimental BC-250 software. They can regress
 performance, corrupt frames, hang, or reset the GPU. Qualify one game at a time,
 retain the portable rollback route while evaluating integrated GE-Proton, and
 do not use DLL injection or FSR4 upgrade with anti-cheat games.
-The LoneWolf profile is also an experimental preview, not a claim of full
-`VK_EXT_mesh_shader` compliance. Read `LONEWOLF-KNOWN_LIMITATIONS.md` before
-use.
+BC250 RADV R2 is an experimental prerelease, not a claim of Vulkan or D3D
+conformance. Its installed `VALIDATION.md` documents known hangs, memory
+failures, and unqualified paths.

@@ -50,8 +50,8 @@ TestCase {
             {"id": "proton-remove", "title": "Remove Proton", "verb": "REMOVE", "description": "Remove Proton.", "destructive": true},
             {"id": "graphics-setup", "title": "Install graphics stack", "verb": "INSTALL / RESUME", "description": "Install graphics.", "destructive": false},
             {"id": "mesh-remove", "title": "Remove RADV", "verb": "REMOVE", "description": "Remove RADV.", "destructive": true}
-            ,{"id": "native-mesh-install", "title": "Install private native mesh", "verb": "BUILD + INSTALL", "description": "Never globally enabled and Steam is not edited.", "destructive": false}
-            ,{"id": "native-mesh-remove", "title": "Remove private native mesh", "verb": "REMOVE", "description": "Leave global RADV unchanged.", "destructive": true}
+            ,{"id": "native-mesh-install", "title": "Install BC250 RADV R2", "verb": "INSTALL", "description": "Private RADV, vkd3d, and Proton pair for per-game use.", "destructive": false}
+            ,{"id": "native-mesh-remove", "title": "Remove BC250 RADV R2", "verb": "REMOVE", "description": "Preserve global RADV, prefixes, saves, and original Proton.", "destructive": true}
         ]
         property bool refreshing: false
         property bool running: false

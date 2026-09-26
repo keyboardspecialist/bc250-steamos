@@ -112,36 +112,36 @@ ColumnLayout {
     }
 
     Components.Section {
-        title: "Private Native Mesh"
+        title: "BC250 RADV R2"
         Components.StatusRow {
-            label: "Native-mesh profile"
+            label: "R2 profile"
             value: root.mesh.nativeMeshState || "Unavailable"
             health: root.mesh.nativeMeshState === "ready" ? 1 : root.mesh.nativeMeshState === "invalid" ? -1 : 0
         }
-        Components.StatusRow { label: "Private ICD"; value: root.mesh.nativeMeshIcdPath || "Unavailable" }
-        Components.StatusRow { label: "Private runner"; value: root.mesh.nativeMeshRunnerPath || "Unavailable" }
+        Components.StatusRow { label: "R2 ICD"; value: root.mesh.nativeMeshIcdPath || "Unavailable" }
+        Components.StatusRow { label: "R2 runner"; value: root.mesh.nativeMeshRunnerPath || "Unavailable" }
         Components.ActionButton {
             visible: root.mesh.nativeMeshState === "not-installed"
-            text: "Install private native mesh"
+            text: "Install BC250 RADV R2"
             enabled: !root.backend.busy && root.mesh.kernelReady && root.mesh.schedulerActive
             disabledReason: root.backend.busy ? root.backend.busyLabel
                 : !root.mesh.kernelReady ? "Install and activate the patched AMDGPU module first."
                 : !root.mesh.schedulerActive ? "Reboot with amdgpu.sched_policy=2 active first." : ""
             onClicked: confirmation.ask(
-                "Install the private native-mesh profile?",
-                "Build the experimental combined async-compute, FSR4, and physical-GFX10 native-mesh ICD. It is not enabled globally and Steam launch options are not changed.",
+                "Install experimental BC250 RADV R2?",
+                "Install the verified R2 RADV and vkd3d pair in a private Proton 11.0-2c copy. It is not enabled globally and game settings are not changed.",
                 false,
                 function() { root.backend.setNativeMeshEnabled(true); })
         }
         Components.ActionButton {
             visible: root.mesh.nativeMeshState && root.mesh.nativeMeshState !== "not-installed"
-            text: "Remove private native mesh"
+            text: "Remove BC250 RADV R2"
             enabled: !root.backend.busy && root.mesh.nativeMeshState === "ready"
             disabledReason: root.backend.busy ? root.backend.busyLabel
                 : "Invalid profile state must be repaired from the toolkit CLI."
             onClicked: confirmation.ask(
-                "Remove the private native-mesh profile?",
-                "Remove only the private profile. The global RADV runtime and Steam configuration are unchanged.",
+                "Remove BC250 RADV R2?",
+                "Remove R2 and its private Proton copy. Global RADV, prefixes, saves, and the original Proton are unchanged.",
                 true,
                 function() { root.backend.setNativeMeshEnabled(false); })
         }
@@ -149,7 +149,7 @@ ColumnLayout {
             Layout.fillWidth: true
             visible: true
             type: Kirigami.MessageType.Information
-            text: "This profile is never enabled globally. Add the displayed runner to a game's Steam launch options manually when required."
+            text: "R2 is never enabled globally. Select BC250 R2 (experimental) in Steam and add the displayed runner to the game's launch options."
         }
     }
 

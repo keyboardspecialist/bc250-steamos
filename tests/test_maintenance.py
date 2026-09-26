@@ -282,8 +282,11 @@ class MaintenanceTests(unittest.TestCase):
                 "exit 2\n",
                 encoding="utf-8",
             )
-            profile = Path(env["HOME"]) / ".local/share/bc250-mesh-shader/native-mesh"
-            profile.mkdir(parents=True)
+            compatibility_tool = (
+                Path(env["HOME"])
+                / ".local/share/Steam/compatibilitytools.d/BC250-R2"
+            )
+            compatibility_tool.mkdir(parents=True)
 
             status = subprocess.run(
                 ["bash", str(MAINTENANCE), "status"],
@@ -292,7 +295,7 @@ class MaintenanceTests(unittest.TestCase):
                 text=True,
                 env=env,
             )
-            self.assertIn("Private native-mesh profile: partial", status.stdout)
+            self.assertIn("BC250 RADV R2:               partial", status.stdout)
 
             subprocess.run(
                 ["bash", str(MAINTENANCE), "uninstall", "all", "--yes"],

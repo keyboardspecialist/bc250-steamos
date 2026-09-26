@@ -484,7 +484,7 @@ class ToolkitTests(unittest.TestCase):
         mesh.write_text(
             "#!/usr/bin/env bash\n"
             "[[ \"${1:-}\" == status-json ]] || exit 2\n"
-            "printf '%s\\n' '{\"runtimeState\":\"not-installed\",\"kernelReady\":false,\"schedulerConfigured\":false,\"schedulerActive\":false,\"globalEnabled\":false,\"nativeMeshState\":\"not-installed\",\"nativeMeshRunnerPath\":\"/tmp/bc250-native-mesh-run\"}'\n",
+            "printf '%s\\n' '{\"runtimeState\":\"not-installed\",\"kernelReady\":false,\"schedulerConfigured\":false,\"schedulerActive\":false,\"globalEnabled\":false,\"nativeMeshState\":\"not-installed\",\"nativeMeshRunnerPath\":\"/tmp/bc250-r2\"}'\n",
             encoding="utf-8",
         )
         proton = root / "bc250-proton.sh"

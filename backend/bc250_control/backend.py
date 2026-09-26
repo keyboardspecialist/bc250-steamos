@@ -3492,11 +3492,11 @@ class ToolkitBackend:
                 "nativeMeshState": "not-installed",
                 "nativeMeshIcdPath": str(
                     self.user_home
-                    / ".local/share/bc250-mesh-shader/native-mesh/radeon_native_mesh_icd.x86_64.json"
+                    / ".local/share/bc250-mesh-shader/native-mesh/icd.json"
                 ),
                 "nativeMeshRunnerPath": str(
                     self.user_home
-                    / ".local/share/bc250-mesh-shader/native-mesh/bc250-native-mesh-run"
+                    / ".local/share/bc250-mesh-shader/native-mesh/bc250-r2"
                 ),
                 "error": None,
                 "games": [],
@@ -3552,10 +3552,10 @@ class ToolkitBackend:
         native_mesh_root = self.user_home / ".local/share/bc250-mesh-shader/native-mesh"
         native_mesh_icd_path = status.get(
             "nativeMeshIcdPath",
-            str(native_mesh_root / "radeon_native_mesh_icd.x86_64.json"),
+            str(native_mesh_root / "icd.json"),
         )
         native_mesh_runner_path = status.get(
-            "nativeMeshRunnerPath", str(native_mesh_root / "bc250-native-mesh-run")
+            "nativeMeshRunnerPath", str(native_mesh_root / "bc250-r2")
         )
         status_error = status.get("error")
         if mesa_version is not None and not isinstance(mesa_version, str):
@@ -3634,7 +3634,7 @@ class ToolkitBackend:
                 "bc250-mesh-shader.sh", "setup", "--native-mesh", timeout=3600
             )
             return {
-                "message": "The private native-mesh profile was installed. Steam launch options were not changed."
+                "message": "BC250 RADV R2 was installed. Steam launch options were not changed; restart Steam, select BC250 R2 (experimental), and add the reported runner manually."
             }
 
         return await self._mutate(action)
@@ -3645,7 +3645,7 @@ class ToolkitBackend:
                 "bc250-mesh-shader.sh", "uninstall", "--native-mesh", timeout=120
             )
             return {
-                "message": "The private native-mesh profile was removed. The global RADV runtime was unchanged."
+                "message": "BC250 RADV R2 and its private Proton copy were removed; the global RADV runtime was unchanged, as were prefixes, saves, and the original Proton."
             }
 
         return await self._mutate(action)
