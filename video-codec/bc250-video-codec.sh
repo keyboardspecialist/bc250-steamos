@@ -263,13 +263,36 @@ with tarfile.open(archive, "r:gz") as bundle:
 PY
 }
 
-build_prerequisites_ready() {
-    local command
+missing_build_prerequisites() {
+    local command package
     for command in cmake gcc make pkg-config glslangValidator; do
-        command -v "$command" >/dev/null 2>&1 || return 1
+        command -v "$command" >/dev/null 2>&1 || echo "command:$command"
     done
-    pkg-config --exists libva libdrm || return 1
-    [[ -r /usr/include/vulkan/vulkan.h ]] || return 1
+    if command -v pkg-config >/dev/null 2>&1; then
+        for package in libva libdrm vulkan; do
+            pkg-config --exists "$package" 2>/dev/null || echo "pkg-config:$package"
+        done
+    fi
+    [[ -r /usr/include/va/va.h ]] || echo "header:/usr/include/va/va.h"
+    [[ -r /usr/include/xf86drm.h ]] || echo "header:/usr/include/xf86drm.h"
+    [[ -r /usr/include/vulkan/vulkan.h ]] || echo "header:/usr/include/vulkan/vulkan.h"
+    if command -v gcc >/dev/null 2>&1 \
+        && command -v pkg-config >/dev/null 2>&1 \
+        && pkg-config --exists libva libdrm vulkan 2>/dev/null; then
+        printf '%s\n' \
+            '#include <va/va.h>' \
+            '#include <xf86drm.h>' \
+            '#include <vulkan/vulkan.h>' \
+            '#include <omp.h>' \
+            'int main(void) { return 0; }' \
+            | gcc -x c -fopenmp $(pkg-config --cflags --libs libva libdrm vulkan) \
+                -o /dev/null - >/dev/null 2>&1 \
+            || echo "compiler-link-probe:libva+libdrm+vulkan+openmp"
+    fi
+}
+
+build_prerequisites_ready() {
+    [[ -z "$(missing_build_prerequisites)" ]]
 }
 
 install_build_prerequisites() (
@@ -297,8 +320,12 @@ install_build_prerequisites() (
     fi
     pacman-key --init
     pacman-key --populate archlinux holo 2>/dev/null || pacman-key --populate
-    pacman -S --needed --noconfirm \
-        base-devel cmake pkgconf libva libdrm vulkan-headers vulkan-icd-loader glslang
+    pacman -S --needed --noconfirm base-devel
+    # SteamOS can record these packages while omitting development files.
+    # Force a signed reinstall instead of trusting pacman's --needed state.
+    pacman -S --noconfirm \
+        cmake make gcc binutils glibc pkgconf libva libdrm \
+        vulkan-headers vulkan-icd-loader glslang
     if [[ $readonly_was_enabled -eq 1 ]]; then
         steamos-readonly enable
         readonly_was_enabled=0
@@ -306,12 +333,18 @@ install_build_prerequisites() (
 )
 
 ensure_build_prerequisites() {
+    local missing
     if ! build_prerequisites_ready; then
+        missing=$(missing_build_prerequisites)
+        printf '%s\n' "$missing" | sed 's/^/[bc250-video-codec] Missing prerequisite: /'
         log "Installing signed SteamOS source-build prerequisites..."
         install_build_prerequisites
     fi
-    build_prerequisites_ready \
-        || die "SteamOS did not provide the required VA-API codec build tools and headers."
+    if ! build_prerequisites_ready; then
+        missing=$(missing_build_prerequisites)
+        printf '%s\n' "$missing" | sed 's/^/[bc250-video-codec] Still missing: /' >&2
+        die "SteamOS did not provide the required VA-API codec build tools and headers."
+    fi
 }
 
 build_runtime() {

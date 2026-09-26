@@ -28,8 +28,11 @@ manifest.
 
 When required build headers or tools are missing, the installer temporarily
 unlocks the SteamOS root filesystem, installs signed packages with `pacman`,
-and restores the original read-only state. Runtime files remain in persistent
-storage.
+and restores the original read-only state. It force-repairs the concrete
+development packages because SteamOS can retain package records after removing
+their headers. Failed probes identify the exact command, header, pkg-config
+module, or compiler/link check that remains unavailable. Runtime files remain
+in persistent storage.
 
 Runtime files use `/var/lib/bc250-control/video-codec/runtime`. The managed
 environment file is `/etc/environment.d/90-bc250-video-codec.conf`.
