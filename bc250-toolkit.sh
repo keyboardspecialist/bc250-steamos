@@ -1078,6 +1078,10 @@ show_status() {
             if [[ "$secondary" == active || "$secondary" == manager-active ]]; then
                 status_row "VA-API video codec" "active" good \
                     "verified ${detail:-release}; ${secondary//-/ } environment"
+            elif [[ "$secondary" == environment-conflict ]]; then
+                status_row "VA-API video codec" "environment conflict" bad \
+                    "verified ${detail:-release}; another profile overrides the driver selection"
+                failed=1; failed_components+=("VA-API video codec")
             else
                 status_row "VA-API video codec" "restart needed" warn "verified ${detail:-release}; sign out or reboot"
             fi
@@ -2156,6 +2160,7 @@ Commands:
   radv                   Open the global Mesa / RADV async-compute patch
   video-codec            Open verified VA-API video codec controls
   video-codec-status     Verify the codec runtime and current session
+  video-codec-test       Run FFmpeg VA-API encode and decode validation
   video-codec-install    Confirm, download, verify, and install the codec
   video-codec-remove     Confirm and restore stock VA-API selection
   proton                 Open BC-250 GE-Proton installation and cleanup
@@ -2273,6 +2278,7 @@ case "$command_name" in
     radv|mesh) (($# == 0)) || die "Usage: $0 radv"; require_normal_user; run_script "$MESH_SHADER_SH" menu ;;
     video-codec) (($# == 0)) || die "Usage: $0 video-codec"; cmd_video_codec_menu ;;
     video-codec-status) (($# == 0)) || die "Usage: $0 video-codec-status"; require_normal_user; run_script "$VIDEO_CODEC_SH" status ;;
+    video-codec-test) (($# == 0)) || die "Usage: $0 video-codec-test"; require_normal_user; run_script "$VIDEO_CODEC_SH" test ;;
     video-codec-install) (($# == 0)) || die "Usage: $0 video-codec-install"; install_video_codec ;;
     video-codec-remove) (($# == 0)) || die "Usage: $0 video-codec-remove"; remove_video_codec ;;
     proton) (($# == 0)) || die "Usage: $0 proton"; cmd_proton_menu ;;

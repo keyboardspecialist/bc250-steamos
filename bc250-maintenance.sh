@@ -200,6 +200,8 @@ component_has_artifacts() {
                 || -L /var/lib/bc250-control/video-codec/runtime \
                 || -e /etc/environment.d/90-bc250-video-codec.conf \
                 || -L /etc/environment.d/90-bc250-video-codec.conf \
+                || -e /etc/profile.d/zz-bc250-video-codec.sh \
+                || -L /etc/profile.d/zz-bc250-video-codec.sh \
                 || -e /etc/profile.d/90-bc250-video-codec.sh \
                 || -L /etc/profile.d/90-bc250-video-codec.sh ]]
             ;;

@@ -26,7 +26,11 @@ SHADER_NAMES=(
 DATA_DIR="${BC250_VIDEO_DATA_DIR:-/var/lib/bc250-control/video-codec}"
 RUNTIME_DIR="$DATA_DIR/runtime"
 ENV_FILE="${BC250_VIDEO_ENV_FILE:-/etc/environment.d/90-bc250-video-codec.conf}"
-PROFILE_FILE="${BC250_VIDEO_PROFILE_FILE:-/etc/profile.d/90-bc250-video-codec.sh}"
+PROFILE_FILE="${BC250_VIDEO_PROFILE_FILE:-/etc/profile.d/zz-bc250-video-codec.sh}"
+LEGACY_PROFILE_FILE=""
+if [[ -z "${BC250_VIDEO_PROFILE_FILE+x}" ]]; then
+    LEGACY_PROFILE_FILE=/etc/profile.d/90-bc250-video-codec.sh
+fi
 LOCK_FILE="${BC250_VIDEO_LOCK_FILE:-/run/lock/bc250-video-codec.lock}"
 MANAGED_MARKER="bc250-toolkit-video-codec-v1"
 ENV_MARKER="# BC-250 toolkit managed VA-API video codec"
@@ -107,9 +111,9 @@ is_managed_environment() {
 }
 
 is_managed_profile() {
-    local first_line
-    [[ -f "$PROFILE_FILE" && ! -L "$PROFILE_FILE" ]] \
-        && IFS= read -r first_line < "$PROFILE_FILE" \
+    local profile="${1:-$PROFILE_FILE}" first_line
+    [[ -n "$profile" && -f "$profile" && ! -L "$profile" ]] \
+        && IFS= read -r first_line < "$profile" \
         && [[ "$first_line" == "$PROFILE_MARKER" ]]
 }
 
@@ -185,11 +189,38 @@ manager_environment_active() {
         && grep -qxF "BC250_SHADER_DIR=$RUNTIME_DIR/shaders" <<< "$environment"
 }
 
+session_environment_conflicted() {
+    local environment=""
+    if [[ ( -n "${LIBVA_DRIVER_NAME:-}" && "${LIBVA_DRIVER_NAME:-}" != bc250 ) \
+        || ( -n "${LIBVA_DRIVERS_PATH:-}" && "${LIBVA_DRIVERS_PATH:-}" != "$RUNTIME_DIR/dri" ) \
+        || ( -n "${BC250_SHADER_DIR:-}" && "${BC250_SHADER_DIR:-}" != "$RUNTIME_DIR/shaders" ) ]]; then
+        return 0
+    fi
+    command -v systemctl >/dev/null 2>&1 || return 1
+    environment=$(systemctl --user show-environment 2>/dev/null) || return 1
+    if grep -q '^LIBVA_DRIVER_NAME=' <<< "$environment" \
+        && ! grep -qxF 'LIBVA_DRIVER_NAME=bc250' <<< "$environment"; then
+        return 0
+    fi
+    if grep -q '^LIBVA_DRIVERS_PATH=' <<< "$environment" \
+        && ! grep -qxF "LIBVA_DRIVERS_PATH=$RUNTIME_DIR/dri" <<< "$environment"; then
+        return 0
+    fi
+    if grep -q '^BC250_SHADER_DIR=' <<< "$environment" \
+        && ! grep -qxF "BC250_SHADER_DIR=$RUNTIME_DIR/shaders" <<< "$environment"; then
+        return 0
+    fi
+    return 1
+}
+
 show_status() {
     local runtime_present=0 environment_present=0
     [[ -e "$RUNTIME_DIR" || -L "$RUNTIME_DIR" ]] && runtime_present=1
     [[ -e "$ENV_FILE" || -L "$ENV_FILE" \
-        || -e "$PROFILE_FILE" || -L "$PROFILE_FILE" ]] && environment_present=1
+        || -e "$PROFILE_FILE" || -L "$PROFILE_FILE" \
+        || ( -n "$LEGACY_PROFILE_FILE" \
+            && ( -e "$LEGACY_PROFILE_FILE" || -L "$LEGACY_PROFILE_FILE" ) ) ]] \
+        && environment_present=1
 
     if [[ $runtime_present -eq 0 && $environment_present -eq 0 ]]; then
         echo "state: not-installed"
@@ -208,6 +239,8 @@ show_status() {
             echo "session: active"
         elif manager_environment_active; then
             echo "session: manager-active"
+        elif session_environment_conflicted; then
+            echo "session: environment-conflict"
         else
             echo "session: restart-required"
         fi
@@ -263,6 +296,72 @@ verify_vaapi_initialization() {
     grep -qF "AMD BC-250 Compute VA-API Driver" <<< "$output" \
         || { printf '%s\n' "$output" >&2; die "VA-API initialized without the BC-250 driver. No driver was activated."; }
     log "Verified VA-API initialization on $render_node."
+}
+
+verify_ffmpeg_pipeline() {
+    local runtime="$1" render_node test_directory encoded decoded encode_output decode_output
+    render_node=$(bc250_render_node) \
+        || die "Could not identify the BC-250 DRM render node."
+    test_directory=$(mktemp -d "${TMPDIR:-/tmp}/bc250-video-codec.ffmpeg.XXXXXX") \
+        || die "Could not create the FFmpeg validation directory."
+    encoded="$test_directory/test.h264"
+    decoded="$test_directory/test.nv12"
+
+    if ! encode_output=$(env \
+        LIBVA_DRIVER_NAME=bc250 \
+        LIBVA_DRIVERS_PATH="$runtime/dri" \
+        BC250_SHADER_DIR="$runtime/shaders" \
+        BC250_FAST_MODE=1 \
+        BC250_SLICES_PER_FRAME=4 \
+        BC250_HEVC_SLICES=4 \
+        OMP_WAIT_POLICY=PASSIVE \
+        GOMP_SPINCOUNT=0 \
+        OMP_NUM_THREADS=2 \
+        OMP_DYNAMIC=FALSE \
+        ffmpeg -nostdin -hide_banner -loglevel verbose \
+            -vaapi_device "$render_node" \
+            -f lavfi -i testsrc2=size=320x240:rate=30 \
+            -vf 'format=nv12,hwupload' \
+            -c:v h264_vaapi -b:v 2M -frames:v 8 -f h264 "$encoded" 2>&1); then
+        rm -rf -- "$test_directory"
+        printf '%s\n' "$encode_output" >&2
+        die "FFmpeg failed the BC-250 VA-API encode test. No driver was activated."
+    fi
+    if [[ ! -s "$encoded" ]] \
+        || ! grep -qF 'VAAPI driver: AMD BC-250 Compute VA-API Driver' <<< "$encode_output"; then
+        rm -rf -- "$test_directory"
+        printf '%s\n' "$encode_output" >&2
+        die "FFmpeg did not encode with the BC-250 VA-API driver. No driver was activated."
+    fi
+
+    if ! decode_output=$(env \
+        LIBVA_DRIVER_NAME=bc250 \
+        LIBVA_DRIVERS_PATH="$runtime/dri" \
+        BC250_SHADER_DIR="$runtime/shaders" \
+        BC250_FAST_MODE=1 \
+        BC250_SLICES_PER_FRAME=4 \
+        BC250_HEVC_SLICES=4 \
+        OMP_WAIT_POLICY=PASSIVE \
+        GOMP_SPINCOUNT=0 \
+        OMP_NUM_THREADS=2 \
+        OMP_DYNAMIC=FALSE \
+        ffmpeg -nostdin -hide_banner -loglevel verbose \
+            -hwaccel vaapi -hwaccel_device "$render_node" \
+            -hwaccel_output_format vaapi -i "$encoded" \
+            -vf 'hwdownload,format=nv12' -frames:v 8 \
+            -pix_fmt nv12 -f rawvideo "$decoded" 2>&1); then
+        rm -rf -- "$test_directory"
+        printf '%s\n' "$decode_output" >&2
+        die "FFmpeg failed the BC-250 VA-API decode test. No driver was activated."
+    fi
+    if [[ $(wc -c < "$decoded") -ne 921600 ]] \
+        || ! grep -qF 'VAAPI driver: AMD BC-250 Compute VA-API Driver' <<< "$decode_output"; then
+        rm -rf -- "$test_directory"
+        printf '%s\n' "$decode_output" >&2
+        die "FFmpeg did not decode eight frames with the BC-250 VA-API driver. No driver was activated."
+    fi
+    rm -rf -- "$test_directory"
+    log "Verified FFmpeg VA-API H.264 encode and decode on $render_node."
 }
 
 validate_elf64() {
@@ -338,7 +437,7 @@ PY
 
 missing_build_prerequisites() {
     local command package
-    for command in cmake gcc make pkg-config glslangValidator vainfo; do
+    for command in cmake ffmpeg gcc make pkg-config glslangValidator vainfo; do
         command -v "$command" >/dev/null 2>&1 || echo "command:$command"
     done
     if command -v pkg-config >/dev/null 2>&1; then
@@ -348,6 +447,7 @@ missing_build_prerequisites() {
     fi
     [[ -r /usr/include/va/va.h ]] || echo "header:/usr/include/va/va.h"
     [[ -r /usr/include/xf86drm.h ]] || echo "header:/usr/include/xf86drm.h"
+    [[ -r /usr/include/linux/types.h ]] || echo "header:/usr/include/linux/types.h"
     [[ -r /usr/include/vulkan/vulkan.h ]] || echo "header:/usr/include/vulkan/vulkan.h"
     if command -v gcc >/dev/null 2>&1 \
         && command -v pkg-config >/dev/null 2>&1 \
@@ -397,7 +497,7 @@ install_build_prerequisites() (
     # SteamOS can record these packages while omitting development files.
     # Force a signed reinstall instead of trusting pacman's --needed state.
     pacman -S --noconfirm \
-        cmake make gcc binutils glibc pkgconf libva libdrm \
+        cmake make gcc binutils glibc linux-api-headers pkgconf libva libdrm ffmpeg \
         vulkan-headers vulkan-icd-loader glslang libva-utils
     if [[ $readonly_was_enabled -eq 1 ]]; then
         steamos-readonly enable
@@ -464,6 +564,16 @@ write_environment_atomically() {
     fi
 }
 
+remove_legacy_profile() {
+    [[ -n "$LEGACY_PROFILE_FILE" && "$LEGACY_PROFILE_FILE" != "$PROFILE_FILE" ]] \
+        || return 0
+    if [[ -e "$LEGACY_PROFILE_FILE" || -L "$LEGACY_PROFILE_FILE" ]]; then
+        is_managed_profile "$LEGACY_PROFILE_FILE" \
+            || die "Refusing to replace an unrecognized legacy shell profile: $LEGACY_PROFILE_FILE"
+        rm -f -- "$LEGACY_PROFILE_FILE"
+    fi
+}
+
 install_codec() {
     local archive actual parent source build dependency_status="" backup=""
     require_root
@@ -482,6 +592,11 @@ install_codec() {
     if [[ -e "$PROFILE_FILE" || -L "$PROFILE_FILE" ]]; then
         is_managed_profile \
             || die "Refusing to replace an unrecognized shell profile: $PROFILE_FILE"
+    fi
+    if [[ -n "$LEGACY_PROFILE_FILE" && "$LEGACY_PROFILE_FILE" != "$PROFILE_FILE" \
+        && ( -e "$LEGACY_PROFILE_FILE" || -L "$LEGACY_PROFILE_FILE" ) ]]; then
+        is_managed_profile "$LEGACY_PROFILE_FILE" \
+            || die "Refusing to replace an unrecognized legacy shell profile: $LEGACY_PROFILE_FILE"
     fi
 
     install -d -m 0755 "$DATA_DIR"
@@ -521,6 +636,7 @@ install_codec() {
         die "The local source build has unavailable runtime dependencies. No driver was activated."
     fi
     verify_vaapi_initialization "$STAGE/runtime"
+    verify_ffmpeg_pipeline "$STAGE/runtime"
     chmod 0755 "$STAGE/runtime" "$STAGE/runtime/dri" "$STAGE/runtime/shaders"
 
     if [[ -d "$RUNTIME_DIR" ]]; then
@@ -533,6 +649,7 @@ install_codec() {
         [[ -z "$backup" ]] || mv -- "$backup" "$RUNTIME_DIR"
         die "Could not install the managed environment configuration."
     fi
+    remove_legacy_profile
     if ! runtime_valid || ! environment_valid; then
         rm -rf -- "$RUNTIME_DIR"
         [[ -z "$backup" ]] || mv -- "$backup" "$RUNTIME_DIR"
@@ -541,6 +658,14 @@ install_codec() {
     [[ -z "$backup" ]] || rm -rf -- "$backup"
     log "Installed BC-250 VA-API video codec $RELEASE from verified source."
     log "Sign out or reboot before using the new VA-API selection."
+}
+
+test_codec() {
+    for command in ffmpeg ldd sha256sum vainfo; do require_command "$command"; done
+    detect_bc250 || die "AMD BC-250 PCI device 1002:13fe was not detected."
+    runtime_valid || die "The installed BC-250 VA-API runtime is missing or invalid."
+    verify_vaapi_initialization "$RUNTIME_DIR"
+    verify_ffmpeg_pipeline "$RUNTIME_DIR"
 }
 
 uninstall_codec() {
@@ -560,6 +685,12 @@ uninstall_codec() {
             || die "Refusing to remove an unrecognized shell profile: $PROFILE_FILE"
         rm -f -- "$PROFILE_FILE"
     fi
+    if [[ -n "$LEGACY_PROFILE_FILE" && "$LEGACY_PROFILE_FILE" != "$PROFILE_FILE" \
+        && ( -e "$LEGACY_PROFILE_FILE" || -L "$LEGACY_PROFILE_FILE" ) ]]; then
+        is_managed_profile "$LEGACY_PROFILE_FILE" \
+            || die "Refusing to remove an unrecognized legacy shell profile: $LEGACY_PROFILE_FILE"
+        rm -f -- "$LEGACY_PROFILE_FILE"
+    fi
     if [[ -e "$RUNTIME_DIR" || -L "$RUNTIME_DIR" ]]; then
         [[ -d "$RUNTIME_DIR" && ! -L "$RUNTIME_DIR" \
             && -f "$RUNTIME_DIR/.bc250-toolkit-managed" \
@@ -576,10 +707,11 @@ uninstall_codec() {
 
 usage() {
     cat <<EOF
-Usage: $0 {install|status|uninstall}
+Usage: $0 {install|status|test|uninstall}
 
   install    Download verified source, build for SteamOS, and install $RELEASE
   status     Verify the runtime, environment, and current session
+  test       Run VA-API initialization and FFmpeg encode/decode tests
   uninstall  Remove only toolkit-managed codec files
 EOF
 }
@@ -587,6 +719,7 @@ EOF
 case "${1:-help}" in
     install) (($# == 1)) || die "Usage: $0 install"; install_codec ;;
     status) (($# == 1)) || die "Usage: $0 status"; show_status ;;
+    test) (($# == 1)) || die "Usage: $0 test"; test_codec ;;
     uninstall) (($# == 1)) || die "Usage: $0 uninstall"; uninstall_codec ;;
     help|-h|--help) usage ;;
     *) usage >&2; exit 1 ;;

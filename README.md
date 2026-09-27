@@ -396,6 +396,7 @@ Check or remove the runtime:
 
 ```bash
 ./bc250-toolkit.sh video-codec-status
+./bc250-toolkit.sh video-codec-test
 ./bc250-toolkit.sh video-codec-remove
 ```
 

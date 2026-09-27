@@ -14,6 +14,7 @@ Run the toolkit as the logged-in user:
 ```bash
 ./bc250-toolkit.sh video-codec
 ./bc250-toolkit.sh video-codec-status
+./bc250-toolkit.sh video-codec-test
 ./bc250-toolkit.sh video-codec-install
 ./bc250-toolkit.sh video-codec-remove
 ```
@@ -36,7 +37,9 @@ in persistent storage.
 
 Runtime files use `/var/lib/bc250-control/video-codec/runtime`. The managed
 environment files are `/etc/environment.d/90-bc250-video-codec.conf` and
-`/etc/profile.d/90-bc250-video-codec.sh`.
+`/etc/profile.d/zz-bc250-video-codec.sh`. The late-loading shell profile is
+intentional: SteamOS provides `/etc/profile.d/libva.sh`, which otherwise resets
+the selected driver to `radeonsi` after the toolkit profile is read.
 
 Sign out or reboot after installation or removal. New processes then use the
 new VA-API selection.
@@ -44,13 +47,15 @@ new VA-API selection.
 Test the selected driver explicitly:
 
 ```bash
-source /etc/profile.d/90-bc250-video-codec.sh
+source /etc/profile.d/zz-bc250-video-codec.sh
 vainfo --display drm --device /dev/dri/renderD128
+./bc250-toolkit.sh video-codec-test
 ```
 
-The installer runs this initialization test against the staged runtime before
-changing the system environment. It also checks relocated symbols with
-`ldd -r`; failed initialization leaves the previous runtime active.
+The installer runs initialization plus an eight-frame FFmpeg H.264 VA-API
+encode/decode test against the staged runtime before changing the system
+environment. It also checks relocated symbols with `ldd -r`; failed validation
+leaves the previous runtime active.
 
 ## Scope
 

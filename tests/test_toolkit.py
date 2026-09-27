@@ -51,6 +51,7 @@ class ToolkitTests(unittest.TestCase):
             "radv",
             "video-codec",
             "video-codec-status",
+            "video-codec-test",
             "video-codec-install",
             "video-codec-remove",
             "proton",

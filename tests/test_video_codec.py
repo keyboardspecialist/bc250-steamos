@@ -19,7 +19,7 @@ class VideoCodecTests(unittest.TestCase):
                 "BC250_VIDEO_DATA_DIR": str(data_dir),
                 "BC250_VIDEO_ENV_FILE": str(env_file),
                 "BC250_VIDEO_PROFILE_FILE": str(
-                    env_file.parent.parent / "profile.d/90-bc250-video-codec.sh"
+                    env_file.parent.parent / "profile.d/zz-bc250-video-codec.sh"
                 ),
                 "BC250_VIDEO_LOCK_FILE": str(data_dir.parent / "codec.lock"),
             }
@@ -89,21 +89,48 @@ class VideoCodecTests(unittest.TestCase):
             "ldd -r",
             "verify_vaapi_initialization",
             "vainfo --display drm --device",
+            "verify_ffmpeg_pipeline",
+            "-c:v h264_vaapi",
+            "-hwaccel vaapi",
+            "hwdownload,format=nv12",
+            "FFmpeg VA-API H.264 encode and decode",
             "pacman -S --needed --noconfirm",
             "pacman -S --noconfirm",
-            "cmake make gcc binutils glibc pkgconf libva libdrm",
+            "cmake make gcc binutils glibc linux-api-headers pkgconf libva libdrm ffmpeg",
+            "header:/usr/include/linux/types.h",
             "compiler-link-probe:libva+libdrm+vulkan+openmp",
             "Still missing:",
             "steamos-readonly disable",
             "steamos-readonly enable",
             "/var/lib/bc250-control/video-codec",
             "/etc/environment.d/90-bc250-video-codec.conf",
-            "/etc/profile.d/90-bc250-video-codec.sh",
+            "/etc/profile.d/zz-bc250-video-codec.sh",
             "Refusing to replace an unrecognized runtime",
             "Refusing to remove an unrecognized runtime",
         ):
             self.assertIn(required, source)
         self.assertNotIn("radeonsi_drv_video.so", source)
+
+    def test_shell_profile_loads_after_steamos_libva_profile(self):
+        source = SCRIPT.read_text(encoding="utf-8")
+        self.assertIn("PROFILE_FILE=\"${BC250_VIDEO_PROFILE_FILE:-/etc/profile.d/zz-bc250-video-codec.sh}\"", source)
+        self.assertIn("LEGACY_PROFILE_FILE=/etc/profile.d/90-bc250-video-codec.sh", source)
+        self.assertGreater("zz-bc250-video-codec.sh", "libva.sh")
+
+    def test_status_distinguishes_environment_conflict_from_restart(self):
+        result = subprocess.run(
+            [
+                "bash",
+                "-c",
+                'helper=$1; set -- help; source "$helper" >/dev/null; '
+                "LIBVA_DRIVER_NAME=radeonsi; export LIBVA_DRIVER_NAME; "
+                "session_environment_conflicted",
+                "_",
+                str(SCRIPT),
+            ],
+            check=False,
+        )
+        self.assertEqual(result.returncode, 0)
 
     def test_source_extraction_rejects_traversal(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -152,6 +179,7 @@ class VideoCodecTests(unittest.TestCase):
         maintenance = (ROOT / "bc250-maintenance.sh").read_text(encoding="utf-8")
         self.assertIn("nct6687d video-codec", workflow)
         self.assertIn("video-codec) echo \"VA-API video codec\"", maintenance)
+        self.assertIn("/etc/profile.d/zz-bc250-video-codec.sh", maintenance)
         self.assertIn("/etc/profile.d/90-bc250-video-codec.sh", maintenance)
         self.assertIn("sudo bash \"$script\" uninstall", maintenance)
 
@@ -164,6 +192,7 @@ class VideoCodecTests(unittest.TestCase):
         )
         self.assertIn("install", result.stdout)
         self.assertIn("status", result.stdout)
+        self.assertIn("test", result.stdout)
         self.assertIn("uninstall", result.stdout)
 
 
