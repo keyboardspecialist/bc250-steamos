@@ -866,7 +866,7 @@ show_status() {
     local cu_output="" cu_rc=0 cec_output="" cec_rc=0
     local cec_bus_output="" cec_bus_rc=0
     local fan_output="" fan_rc=0
-    local enabled active mode installed_count pending_count
+    local enabled active mode installed_count pending_count profile routed factory_gain
     local failed_components=()
     sudo -v
 
@@ -951,11 +951,11 @@ show_status() {
         detail=$(status_value "$power_output" "max MHz: " || true)
     fi
     if [[ "$enabled" == enabled && "$active" == active ]]; then
-        status_row "GPU governor" "active" good "${detail:-enabled at boot}"
+        status_row "GPU governor" "active" good "${detail:-clock range unavailable}"
     elif [[ -n "$enabled$active" && "$enabled$active" != not-foundinactive ]]; then
         status_row "GPU governor" "partial" warn "${enabled:--} / ${active:--}; ${detail:-no clock data}"
     else
-        status_row "GPU governor" "disabled" dim "not installed"
+        status_row "GPU governor" "disabled" dim "governor service absent; firmware clock policy"
     fi
 
     enabled=$(systemctl is-active bc250-acpi-heal.service 2>/dev/null || true)
@@ -970,32 +970,42 @@ show_status() {
 
     enabled=$(systemctl is-enabled bc250-smu-oc.service 2>/dev/null || true)
     active=$(systemctl is-active bc250-smu-oc.service 2>/dev/null || true)
+    profile=$(status_value "$power_output" "CPU OC boot profile: " || true)
+    if [[ -z "$profile" ]]; then
+        profile=$(status_value "$power_output" "CPU OC staged profile: " || true)
+        [[ -z "$profile" ]] || profile+="; not enabled at boot"
+    fi
+    profile=${profile:-profile details unavailable}
     if [[ "$enabled" == enabled ]]; then
         case "$active" in
             active)
-                status_row "CPU overclock" "enabled" good "boot profile applied successfully"
+                status_row "CPU overclock" "enabled" good "$profile"
                 ;;
             inactive)
-                status_row "CPU overclock" "enabled" warn "boot profile saved; service has not completed successfully in this boot"
+                status_row "CPU overclock" "enabled" warn "$profile; no successful apply this boot"
                 ;;
             activating)
-                status_row "CPU overclock" "applying" warn "boot profile service is still running"
+                status_row "CPU overclock" "applying" warn "$profile"
                 ;;
             failed)
                 status_row "CPU overclock" "apply failed" bad \
-                    "last systemd profile-apply attempt failed; inspect: journalctl -u bc250-smu-oc.service -b"
+                    "$profile; inspect: journalctl -u bc250-smu-oc.service -b"
                 failed=1; failed_components+=("CPU overclock")
                 ;;
             *)
-                status_row "CPU overclock" "incomplete" bad "enabled at boot; systemd state ${active:--}"
+                status_row "CPU overclock" "incomplete" bad "$profile; systemd state ${active:--}"
                 failed=1; failed_components+=("CPU overclock")
                 ;;
         esac
     elif [[ "$active" == active || "$active" == activating || "$active" == failed ]]; then
-        status_row "CPU overclock" "incomplete" bad "boot state ${enabled:--}; service state ${active:--}"
+        status_row "CPU overclock" "incomplete" bad "$profile; boot ${enabled:--}, service ${active:--}"
         failed=1; failed_components+=("CPU overclock")
     else
-        status_row "CPU overclock" "disabled" dim "stock tuning"
+        if [[ "$profile" == "profile details unavailable" ]]; then
+            status_row "CPU overclock" "disabled" dim "no saved profile; firmware tuning in use"
+        else
+            status_row "CPU overclock" "disabled" dim "$profile; retained for manual apply"
+        fi
     fi
 
     state=$(status_value "$power_output" "Tctl:" || true)
@@ -1014,12 +1024,12 @@ show_status() {
     status_heading "GRAPHICS STACK"
     state=$(json_field "$amdgpu_output" state || true)
     case "$state" in
-        ready) status_row "AMDGPU kernel fixes" "active" good "patched module loaded for $(json_field "$amdgpu_output" runningKernel || true)" ;;
-        reboot-required) status_row "AMDGPU kernel fixes" "reboot needed" warn "installed and selected for the running kernel" ;;
-        rebuild-required) status_row "AMDGPU kernel fixes" "rebuild needed" warn "retained configuration is valid; rebuild for the running kernel" ;;
-        not-installed) status_row "AMDGPU kernel fixes" "not installed" dim "stock kernel module" ;;
+        ready) status_row "AMDGPU kernel fixes" "active" good "kernel $(json_field "$amdgpu_output" runningKernel || true); display, telemetry, and runlist repairs verified" ;;
+        reboot-required) status_row "AMDGPU kernel fixes" "reboot needed" warn "kernel $(json_field "$amdgpu_output" runningKernel || true); override selected for next module load" ;;
+        rebuild-required) status_row "AMDGPU kernel fixes" "rebuild needed" warn "kernel $(json_field "$amdgpu_output" runningKernel || true); retained patch inputs available" ;;
+        not-installed) status_row "AMDGPU kernel fixes" "not installed" dim "Valve amdgpu module in use" ;;
         *)
-            status_row "AMDGPU kernel fixes" "${state:-incomplete}" bad "current-kernel module state is invalid"
+            status_row "AMDGPU kernel fixes" "${state:-incomplete}" bad "current-kernel module ownership or attestation failed"
             failed=1; failed_components+=("AMDGPU kernel fixes") ;;
     esac
 
@@ -1033,16 +1043,16 @@ show_status() {
         failed=1; failed_components+=("Mesa / RADV async compute")
     else
         if [[ "$active" == true ]]; then
-            status_row "AMDGPU scheduler policy" "active" good "managed by Mesa / RADV setup"
+            status_row "AMDGPU scheduler policy" "active" good "policy 2 live; managed by Mesa / RADV setup"
         elif [[ "$enabled" == true ]]; then
-            status_row "AMDGPU scheduler policy" "reboot needed" warn "configured for the next boot"
+            status_row "AMDGPU scheduler policy" "reboot needed" warn "policy 2 present in boot configuration"
             failed=1; failed_components+=("AMDGPU scheduler policy")
         else
             status_row "AMDGPU scheduler policy" "disabled" dim "enabled automatically with Mesa / RADV"
         fi
         detail=$(json_field "$radv_output" globalEnabled || true)
         if [[ "$state" == ready && "$detail" == true ]]; then
-            status_row "Mesa / RADV async compute" "active" good "global user environment enabled"
+            status_row "Mesa / RADV async compute" "active" good "global RADV environment; scheduler policy 2 live"
         elif [[ "$state" == ready && "$active" == true ]]; then
             status_row "Mesa / RADV async compute" "sign-out needed" warn "runtime installed; session environment is stale"
             failed=1; failed_components+=("Mesa / RADV async compute")
@@ -1052,7 +1062,7 @@ show_status() {
         elif [[ "$state" == not-installed ]]; then
             status_row "Mesa / RADV async compute" "not installed" dim "optional global runtime"
         else
-            status_row "Mesa / RADV async compute" "incomplete" bad "$state"
+            status_row "Mesa / RADV async compute" "incomplete" bad "runtime ownership or integrity check failed"
             failed=1; failed_components+=("Mesa / RADV async compute")
         fi
     fi
@@ -1088,13 +1098,17 @@ show_status() {
             ;;
         not-installed) status_row "VA-API video codec" "not installed" dim "optional H.264 / HEVC compute codec" ;;
         *)
-            status_row "VA-API video codec" "incomplete" bad "${detail:-status unavailable}"
+            enabled=$(status_value "$video_codec_output" "driver: " || true)
+            active=$(status_value "$video_codec_output" "configuration: " || true)
+            status_row "VA-API video codec" "incomplete" bad \
+                "${detail:-unknown release}; driver ${enabled:-unknown}; configuration ${active:-unknown}"
             failed=1; failed_components+=("VA-API video codec") ;;
     esac
 
     state=$(status_value "$proton_output" "state: " || true)
+    detail=$(status_value "$proton_output" "version: " || true)
     case "$state" in
-        installed) status_row "BC-250 GE-Proton" "installed" good "FSR4 compatibility tool" ;;
+        installed) status_row "BC-250 GE-Proton" "installed" good "version ${detail:-unknown}; FSR4 compatibility route" ;;
         not-installed) status_row "BC-250 GE-Proton" "not installed" dim "optional integrated FSR4 route" ;;
         upgrade-required)
             status_row "BC-250 GE-Proton" "update needed" warn "run proton-update"
@@ -1115,10 +1129,13 @@ show_status() {
         status_row "CPU core unlock" "unavailable" bad "${detail:-status probe failed}"
         failed=1; failed_components+=("CPU core unlock")
     elif [[ "$detail" == *"(unlocked)"* ]]; then
+        detail=${detail% (unlocked)}
         status_row "CPU core unlock" "unlocked" good "$detail; ${state:-mode unknown}${secondary:+; guard $secondary}"
     elif [[ "$detail" == *"(locked)"* && "${state:-disabled}" == disabled ]]; then
-        status_row "CPU core unlock" "stock" dim "$detail; automatic unlock disabled"
+        detail=${detail% (locked)}
+        status_row "CPU core unlock" "stock" dim "$detail; no automatic replay"
     elif [[ "$detail" == *"(locked)"* ]]; then
+        detail=${detail% (locked)}
         status_row "CPU core unlock" "reboot needed" warn "$detail; ${state:-mode unknown}${secondary:+; guard $secondary}"
     else
         status_row "CPU core unlock" "unexpected" bad "$detail; ${state:-mode unknown}"
@@ -1129,9 +1146,20 @@ show_status() {
         status_row "GPU compute-unit unlock" "unavailable" bad "${cu_output:-register read failed}"
         failed=1; failed_components+=("GPU compute-unit unlock")
     elif [[ "$cu_output" == 40/40 ]]; then
-        status_row "GPU compute-unit unlock" "40 / 40" good "all compute units routed"
+        status_row "GPU compute-unit unlock" "40 / 40" good "live register read; +16 CUs over factory route"
     else
-        status_row "GPU compute-unit unlock" "${cu_output:-unknown}" warn "current hardware route"
+        if [[ "$cu_output" =~ ^([0-9]+)/40$ ]]; then
+            routed=${BASH_REMATCH[1]}
+            factory_gain=$((routed - 24))
+            if ((factory_gain >= 0)); then
+                detail="live register read; +$factory_gain CUs over factory route"
+            else
+                detail="live register read; $((-factory_gain)) CUs below factory route"
+            fi
+        else
+            detail="live register format was not recognized"
+        fi
+        status_row "GPU compute-unit unlock" "${cu_output:-unknown}" warn "$detail"
     fi
 
     status_heading "DEVICES & CONNECTIVITY"
@@ -1156,19 +1184,19 @@ show_status() {
         failed=1; failed_components+=("CEC")
     elif [[ "$state" == *active* ]]; then
         if [[ "$detail" == installed ]]; then
-            status_row "CEC setup & automation" "configured" good "pre-installed CEC active"
+            status_row "CEC setup & automation" "configured" good "cecd owns /dev/cec0; shutdown and session hooks present"
         else
             status_row "CEC setup & automation" "defaults" dim \
-                "pre-installed CEC active; optional automation not configured"
+                "cecd owns /dev/cec0; no shutdown or session hooks"
         fi
         case "$secondary" in
             *enabled*|*active*) status_row "  Poweroff standby" "enabled" good "TV standby during system shutdown" ;;
-            *disabled*|*inactive*|*not-found*) status_row "  Poweroff standby" "disabled" dim "optional automation" ;;
+            *disabled*|*inactive*|*not-found*) status_row "  Poweroff standby" "disabled" dim "no TV standby command during shutdown" ;;
             *) status_row "  Poweroff standby" "unknown" warn "${secondary:-state unavailable}" ;;
         esac
         case "$enabled" in
             *enabled*|*active*) status_row "  Boot wake" "enabled" good "TV wake at session start" ;;
-            *disabled*|*inactive*|*not-found*) status_row "  Boot wake" "disabled" dim "optional automation" ;;
+            *disabled*|*inactive*|*not-found*) status_row "  Boot wake" "disabled" dim "TV is not woken at session start" ;;
             *) status_row "  Boot wake" "unknown" warn "${enabled:-state unavailable}" ;;
         esac
         case "$mode" in

@@ -2911,7 +2911,6 @@ efi_artifacts_present() {
 efi_configuration_complete() {
     local allow_recovery="${1:-0}"
     [[ -f "$CORE_UNLOCK_EFI_MASTER" && ! -L "$CORE_UNLOCK_EFI_MASTER" \
-        && -f "$CORE_UNLOCK_EFI_IMAGE" && ! -L "$CORE_UNLOCK_EFI_IMAGE" \
         && -f "$CORE_UNLOCK_EFI_LICENSE" && ! -L "$CORE_UNLOCK_EFI_LICENSE" \
         && -f "$CORE_UNLOCK_EFI_HEADER_LICENSE" && ! -L "$CORE_UNLOCK_EFI_HEADER_LICENSE" \
         && -f "$CORE_UNLOCK_EFI_BOOTNUM" && ! -L "$CORE_UNLOCK_EFI_BOOTNUM" \
@@ -2919,20 +2918,26 @@ efi_configuration_complete() {
         || return 1
     [[ "$allow_recovery" -eq 1 || ! -e "$CORE_UNLOCK_EFI_RECOVERY" ]] || return 1
     efi_guard_present && return 1
-    cmp -s "$CORE_UNLOCK_EFI_MASTER" "$CORE_UNLOCK_EFI_IMAGE" || return 1
     efi_state_read || return 1
-    verify_core_unlock_esp_state || return 1
-    [[ "$(tr -d '\n' < "$CORE_UNLOCK_EFI_BOOTNUM")" == "$EFI_STATE_BOOTNUM" ]] \
-        || return 1
-    local expected_hash actual_hash
-    expected_hash=$(tr -d '\n' < "$CORE_UNLOCK_EFI_IMAGE_HASH")
-    [[ "$expected_hash" =~ ^[0-9a-f]{64}$ ]] || return 1
-    actual_hash=$(sha256sum "$CORE_UNLOCK_EFI_MASTER" | awk '{print $1}')
-    [[ "$actual_hash" == "$expected_hash" ]] || return 1
-    efi_read_boot_listing || return 1
-    efi_boot_entry_matches_in "$EFI_STATE_BOOTNUM" 1 "$EFI_BOOT_LISTING" || return 1
-    [[ "$(efi_boot_order_first_in "$EFI_BOOT_LISTING")" == "$EFI_STATE_BOOTNUM" \
-        && "$(efi_matching_boot_numbers_in "$EFI_BOOT_LISTING")" == "$EFI_STATE_BOOTNUM" ]]
+    prepare_core_unlock_validation_esp || return 1
+    local complete=0
+    if [[ -f "$CORE_UNLOCK_EFI_IMAGE" && ! -L "$CORE_UNLOCK_EFI_IMAGE" ]] \
+        && cmp -s "$CORE_UNLOCK_EFI_MASTER" "$CORE_UNLOCK_EFI_IMAGE" \
+        && [[ "$(tr -d '\n' < "$CORE_UNLOCK_EFI_BOOTNUM")" == "$EFI_STATE_BOOTNUM" ]]; then
+        local expected_hash actual_hash
+        expected_hash=$(tr -d '\n' < "$CORE_UNLOCK_EFI_IMAGE_HASH")
+        if [[ "$expected_hash" =~ ^[0-9a-f]{64}$ ]]; then
+            actual_hash=$(sha256sum "$CORE_UNLOCK_EFI_MASTER" | awk '{print $1}')
+            if [[ "$actual_hash" == "$expected_hash" ]] && efi_read_boot_listing \
+                && efi_boot_entry_matches_in "$EFI_STATE_BOOTNUM" 1 "$EFI_BOOT_LISTING" \
+                && [[ "$(efi_boot_order_first_in "$EFI_BOOT_LISTING")" == "$EFI_STATE_BOOTNUM" \
+                    && "$(efi_matching_boot_numbers_in "$EFI_BOOT_LISTING")" == "$EFI_STATE_BOOTNUM" ]]; then
+                complete=1
+            fi
+        fi
+    fi
+    release_core_unlock_recorded_esp || complete=0
+    [[ $complete -eq 1 ]]
 }
 
 # Authoritative persistence state. Support files left by a one-time test do not
@@ -3389,10 +3394,14 @@ verify_core_unlock_esp_state() {
 }
 
 CORE_UNLOCK_EFI_TEMP_MOUNT=""
+CORE_UNLOCK_EFI_TEMP_WRITABLE=0
 mount_core_unlock_recorded_esp() {
     local source="$1" disk="$2" part="$3" partuuid="$4"
+    local access="${5:-rw}"
     local other block_info name type parent actual_part actual_uuid parttype extra
     local mount_root mount_listing mount_info= line target fstype options owner mode kind
+    [[ "$access" == ro || "$access" == rw ]] \
+        || { ESP_DISCOVERY_ERROR="Invalid inactive-ESP mount access."; return 1; }
     [[ -L "$CORE_UNLOCK_STEAMOS_OTHER_EFI_PARTSET" ]] \
         || { ESP_DISCOVERY_ERROR="SteamOS inactive EFI slot link is missing."; return 1; }
     other=$(readlink -f "$CORE_UNLOCK_STEAMOS_OTHER_EFI_PARTSET" 2>/dev/null) \
@@ -3420,7 +3429,7 @@ mount_core_unlock_recorded_esp() {
     else
         mount_root=$(mktemp -d /run/bc250-core-unlock-esp.XXXXXX) \
             || { ESP_DISCOVERY_ERROR="Could not create a private inactive-ESP mountpoint."; return 1; }
-        mount -t vfat -o rw,nosuid,nodev,noexec "$source" "$mount_root" \
+        mount -t vfat -o "$access",nosuid,nodev,noexec "$source" "$mount_root" \
             || { rmdir "$mount_root" 2>/dev/null || true; ESP_DISCOVERY_ERROR="Could not mount the recorded inactive ESP."; return 1; }
     fi
     TEMP_MOUNTS+=("$mount_root")
@@ -3443,8 +3452,8 @@ mount_core_unlock_recorded_esp() {
         vfat|fat|fat32) ;;
         *) ESP_DISCOVERY_ERROR="Recorded inactive ESP must use FAT/vfat, not ${fstype:-unknown}."; return 1 ;;
     esac
-    [[ ",$options," == *,rw,* ]] \
-        || { ESP_DISCOVERY_ERROR="Recorded inactive ESP is mounted read-only."; return 1; }
+    [[ ",$options," == *,$access,* ]] \
+        || { ESP_DISCOVERY_ERROR="Recorded inactive ESP mount access differs from the requested $access mode."; return 1; }
     block_info=$(lsblk -dnpro NAME,TYPE,PKNAME,PARTN,PARTUUID,PARTTYPE "$name" 2>/dev/null) \
         || { ESP_DISCOVERY_ERROR="Could not revalidate the mounted inactive ESP."; return 1; }
     read -r name type parent actual_part actual_uuid parttype extra <<< "$block_info"
@@ -3453,6 +3462,9 @@ mount_core_unlock_recorded_esp() {
         && "${actual_uuid,,}" == "$partuuid" \
         && "${parttype,,}" == "$CORE_UNLOCK_STEAMOS_EFI_PARTTYPE" ]] \
         || { ESP_DISCOVERY_ERROR="Mounted inactive ESP differs from recorded ownership state."; return 1; }
+    other=$(readlink -f "$CORE_UNLOCK_STEAMOS_OTHER_EFI_PARTSET" 2>/dev/null || true)
+    [[ "$other" == "$source" ]] \
+        || { ESP_DISCOVERY_ERROR="SteamOS inactive EFI slot changed during validation."; return 1; }
 
     CORE_UNLOCK_ESP_SOURCE="$source"
     CORE_UNLOCK_ESP_DISK="$disk"
@@ -3460,6 +3472,25 @@ mount_core_unlock_recorded_esp() {
     CORE_UNLOCK_ESP_PARTUUID="$partuuid"
     CORE_UNLOCK_EFI_DIR="$mount_root/EFI/bc250"
     CORE_UNLOCK_EFI_IMAGE="$CORE_UNLOCK_EFI_DIR/bc250-core-unlock.efi"
+    [[ "$access" == rw ]] && CORE_UNLOCK_EFI_TEMP_WRITABLE=1 \
+        || CORE_UNLOCK_EFI_TEMP_WRITABLE=0
+}
+
+prepare_core_unlock_validation_esp() {
+    if verify_core_unlock_esp_state; then
+        return 0
+    fi
+    local active_error="${ESP_DISCOVERY_ERROR:-Active ESP ownership validation failed.}"
+    if ! mount_core_unlock_recorded_esp "$EFI_STATE_SOURCE" "$EFI_STATE_DISK" \
+        "$EFI_STATE_PART" "$EFI_STATE_PARTUUID" ro; then
+        local inactive_error="$ESP_DISCOVERY_ERROR"
+        if [[ -n "$CORE_UNLOCK_EFI_TEMP_MOUNT" ]] \
+            && ! release_core_unlock_recorded_esp; then
+            inactive_error="$inactive_error ${ESP_DISCOVERY_ERROR:-Could not release the inactive ESP.}"
+        fi
+        ESP_DISCOVERY_ERROR="$active_error Recorded inactive ESP validation failed: $inactive_error"
+        return 1
+    fi
 }
 
 prepare_core_unlock_removal_esp() {
@@ -3488,11 +3519,16 @@ prepare_core_unlock_removal_esp() {
 release_core_unlock_recorded_esp() {
     local mount_root="$CORE_UNLOCK_EFI_TEMP_MOUNT"
     [[ -n "$mount_root" ]] || return 0
-    sync "$mount_root" \
-        || { ESP_DISCOVERY_ERROR="Could not sync the recorded inactive ESP."; return 1; }
+    if [[ $CORE_UNLOCK_EFI_TEMP_WRITABLE -eq 1 ]]; then
+        sync "$mount_root" \
+            || { ESP_DISCOVERY_ERROR="Could not sync the recorded inactive ESP."; return 1; }
+    fi
     umount "$mount_root" \
         || { ESP_DISCOVERY_ERROR="Could not unmount the recorded inactive ESP."; return 1; }
     CORE_UNLOCK_EFI_TEMP_MOUNT=""
+    CORE_UNLOCK_EFI_TEMP_WRITABLE=0
+    CORE_UNLOCK_EFI_DIR="$CORE_UNLOCK_ESP_ROOT/EFI/bc250"
+    CORE_UNLOCK_EFI_IMAGE="$CORE_UNLOCK_EFI_DIR/bc250-core-unlock.efi"
     rmdir "$mount_root" 2>/dev/null || true
 }
 
@@ -4530,6 +4566,23 @@ oc_detected_result() {   # "3800 MHz @ 1176 mV" from a conf's detect stamp
     return 0
 }
 
+oc_profile_summary() {
+    local conf="$1" detected frequency temperature summary
+    [[ -f "$conf" && ! -L "$conf" ]] || return 1
+    detected=$(oc_detected_result "$conf")
+    frequency=$(awk '$1 == "frequency" && $2 == "=" && $3 ~ /^[0-9]+$/ { print $3; exit }' "$conf")
+    temperature=$(awk '$1 == "max_temperature" && $2 == "=" && $3 ~ /^[0-9]+$/ { print $3; exit }' "$conf")
+    if [[ -n "$detected" ]]; then
+        summary="$detected"
+    elif [[ -n "$frequency" ]]; then
+        summary="$frequency MHz (measured voltage unavailable)"
+    else
+        return 1
+    fi
+    [[ -z "$temperature" ]] || summary+="; $temperature C limit"
+    printf '%s\n' "$summary"
+}
+
 oc_live_mv() {   # current CPU voltage over SMU; needs root + staged tool
     [[ $EUID -eq 0 && -f "$OC_DIR/bc250_smu/api.py" ]] || return 1
     PYTHONPATH="$OC_DIR" python3 - << 'EOF' 2>/dev/null
@@ -4617,6 +4670,14 @@ cmd_status() {
         echo "  c-states: $states"
     else
         echo "  cpufreq absent -- ACPI override not active (not installed, or reboot pending)"
+    fi
+    local oc_profile
+    if oc_profile=$(oc_profile_summary "$OC_CONF"); then
+        echo "  CPU OC boot profile: $oc_profile"
+    elif oc_profile=$(oc_profile_summary "$OC_STAGE_CONF"); then
+        echo "  CPU OC staged profile: $oc_profile"
+    else
+        echo "  CPU OC profile: none"
     fi
     echo
     sensors 2>/dev/null | grep -E 'edge|junction|PPT|Tctl|power' || true

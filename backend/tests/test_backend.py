@@ -1977,6 +1977,8 @@ class BackendMutationTests(unittest.IsolatedAsyncioTestCase):
             },
         )
         self.assertTrue(status["imageHashValid"])
+        self.assertEqual(status["espSlot"], "self")
+        self.assertEqual(status["imageVerification"], "live")
         self.assertEqual(
             [call.args[0][0] for call in backend._exec.await_args_list],
             [
@@ -1986,7 +1988,7 @@ class BackendMutationTests(unittest.IsolatedAsyncioTestCase):
             ],
         )
 
-    async def test_cpu_unlock_efi_status_accepts_only_active_steamos_efi_slot(self):
+    async def test_cpu_unlock_efi_status_accepts_both_steamos_efi_slot_roles(self):
         backend = object.__new__(ToolkitBackend)
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -1994,6 +1996,7 @@ class BackendMutationTests(unittest.IsolatedAsyncioTestCase):
             source = root / "test3"
             disk = root / "test"
             partset = root / "self-efi"
+            other_partset = root / "other-efi"
             esp_root.mkdir()
             source.touch()
             disk.touch()
@@ -2022,6 +2025,7 @@ class BackendMutationTests(unittest.IsolatedAsyncioTestCase):
                 backend_module,
                 CPU_UNLOCK_EFI_ESP_ROOT_PATH=esp_root,
                 CPU_UNLOCK_STEAMOS_EFI_PARTSET_PATH=partset,
+                CPU_UNLOCK_STEAMOS_OTHER_EFI_PARTSET_PATH=other_partset,
             ):
                 valid = await backend._cpu_unlock_efi_esp_identity_valid(
                     source=str(source),
@@ -2033,6 +2037,15 @@ class BackendMutationTests(unittest.IsolatedAsyncioTestCase):
                 other = root / "other3"
                 other.touch()
                 partset.symlink_to(other)
+                other_partset.symlink_to(source)
+                valid_other = await backend._cpu_unlock_efi_esp_identity_valid(
+                    source=str(source),
+                    disk=str(disk),
+                    part="3",
+                    partuuid="11111111-2222-3333-4444-555555555555",
+                )
+                other_partset.unlink()
+                other_partset.symlink_to(other)
                 wrong_slot = await backend._cpu_unlock_efi_esp_identity_valid(
                     source=str(source),
                     disk=str(disk),
@@ -2041,11 +2054,82 @@ class BackendMutationTests(unittest.IsolatedAsyncioTestCase):
                 )
 
         self.assertTrue(valid)
+        self.assertTrue(valid_other)
         self.assertFalse(wrong_slot)
         self.assertIn(
             "NAME,TYPE,PKNAME,PARTN,PARTUUID,PARTTYPE",
             backend._exec.await_args_list[1].args[0],
         )
+
+    async def test_cpu_unlock_efi_status_survives_steamos_slot_flip(self):
+        backend = object.__new__(ToolkitBackend)
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            paths = self._write_efi_artifacts(root)
+            paths["image"].unlink()
+            paths["state"].write_text(
+                "BOOTNUM=00AF\n"
+                "ESP_SOURCE=/dev/null\n"
+                "DISK=/dev/test\n"
+                "PART=2\n"
+                "PARTUUID=22222222-2222-3333-4444-555555555555\n"
+                "LABEL=BC250 Core Unlock\n"
+                "LOADER=\\EFI\\bc250\\bc250-core-unlock.efi\n",
+                encoding="ascii",
+            )
+            self_partset = root / "self-efi"
+            other_partset = root / "other-efi"
+            self_partset.symlink_to("/dev/zero")
+            other_partset.symlink_to("/dev/null")
+            output = (
+                "BootOrder: 00AF,0001\n"
+                "Boot00AF* BC250 Core Unlock "
+                "HD(2,GPT,22222222-2222-3333-4444-555555555555,0x800,0x1000)"
+                "/File(\\EFI\\bc250\\bc250-core-unlock.efi)\n"
+            )
+
+            async def command_result(command, **_kwargs):
+                if command[0] == backend_module.EFIBOOTMGR:
+                    return 0, output, ""
+                if command[0] == backend_module.FINDMNT:
+                    return 0, f"/dev/zero {paths['esp_root']} vfat rw,nosuid\n", ""
+                if command[0] == backend_module.LSBLK:
+                    if command[-1] == "/dev/null":
+                        return (
+                            0,
+                            "/dev/null part /dev/test 2 "
+                            "22222222-2222-3333-4444-555555555555 "
+                            "ebd0a0a2-b9e5-4433-87c0-68b6b72699c7\n",
+                            "",
+                        )
+                    return (
+                        0,
+                        "/dev/zero part /dev/test 3 "
+                        "33333333-2222-3333-4444-555555555555 "
+                        "ebd0a0a2-b9e5-4433-87c0-68b6b72699c7\n",
+                        "",
+                    )
+                raise AssertionError(f"unexpected command: {command}")
+
+            trusted_paths = set(paths.values())
+            backend._exec = AsyncMock(side_effect=command_result)
+            with self._patch_efi_paths(paths), patch.multiple(
+                backend_module,
+                CPU_UNLOCK_STEAMOS_EFI_PARTSET_PATH=self_partset,
+                CPU_UNLOCK_STEAMOS_OTHER_EFI_PARTSET_PATH=other_partset,
+            ), patch.object(
+                ToolkitBackend,
+                "_trusted_root_file",
+                side_effect=lambda path: path in trusted_paths and path.exists(),
+            ):
+                status = await backend._cpu_unlock_efi_status()
+
+        self.assertTrue(status["installed"])
+        self.assertFalse(status["partial"])
+        self.assertEqual(status["espSlot"], "other")
+        self.assertEqual(status["imageVerification"], "committed-unmounted")
+        self.assertIsNone(status["imageInstalled"])
+        self.assertTrue(status["bootEntry"]["effective"])
 
     async def test_cpu_unlock_efi_status_missing_state_is_partial(self):
         backend = object.__new__(ToolkitBackend)

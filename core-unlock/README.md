@@ -75,9 +75,12 @@ stores a master image and ownership state under
 `Boot####` entry. The mounted path must be a writable FAT filesystem on a
 standard GPT ESP or the active SteamOS EFI slot; its canonical source, parent
 disk, partition number, and PARTUUID are recorded. Completeness additionally
-requires an active entry first in `BootOrder`. Rollback and removal delete only
-an entry whose exact label, loader, partition number, and PARTUUID match;
-uncertainty retains the loader and ownership/recovery state for manual review.
+requires an active entry first in `BootOrder`. If a SteamOS update swaps the A/B
+slot roles, status revalidates the recorded loader read-only on `other/efi`;
+the fixed firmware entry remains effective because it names the partition by
+PARTUUID. Rollback and removal delete only an entry whose exact label, loader,
+partition number, and PARTUUID match; uncertainty retains the loader and
+ownership/recovery state for manual review.
 
 EFI mode runs before Linux. Its first pass after cold power writes the mask and
 requests a warm reset; its second pass sees the completed mask and lets firmware

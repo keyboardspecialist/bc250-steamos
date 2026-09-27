@@ -473,6 +473,7 @@ class ToolkitTests(unittest.TestCase):
                     "  printf '%s\\n' '  saved freq setting (reapplied at boot): MODE=range A=1000 B=1850 '\n"
                     "  printf '%s\\n' '  max MHz: config=1500 initial=1500 current=1500'\n"
                     "  printf '%s\\n' '  governor: schedutil'\n"
+                    "  printf '%s\\n' '  CPU OC boot profile: 3800 MHz @ 1150 mV; 90 C limit'\n"
                     "fi\n"
                 )
             elif relative == "bc250-cec.sh":
@@ -515,7 +516,8 @@ class ToolkitTests(unittest.TestCase):
         )
         proton = root / "bc250-proton.sh"
         proton.write_text(
-            "#!/usr/bin/env bash\nprintf '%s\\n' '[bc250-proton] state: not-installed'\nexit 1\n",
+            "#!/usr/bin/env bash\n"
+            "printf '%s\\n' '[bc250-proton] state: installed' '[bc250-proton] version: 11.6-166'\n",
             encoding="utf-8",
         )
         fan = root / "nct6687d/steamdeck-setup.sh"
@@ -575,11 +577,16 @@ class ToolkitTests(unittest.TestCase):
                     self.assertIn(heading, result.stdout)
                 self.assertIn("1000-1850 MHz saved range", result.stdout)
                 self.assertNotIn("config=1500", result.stdout)
+                self.assertIn("3800 MHz @ 1150 mV; 90 C limit", result.stdout)
                 self.assertIn("CPU core unlock", result.stdout)
-                self.assertIn("6 cores / 12 threads (locked)", result.stdout)
+                self.assertIn("6 cores / 12 threads; no automatic replay", result.stdout)
+                self.assertNotIn("6 cores / 12 threads (locked)", result.stdout)
                 self.assertIn("GPU compute-unit unlock", result.stdout)
                 self.assertIn("BC-250 GE-Proton", result.stdout)
+                self.assertIn("version 11.6-166", result.stdout)
                 self.assertIn("[38/40]", result.stdout)
+                self.assertIn("+14 CUs over factory route", result.stdout)
+                self.assertNotIn("all compute units routed", result.stdout)
                 self.assertIn("CEC setup & automation", result.stdout)
                 self.assertIn("[configured]", result.stdout)
                 self.assertIn("Poweroff standby", result.stdout)
@@ -616,6 +623,14 @@ class ToolkitTests(unittest.TestCase):
                     if re.match(r"^  .{30} \[", line)
                 ]
                 self.assertGreaterEqual(len(rows), 10)
+                for row in rows:
+                    match = re.match(r"^  .{30} \[([^]]+)\]\s+(.*)$", row)
+                    self.assertIsNotNone(match, row)
+                    self.assertNotEqual(
+                        match.group(1).strip().casefold(),
+                        match.group(2).strip().casefold(),
+                        row,
+                    )
 
     def test_status_reports_unlocked_cpu_topology_and_efi_mode(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -641,13 +656,14 @@ class ToolkitTests(unittest.TestCase):
             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
             self.assertIn("CPU core unlock", result.stdout)
             self.assertIn("[unlocked]", result.stdout)
-            self.assertIn("8 cores / 16 threads (unlocked)", result.stdout)
+            self.assertIn("8 cores / 16 threads; EFI pre-boot method", result.stdout)
+            self.assertNotIn("8 cores / 16 threads (unlocked)", result.stdout)
             self.assertIn("EFI pre-boot method", result.stdout)
 
     def test_cpu_overclock_status_explains_boot_apply_failure(self):
         cases = (
             ("failed", 1, "[apply failed]", "journalctl -u bc250-smu-oc.service -b"),
-            ("active", 0, "[enabled]", "boot profile applied successfully"),
+            ("active", 0, "[enabled]", "3800 MHz @ 1150 mV; 90 C limit"),
         )
         for active, expected_rc, badge, detail in cases:
             with self.subTest(active=active), tempfile.TemporaryDirectory() as directory:
@@ -666,6 +682,7 @@ class ToolkitTests(unittest.TestCase):
                 self.assertIn("CPU overclock", result.stdout)
                 self.assertIn(badge, result.stdout)
                 self.assertIn(detail, result.stdout)
+                self.assertNotIn("boot profile applied successfully", result.stdout)
 
     def test_update_badge_formats_latest_version(self):
         result = subprocess.run(

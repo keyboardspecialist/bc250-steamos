@@ -109,6 +109,9 @@ CPU_UNLOCK_EFI_RECOVERY_PATH = Path(
 CPU_UNLOCK_EFI_ESP_IMAGE_PATH = Path("/efi/EFI/bc250/bc250-core-unlock.efi")
 CPU_UNLOCK_EFI_ESP_ROOT_PATH = Path("/efi")
 CPU_UNLOCK_STEAMOS_EFI_PARTSET_PATH = Path("/dev/disk/by-partsets/self/efi")
+CPU_UNLOCK_STEAMOS_OTHER_EFI_PARTSET_PATH = Path(
+    "/dev/disk/by-partsets/other/efi"
+)
 CPU_UNLOCK_EFI_GUARD_PATH = Path(
     "/sys/firmware/efi/efivars/"
     "BC250CoreUnlockAttempt-4f6f6f13-1ec2-4f26-a250-bc250c0e77ff"
@@ -1142,6 +1145,7 @@ class ToolkitBackend:
         hash_present = self._path_represented(CPU_UNLOCK_EFI_IMAGE_HASH_PATH)
         hash_trusted = False
         hash_valid: Optional[bool] = None
+        master_hash_valid = False
         if hash_present:
             hash_trusted = self._trusted_root_file(CPU_UNLOCK_EFI_IMAGE_HASH_PATH)
             hash_content = (
@@ -1160,14 +1164,24 @@ class ToolkitBackend:
                 and image_hash is not None
                 and hash_match[1].decode("ascii").lower() == master_hash == image_hash
             )
+            master_hash_valid = bool(
+                hash_match is not None
+                and master_hash is not None
+                and hash_match[1].decode("ascii").lower() == master_hash
+            )
 
-        files_valid = bool(
+        local_files_valid = bool(
             master_installed
-            and image_installed
             and state_installed
             and state_valid
             and license_installed
             and header_license_installed
+            and bootnum_trusted
+            and master_hash_valid
+        )
+        files_valid = bool(
+            local_files_valid
+            and image_installed
             and images_match
             and hash_valid is True
         )
@@ -1211,10 +1225,13 @@ class ToolkitBackend:
             "imageHashPresent": hash_present,
             "imageHashStateInstalled": hash_trusted,
             "imageHashValid": hash_valid,
+            "imageVerification": "live" if hash_valid is True else "failed",
             "recoveryStatePresent": recovery_present,
             "_artifactsRepresented": required_represented,
             "_filesComplete": files_complete,
             "_filesValid": files_valid,
+            "_localFilesComplete": local_files_valid and not recovery_present,
+            "_localFilesValid": local_files_valid,
             "_bootnum": values.get("BOOTNUM") if state_valid else None,
             "_source": values.get("ESP_SOURCE") if state_valid else None,
             "_disk": values.get("DISK") if state_valid else None,
@@ -1291,16 +1308,16 @@ class ToolkitBackend:
         )
         return [match[1].upper() for match in pattern.finditer(output)]
 
-    async def _cpu_unlock_efi_esp_identity_valid(
+    async def _cpu_unlock_efi_esp_slot(
         self,
         *,
         source: Optional[str],
         disk: Optional[str],
         part: Optional[str],
         partuuid: Optional[str],
-    ) -> Optional[bool]:
+    ) -> Optional[str]:
         if None in (source, disk, part, partuuid):
-            return False
+            return "invalid"
         try:
             returncode, output, _ = await self._exec(
                 [
@@ -1325,14 +1342,14 @@ class ToolkitBackend:
                 ):
                     concrete_mounts.append(fields)
             if len(concrete_mounts) != 1:
-                return False
+                return "invalid"
             mount_source, target, filesystem, options = concrete_mounts[0]
             if (
                 target != str(CPU_UNLOCK_EFI_ESP_ROOT_PATH)
                 or filesystem.lower() not in {"vfat", "fat", "fat32"}
                 or "rw" not in options.split(",")
             ):
-                return False
+                return "invalid"
             returncode, output, _ = await self._exec(
                 [
                     LSBLK,
@@ -1347,7 +1364,7 @@ class ToolkitBackend:
                 return None
             fields = output.split()
             if len(fields) != 6:
-                return False
+                return "invalid"
             name, kind, parent, actual_part, actual_uuid, parttype = fields
             partition_type_valid = (
                 parttype.lower() == "c12a7328-f81f-11d2-ba4b-00a0c93ec93b"
@@ -1361,7 +1378,7 @@ class ToolkitBackend:
                     )
                 except (OSError, RuntimeError):
                     partition_type_valid = False
-            return bool(
+            current_matches = bool(
                 name == source
                 and kind == "part"
                 and parent == disk
@@ -1369,14 +1386,75 @@ class ToolkitBackend:
                 and actual_uuid.lower() == partuuid.lower()
                 and partition_type_valid
             )
+            if current_matches:
+                return "self"
+
+            try:
+                other_matches = (
+                    CPU_UNLOCK_STEAMOS_OTHER_EFI_PARTSET_PATH.is_symlink()
+                    and CPU_UNLOCK_STEAMOS_OTHER_EFI_PARTSET_PATH.resolve(strict=True)
+                    == Path(source).resolve(strict=True)
+                )
+            except (OSError, RuntimeError):
+                other_matches = False
+            if not other_matches:
+                return "invalid"
+            returncode, output, _ = await self._exec(
+                [
+                    LSBLK,
+                    "-dnpro",
+                    "NAME,TYPE,PKNAME,PARTN,PARTUUID,PARTTYPE",
+                    source,
+                ],
+                timeout=5,
+                check=False,
+            )
+            if returncode != 0:
+                return None
+            fields = output.split()
+            if len(fields) != 6:
+                return "invalid"
+            name, kind, parent, actual_part, actual_uuid, parttype = fields
+            try:
+                other_still_matches = (
+                    CPU_UNLOCK_STEAMOS_OTHER_EFI_PARTSET_PATH.is_symlink()
+                    and CPU_UNLOCK_STEAMOS_OTHER_EFI_PARTSET_PATH.resolve(strict=True)
+                    == Path(source).resolve(strict=True)
+                )
+            except (OSError, RuntimeError):
+                other_still_matches = False
+            return "other" if (
+                other_still_matches
+                and name == source
+                and kind == "part"
+                and parent == disk
+                and actual_part == part
+                and actual_uuid.lower() == partuuid.lower()
+                and parttype.lower() == "ebd0a0a2-b9e5-4433-87c0-68b6b72699c7"
+            ) else "invalid"
         except (CommandError, OSError):
             return None
+
+    async def _cpu_unlock_efi_esp_identity_valid(
+        self,
+        *,
+        source: Optional[str],
+        disk: Optional[str],
+        part: Optional[str],
+        partuuid: Optional[str],
+    ) -> Optional[bool]:
+        slot = await self._cpu_unlock_efi_esp_slot(
+            source=source, disk=disk, part=part, partuuid=partuuid
+        )
+        return None if slot is None else slot in {"self", "other"}
 
     async def _cpu_unlock_efi_status(self) -> dict[str, Any]:
         status = self._cpu_unlock_efi_file_status()
         represented = status.pop("_artifactsRepresented")
         files_complete = status.pop("_filesComplete")
         files_valid = status.pop("_filesValid")
+        local_files_complete = status.pop("_localFilesComplete")
+        local_files_valid = status.pop("_localFilesValid")
         bootnum = status.pop("_bootnum")
         source = status.pop("_source")
         disk = status.pop("_disk")
@@ -1404,12 +1482,23 @@ class ToolkitBackend:
                 matching_numbers = self._cpu_unlock_matching_boot_numbers(output)
         except (CommandError, OSError):
             pass
-        esp_identity_valid = await self._cpu_unlock_efi_esp_identity_valid(
+        esp_slot = await self._cpu_unlock_efi_esp_slot(
             source=source,
             disk=disk,
             part=part,
             partuuid=partuuid,
         )
+        esp_identity_valid = None if esp_slot is None else esp_slot in {"self", "other"}
+        if esp_slot == "other":
+            # Snapshot polling must not repeatedly mount the inactive slot. The
+            # shell action path performs live read-only attestation before use.
+            files_complete = local_files_complete
+            files_valid = local_files_valid
+            status["imageInstalled"] = None
+            status["espImageInstalled"] = None
+            status["imagesMatch"] = None
+            status["imageHashValid"] = True if local_files_valid else False
+            status["imageVerification"] = "committed-unmounted"
         represented = bool(
             represented
             or guard_present
@@ -1424,6 +1513,7 @@ class ToolkitBackend:
         status["efiGuardPresent"] = guard_present
         status["uefiRuntimeAvailable"] = uefi_runtime_available
         status["espIdentityValid"] = esp_identity_valid
+        status["espSlot"] = esp_slot if esp_slot in {"self", "other"} else None
         status["matchingEntryCount"] = len(matching_numbers)
         status["unrecordedMatchingEntries"] = bool(
             matching_numbers

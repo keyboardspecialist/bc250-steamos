@@ -640,6 +640,79 @@ remove_core_unlock_efi
             self.assertIn("/dev/test3", Path(directory, "mount.log").read_text(encoding="utf-8"))
             self.assertTrue(Path(directory, "umount.log").is_file())
 
+    def test_efi_status_accepts_recorded_other_steamos_slot(self):
+        with tempfile.TemporaryDirectory() as directory:
+            result = self.run_power_shell(
+                r'''
+MOUNTED=0
+efibootmgr() {
+    printf '%s\n' 'BootOrder: 0007,0001'
+    printf '%s\n' 'Boot0007* BC250 Core Unlock HD(2,GPT,22222222-2222-3333-4444-555555555555,0x800,0x1000)/File(\EFI\bc250\bc250-core-unlock.efi)'
+}
+findmnt() {
+    if [[ "$*" == *"--source /dev/test2"* ]]; then
+        [[ $MOUNTED -eq 1 ]] || return 1
+        printf '%s\n' "$base/recorded-mount"
+    elif [[ "$*" == *"--target $base/recorded-mount"* ]]; then
+        printf '/dev/test2 %s vfat ro,nosuid,nodev,noexec\n' "$base/recorded-mount"
+    else
+        printf '/dev/test3 %s vfat rw,nosuid\n' "$CORE_UNLOCK_ESP_ROOT"
+    fi
+}
+lsblk() {
+    case "${*: -1}" in
+        /dev/test2) printf '/dev/test2 part /dev/test 2 22222222-2222-3333-4444-555555555555 ebd0a0a2-b9e5-4433-87c0-68b6b72699c7\n' ;;
+        /dev/test3) printf '/dev/test3 part /dev/test 3 33333333-2222-3333-4444-555555555555 ebd0a0a2-b9e5-4433-87c0-68b6b72699c7\n' ;;
+        *) return 1 ;;
+    esac
+}
+mktemp() {
+    [[ "$*" == *bc250-core-unlock-esp.XXXXXX* ]] || return 1
+    mkdir -p "$base/recorded-mount"
+    printf '%s\n' "$base/recorded-mount"
+}
+mount() {
+    [[ "$*" == *'-o ro,nosuid,nodev,noexec /dev/test2'* ]] || return 30
+    cp -a "$base/other-esp/." "$base/recorded-mount/"
+    MOUNTED=1
+}
+umount() {
+    printf '%s\n' "$*" > "$base/umount.log"
+    rm -rf "$base/recorded-mount/EFI"
+    MOUNTED=0
+}
+CORE_UNLOCK_ESP_ROOT="$base/efi"
+CORE_UNLOCK_STEAMOS_EFI_PARTSET="$base/partsets/self/efi"
+CORE_UNLOCK_STEAMOS_OTHER_EFI_PARTSET="$base/partsets/other/efi"
+CORE_UNLOCK_EFI_MASTER="$base/state/bc250-core-unlock.efi"
+CORE_UNLOCK_EFI_STATE="$base/state/efi-state"
+CORE_UNLOCK_EFI_BOOTNUM="$base/state/efi-bootnum"
+CORE_UNLOCK_EFI_IMAGE_HASH="$base/state/efi-image.sha256"
+CORE_UNLOCK_EFI_RECOVERY="$base/state/efi-recovery"
+CORE_UNLOCK_EFI_DIR="$CORE_UNLOCK_ESP_ROOT/EFI/bc250"
+CORE_UNLOCK_EFI_IMAGE="$CORE_UNLOCK_EFI_DIR/bc250-core-unlock.efi"
+CORE_UNLOCK_EFI_LICENSE="$base/licenses/efi"
+CORE_UNLOCK_EFI_HEADER_LICENSE="$base/licenses/header"
+CORE_UNLOCK_EFIVARS_DIR="$base/efivars"
+mkdir -p "$CORE_UNLOCK_ESP_ROOT" "$base/other-esp/EFI/bc250" \
+    "$base/state" "$base/licenses" "$base/efivars" \
+    "$base/partsets/self" "$base/partsets/other"
+ln -s /dev/test3 "$CORE_UNLOCK_STEAMOS_EFI_PARTSET"
+ln -s /dev/test2 "$CORE_UNLOCK_STEAMOS_OTHER_EFI_PARTSET"
+printf image > "$CORE_UNLOCK_EFI_MASTER"
+cp "$CORE_UNLOCK_EFI_MASTER" "$base/other-esp/EFI/bc250/bc250-core-unlock.efi"
+touch "$CORE_UNLOCK_EFI_LICENSE" "$CORE_UNLOCK_EFI_HEADER_LICENSE"
+printf '0007\n' > "$CORE_UNLOCK_EFI_BOOTNUM"
+sha256sum "$CORE_UNLOCK_EFI_MASTER" | awk '{print $1}' > "$CORE_UNLOCK_EFI_IMAGE_HASH"
+printf 'BOOTNUM=0007\nESP_SOURCE=/dev/test2\nDISK=/dev/test\nPART=2\nPARTUUID=22222222-2222-3333-4444-555555555555\nLABEL=%s\nLOADER=%s\n' \
+    "$CORE_UNLOCK_EFI_LABEL" "$CORE_UNLOCK_EFI_LOADER" > "$CORE_UNLOCK_EFI_STATE"
+[[ "$(core_unlock_mode)" == efi && $MOUNTED -eq 0 ]]
+''',
+                directory,
+            )
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertTrue(Path(directory, "umount.log").is_file())
+
     def test_efi_removal_rejects_unproven_inactive_esp(self):
         with tempfile.TemporaryDirectory() as directory:
             result = self.run_power_shell(

@@ -163,6 +163,8 @@ export interface CpuUnlockStatus {
   efi: {
     installed: boolean;
     partial: boolean;
+    espSlot?: "self" | "other" | null;
+    imageVerification?: "live" | "committed-unmounted" | "failed";
     bootEntry: {
       present: boolean;
       active: boolean;

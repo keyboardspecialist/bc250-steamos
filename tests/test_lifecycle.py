@@ -119,6 +119,35 @@ class LifecycleTests(unittest.TestCase):
         self.assertLess(enable.index("oc_apply"), enable.index("systemctl reset-failed"))
         self.assertIn('systemctl reset-failed "$OC_SVC"', enable)
 
+    def test_cpu_overclock_profile_summary_reports_detected_mv(self):
+        with tempfile.TemporaryDirectory() as directory:
+            profile = Path(directory) / "overclock.conf"
+            profile.write_text(
+                "[overclock]\n"
+                "frequency = 3800\n"
+                "scale = -30\n"
+                "max_temperature = 90\n"
+                "# detected: 3800 MHz @ 1150 mV using scale -30 (2026-07-09)\n",
+                encoding="ascii",
+            )
+            result = subprocess.run(
+                [
+                    "bash",
+                    "-c",
+                    'script=$1; profile=$2; set -- help; source "$script" >/dev/null; '
+                    'oc_profile_summary "$profile"',
+                    "_",
+                    str(POWER),
+                    str(profile),
+                ],
+                check=True,
+                capture_output=True,
+                text=True,
+                env=script_env(directory),
+            )
+
+            self.assertEqual(result.stdout, "3800 MHz @ 1150 mV; 90 C limit\n")
+
     def test_power_uninstall_removes_payload_but_preserves_tuning(self):
         with tempfile.TemporaryDirectory() as directory:
             result = subprocess.run(
