@@ -17,9 +17,14 @@ class VideoCodecTests(unittest.TestCase):
         environment.update(
             {
                 "BC250_VIDEO_DATA_DIR": str(data_dir),
+                "BC250_VIDEO_COMPAT_DIR": str(data_dir.parent / "bc250"),
                 "BC250_VIDEO_ENV_FILE": str(env_file),
                 "BC250_VIDEO_PROFILE_FILE": str(
                     env_file.parent.parent / "profile.d/zz-bc250-video-codec.sh"
+                ),
+                "BC250_VIDEO_KEEP_FILE": str(
+                    env_file.parent.parent
+                    / "atomic-update.conf.d/bc250-video-codec.conf"
                 ),
                 "BC250_VIDEO_LOCK_FILE": str(data_dir.parent / "codec.lock"),
             }
@@ -103,10 +108,16 @@ class VideoCodecTests(unittest.TestCase):
             "steamos-readonly disable",
             "steamos-readonly enable",
             "/var/lib/bc250-control/video-codec",
+            "/var/lib/bc250",
             "/etc/environment.d/90-bc250-video-codec.conf",
             "/etc/profile.d/zz-bc250-video-codec.sh",
+            "/etc/atomic-update.conf.d/bc250-video-codec.conf",
             "Refusing to replace an unrecognized runtime",
             "Refusing to remove an unrecognized runtime",
+            "Refusing to replace an unrecognized SteamOS runtime path",
+            "Refusing to remove an unrecognized SteamOS runtime path",
+            "Refusing to replace an unrecognized atomic-update keep list",
+            "Refusing to remove an unrecognized atomic-update keep list",
         ):
             self.assertIn(required, source)
         self.assertNotIn("radeonsi_drv_video.so", source)
@@ -131,6 +142,15 @@ class VideoCodecTests(unittest.TestCase):
             check=False,
         )
         self.assertEqual(result.returncode, 0)
+
+    def test_environment_uses_standard_steamos_runtime_path(self):
+        source = SCRIPT.read_text(encoding="utf-8")
+        self.assertIn('COMPAT_DIR="${BC250_VIDEO_COMPAT_DIR:-/var/lib/bc250}"', source)
+        self.assertIn("LIBVA_DRIVERS_PATH=$COMPAT_DIR/dri", source)
+        self.assertIn("BC250_SHADER_DIR=$COMPAT_DIR/shaders", source)
+        self.assertIn('ln -s -- "$RUNTIME_DIR" "$COMPAT_DIR"', source)
+        self.assertIn('[[ "$(readlink "$COMPAT_DIR")" == "$RUNTIME_DIR" ]]', source)
+        self.assertIn("$COMPAT_DIR\n$ENV_FILE\n$PROFILE_FILE", source)
 
     def test_source_extraction_rejects_traversal(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -180,7 +200,11 @@ class VideoCodecTests(unittest.TestCase):
         self.assertIn("nct6687d video-codec", workflow)
         self.assertIn("video-codec) echo \"VA-API video codec\"", maintenance)
         self.assertIn("/etc/profile.d/zz-bc250-video-codec.sh", maintenance)
+        self.assertIn("/var/lib/bc250", maintenance)
         self.assertIn("/etc/profile.d/90-bc250-video-codec.sh", maintenance)
+        self.assertIn(
+            "/etc/atomic-update.conf.d/bc250-video-codec.conf", maintenance
+        )
         self.assertIn("sudo bash \"$script\" uninstall", maintenance)
 
     def test_help_is_non_privileged(self):

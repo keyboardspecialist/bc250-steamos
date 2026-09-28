@@ -400,9 +400,12 @@ Check or remove the runtime:
 ./bc250-toolkit.sh video-codec-remove
 ```
 
-Sign out or reboot after installation or removal. The toolkit uses persistent
-storage plus managed systemd and shell environment files. It does not replace the stock
-`radeonsi` driver or enable the upstream Sunshine boot redirect.
+Sign out or reboot after installation or removal. The toolkit keeps the
+payload in its persistent storage and exposes the standard SteamOS layout at
+`/var/lib/bc250`, alongside managed systemd and shell environment files. An
+atomic-update keep list preserves the compatibility link and environment files.
+The toolkit does not replace the stock `radeonsi` driver or enable the upstream
+Sunshine boot redirect.
 
 See [`video-codec/README.md`](video-codec/README.md) for paths, scope, and
 license information.

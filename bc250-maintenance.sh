@@ -198,12 +198,16 @@ component_has_artifacts() {
         video-codec)
             [[ -e /var/lib/bc250-control/video-codec/runtime \
                 || -L /var/lib/bc250-control/video-codec/runtime \
+                || -e /var/lib/bc250 \
+                || -L /var/lib/bc250 \
                 || -e /etc/environment.d/90-bc250-video-codec.conf \
                 || -L /etc/environment.d/90-bc250-video-codec.conf \
                 || -e /etc/profile.d/zz-bc250-video-codec.sh \
                 || -L /etc/profile.d/zz-bc250-video-codec.sh \
                 || -e /etc/profile.d/90-bc250-video-codec.sh \
-                || -L /etc/profile.d/90-bc250-video-codec.sh ]]
+                || -L /etc/profile.d/90-bc250-video-codec.sh \
+                || -e /etc/atomic-update.conf.d/bc250-video-codec.conf \
+                || -L /etc/atomic-update.conf.d/bc250-video-codec.conf ]]
             ;;
         native-mesh)
             [[ -e "$MESH_STATE_DIR/native-mesh" || -L "$MESH_STATE_DIR/native-mesh" \

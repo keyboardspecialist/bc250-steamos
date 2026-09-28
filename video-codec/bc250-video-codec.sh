@@ -25,16 +25,19 @@ SHADER_NAMES=(
 
 DATA_DIR="${BC250_VIDEO_DATA_DIR:-/var/lib/bc250-control/video-codec}"
 RUNTIME_DIR="$DATA_DIR/runtime"
+COMPAT_DIR="${BC250_VIDEO_COMPAT_DIR:-/var/lib/bc250}"
 ENV_FILE="${BC250_VIDEO_ENV_FILE:-/etc/environment.d/90-bc250-video-codec.conf}"
 PROFILE_FILE="${BC250_VIDEO_PROFILE_FILE:-/etc/profile.d/zz-bc250-video-codec.sh}"
 LEGACY_PROFILE_FILE=""
 if [[ -z "${BC250_VIDEO_PROFILE_FILE+x}" ]]; then
     LEGACY_PROFILE_FILE=/etc/profile.d/90-bc250-video-codec.sh
 fi
+KEEP_FILE="${BC250_VIDEO_KEEP_FILE:-/etc/atomic-update.conf.d/bc250-video-codec.conf}"
 LOCK_FILE="${BC250_VIDEO_LOCK_FILE:-/run/lock/bc250-video-codec.lock}"
 MANAGED_MARKER="bc250-toolkit-video-codec-v1"
 ENV_MARKER="# BC-250 toolkit managed VA-API video codec"
 PROFILE_MARKER="# BC-250 toolkit managed VA-API video codec shell environment"
+KEEP_MARKER="# BC-250 toolkit managed VA-API video codec update persistence"
 STAGE=""
 
 log() { echo "[bc250-video-codec] $*"; }
@@ -69,8 +72,8 @@ environment_config() {
     cat <<EOF
 $ENV_MARKER
 LIBVA_DRIVER_NAME=bc250
-LIBVA_DRIVERS_PATH=$RUNTIME_DIR/dri
-BC250_SHADER_DIR=$RUNTIME_DIR/shaders
+LIBVA_DRIVERS_PATH=$COMPAT_DIR/dri
+BC250_SHADER_DIR=$COMPAT_DIR/shaders
 BC250_FAST_MODE=1
 BC250_SLICES_PER_FRAME=4
 BC250_HEVC_SLICES=4
@@ -85,8 +88,8 @@ profile_config() {
     cat <<EOF
 $PROFILE_MARKER
 export LIBVA_DRIVER_NAME=bc250
-export LIBVA_DRIVERS_PATH=$RUNTIME_DIR/dri
-export BC250_SHADER_DIR=$RUNTIME_DIR/shaders
+export LIBVA_DRIVERS_PATH=$COMPAT_DIR/dri
+export BC250_SHADER_DIR=$COMPAT_DIR/shaders
 export BC250_FAST_MODE=1
 export BC250_SLICES_PER_FRAME=4
 export BC250_HEVC_SLICES=4
@@ -97,11 +100,30 @@ export OMP_DYNAMIC=FALSE
 EOF
 }
 
+keep_config() {
+    cat <<EOF
+$KEEP_MARKER
+$COMPAT_DIR
+$ENV_FILE
+$PROFILE_FILE
+EOF
+}
+
 is_managed_runtime() {
     [[ -d "$RUNTIME_DIR" && ! -L "$RUNTIME_DIR" \
         && -f "$RUNTIME_DIR/.bc250-toolkit-managed" \
         && ! -L "$RUNTIME_DIR/.bc250-toolkit-managed" ]] \
         && grep -qxF "$MANAGED_MARKER" "$RUNTIME_DIR/.bc250-toolkit-managed"
+}
+
+is_managed_compatibility_link() {
+    [[ -L "$COMPAT_DIR" ]] \
+        && [[ "$(readlink "$COMPAT_DIR")" == "$RUNTIME_DIR" ]]
+}
+
+compatibility_link_valid() {
+    is_managed_compatibility_link \
+        && [[ -d "$COMPAT_DIR/dri" && -d "$COMPAT_DIR/shaders" ]]
 }
 
 is_managed_environment() {
@@ -115,6 +137,13 @@ is_managed_profile() {
     [[ -n "$profile" && -f "$profile" && ! -L "$profile" ]] \
         && IFS= read -r first_line < "$profile" \
         && [[ "$first_line" == "$PROFILE_MARKER" ]]
+}
+
+is_managed_keep_file() {
+    local first_line
+    [[ -f "$KEEP_FILE" && ! -L "$KEEP_FILE" ]] \
+        && IFS= read -r first_line < "$KEEP_FILE" \
+        && [[ "$first_line" == "$KEEP_MARKER" ]]
 }
 
 runtime_valid() {
@@ -171,13 +200,15 @@ environment_valid() {
     is_managed_environment || return 1
     diff -q <(environment_config) "$ENV_FILE" >/dev/null 2>&1 || return 1
     is_managed_profile || return 1
-    diff -q <(profile_config) "$PROFILE_FILE" >/dev/null 2>&1
+    diff -q <(profile_config) "$PROFILE_FILE" >/dev/null 2>&1 || return 1
+    is_managed_keep_file || return 1
+    diff -q <(keep_config) "$KEEP_FILE" >/dev/null 2>&1
 }
 
 shell_environment_active() {
     [[ "${LIBVA_DRIVER_NAME:-}" == bc250 \
-        && "${LIBVA_DRIVERS_PATH:-}" == "$RUNTIME_DIR/dri" \
-        && "${BC250_SHADER_DIR:-}" == "$RUNTIME_DIR/shaders" ]]
+        && "${LIBVA_DRIVERS_PATH:-}" == "$COMPAT_DIR/dri" \
+        && "${BC250_SHADER_DIR:-}" == "$COMPAT_DIR/shaders" ]]
 }
 
 manager_environment_active() {
@@ -185,15 +216,15 @@ manager_environment_active() {
     command -v systemctl >/dev/null 2>&1 || return 1
     environment=$(systemctl --user show-environment 2>/dev/null) || return 1
     grep -qxF "LIBVA_DRIVER_NAME=bc250" <<< "$environment" \
-        && grep -qxF "LIBVA_DRIVERS_PATH=$RUNTIME_DIR/dri" <<< "$environment" \
-        && grep -qxF "BC250_SHADER_DIR=$RUNTIME_DIR/shaders" <<< "$environment"
+        && grep -qxF "LIBVA_DRIVERS_PATH=$COMPAT_DIR/dri" <<< "$environment" \
+        && grep -qxF "BC250_SHADER_DIR=$COMPAT_DIR/shaders" <<< "$environment"
 }
 
 session_environment_conflicted() {
     local environment=""
     if [[ ( -n "${LIBVA_DRIVER_NAME:-}" && "${LIBVA_DRIVER_NAME:-}" != bc250 ) \
-        || ( -n "${LIBVA_DRIVERS_PATH:-}" && "${LIBVA_DRIVERS_PATH:-}" != "$RUNTIME_DIR/dri" ) \
-        || ( -n "${BC250_SHADER_DIR:-}" && "${BC250_SHADER_DIR:-}" != "$RUNTIME_DIR/shaders" ) ]]; then
+        || ( -n "${LIBVA_DRIVERS_PATH:-}" && "${LIBVA_DRIVERS_PATH:-}" != "$COMPAT_DIR/dri" ) \
+        || ( -n "${BC250_SHADER_DIR:-}" && "${BC250_SHADER_DIR:-}" != "$COMPAT_DIR/shaders" ) ]]; then
         return 0
     fi
     command -v systemctl >/dev/null 2>&1 || return 1
@@ -203,37 +234,41 @@ session_environment_conflicted() {
         return 0
     fi
     if grep -q '^LIBVA_DRIVERS_PATH=' <<< "$environment" \
-        && ! grep -qxF "LIBVA_DRIVERS_PATH=$RUNTIME_DIR/dri" <<< "$environment"; then
+        && ! grep -qxF "LIBVA_DRIVERS_PATH=$COMPAT_DIR/dri" <<< "$environment"; then
         return 0
     fi
     if grep -q '^BC250_SHADER_DIR=' <<< "$environment" \
-        && ! grep -qxF "BC250_SHADER_DIR=$RUNTIME_DIR/shaders" <<< "$environment"; then
+        && ! grep -qxF "BC250_SHADER_DIR=$COMPAT_DIR/shaders" <<< "$environment"; then
         return 0
     fi
     return 1
 }
 
 show_status() {
-    local runtime_present=0 environment_present=0
+    local runtime_present=0 compatibility_present=0 environment_present=0
     [[ -e "$RUNTIME_DIR" || -L "$RUNTIME_DIR" ]] && runtime_present=1
+    [[ -e "$COMPAT_DIR" || -L "$COMPAT_DIR" ]] && compatibility_present=1
     [[ -e "$ENV_FILE" || -L "$ENV_FILE" \
         || -e "$PROFILE_FILE" || -L "$PROFILE_FILE" \
+        || -e "$KEEP_FILE" || -L "$KEEP_FILE" \
         || ( -n "$LEGACY_PROFILE_FILE" \
             && ( -e "$LEGACY_PROFILE_FILE" || -L "$LEGACY_PROFILE_FILE" ) ) ]] \
         && environment_present=1
 
-    if [[ $runtime_present -eq 0 && $environment_present -eq 0 ]]; then
+    if [[ $runtime_present -eq 0 && $compatibility_present -eq 0 \
+        && $environment_present -eq 0 ]]; then
         echo "state: not-installed"
         echo "release: $RELEASE"
         echo "session: stock"
         return 1
     fi
 
-    if runtime_valid && environment_valid; then
+    if runtime_valid && compatibility_link_valid && environment_valid; then
         echo "state: installed"
         echo "release: $RELEASE"
         echo "driver: verified local source build"
         echo "shaders: 11 verified"
+        echo "SteamOS path: $COMPAT_DIR"
         echo "configuration: installed"
         if shell_environment_active; then
             echo "session: active"
@@ -250,6 +285,7 @@ show_status() {
     echo "state: incomplete"
     echo "release: $RELEASE"
     if runtime_valid; then echo "driver: verified"; else echo "driver: missing-or-invalid"; fi
+    if compatibility_link_valid; then echo "SteamOS path: installed"; else echo "SteamOS path: missing-or-invalid"; fi
     if environment_valid; then echo "configuration: installed"; else echo "configuration: missing-or-invalid"; fi
     echo "session: unavailable"
     return 2
@@ -541,25 +577,35 @@ build_runtime() {
 }
 
 write_environment_atomically() {
-    local environment_dir profile_dir temporary profile_temporary
+    local environment_dir profile_dir keep_dir temporary profile_temporary keep_temporary
     environment_dir=$(dirname "$ENV_FILE")
     profile_dir=$(dirname "$PROFILE_FILE")
+    keep_dir=$(dirname "$KEEP_FILE")
     [[ ! -L "$environment_dir" ]] || die "Refusing symlinked environment directory: $environment_dir"
     [[ ! -L "$profile_dir" ]] || die "Refusing symlinked profile directory: $profile_dir"
+    [[ ! -L "$keep_dir" ]] || die "Refusing symlinked atomic-update directory: $keep_dir"
     install -d -m 0755 "$environment_dir"
     install -d -m 0755 "$profile_dir"
+    install -d -m 0755 "$keep_dir"
     temporary=$(mktemp "$environment_dir/.bc250-video-codec.XXXXXX")
     profile_temporary=$(mktemp "$profile_dir/.bc250-video-codec.XXXXXX")
+    keep_temporary=$(mktemp "$keep_dir/.bc250-video-codec.XXXXXX")
     environment_config > "$temporary"
     profile_config > "$profile_temporary"
+    keep_config > "$keep_temporary"
     chmod 0644 "$temporary"
     chmod 0644 "$profile_temporary"
+    chmod 0644 "$keep_temporary"
     if ! mv -f -- "$temporary" "$ENV_FILE"; then
-        rm -f -- "$temporary" "$profile_temporary"
+        rm -f -- "$temporary" "$profile_temporary" "$keep_temporary"
         return 1
     fi
     if ! mv -f -- "$profile_temporary" "$PROFILE_FILE"; then
-        rm -f -- "$profile_temporary"
+        rm -f -- "$profile_temporary" "$keep_temporary"
+        return 1
+    fi
+    if ! mv -f -- "$keep_temporary" "$KEEP_FILE"; then
+        rm -f -- "$keep_temporary"
         return 1
     fi
 }
@@ -574,12 +620,29 @@ remove_legacy_profile() {
     fi
 }
 
+install_compatibility_link() {
+    local compatibility_parent
+    if [[ -e "$COMPAT_DIR" || -L "$COMPAT_DIR" ]]; then
+        is_managed_compatibility_link \
+            || die "Refusing to replace an unrecognized SteamOS runtime path: $COMPAT_DIR"
+        return 0
+    fi
+    compatibility_parent=$(dirname "$COMPAT_DIR")
+    [[ ! -L "$compatibility_parent" ]] \
+        || die "Refusing symlinked SteamOS runtime parent: $compatibility_parent"
+    install -d -m 0755 "$compatibility_parent"
+    ln -s -- "$RUNTIME_DIR" "$COMPAT_DIR"
+}
+
 install_codec() {
-    local archive actual parent source build dependency_status="" backup=""
+    local archive actual parent source build dependency_status="" backup="" compatibility_created=0
     require_root
     for command in curl flock ldd od python3 sha256sum; do require_command "$command"; done
     detect_bc250 || die "AMD BC-250 PCI device 1002:13fe was not detected."
     [[ "$DATA_DIR" == /* && "$DATA_DIR" != / ]] || die "The runtime path is invalid."
+    [[ "$COMPAT_DIR" == /* && "$COMPAT_DIR" != / \
+        && "$COMPAT_DIR" != "$DATA_DIR" && "$COMPAT_DIR" != "$RUNTIME_DIR" ]] \
+        || die "The SteamOS compatibility path is invalid."
     [[ ! -L "$DATA_DIR" ]] || die "Refusing symlinked runtime directory: $DATA_DIR"
     if [[ -e "$RUNTIME_DIR" || -L "$RUNTIME_DIR" ]]; then
         is_managed_runtime \
@@ -597,6 +660,14 @@ install_codec() {
         && ( -e "$LEGACY_PROFILE_FILE" || -L "$LEGACY_PROFILE_FILE" ) ]]; then
         is_managed_profile "$LEGACY_PROFILE_FILE" \
             || die "Refusing to replace an unrecognized legacy shell profile: $LEGACY_PROFILE_FILE"
+    fi
+    if [[ -e "$KEEP_FILE" || -L "$KEEP_FILE" ]]; then
+        is_managed_keep_file \
+            || die "Refusing to replace an unrecognized atomic-update keep list: $KEEP_FILE"
+    fi
+    if [[ -e "$COMPAT_DIR" || -L "$COMPAT_DIR" ]]; then
+        is_managed_compatibility_link \
+            || die "Refusing to replace an unrecognized SteamOS runtime path: $COMPAT_DIR"
     fi
 
     install -d -m 0755 "$DATA_DIR"
@@ -644,19 +715,26 @@ install_codec() {
         mv -- "$RUNTIME_DIR" "$backup"
     fi
     mv -- "$STAGE/runtime" "$RUNTIME_DIR"
+    if [[ ! -L "$COMPAT_DIR" ]]; then
+        install_compatibility_link
+        compatibility_created=1
+    fi
     if ! write_environment_atomically; then
+        [[ $compatibility_created -eq 0 ]] || rm -f -- "$COMPAT_DIR"
         rm -rf -- "$RUNTIME_DIR"
         [[ -z "$backup" ]] || mv -- "$backup" "$RUNTIME_DIR"
         die "Could not install the managed environment configuration."
     fi
     remove_legacy_profile
-    if ! runtime_valid || ! environment_valid; then
+    if ! runtime_valid || ! compatibility_link_valid || ! environment_valid; then
+        [[ $compatibility_created -eq 0 ]] || rm -f -- "$COMPAT_DIR"
         rm -rf -- "$RUNTIME_DIR"
         [[ -z "$backup" ]] || mv -- "$backup" "$RUNTIME_DIR"
         die "The installed runtime failed final verification."
     fi
     [[ -z "$backup" ]] || rm -rf -- "$backup"
     log "Installed BC-250 VA-API video codec $RELEASE from verified source."
+    log "SteamOS runtime path: $COMPAT_DIR -> $RUNTIME_DIR"
     log "Sign out or reboot before using the new VA-API selection."
 }
 
@@ -675,21 +753,26 @@ uninstall_codec() {
     exec 9> "$LOCK_FILE"
     flock 9
 
+    if [[ -e "$COMPAT_DIR" || -L "$COMPAT_DIR" ]]; then
+        is_managed_compatibility_link \
+            || die "Refusing to remove an unrecognized SteamOS runtime path: $COMPAT_DIR"
+    fi
+    if [[ -e "$KEEP_FILE" || -L "$KEEP_FILE" ]]; then
+        is_managed_keep_file \
+            || die "Refusing to remove an unrecognized atomic-update keep list: $KEEP_FILE"
+    fi
     if [[ -e "$ENV_FILE" || -L "$ENV_FILE" ]]; then
         is_managed_environment \
             || die "Refusing to remove an unrecognized environment file: $ENV_FILE"
-        rm -f -- "$ENV_FILE"
     fi
     if [[ -e "$PROFILE_FILE" || -L "$PROFILE_FILE" ]]; then
         is_managed_profile \
             || die "Refusing to remove an unrecognized shell profile: $PROFILE_FILE"
-        rm -f -- "$PROFILE_FILE"
     fi
     if [[ -n "$LEGACY_PROFILE_FILE" && "$LEGACY_PROFILE_FILE" != "$PROFILE_FILE" \
         && ( -e "$LEGACY_PROFILE_FILE" || -L "$LEGACY_PROFILE_FILE" ) ]]; then
         is_managed_profile "$LEGACY_PROFILE_FILE" \
             || die "Refusing to remove an unrecognized legacy shell profile: $LEGACY_PROFILE_FILE"
-        rm -f -- "$LEGACY_PROFILE_FILE"
     fi
     if [[ -e "$RUNTIME_DIR" || -L "$RUNTIME_DIR" ]]; then
         [[ -d "$RUNTIME_DIR" && ! -L "$RUNTIME_DIR" \
@@ -698,6 +781,13 @@ uninstall_codec() {
             || die "Refusing to remove an unrecognized runtime at $RUNTIME_DIR"
         grep -qxF "$MANAGED_MARKER" "$RUNTIME_DIR/.bc250-toolkit-managed" \
             || die "Refusing to remove an unrecognized runtime at $RUNTIME_DIR"
+    fi
+
+    rm -f -- "$ENV_FILE" "$PROFILE_FILE" "$KEEP_FILE" "$COMPAT_DIR"
+    if [[ -n "$LEGACY_PROFILE_FILE" && "$LEGACY_PROFILE_FILE" != "$PROFILE_FILE" ]]; then
+        rm -f -- "$LEGACY_PROFILE_FILE"
+    fi
+    if [[ -e "$RUNTIME_DIR" || -L "$RUNTIME_DIR" ]]; then
         rm -rf -- "$RUNTIME_DIR"
     fi
     rmdir "$DATA_DIR" 2>/dev/null || true

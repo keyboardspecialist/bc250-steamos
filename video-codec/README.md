@@ -35,11 +35,21 @@ their headers. Failed probes identify the exact command, header, pkg-config
 module, or compiler/link check that remains unavailable. Runtime files remain
 in persistent storage.
 
-Runtime files use `/var/lib/bc250-control/video-codec/runtime`. The managed
-environment files are `/etc/environment.d/90-bc250-video-codec.conf` and
+Runtime files are physically stored in
+`/var/lib/bc250-control/video-codec/runtime`, which the toolkit's storage
+setup can offload to SteamOS's large persistent `/home` partition. The
+installer exposes that runtime at the upstream SteamOS path `/var/lib/bc250`
+with a managed symlink. Thus the driver and shaders are available as
+`/var/lib/bc250/dri/bc250_drv_video.so` and `/var/lib/bc250/shaders/` without
+duplicating them. The managed environment files are
+`/etc/environment.d/90-bc250-video-codec.conf` and
 `/etc/profile.d/zz-bc250-video-codec.sh`. The late-loading shell profile is
 intentional: SteamOS provides `/etc/profile.d/libva.sh`, which otherwise resets
-the selected driver to `radeonsi` after the toolkit profile is read.
+the selected driver to `radeonsi` after the toolkit profile is read. The
+atomic-update keep list `/etc/atomic-update.conf.d/bc250-video-codec.conf`
+explicitly preserves both configuration files and the `/var/lib/bc250`
+compatibility link across SteamOS image updates. The link target remains backed
+by persistent `/home` storage.
 
 Sign out or reboot after installation or removal. New processes then use the
 new VA-API selection.
