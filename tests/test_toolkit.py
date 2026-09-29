@@ -870,6 +870,7 @@ class ToolkitTests(unittest.TestCase):
                     "sudo",
                     "video-codec/bc250-video-codec.sh",
                     "install",
+                    "--without-32bit",
                 ),
                 "audio-build": ("direct", "bc250-audio-fix/patch-driver.sh"),
                 "mesh-setup": ("direct", "bc250-mesh-shader.sh", "setup"),
@@ -1186,6 +1187,26 @@ class ToolkitTests(unittest.TestCase):
         )
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("Usage:", result.stderr)
+
+    def test_video_codec_confirmation_controls_32bit_companion(self):
+        command = (
+            'script=$1; answer=$2; set -- help; source "$script" >/dev/null; '
+            'sudo() { printf "COMMAND:%s\\n" "$*"; }; '
+            'printf "%s\\n" "$answer" | install_video_codec_selected'
+        )
+        for answer, expected in (
+            ("y", "install --with-32bit"),
+            ("n", "install --without-32bit"),
+            ("", "install --without-32bit"),
+        ):
+            with self.subTest(answer=answer):
+                result = subprocess.run(
+                    ["bash", "-c", command, "_", str(TOOLKIT), answer],
+                    check=True,
+                    capture_output=True,
+                    text=True,
+                )
+                self.assertIn(expected, result.stdout)
 
     def test_script_parses(self):
         subprocess.run(

@@ -380,7 +380,7 @@ The global runtime uses the patched 64-bit RADV ICD. SteamOS supplies the
 
 ### VA-API video codec
 
-Install the pinned 64-bit H.264 and HEVC codec release:
+Install the pinned H.264 and HEVC codec release:
 
 ```bash
 ./bc250-toolkit.sh video-codec-install
@@ -388,6 +388,9 @@ Install the pinned 64-bit H.264 and HEVC codec release:
 
 The toolkit downloads the pinned `simpmix/bc250-encoding-decoding-fix`
 `v0.5.1` source, verifies it, and builds it against the active SteamOS image.
+It then offers an optional, separately verified 32-bit companion for Steam and
+Remote Play. The 32-bit selection installs signed SteamOS multilib packages;
+declining retains a 64-bit-only installation.
 The runtime provides Vulkan-compute encoding and CPU-backed decoding through
 VA-API. The build disables the optional libx264 backend to avoid coupling the
 driver to another distribution's libx264 ABI.

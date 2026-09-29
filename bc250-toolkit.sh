@@ -486,7 +486,17 @@ install_video_codec() {
     require_script "$VIDEO_CODEC_SH"
     confirm_action \
         "Install the verified upstream VA-API video codec system-wide for new sessions?" \
-        sudo bash "$VIDEO_CODEC_SH" install
+        install_video_codec_selected
+}
+
+install_video_codec_selected() {
+    local answer mode=--without-32bit
+    printf '%s' "${CB}Include the optional 32-bit companion for Steam and Remote Play? This installs signed multilib packages. [y/N] ${C0}"
+    IFS= read -r answer
+    case "$answer" in
+        y|Y|yes|YES) mode=--with-32bit ;;
+    esac
+    sudo bash "$VIDEO_CODEC_SH" install "$mode"
 }
 
 remove_video_codec() {
@@ -783,7 +793,7 @@ run_machine_action() {
         persistence-install) run_sudo_script "$PERSISTENCE_SH" install all ;;
         aic-install) run_sudo_script "$AIC_SETUP_SH" install ;;
         fan-install) run_sudo_script "$FAN_SETUP_SH" install ;;
-        video-codec-install) run_sudo_script "$VIDEO_CODEC_SH" install ;;
+        video-codec-install) run_sudo_script "$VIDEO_CODEC_SH" install --without-32bit ;;
         audio-build) run_script "$AUDIO_FIX_SH" ;;
         mesh-setup) run_script "$MESH_SHADER_SH" setup ;;
         native-mesh-install) run_script "$MESH_SHADER_SH" setup --native-mesh ;;
@@ -1083,8 +1093,14 @@ show_status() {
     state=$(status_value "$video_codec_output" "state: " || true)
     detail=$(status_value "$video_codec_output" "release: " || true)
     secondary=$(status_value "$video_codec_output" "session: " || true)
+    mode=$(status_value "$video_codec_output" "driver32: " || true)
     case "$state" in
         installed)
+            if [[ "$mode" == installed ]]; then
+                detail="${detail:-release}, 64-bit + 32-bit"
+            else
+                detail="${detail:-release}, 64-bit"
+            fi
             if [[ "$secondary" == active || "$secondary" == manager-active ]]; then
                 status_row "VA-API video codec" "active" good \
                     "verified ${detail:-release}; ${secondary//-/ } environment"
@@ -1927,7 +1943,7 @@ menu_graph_render() {
                 if [[ "$badge" == *"|"* || "$badge" == *$'\n'* ]]; then
                     die "Invalid generated menu badge: action__video_codec_install"
                 fi
-                items+=("Install or Repair Video Codec|${badge}|Verify pinned upstream source and build it for the active SteamOS image.")
+                items+=("Install or Repair Video Codec|${badge}|Build the verified 64-bit runtime and optionally include the 32-bit Steam companion.")
                 targets+=("action__video_codec_install")
                 badges+=("$badge")
                 if ! badge=$(menu_graph_badge action__video_codec_remove cleanup); then badge=; fi
@@ -2189,7 +2205,7 @@ Commands:
   video-codec            Open verified VA-API video codec controls
   video-codec-status     Verify the codec runtime and current session
   video-codec-test       Run FFmpeg VA-API encode and decode validation
-  video-codec-install    Confirm, download, verify, and install the codec
+  video-codec-install    Install 64-bit codec; optionally include 32-bit Steam support
   video-codec-remove     Confirm and restore stock VA-API selection
   proton                 Open BC-250 GE-Proton installation and cleanup
   proton-install         Confirm and install the latest verified GE-Proton build

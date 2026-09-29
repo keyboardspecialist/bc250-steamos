@@ -19,13 +19,18 @@ Run the toolkit as the logged-in user:
 ./bc250-toolkit.sh video-codec-remove
 ```
 
-The installer downloads the source at the pinned `v0.5.1` commit, verifies its
+After confirming the installation, the toolkit asks whether to include the
+optional 32-bit companion for Steam and Remote Play. Declining installs or
+repairs only the standard 64-bit runtime. The installer downloads the source
+at the pinned `v0.5.1` commit, verifies its
 SHA-256 digest, validates its archive layout, and builds it against the active
 SteamOS image. It disables the optional libx264 backend so the installed driver
 uses the Vulkan-compute H.264 path and does not depend on an upstream distro's
 libx264 ABI. Before activation, it verifies the ELF architecture, dynamic
 dependencies, shaders, license, README, and a locally generated payload
-manifest.
+manifest. When selected, it separately builds and verifies an ELF32/i386
+driver with no text relocations and executes a 32-bit VA-API initialization
+probe before activation.
 
 When required build headers or tools are missing, the installer temporarily
 unlocks the SteamOS root filesystem, installs signed packages with `pacman`,
@@ -33,7 +38,9 @@ and restores the original read-only state. It force-repairs the concrete
 development packages because SteamOS can retain package records after removing
 their headers. Failed probes identify the exact command, header, pkg-config
 module, or compiler/link check that remains unavailable. Runtime files remain
-in persistent storage.
+in persistent storage. The optional build installs signed `lib32-libva`,
+`lib32-libdrm`, `lib32-vulkan-icd-loader`, `lib32-vulkan-radeon`,
+`lib32-glibc`, and `lib32-gcc-libs` packages.
 
 Runtime files are physically stored in
 `/var/lib/bc250-control/video-codec/runtime`, which the toolkit's storage
@@ -41,7 +48,10 @@ setup can offload to SteamOS's large persistent `/home` partition. The
 installer exposes that runtime at the upstream SteamOS path `/var/lib/bc250`
 with a managed symlink. Thus the driver and shaders are available as
 `/var/lib/bc250/dri/bc250_drv_video.so` and `/var/lib/bc250/shaders/` without
-duplicating them. The managed environment files are
+duplicating them. If selected, the 32-bit driver is
+`/var/lib/bc250/dri32/bc250_drv_video.so`. A colon-separated libva search path
+lets each process skip the incompatible ELF class and load its matching
+driver. Both architectures use the same SPIR-V shaders. The managed environment files are
 `/etc/environment.d/90-bc250-video-codec.conf` and
 `/etc/profile.d/zz-bc250-video-codec.sh`. The late-loading shell profile is
 intentional: SteamOS provides `/etc/profile.d/libva.sh`, which otherwise resets
@@ -69,7 +79,8 @@ leaves the previous runtime active.
 
 ## Scope
 
-The toolkit installs the 64-bit runtime in persistent storage. It does not
+The toolkit always installs the 64-bit runtime in persistent storage and can
+optionally install its 32-bit companion. It does not
 replace the stock `radeonsi_drv_video.so`, install runtime files into `/usr`,
 install the upstream audio module, or enable the upstream Sunshine boot
 redirect. Signed source-build prerequisite packages remain subject to SteamOS

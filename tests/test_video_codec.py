@@ -95,6 +95,12 @@ class VideoCodecTests(unittest.TestCase):
             "verify_vaapi_initialization",
             "vainfo --display drm --device",
             "verify_ffmpeg_pipeline",
+            "verify_vaapi_initialization_32",
+            "-DBUILD_32BIT=ON",
+            "validate_elf32",
+            "elf_machine_is_i386",
+            "no_text_relocations",
+            "-Wl,-z,text",
             "-c:v h264_vaapi",
             "-hwaccel vaapi",
             "hwdownload,format=nv12",
@@ -102,6 +108,8 @@ class VideoCodecTests(unittest.TestCase):
             "pacman -S --needed --noconfirm",
             "pacman -S --noconfirm",
             "cmake make gcc binutils glibc linux-api-headers pkgconf libva libdrm ffmpeg",
+            "lib32-glibc lib32-gcc-libs lib32-libva lib32-libdrm",
+            "lib32-vulkan-icd-loader lib32-vulkan-radeon",
             "header:/usr/include/linux/types.h",
             "compiler-link-probe:libva+libdrm+vulkan+openmp",
             "Still missing:",
@@ -143,14 +151,78 @@ class VideoCodecTests(unittest.TestCase):
         )
         self.assertEqual(result.returncode, 0)
 
+    def test_previous_managed_architecture_path_is_restart_not_conflict(self):
+        result = subprocess.run(
+            [
+                "bash",
+                "-c",
+                'helper=$1; set -- help; source "$helper" >/dev/null; '
+                'LIBVA_DRIVER_NAME=bc250; export LIBVA_DRIVER_NAME; '
+                'LIBVA_DRIVERS_PATH="$COMPAT_DIR/dri:$COMPAT_DIR/dri32"; '
+                'export LIBVA_DRIVERS_PATH; '
+                'BC250_SHADER_DIR="$COMPAT_DIR/shaders"; export BC250_SHADER_DIR; '
+                "systemctl() { return 1; }; "
+                "! session_environment_conflicted",
+                "_",
+                str(SCRIPT),
+            ],
+            check=False,
+        )
+        self.assertEqual(result.returncode, 0)
+
     def test_environment_uses_standard_steamos_runtime_path(self):
         source = SCRIPT.read_text(encoding="utf-8")
         self.assertIn('COMPAT_DIR="${BC250_VIDEO_COMPAT_DIR:-/var/lib/bc250}"', source)
-        self.assertIn("LIBVA_DRIVERS_PATH=$COMPAT_DIR/dri", source)
+        self.assertIn('path="$COMPAT_DIR/dri"', source)
+        self.assertIn('path="$path:$COMPAT_DIR/dri32"', source)
         self.assertIn("BC250_SHADER_DIR=$COMPAT_DIR/shaders", source)
         self.assertIn('ln -s -- "$RUNTIME_DIR" "$COMPAT_DIR"', source)
         self.assertIn('[[ "$(readlink "$COMPAT_DIR")" == "$RUNTIME_DIR" ]]', source)
         self.assertIn("$COMPAT_DIR\n$ENV_FILE\n$PROFILE_FILE", source)
+
+    def test_environment_adds_32bit_path_only_when_companion_exists(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            data = root / "data"
+            environment = root / "environment.d/90-bc250-video-codec.conf"
+            runtime = data / "runtime"
+            runtime.mkdir(parents=True)
+            command = (
+                'helper=$1; set -- help; source "$helper" >/dev/null; '
+                "environment_config"
+            )
+            env = os.environ.copy()
+            env.update(
+                {
+                    "BC250_VIDEO_DATA_DIR": str(data),
+                    "BC250_VIDEO_COMPAT_DIR": str(root / "bc250"),
+                    "BC250_VIDEO_ENV_FILE": str(environment),
+                }
+            )
+            native = subprocess.run(
+                ["bash", "-c", command, "_", str(SCRIPT)],
+                check=True,
+                capture_output=True,
+                text=True,
+                env=env,
+            )
+            self.assertIn(f"LIBVA_DRIVERS_PATH={root / 'bc250/dri'}\n", native.stdout)
+            self.assertNotIn("dri32", native.stdout)
+
+            companion = runtime / "dri32/bc250_drv_video.so"
+            companion.parent.mkdir()
+            companion.write_bytes(b"ELF32 placeholder")
+            dual = subprocess.run(
+                ["bash", "-c", command, "_", str(SCRIPT)],
+                check=True,
+                capture_output=True,
+                text=True,
+                env=env,
+            )
+            self.assertIn(
+                f"LIBVA_DRIVERS_PATH={root / 'bc250/dri'}:{root / 'bc250/dri32'}\n",
+                dual.stdout,
+            )
 
     def test_source_extraction_rejects_traversal(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -196,6 +268,7 @@ class VideoCodecTests(unittest.TestCase):
         workflow = (ROOT / ".github/workflows/release-artifacts.yml").read_text(
             encoding="utf-8"
         )
+        toolkit = (ROOT / "bc250-toolkit.sh").read_text(encoding="utf-8")
         maintenance = (ROOT / "bc250-maintenance.sh").read_text(encoding="utf-8")
         self.assertIn("nct6687d video-codec", workflow)
         self.assertIn("video-codec) echo \"VA-API video codec\"", maintenance)
@@ -206,6 +279,9 @@ class VideoCodecTests(unittest.TestCase):
             "/etc/atomic-update.conf.d/bc250-video-codec.conf", maintenance
         )
         self.assertIn("sudo bash \"$script\" uninstall", maintenance)
+        self.assertIn("Include the optional 32-bit companion", toolkit)
+        self.assertIn("mode=--with-32bit", toolkit)
+        self.assertIn("install --without-32bit", toolkit)
 
     def test_help_is_non_privileged(self):
         result = subprocess.run(
