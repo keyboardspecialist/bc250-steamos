@@ -926,8 +926,15 @@ show_status() {
     secondary=$(status_value "$swap_output" "runtime: " || true)
     if [[ $swap_rc -eq 0 ]]; then
         status_row "Compressed swap" "${state:-ready}" good "runtime ${secondary:-active}"
+    elif [[ $swap_rc -eq 3 && "$state" == legacy-zswap ]]; then
+        status_row "Compressed swap" "upgrade needed" warn "legacy zswap profile"
+        failed=1; failed_components+=("Compressed swap")
     elif [[ $swap_rc -eq 1 && "${state:-none}" == none ]]; then
-        status_row "Compressed swap" "disabled" dim "optional; runtime ${secondary:-inactive}"
+        if [[ "$secondary" == zram ]]; then
+            status_row "Compressed swap" "SteamOS default" good "runtime zram"
+        else
+            status_row "Compressed swap" "disabled" dim "optional; runtime ${secondary:-inactive}"
+        fi
     else
         status_row "Compressed swap" "incomplete" bad "configured ${state:-unknown}; runtime ${secondary:-unknown}"
         failed=1; failed_components+=("Compressed swap")

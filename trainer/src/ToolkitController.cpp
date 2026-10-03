@@ -77,7 +77,7 @@ constexpr OperationDefinition Operations[] = {
     {"swap-zram-install", "Use compressed zram swap", "swap", "USE ZRAM",
      "Configure Valve-style half-RAM zstd swap at priority 100. Reboot-gated transitions never perform a live swapoff.", false, false},
     {"swap-zswap-install", "Use zswap-backed disk swap", "swap", "USE ZSWAP",
-     "Configure lz4 zswap with a 25% RAM pool and a 16 GiB persistent disk swapfile at priority 10.", false, false},
+     "Configure zstd zswap with a 10% RAM pool, memory shrinker, and a 16 GiB persistent disk swapfile at priority 10.", false, false},
     {"swap-remove", "Remove compressed swap profile", "swap", "REMOVE",
      "Remove toolkit-owned swap integration and return to Valve's zram defaults after any required reboot.", false, true},
     {"compute-build", "Build GPU CU prerequisites", "compute", "BUILD UMR",

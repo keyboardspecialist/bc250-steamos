@@ -761,6 +761,8 @@ class ToolkitTests(unittest.TestCase):
             'status_script_capture cpu_output cpu_rc root "$POWER_SH" cpu-unlock status',
             status,
         )
+        self.assertIn('"SteamOS default" good "runtime zram"', status)
+        self.assertIn('"upgrade needed" warn "legacy zswap profile"', status)
         self.assertIn("system status is incomplete", runner)
         self.assertIn("if [[ ${1:-} == status ]]", runner)
 

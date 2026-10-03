@@ -188,7 +188,7 @@ Open the menu:
 | Profile | Configuration |
 |---|---|
 | Zram | Half of physical RAM, Zstandard compression, priority 100 |
-| Zswap and disk | LZ4 cache, 25% RAM pool, persistent disk swap, priority 10 |
+| Zswap and disk | Zstandard cache, 10% RAM pool, memory shrinker, persistent disk swap, priority 10 |
 
 | Command | Result |
 |---|---|
@@ -199,6 +199,8 @@ Open the menu:
 | `sudo ./bc250-swap.sh uninstall` | Remove the toolkit profile |
 
 A profile transition can require one reboot and a second run of the command.
+Zram is the recommended default. Zswap is an advanced disk-backed option and
+can still cause storage latency when sustained memory pressure forces writeback.
 
 ## Power and thermals
 

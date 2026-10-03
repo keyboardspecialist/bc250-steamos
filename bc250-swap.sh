@@ -22,6 +22,9 @@ PROC_SWAPS="${BC250_PROC_SWAPS:-/proc/swaps}"
 MEMINFO="${BC250_MEMINFO:-/proc/meminfo}"
 ZRAM_SYS="${BC250_ZRAM_SYS:-/sys/block/zram0}"
 ZSWAP_PARAMS="${BC250_ZSWAP_PARAMS:-/sys/module/zswap/parameters}"
+ZSWAP_DEBUG="${BC250_ZSWAP_DEBUG:-/sys/kernel/debug/zswap}"
+VMSTAT="${BC250_VMSTAT:-/proc/vmstat}"
+MEMORY_PRESSURE="${BC250_MEMORY_PRESSURE:-/proc/pressure/memory}"
 LOCK_FILE="${BC250_SWAP_LOCK_FILE:-/run/lock/bc250-swap.lock}"
 DEFAULT_SWAP_GIB=16
 MIN_SWAP_GIB=4
@@ -58,6 +61,16 @@ EOF
 render_zswap_tmpfiles() {
     cat <<'EOF'
 # BC-250 zswap profile. Managed by bc250-swap.sh.
+w! /sys/module/zswap/parameters/compressor - - - - zstd
+w! /sys/module/zswap/parameters/max_pool_percent - - - - 10
+w! /sys/module/zswap/parameters/shrinker_enabled - - - - Y
+w! /sys/module/zswap/parameters/enabled - - - - Y
+EOF
+}
+
+render_legacy_zswap_tmpfiles() {
+    cat <<'EOF'
+# BC-250 zswap profile. Managed by bc250-swap.sh.
 w /sys/module/zswap/parameters/compressor - - - - lz4
 w /sys/module/zswap/parameters/max_pool_percent - - - - 25
 w /sys/module/zswap/parameters/enabled - - - - Y
@@ -79,6 +92,35 @@ EOF
 }
 
 render_service() {
+    cat <<EOF
+[Unit]
+Description=Configure zswap for BC-250 disk swap
+DefaultDependencies=no
+Requires=systemd-tmpfiles-setup.service
+After=systemd-tmpfiles-setup.service
+Before=$SWAP_UNIT_NAME
+Conflicts=shutdown.target
+Before=shutdown.target
+
+[Service]
+Type=oneshot
+ExecStartPre=/usr/bin/test -w $ZSWAP_PARAMS/compressor
+ExecStartPre=/usr/bin/test -w $ZSWAP_PARAMS/max_pool_percent
+ExecStartPre=/usr/bin/test -w $ZSWAP_PARAMS/shrinker_enabled
+ExecStartPre=/usr/bin/test -w $ZSWAP_PARAMS/enabled
+ExecStart=/usr/bin/systemd-tmpfiles --create --boot $ZSWAP_TMPFILES
+RemainAfterExit=yes
+NoNewPrivileges=yes
+ProtectSystem=strict
+ReadWritePaths=$ZSWAP_PARAMS
+PrivateTmp=yes
+RestrictAddressFamilies=AF_UNIX
+LockPersonality=yes
+TimeoutStartSec=30
+EOF
+}
+
+render_previous_service() {
     cat <<EOF
 [Unit]
 Description=Configure zswap for BC-250 disk swap
@@ -224,8 +266,12 @@ config_owned() {
             || file_matches "$ZRAM_CONFIG" render_zswap_config; }
 }
 tmpfiles_owned() { file_mode_is "$ZSWAP_TMPFILES" 644 && file_matches "$ZSWAP_TMPFILES" render_zswap_tmpfiles; }
+legacy_tmpfiles_owned() { file_mode_is "$ZSWAP_TMPFILES" 644 && file_matches "$ZSWAP_TMPFILES" render_legacy_zswap_tmpfiles; }
+tmpfiles_recognized() { tmpfiles_owned || legacy_tmpfiles_owned; }
 service_owned() { file_mode_is "$SERVICE" 644 && file_matches "$SERVICE" render_service; }
-service_recognized() { service_owned || { file_mode_is "$SERVICE" 644 && file_matches "$SERVICE" render_legacy_service; }; }
+previous_service_owned() { file_mode_is "$SERVICE" 644 && file_matches "$SERVICE" render_previous_service; }
+legacy_service_owned() { file_mode_is "$SERVICE" 644 && file_matches "$SERVICE" render_legacy_service; }
+service_recognized() { service_owned || previous_service_owned || legacy_service_owned; }
 swap_unit_owned() { file_mode_is "$SWAP_UNIT" 644 && file_matches "$SWAP_UNIT" render_swap_unit; }
 swap_unit_recognized() { swap_unit_owned || { file_mode_is "$SWAP_UNIT" 644 && file_matches "$SWAP_UNIT" render_legacy_swap_unit; }; }
 legacy_helper_owned() { file_mode_is "$HELPER" 755 && file_matches "$HELPER" render_legacy_helper; }
@@ -234,12 +280,12 @@ enablement_owned() {
     [[ -L "$SWAP_WANTS" && "$(readlink "$SWAP_WANTS")" == "../$SWAP_UNIT_NAME" ]]
 }
 
-preflight_ownership() {
+preflight_configuration_ownership() {
     if [[ -e "$ZRAM_CONFIG" || -L "$ZRAM_CONFIG" ]]; then
         config_owned || die "Refusing unrecognized zram configuration: $ZRAM_CONFIG"
     fi
     if [[ -e "$ZSWAP_TMPFILES" || -L "$ZSWAP_TMPFILES" ]]; then
-        tmpfiles_owned || die "Refusing unrecognized zswap tmpfiles configuration: $ZSWAP_TMPFILES"
+        tmpfiles_recognized || die "Refusing unrecognized zswap tmpfiles configuration: $ZSWAP_TMPFILES"
     fi
     if [[ -e "$SERVICE" || -L "$SERVICE" ]]; then
         service_recognized || die "Refusing unrecognized zswap service: $SERVICE"
@@ -253,6 +299,9 @@ preflight_ownership() {
     if [[ -e "$SWAP_WANTS" || -L "$SWAP_WANTS" ]]; then
         enablement_owned || die "Refusing unrecognized swap enablement: $SWAP_WANTS"
     fi
+}
+
+preflight_state_ownership() {
     if [[ -e "$STATE_FILE" || -L "$STATE_FILE" ]]; then
         read_state || die "Refusing malformed swap profile state: $STATE_FILE"
     fi
@@ -261,6 +310,11 @@ preflight_ownership() {
             || die "Refusing unrecorded swapfile: $SWAPFILE"
         file_secure "$SWAPFILE" || die "Refusing unsafe swapfile: $SWAPFILE"
     fi
+}
+
+preflight_ownership() {
+    preflight_configuration_ownership
+    preflight_state_ownership
 }
 
 configured_complete() {
@@ -287,6 +341,17 @@ configured_complete() {
     esac
 }
 
+legacy_zswap_configured_complete() {
+    read_state && [[ "$MODE" == zswap && ( "$PENDING" == none || "$PENDING" == reboot ) ]] \
+        && file_matches "$ZRAM_CONFIG" render_zswap_config \
+        && validate_swapfile_metadata "$((SIZE_GIB * 1024 * 1024 * 1024))" \
+        && enablement_owned \
+        && { { legacy_tmpfiles_owned && previous_service_owned && swap_unit_owned \
+                && [[ ! -e "$HELPER" && ! -L "$HELPER" ]]; } \
+            || { [[ ! -e "$ZSWAP_TMPFILES" && ! -L "$ZSWAP_TMPFILES" ]] \
+                && legacy_service_owned && swap_unit_recognized && legacy_helper_owned; }; }
+}
+
 swap_active() {
     local target="$1" active target_id active_id
     [[ -r "$PROC_SWAPS" ]] || return 1
@@ -302,6 +367,27 @@ swap_active() {
     return 1
 }
 
+swap_priority() {
+    local target="$1" active priority target_id active_id
+    [[ -r "$PROC_SWAPS" ]] || return 1
+    target_id=$(stat -Lc '%d:%i' "$target" 2>/dev/null || true)
+    while read -r active _ _ _ priority; do
+        [[ "$active" == Filename || -z "$active" ]] && continue
+        if [[ "$active" == "$target" ]]; then
+            printf '%s\n' "$priority"
+            return 0
+        fi
+        if [[ -n "$target_id" ]]; then
+            active_id=$(stat -Lc '%d:%i' "$active" 2>/dev/null || true)
+            if [[ -n "$active_id" && "$active_id" == "$target_id" ]]; then
+                printf '%s\n' "$priority"
+                return 0
+            fi
+        fi
+    done < "$PROC_SWAPS"
+    return 1
+}
+
 zram_runtime_matches() {
     local mem_kib expected actual difference priority algorithms
     swap_active /dev/zram0 || return 1
@@ -310,7 +396,7 @@ zram_runtime_matches() {
     mem_kib=$(awk '$1 == "MemTotal:" { print $2 }' "$MEMINFO")
     actual=$(< "$ZRAM_SYS/disksize")
     algorithms=$(< "$ZRAM_SYS/comp_algorithm")
-    priority=$(awk '$1 == "/dev/zram0" { print $5 }' "$PROC_SWAPS")
+    priority=$(swap_priority /dev/zram0 || true)
     [[ "$mem_kib" =~ ^[0-9]+$ && "$actual" =~ ^[0-9]+$ ]] || return 1
     expected=$((mem_kib * 1024 / 2))
     difference=$((actual > expected ? actual - expected : expected - actual))
@@ -318,19 +404,34 @@ zram_runtime_matches() {
         && "$algorithms" == *"[zstd]"* && "$priority" == 100 ]]
 }
 
+zswap_runtime_matches() {
+    local enabled compressor pool shrinker priority
+    swap_active "$SWAPFILE" && ! swap_active /dev/zram0 || return 1
+    [[ -r "$ZSWAP_PARAMS/enabled" && -r "$ZSWAP_PARAMS/compressor" \
+        && -r "$ZSWAP_PARAMS/max_pool_percent" && -r "$ZSWAP_PARAMS/shrinker_enabled" ]] \
+        || return 1
+    enabled=$(< "$ZSWAP_PARAMS/enabled")
+    compressor=$(< "$ZSWAP_PARAMS/compressor")
+    pool=$(< "$ZSWAP_PARAMS/max_pool_percent")
+    shrinker=$(< "$ZSWAP_PARAMS/shrinker_enabled")
+    priority=$(swap_priority "$SWAPFILE" || true)
+    [[ "$enabled" == Y && "$compressor" == zstd && "$pool" == 10 \
+        && "$shrinker" == Y && "$priority" == 10 ]]
+}
+
 install_storage() {
     require_file "$STORAGE_SH"
-    bash "$STORAGE_SH" install
+    BC250_STORAGE_SKIP_LEGACY_AIC=1 bash "$STORAGE_SH" install
 }
 
 install_persistence() {
     require_file "$PERSISTENCE_SH"
-    bash "$PERSISTENCE_SH" install swap
+    BC250_STORAGE_SKIP_LEGACY_AIC=1 bash "$PERSISTENCE_SH" install swap
 }
 
 remove_persistence() {
     require_file "$PERSISTENCE_SH"
-    bash "$PERSISTENCE_SH" remove swap
+    BC250_STORAGE_SKIP_LEGACY_AIC=1 bash "$PERSISTENCE_SH" remove swap
 }
 
 write_profile_state() {
@@ -436,8 +537,9 @@ begin_locked_lifecycle() {
 
 begin_install_lifecycle() {
     begin_locked_lifecycle
-    install_storage
     preflight_ownership
+    install_storage
+    preflight_state_ownership
     recover_staged_swapfile
 }
 
@@ -454,12 +556,19 @@ swap_has_artifacts() {
 begin_cleanup_lifecycle() {
     begin_locked_lifecycle
     swap_has_artifacts || return 1
-    install_storage
     preflight_ownership
+    install_storage
+    preflight_state_ownership
     recover_staged_swapfile
 }
 
 cmd_install_zram() {
+    require_root
+    if ! swap_has_artifacts && zram_runtime_matches; then
+        log "SteamOS's half-RAM zstd zram profile is already active; no toolkit override or reboot is needed."
+        log "Its ram/2 size is logical capacity allocated on demand, not reserved RAM."
+        return 0
+    fi
     begin_install_lifecycle
     command -v systemctl >/dev/null 2>&1 || die "systemctl is required."
     local previous_size=0
@@ -493,6 +602,11 @@ cmd_install_zswap() {
     done
     [[ -d "$ZSWAP_PARAMS" && ! -L "$ZSWAP_PARAMS" ]] \
         || die "This kernel does not expose zswap controls."
+    local parameter
+    for parameter in enabled compressor max_pool_percent shrinker_enabled; do
+        [[ -w "$ZSWAP_PARAMS/$parameter" && ! -L "$ZSWAP_PARAMS/$parameter" ]] \
+            || die "This kernel does not expose a writable zswap $parameter control."
+    done
     if [[ ! -e "$SWAPFILE" && ! -L "$SWAPFILE" ]]; then
         write_profile_state zswap "$size_gib" creating
     fi
@@ -505,12 +619,12 @@ cmd_install_zswap() {
     install_enablement
     systemctl daemon-reload
     install_persistence
-    if swap_active "$SWAPFILE" && ! swap_active /dev/zram0; then
+    if zswap_runtime_matches; then
         write_profile_state zswap "$size_gib" none
         log "Zswap disk swap is active."
     else
-        log "Installed zswap with lz4, a 25% RAM pool, and a ${size_gib} GiB disk swapfile at priority 10."
-        log "Reboot to switch from zram to the zswap-backed disk swap."
+        log "Installed zswap with zstd, a 10% RAM pool, the memory shrinker, and a ${size_gib} GiB disk swapfile at priority 10."
+        log "Reboot to apply and verify the complete zswap profile."
         write_profile_state zswap "$size_gib" reboot
     fi
 }
@@ -518,8 +632,17 @@ cmd_install_zswap() {
 cmd_status() {
     local configured="none" runtime="inactive" swappiness="unknown"
     local zswap_enabled="unknown" compressor="unknown" pool="unknown"
+    local active type size used priority size_mib used_mib
+    local swap_in="unknown" swap_out="unknown" psi_some="unknown" psi_full="unknown"
+    local original compressed resident _
+    local pool_bytes stored_pages written_back_pages runtime_mismatch=0 legacy_profile=0
     if read_state; then
-        configured="$MODE"
+        if legacy_zswap_configured_complete; then
+            configured="legacy-zswap"
+            legacy_profile=1
+        else
+            configured="$MODE"
+        fi
     elif [[ -e "$ZRAM_CONFIG" || -e "$ZSWAP_TMPFILES" || -e "$SERVICE" || -e "$SWAP_UNIT" \
         || -e "$HELPER" || -e "$SWAPFILE" ]]; then
         configured="partial"
@@ -536,11 +659,53 @@ cmd_status() {
     echo "  runtime:    $runtime"
     echo "  swappiness: $swappiness"
     echo "  zswap:      $zswap_enabled (compressor $compressor, pool ${pool}%)"
-    if [[ "$configured" == zswap || ( "$configured" == zram && "${PENDING:-}" == zswap-removal ) ]]; then
+    if [[ -r "$PROC_SWAPS" ]]; then
+        while read -r active type size used priority; do
+            [[ "$active" == Filename || -z "$active" ]] && continue
+            if [[ "$size" =~ ^[0-9]+$ && "$used" =~ ^[0-9]+$ ]]; then
+                size_mib=$((size / 1024))
+                used_mib=$((used / 1024))
+                echo "  active swap: $active ($type, ${used_mib}/${size_mib} MiB used, priority $priority)"
+            else
+                echo "  active swap: $active ($type, usage unavailable, priority $priority)"
+            fi
+        done < "$PROC_SWAPS"
+    fi
+    if [[ -r "$ZRAM_SYS/mm_stat" ]]; then
+        read -r original compressed resident _ < "$ZRAM_SYS/mm_stat" || true
+        if [[ "$original" =~ ^[0-9]+$ && "$compressed" =~ ^[0-9]+$ \
+            && "$resident" =~ ^[0-9]+$ ]]; then
+            echo "  zram memory: $((original / 1024 / 1024)) MiB uncompressed used, $((compressed / 1024 / 1024)) MiB compressed, $((resident / 1024 / 1024)) MiB resident"
+        fi
+    fi
+    if [[ -r "$VMSTAT" ]]; then
+        swap_in=$(awk '$1 == "pswpin" { print $2 }' "$VMSTAT")
+        swap_out=$(awk '$1 == "pswpout" { print $2 }' "$VMSTAT")
+        echo "  swap I/O:   ${swap_in:-unknown} pages in, ${swap_out:-unknown} pages out since boot"
+    fi
+    if [[ -r "$MEMORY_PRESSURE" ]]; then
+        psi_some=$(awk '$1 == "some" { sub(/^avg10=/, "", $2); print $2 }' "$MEMORY_PRESSURE")
+        psi_full=$(awk '$1 == "full" { sub(/^avg10=/, "", $2); print $2 }' "$MEMORY_PRESSURE")
+        echo "  memory PSI: some avg10 ${psi_some:-unknown}%, full avg10 ${psi_full:-unknown}%"
+    fi
+    if [[ -r "$ZSWAP_DEBUG/pool_total_size" && -r "$ZSWAP_DEBUG/stored_pages" ]]; then
+        pool_bytes=$(< "$ZSWAP_DEBUG/pool_total_size")
+        stored_pages=$(< "$ZSWAP_DEBUG/stored_pages")
+        if [[ "$pool_bytes" =~ ^[0-9]+$ && "$stored_pages" =~ ^[0-9]+$ ]]; then
+            echo "  zswap memory: $((pool_bytes / 1024 / 1024)) MiB resident, $stored_pages pages stored"
+        fi
+    fi
+    if [[ -r "$ZSWAP_DEBUG/written_back_pages" ]]; then
+        written_back_pages=$(< "$ZSWAP_DEBUG/written_back_pages")
+        [[ "$written_back_pages" =~ ^[0-9]+$ ]] \
+            && echo "  zswap writeback: $written_back_pages pages since boot"
+    fi
+    if [[ "$configured" == zswap || "$configured" == legacy-zswap \
+        || ( "$configured" == zram && "${PENDING:-}" == zswap-removal ) ]]; then
         echo "  swapfile:   $SWAPFILE (${SIZE_GIB} GiB configured)"
     fi
     local effective_pending="${PENDING:-}"
-    if [[ "$configured" == zswap && "$runtime" == zswap-disk && "$effective_pending" == reboot ]]; then
+    if [[ "$MODE" == zswap && "$effective_pending" == reboot ]] && zswap_runtime_matches; then
         effective_pending=none
     fi
     if [[ "$configured" == zram && "$effective_pending" == reboot ]] && zram_runtime_matches; then
@@ -550,12 +715,21 @@ cmd_status() {
         echo "  pending:    $effective_pending"
     fi
     [[ "$configured" != partial && "$runtime" != mixed ]] || return 2
+    if [[ $legacy_profile -eq 1 ]]; then
+        echo "  upgrade:    rerun 'install zswap' to apply the bounded safe profile"
+        return 3
+    fi
+    if [[ "$configured" == zswap && "$effective_pending" == none ]] && ! zswap_runtime_matches; then
+        echo "  warning:    active zswap runtime does not match the safe profile"
+        runtime_mismatch=1
+    fi
+    [[ $runtime_mismatch -eq 0 ]] || return 2
     [[ "$configured" != none ]] || return 1
     configured_complete || return 2
 }
 
 cmd_installed() {
-    if configured_complete; then
+    if configured_complete || legacy_zswap_configured_complete; then
         echo installed
         return 0
     fi
@@ -567,7 +741,7 @@ cmd_verify() {
     require_root
     local rc=0
     cmd_status || rc=$?
-    [[ $rc -eq 0 ]] || return "$rc"
+    [[ $rc -eq 0 || $rc -eq 3 ]] || return "$rc"
     if read_state && [[ "$MODE" == zswap ]]; then
         if ! validate_swapfile "$((SIZE_GIB * 1024 * 1024 * 1024))"; then
             log "The toolkit swapfile size or swap signature is invalid." >&2
@@ -577,6 +751,7 @@ cmd_verify() {
     else
         echo "  verification: zram configuration valid"
     fi
+    [[ $rc -eq 0 ]] || return "$rc"
 }
 
 cmd_uninstall() {
@@ -663,6 +838,10 @@ swap_menu_graph_badge() {
         action__status|action__zram|action__zswap|action__remove)
             if configured_complete && read_state; then
                 badge="${CG}[${MODE}]${C0}"
+            elif legacy_zswap_configured_complete; then
+                badge="${CY}[upgrade]${C0}"
+            elif ! swap_has_artifacts && zram_runtime_matches; then
+                badge="${CG}[SteamOS default]${C0}"
             fi
             printf '%s' "$badge"
             ;;
@@ -676,7 +855,7 @@ swap_menu_graph_activate() {
     case "$1" in
         action__status) cmd_status || true ;;
         action__zram) confirm_action "Configure the zram profile?" cmd_install_zram ;;
-        action__zswap) confirm_action "Configure zswap with a 16 GiB disk swapfile?" cmd_install_zswap "$DEFAULT_SWAP_GIB" ;;
+        action__zswap) confirm_action "Configure advanced zswap with a 16 GiB disk swapfile?" cmd_install_zswap "$DEFAULT_SWAP_GIB" ;;
         action__remove) confirm_action "Remove the toolkit swap profile?" cmd_uninstall ;;
         action__help) cmd_help ;;
         *) die "Unknown generated swap menu target: $1" ;;
@@ -715,7 +894,7 @@ swap_menu_graph_render() {
                 if [[ "$badge" == *"|"* || "$badge" == *$'\n'* ]]; then
                     die "Invalid generated menu badge: action__zswap"
                 fi
-                items+=("Use zswap + disk|${badge}|Use lz4 zswap with a 25% RAM pool plus a 16 GiB disk swapfile at priority 10.")
+                items+=("Use zswap + disk|${badge}|Use zstd zswap with a 10% RAM pool, memory shrinker, and 16 GiB disk swapfile at priority 10.")
                 targets+=("action__zswap")
                 badges+=("$badge")
                 if ! badge=$(swap_menu_graph_badge action__remove cleanup); then badge=; fi
@@ -766,9 +945,10 @@ cmd_help() {
     cat <<EOF
 Usage: $0 [menu|install MODE [SIZE_GIB]|status|verify|installed|uninstall|help]
 
-  install zram              Use compressed RAM swap: ram/2, zstd, priority 100.
-  install zswap [SIZE_GIB]  Use lz4 zswap with a 25% RAM pool and a toolkit-owned
-                            disk swapfile at priority 10 (default: 16 GiB).
+  install zram              Use compressed RAM swap: ram/2 logical capacity,
+                            allocated on demand, zstd, priority 100.
+  install zswap [SIZE_GIB]  Use zstd zswap with a 10% RAM pool, memory shrinker,
+                            and disk swapfile at priority 10 (default: 16 GiB).
   status                    Show configured, active, and pending swap state.
   verify                    Privileged status plus disk swap-signature validation.
   installed                 Machine-readable installation probe.
@@ -777,7 +957,9 @@ Usage: $0 [menu|install MODE [SIZE_GIB]|status|verify|installed|uninstall|help]
 The profiles are mutually exclusive and transitions are reboot-gated. The
 script never performs a live swapoff or removes an active swapfile. Zswap is a
 global kernel cache and therefore also compresses pages sent to other active
-disk swap devices; unrelated swap devices are otherwise left unchanged.
+disk swap devices; unrelated swap devices are otherwise left unchanged. Zram
+is the recommended default. Sustained zswap pressure can still write pages to
+disk and cause storage latency even with the bounded cache and memory shrinker.
 EOF
 }
 
