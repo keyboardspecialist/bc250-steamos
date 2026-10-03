@@ -48,6 +48,14 @@ and its patched vkd3d core SHA-256 is
 `1dd2de3737fa70b2131368304c36d8fae0797fb7f3bfe1357b207c59739686c5`.
 Both values must also match the release manifest.
 
+The corresponding `mesa-r2-source.tar.gz` asset is pinned at SHA-256
+`752eb8c0941c0aeb46be991cdf7f8fc2fc1ed2f0c940a62759e47770e33a0f94`.
+If the prebuilt RADV fails dynamic-link validation on the active SteamOS image,
+the toolkit safely extracts that exact source snapshot and builds only the AMD
+Vulkan driver locally. The release's verified vkd3d core remains unchanged.
+The private profile manifest records the resulting driver hash and source asset
+provenance; arbitrary local or mutable upstream source is not accepted.
+
 R2 substantially extends the earlier LoneWolf baseline. Native mesh-only draws
 use direct dispatch where eligible, while application TASK shaders use a
 compute-emulated producer/native-mesh-consumer path. The patched vkd3d core

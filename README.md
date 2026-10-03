@@ -420,7 +420,12 @@ license information.
 ### BC250 RADV R2
 
 The R2 profile combines its RADV driver, patched vkd3d core, and a private copy
-of Proton 11.0-2c.
+of Proton 11.0-2c. The toolkit uses the verified prebuilt RADV when its runtime
+dependencies are compatible. Otherwise, it verifies and builds the release's
+exact pinned Mesa source against the active SteamOS runtime while retaining the
+verified release vkd3d binary. Missing build prerequisites are installed from
+signed SteamOS packages, and the installed manifest records whether RADV came
+from the prebuilt payload or the pinned source archive.
 
 Install Proton 11.0-2c through Steam. Then run:
 

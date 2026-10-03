@@ -434,6 +434,15 @@ class MeshShaderTests(unittest.TestCase):
         )
         return archive, proton, driver_sha, dll_sha
 
+    def make_r2_source_stub(self, env, root):
+        archive = root / "mesa-r2-source.tar.gz"
+        archive.write_bytes(b"pinned R2 Mesa source archive\n")
+        env["BC250_R2_SOURCE_ARCHIVE"] = str(archive)
+        env["BC250_R2_SOURCE_ARCHIVE_SHA256"] = hashlib.sha256(
+            archive.read_bytes()
+        ).hexdigest()
+        return archive
+
     def install_legacy_native_mesh_runtime(self, env):
         profile = Path(env["BC250_MESH_STATE_DIR"]) / "native-mesh"
         profile.mkdir(parents=True)
@@ -1414,12 +1423,145 @@ refresh_current_generator
             self.assertFalse(destination.exists())
             self.assertFalse((root / "escaped").exists())
 
-    def test_native_mesh_setup_reports_incompatible_gnu2_tls_abi(self):
+    def test_native_mesh_source_archive_allows_only_in_tree_relative_links(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = root / "source"
+            for name, content in {
+                "VERSION": "26.2.1\n",
+                "meson.build": "project('mesa', 'c')\n",
+                "meson.options": "\n",
+                "licenses/MIT": "MIT\n",
+                "src/amd/common/amd_family.h": "CHIP_GFX1013\n",
+                "src/amd/vulkan/radv_bc250.c": "BC250_TRACE_NATIVE_TASK\n",
+                "src/amd/vulkan/radv_physical_device.c": "RADV_BC250_HYBRID_TASK\n",
+            }.items():
+                path = source / name
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_text(content, encoding="ascii")
+            docs = source / "docs"
+            docs.mkdir()
+            (docs / "license").symlink_to("../licenses/MIT")
+            archive = root / "mesa-r2-source.tar.gz"
+            with tarfile.open(archive, "w:gz", dereference=False) as output:
+                for path in source.iterdir():
+                    output.add(path, arcname=path.name)
+            destination = root / "extracted"
+            command = (
+                'script=$1; archive=$2; destination=$3; set -- help; '
+                'source "$script" >/dev/null; '
+                'extract_native_mesh_source_archive "$archive" "$destination"'
+            )
+
+            valid = subprocess.run(
+                ["bash", "-c", command, "_", str(MESH), str(archive), str(destination)],
+                capture_output=True,
+                text=True,
+            )
+            self.assertEqual(valid.returncode, 0, valid.stderr)
+            self.assertTrue((destination / "docs/license").is_symlink())
+            self.assertEqual((destination / "docs/license").read_text(), "MIT\n")
+
+            unsafe = root / "unsafe-source.tar.gz"
+            with tarfile.open(unsafe, "w:gz") as output:
+                for name in ("a", "b"):
+                    entry = tarfile.TarInfo(name)
+                    entry.type = tarfile.DIRTYPE
+                    output.addfile(entry)
+                link = tarfile.TarInfo("a/link")
+                link.type = tarfile.SYMTYPE
+                link.linkname = "../b"
+                output.addfile(link)
+                escape = tarfile.TarInfo("escape")
+                escape.type = tarfile.SYMTYPE
+                escape.linkname = "a/link/../../outside"
+                output.addfile(escape)
+            rejected = subprocess.run(
+                [
+                    "bash",
+                    "-c",
+                    'script=$1; archive=$2; set -- help; source "$script" >/dev/null; '
+                    'validate_native_mesh_source_archive "$archive"',
+                    "_",
+                    str(MESH),
+                    str(unsafe),
+                ],
+                capture_output=True,
+                text=True,
+            )
+            self.assertNotEqual(rejected.returncode, 0)
+            self.assertIn("unsafe link", rejected.stderr)
+
+    def test_native_mesh_setup_builds_pinned_source_for_incompatible_gnu2_tls_abi(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             env = self.environment(root)
             self.install_runtime(env)
             self.make_r2_archive(env, root)
+            self.make_r2_source_stub(env, root)
+            source_driver = root / "locally-built-r2.so"
+            source_driver.write_bytes(b"locally built R2 driver\n")
+            source_driver_sha = hashlib.sha256(source_driver.read_bytes()).hexdigest()
+            env["BC250_TEST_LDD_GNU2_TLS_MISSING"] = "1"
+            env["BC250_TEST_SOURCE_DRIVER"] = str(source_driver)
+
+            result = subprocess.run(
+                [
+                    "bash",
+                    "-c",
+                    'script=$1; set -- help; source "$script" >/dev/null; '
+                    "require_native_mesh_host() { :; }; "
+                    "require_production_kernel_paths() { :; }; "
+                    "ensure_mesa_build_prerequisites() { :; }; "
+                    'build_native_mesh_driver() { cp "$BC250_TEST_SOURCE_DRIVER" "$3"; '
+                    "unset BC250_TEST_LDD_GNU2_TLS_MISSING; }; "
+                    "cmd_setup_native_mesh",
+                    "_",
+                    str(MESH),
+                ],
+                capture_output=True,
+                text=True,
+                env=env,
+            )
+
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertIn("GLIBC_ABI_GNU2_TLS", result.stdout)
+            self.assertIn("locally built pinned RADV", result.stdout)
+            profile = Path(env["BC250_MESH_STATE_DIR"]) / "native-mesh"
+            self.assertEqual(
+                hashlib.sha256((profile / "libvulkan_radeon.so").read_bytes()).hexdigest(),
+                source_driver_sha,
+            )
+            manifest = (profile / "install.conf").read_text(encoding="ascii").split()
+            self.assertEqual(manifest[0], "3")
+            self.assertEqual(manifest[-2], "source")
+            self.assertEqual(manifest[-1], env["BC250_R2_SOURCE_ARCHIVE_SHA256"])
+            env.pop("BC250_TEST_LDD_GNU2_TLS_MISSING")
+            self.assertEqual(self.run_status_json(env)["nativeMeshState"], "ready")
+            launched = subprocess.run(
+                [str(profile / "bc250-r2"), "true"],
+                capture_output=True,
+                text=True,
+                env=env,
+            )
+            self.assertEqual(launched.returncode, 0, launched.stderr)
+
+            manifest[-1] = "0" * 64
+            (profile / "install.conf").write_text(
+                " ".join(manifest) + "\n", encoding="ascii"
+            )
+            self.assertEqual(self.run_status_json(env)["nativeMeshState"], "invalid")
+
+    def test_native_mesh_source_build_failure_preserves_existing_profile(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            env = self.environment(root)
+            self.install_runtime(env)
+            self.install_legacy_native_mesh_runtime(env)
+            legacy = Path(env["BC250_MESH_STATE_DIR"]) / "native-mesh"
+            legacy_manifest = (legacy / "install.conf").read_bytes()
+            self.make_r2_archive(env, root)
+            self.make_r2_source_stub(env, root)
             env["BC250_TEST_LDD_GNU2_TLS_MISSING"] = "1"
 
             result = subprocess.run(
@@ -1428,7 +1570,10 @@ refresh_current_generator
                     "-c",
                     'script=$1; set -- help; source "$script" >/dev/null; '
                     "require_native_mesh_host() { :; }; "
-                    "require_production_kernel_paths() { :; }; cmd_setup_native_mesh",
+                    "require_production_kernel_paths() { :; }; "
+                    "ensure_mesa_build_prerequisites() { :; }; "
+                    "build_native_mesh_driver() { return 73; }; "
+                    "cmd_setup_native_mesh",
                     "_",
                     str(MESH),
                 ],
@@ -1438,11 +1583,70 @@ refresh_current_generator
             )
 
             self.assertNotEqual(result.returncode, 0)
-            self.assertIn("incompatible with this SteamOS build", result.stderr)
-            self.assertIn("GLIBC_ABI_GNU2_TLS", result.stderr)
+            self.assertEqual((legacy / "install.conf").read_bytes(), legacy_manifest)
             self.assertFalse(
-                (Path(env["BC250_MESH_STATE_DIR"]) / "native-mesh").exists()
+                (Path(env["BC250_R2_COMPAT_DIR"]) / "BC250-R2").exists()
             )
+
+    def test_native_mesh_setup_refreshes_recorded_runner_and_reuses_proton(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            env = self.environment(root)
+            self.install_runtime(env)
+            self.make_r2_archive(env, root)
+            command = (
+                'script=$1; set -- help; source "$script" >/dev/null; '
+                "require_native_mesh_host() { :; }; "
+                "require_production_kernel_paths() { :; }; cmd_setup_native_mesh"
+            )
+            subprocess.run(
+                ["bash", "-c", command, "_", str(MESH)],
+                check=True,
+                capture_output=True,
+                text=True,
+                env=env,
+            )
+            profile = Path(env["BC250_MESH_STATE_DIR"]) / "native-mesh"
+            runner = profile / "bc250-r2"
+            manifest = profile / "install.conf"
+            with runner.open("a", encoding="ascii") as output:
+                output.write("# previous toolkit runner\n")
+            fields = manifest.read_text(encoding="ascii").split()
+            fields[5] = hashlib.sha256(runner.read_bytes()).hexdigest()
+            manifest.write_text(" ".join(fields) + "\n", encoding="ascii")
+            tool = Path(env["BC250_R2_COMPAT_DIR"]) / "BC250-R2"
+            proton_sha = hashlib.sha256((tool / "proton").read_bytes()).hexdigest()
+            env["BC250_R2_PROTON_BASE"] = str(root / "missing-proton")
+
+            refreshed = subprocess.run(
+                ["bash", "-c", command, "_", str(MESH)],
+                capture_output=True,
+                text=True,
+                env=env,
+            )
+
+            self.assertEqual(refreshed.returncode, 0, refreshed.stderr)
+            self.assertNotIn("previous toolkit runner", runner.read_text(encoding="ascii"))
+            self.assertEqual(
+                hashlib.sha256((tool / "proton").read_bytes()).hexdigest(), proton_sha
+            )
+            self.assertEqual(self.run_status_json(env)["nativeMeshState"], "ready")
+
+    def test_native_mesh_runtime_update_is_invalid_but_remains_removable(self):
+        with tempfile.TemporaryDirectory() as directory:
+            env = self.environment(Path(directory))
+            self.install_runtime(env)
+            self.install_native_mesh_runtime(env)
+            env["BC250_TEST_LDD_GNU2_TLS_MISSING"] = "1"
+
+            self.assertEqual(self.run_status_json(env)["nativeMeshState"], "invalid")
+            removed = subprocess.run(
+                ["bash", str(MESH), "uninstall", "--native-mesh"],
+                capture_output=True,
+                text=True,
+                env=env,
+            )
+            self.assertEqual(removed.returncode, 0, removed.stderr)
             self.assertFalse(
                 (Path(env["BC250_R2_COMPAT_DIR"]) / "BC250-R2").exists()
             )
@@ -1585,12 +1789,19 @@ refresh_current_generator
             "36188f341adbbd3f61069155601b18eda2e90d557bf4d16005a0b44b177e5a40",
             script,
         )
+        self.assertIn(
+            "752eb8c0941c0aeb46be991cdf7f8fc2fc1ed2f0c940a62759e47770e33a0f94",
+            script,
+        )
         self.assertIn('validate_native_mesh_archive "$archive"', setup)
         self.assertIn('validate_native_mesh_bundle "$bundle"', setup)
         self.assertIn('"$bundle/payload/libvulkan_radeon.so"', setup)
         self.assertIn('"$bundle/payload/d3d12core.dll"', setup)
         self.assertIn('cp -a --reflink=auto "$proton_base/."', setup)
-        self.assertNotIn("meson setup", setup)
+        self.assertIn('meson setup "$build" "$source"', script)
+        self.assertIn("stage_native_mesh_source_upstream", setup)
+        self.assertIn("build_native_mesh_driver", setup)
+        self.assertIn("local required_commands=(curl gcc", script)
         runner = script.split("render_native_mesh_runner() {", 1)[1].split(
             "\n}\n\nread_native_mesh_manifest", 1
         )[0]
