@@ -529,6 +529,10 @@ class DriverLifecycleTests(unittest.TestCase):
         self.assertIn("did not transition to a runtime device bound to aic8800_fdrv", helper)
         self.assertIn("BUILD_ZLP_KO", helper)
         self.assertIn("zlp_target_present", helper)
+        self.assertIn("pacman -S --noconfirm --needed base-devel", helper)
+        self.assertNotIn("pacman -Sy", helper)
+        self.assertNotIn("pacman -Sy", installer)
+        self.assertIn("temporary Ethernet/USB tethering", helper)
 
     def test_nct6687_source_and_build_are_pinned_and_verified(self):
         fetcher = FAN_FETCHER.read_text(encoding="utf-8")

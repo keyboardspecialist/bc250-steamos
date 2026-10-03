@@ -2112,6 +2112,18 @@ if (pe_offset + 6 > len(dll) or dll[pe_offset:pe_offset + 4] != b"PE\0\0"
 PY
 }
 
+validate_native_mesh_runtime_dependencies() {
+    local driver=$1 linkage
+    if ! linkage=$(LC_ALL=C ldd "$driver" 2>&1); then
+        if grep -Fq GLIBC_ABI_GNU2_TLS <<< "$linkage"; then
+            die "BC250 R2 $NATIVE_MESH_RELEASE is incompatible with this SteamOS build: its glibc does not provide GLIBC_ABI_GNU2_TLS. R2 was not installed; use a compatible SteamOS build or a rebuilt R2 release."
+        fi
+        die "BC250 R2 driver dependencies are unavailable: $linkage"
+    fi
+    ! grep -Eq 'not found|undefined symbol:' <<< "$linkage" \
+        || die "BC250 R2 driver has unresolved dependencies: $linkage"
+}
+
 require_native_mesh_host() {
     [[ $(uname -m) == x86_64 ]] \
         || die "BC250 RADV R2 requires an x86-64 Linux host."
@@ -2479,7 +2491,7 @@ EOF
 
 cmd_setup_native_mesh() (
     require_normal_user
-    local work archive bundle profile_stage compat_stage proton_base linkage
+    local work archive bundle profile_stage compat_stage proton_base
     local transaction_stage transaction_tmp had_previous=0 committed=0
     require_native_mesh_host
     require_production_kernel_paths
@@ -2549,10 +2561,8 @@ cmd_setup_native_mesh() (
     bundle="$work/bc250-r2-linux-x86_64"
     validate_native_mesh_bundle "$bundle" \
         || die "The BC250 R2 release payload failed validation."
-    linkage=$(LC_ALL=C ldd "$bundle/payload/libvulkan_radeon.so" 2>&1) \
-        || die "BC250 R2 driver dependencies are unavailable: $linkage"
-    ! grep -Eq 'not found|undefined symbol:' <<< "$linkage" \
-        || die "BC250 R2 driver has unresolved dependencies: $linkage"
+    validate_native_mesh_runtime_dependencies \
+        "$bundle/payload/libvulkan_radeon.so"
     require_compute_kernel
     verify_scheduler_active \
         || die "amdgpu.sched_policy=2 became inactive during BC250 R2 setup."

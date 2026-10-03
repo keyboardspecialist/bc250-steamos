@@ -501,7 +501,9 @@ unlock_rootfs
 echo "== [2/7] Installing build tools =="
 pacman-key --init >/dev/null 2>&1 || true
 pacman-key --populate archlinux holo >/dev/null 2>&1 || true
-pacman -Sy --noconfirm --needed base-devel git util-linux usb_modeswitch
+# Keep package installation aligned with the repository database shipped in the
+# active SteamOS image; -Sy can turn beta images into unsupported partial upgrades.
+pacman -S --noconfirm --needed base-devel git util-linux usb_modeswitch
 relock_rootfs
 
 echo "== [3/7] Kernel headers for $KREL =="

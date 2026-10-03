@@ -35,7 +35,14 @@ class MeshShaderTests(unittest.TestCase):
             "modinfo": '#!/bin/sh\nprintf "%s\\n" "$BC250_GFX1013_MODULE"\n',
             "stat": '#!/bin/sh\n[ "$2" = %u ] && { echo 0; exit; }\n[ "$2" = %a ] && { echo 644; exit; }\nexec /usr/bin/stat "$@"\n',
             "steamos-readonly": '#!/bin/sh\n[ "$1" != status ] || echo disabled\n',
-            "ldd": "#!/bin/sh\necho 'mock linked dependencies'\n",
+            "ldd": (
+                "#!/bin/sh\n"
+                "if [ \"${BC250_TEST_LDD_GNU2_TLS_MISSING:-0}\" = 1 ]; then\n"
+                "  echo \"$1: /usr/lib/libc.so.6: version \\`GLIBC_ABI_GNU2_TLS' not found (required by $1)\" >&2\n"
+                "  exit 1\n"
+                "fi\n"
+                "echo 'mock linked dependencies'\n"
+            ),
         }.items():
             path = bindir / name
             path.write_text(source, encoding="utf-8")
@@ -1406,6 +1413,39 @@ refresh_current_generator
             self.assertIn("unsupported BC250 R2 archive entry", result.stderr)
             self.assertFalse(destination.exists())
             self.assertFalse((root / "escaped").exists())
+
+    def test_native_mesh_setup_reports_incompatible_gnu2_tls_abi(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            env = self.environment(root)
+            self.install_runtime(env)
+            self.make_r2_archive(env, root)
+            env["BC250_TEST_LDD_GNU2_TLS_MISSING"] = "1"
+
+            result = subprocess.run(
+                [
+                    "bash",
+                    "-c",
+                    'script=$1; set -- help; source "$script" >/dev/null; '
+                    "require_native_mesh_host() { :; }; "
+                    "require_production_kernel_paths() { :; }; cmd_setup_native_mesh",
+                    "_",
+                    str(MESH),
+                ],
+                capture_output=True,
+                text=True,
+                env=env,
+            )
+
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("incompatible with this SteamOS build", result.stderr)
+            self.assertIn("GLIBC_ABI_GNU2_TLS", result.stderr)
+            self.assertFalse(
+                (Path(env["BC250_MESH_STATE_DIR"]) / "native-mesh").exists()
+            )
+            self.assertFalse(
+                (Path(env["BC250_R2_COMPAT_DIR"]) / "BC250-R2").exists()
+            )
 
     def test_native_mesh_runner_is_private_attested_and_uses_r2_policy(self):
         with tempfile.TemporaryDirectory() as directory:

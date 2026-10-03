@@ -154,7 +154,9 @@ else
                 pacman-key --init >/dev/null 2>&1 || true
                 pacman-key --populate archlinux >/dev/null 2>&1 || true
                 pacman-key --populate holo >/dev/null 2>&1 || true
-                pacman -Sy --noconfirm --needed base-devel
+                # Use the repository database shipped with this image. Refreshing
+                # it here can create a partial upgrade against a moving channel.
+                pacman -S --noconfirm --needed base-devel
                 relock_rootfs
             fi
 
@@ -162,7 +164,7 @@ else
                && [ ! -d "/lib/modules/$KVER/build" ]; then
                 log "fetching kernel headers for $KVER"
                 make -C "$DRV" steamos-headers \
-                    || { log "exact headers unavailable; rerun interactive steamdeck-setup.sh for source preparation"; exit 1; }
+                    || { log "exact headers unavailable; connect temporary Ethernet/USB tethering and rerun interactive steamdeck-setup.sh for source preparation"; exit 1; }
             fi
 
             log "building modules for $KVER"
