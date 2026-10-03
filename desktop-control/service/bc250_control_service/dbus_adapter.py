@@ -42,6 +42,7 @@ INTROSPECTION_XML = """<node>
     <method name="UninstallOptiscaler"><arg name="candidate_id" type="s" direction="in"/><arg name="operation_id" type="s" direction="out"/></method>
     <method name="CpuOcAction"><arg name="action" type="s" direction="in"/><arg name="frequency" type="u" direction="in"/><arg name="voltage" type="u" direction="in"/><arg name="temperature" type="u" direction="in"/><arg name="operation_id" type="s" direction="out"/></method>
     <method name="SetCpuMitigations"><arg name="enabled" type="b" direction="in"/><arg name="operation_id" type="s" direction="out"/></method>
+    <method name="SetCpuSmtDisabled"><arg name="disabled" type="b" direction="in"/><arg name="operation_id" type="s" direction="out"/></method>
     <method name="CpuUnlockAction"><arg name="action" type="s" direction="in"/><arg name="operation_id" type="s" direction="out"/></method>
     <method name="SetUmaSize"><arg name="uma_mib" type="u" direction="in"/><arg name="operation_id" type="s" direction="out"/></method>
     <method name="SetTtmPages"><arg name="pages" type="u" direction="in"/><arg name="operation_id" type="s" direction="out"/></method>
@@ -180,6 +181,7 @@ class DbusAdapter:
         "UninstallOptiscaler": ("s", "s", "uninstall_optiscaler"),
         "CpuOcAction": ("suuu", "s", "cpu_oc_action"),
         "SetCpuMitigations": ("b", "s", "set_cpu_mitigations"),
+        "SetCpuSmtDisabled": ("b", "s", "set_cpu_smt_disabled"),
         "CpuUnlockAction": ("s", "s", "cpu_unlock_action"),
         "SetUmaSize": ("u", "s", "set_uma_size"),
         "SetTtmPages": ("u", "s", "set_ttm_pages"),

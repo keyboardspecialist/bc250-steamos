@@ -978,6 +978,17 @@ show_status() {
         status_row "CPU ACPI / freq" "incomplete" warn "ACPI $enabled; cpufreq $active"
     fi
 
+    state=$(status_value "$power_output" "SMT: " || true)
+    if [[ "$state" == "configured=disabled current=off" || "$state" == "configured=disabled current=forceoff" ]]; then
+        status_row "CPU SMT" "disabled" good "boot persistence active; one thread per core"
+    elif [[ "$state" == "configured=enabled current=on" ]]; then
+        status_row "CPU SMT" "enabled" good "firmware default; all logical threads online"
+    elif [[ -n "$state" ]]; then
+        status_row "CPU SMT" "attention" warn "$state"
+    else
+        status_row "CPU SMT" "unavailable" dim "kernel SMT state not reported"
+    fi
+
     enabled=$(systemctl is-enabled bc250-smu-oc.service 2>/dev/null || true)
     active=$(systemctl is-active bc250-smu-oc.service 2>/dev/null || true)
     profile=$(status_value "$power_output" "CPU OC boot profile: " || true)

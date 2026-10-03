@@ -43,6 +43,7 @@ action__ramp_relaxed["Relaxed (climb in 1000 ms)<br/>Install-default speed, but 
 child__ramp_custom["Custom climb time<br/>You pick idle-to-max ms; step, interval, down-events are derived."]:::advanced
 action__ramp_reset["Reset install defaults<br/>200 MHz steps every 200 ms, 1 s hold before downscaling."]:::cleanup
 child__cpu_mitigations["CPU security mitigations (toggle)<br/>Trade kernel security mitigations for performance. Reboot required."]:::advanced
+child__cpu_smt["Disable SMT at boot (toggle)<br/>Apply immediately and persist for cache-sensitive games."]:::advanced
 action__oc_status["Show OC status<br/>Full report: configs, measured + live mV, saved verdict."]:::read_only
 child__oc_detect["Detect stable overclock<br/>Guided stress-stepped search. Start here. CAN hard-crash if pushed."]:::experimental
 action__oc_enable["Enable at boot<br/>Persist the detected config; applies before the GPU governor."]:::install
@@ -95,6 +96,7 @@ menu__ramp --> action__ramp_reset
 
 menu__cpu --> menu__cpu_oc
 menu__cpu --> child__cpu_mitigations
+menu__cpu --> child__cpu_smt
 
 menu__cpu_oc --> action__oc_status
 menu__cpu_oc --> child__oc_detect

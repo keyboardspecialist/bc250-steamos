@@ -79,6 +79,9 @@ class Plugin:
     async def set_cpu_mitigations(self, enabled: bool):
         return await self.backend.set_cpu_mitigations(enabled)
 
+    async def set_cpu_smt_disabled(self, disabled: bool):
+        return await self.backend.set_cpu_smt_disabled(disabled)
+
     async def cpu_unlock_action(self, action: str):
         return await self.backend.cpu_unlock_action(action)
 

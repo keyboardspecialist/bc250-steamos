@@ -117,6 +117,9 @@ class FakeBackend:
     async def set_cpu_mitigations(self, *args):
         await self._mutation("set_cpu_mitigations", *args)
 
+    async def set_cpu_smt_disabled(self, *args):
+        await self._mutation("set_cpu_smt_disabled", *args)
+
     async def set_uma_size(self, *args):
         await self._mutation("set_uma_size", *args)
 
@@ -267,6 +270,19 @@ class ControlServiceTests(unittest.IsolatedAsyncioTestCase):
             self.backends[0].calls, [("set_cpu_mitigations", (False,))]
         )
 
+    async def test_cpu_smt_is_authorized_and_non_cancellable(self):
+        operation_id = await self.service.set_cpu_smt_disabled(":1.1", True)
+        operation = await self.wait_for_status(":1.1", operation_id, "succeeded")
+
+        self.assertFalse(operation["cancellable"])
+        self.assertEqual(operation["method"], "SetCpuSmtDisabled")
+        self.assertEqual(
+            self.authorizer.calls, [(":1.1", 1000, "audit:1000", "cpu")]
+        )
+        self.assertEqual(
+            self.backends[0].calls, [("set_cpu_smt_disabled", (True,))]
+        )
+
     async def test_ram_mutations_are_authorized_and_non_cancellable(self):
         operation_id = await self.service.set_uma_size(":1.1", 512)
         operation = await self.wait_for_status(":1.1", operation_id, "succeeded")
@@ -360,6 +376,8 @@ class ControlServiceTests(unittest.IsolatedAsyncioTestCase):
             await self.service.cpu_oc_action(":1.1", "detect", True, 1200, 90)
         with self.assertRaises(InvalidArguments):
             await self.service.set_cpu_mitigations(":1.1", 0)
+        with self.assertRaises(InvalidArguments):
+            await self.service.set_cpu_smt_disabled(":1.1", 1)
         with self.assertRaises(InvalidArguments):
             await self.service.set_hdmi_surround(":1.1", 1)
         for target_id in ("", "/tmp/game.dll", "A" * 64, "a" * 63, 1):

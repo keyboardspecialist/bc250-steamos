@@ -124,7 +124,9 @@ QtObject {
             installed: { values: { frequency: "4000", voltage: "1275" }, detected: "4000 MHz @ 1275 mV" },
             staged: null, toolAvailable: true,
             mitigations: { schemaVersion: 1, available: true, state: "enabled",
-                configuredEnabled: true, bootEnabled: true, rebootRequired: false, protected: true }
+                configuredEnabled: true, bootEnabled: true, rebootRequired: false, protected: true },
+            smt: { schemaVersion: 1, available: true, state: "enabled",
+                configuredDisabled: false, liveDisabled: false, liveState: "on", protected: true }
         },
         ram: {
             schemaVersion: 1, available: true, toolState: "verified", toolVersion: "v0.1",
@@ -170,6 +172,7 @@ QtObject {
     function cpuOcAction() { start("Running CPU operation"); }
     function cpuUnlockAction() { start("Running CPU core-unlock operation"); }
     function setCpuMitigations() { start("Updating CPU mitigations"); }
+    function setCpuSmtDisabled() { start("Updating CPU SMT"); }
     function setUmaSize() { start("Writing CMOS minimum VRAM"); }
     function setTtmPages() { start("Updating TTM boot limit"); }
     function removeTtmOverride() { start("Removing TTM boot limit"); }

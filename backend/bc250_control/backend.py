@@ -2429,6 +2429,15 @@ class ToolkitBackend:
             "rebootRequired": False,
             "protected": False,
         }
+        smt = {
+            "schemaVersion": 1,
+            "available": False,
+            "state": "unavailable",
+            "configuredDisabled": None,
+            "liveDisabled": None,
+            "liveState": "unavailable",
+            "protected": False,
+        }
         if self._cpu_helper_available():
             try:
                 value = json.loads(
@@ -2472,6 +2481,47 @@ class ToolkitBackend:
                 )
             ):
                 mitigations = value
+            try:
+                value = json.loads(await self._cpu_tool("cpu-smt", "status-json"))
+            except (CommandError, json.JSONDecodeError):
+                value = None
+            if (
+                isinstance(value, dict)
+                and {
+                    "schemaVersion",
+                    "available",
+                    "state",
+                    "configuredDisabled",
+                    "liveDisabled",
+                    "liveState",
+                    "protected",
+                }.issubset(value)
+                and type(value.get("schemaVersion")) is int
+                and value.get("schemaVersion") == 1
+                and type(value.get("available")) is bool
+                and value.get("state")
+                in {"enabled", "disabled", "foreign", "incomplete", "unavailable"}
+                and (
+                    value.get("configuredDisabled") is None
+                    or type(value.get("configuredDisabled")) is bool
+                )
+                and (
+                    value.get("liveDisabled") is None
+                    or type(value.get("liveDisabled")) is bool
+                )
+                and value.get("liveState")
+                in {"on", "off", "forceoff", "notsupported", "notimplemented", "unknown", "unavailable"}
+                and type(value.get("protected")) is bool
+                and (
+                    (value.get("state") == "enabled" and value.get("configuredDisabled") is False)
+                    or (value.get("state") == "disabled" and value.get("configuredDisabled") is True)
+                    or (
+                        value.get("state") in {"foreign", "incomplete", "unavailable"}
+                        and value.get("configuredDisabled") is None
+                    )
+                )
+            ):
+                smt = value
         return {
             "service": service,
             "installed": self._cpu_config(installed_path)
@@ -2484,6 +2534,7 @@ class ToolkitBackend:
                 CPU_STATE_DIR / "bc250_apply.py"
             ),
             "mitigations": mitigations,
+            "smt": smt,
         }
 
     @staticmethod
@@ -4300,6 +4351,17 @@ class ToolkitBackend:
         async def action() -> None:
             await self._cpu_tool(
                 "cpu-mitigations", "enable" if enabled else "disable", timeout=180
+            )
+
+        return await self._mutate(action)
+
+    async def set_cpu_smt_disabled(self, disabled: bool) -> None:
+        if type(disabled) is not bool:
+            raise CommandError("CPU SMT state must be a boolean.")
+
+        async def action() -> None:
+            await self._cpu_tool(
+                "cpu-smt", "disable" if disabled else "enable", timeout=180
             )
 
         return await self._mutate(action)

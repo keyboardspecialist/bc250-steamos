@@ -344,6 +344,17 @@ class ControlService:
             cancellable=False,
         )
 
+    async def set_cpu_smt_disabled(self, sender: str, disabled: bool) -> str:
+        if type(disabled) is not bool:
+            raise InvalidArguments("CPU SMT state must be a boolean.")
+        return await self._submit(
+            sender,
+            "cpu",
+            "SetCpuSmtDisabled",
+            lambda backend: backend.set_cpu_smt_disabled(disabled),
+            cancellable=False,
+        )
+
     async def set_uma_size(self, sender: str, uma_mib: int) -> str:
         _whole(uma_mib, "UMA size must be a whole number of MiB.")
         if not 256 <= uma_mib <= 12288 or uma_mib % 16 != 0 or uma_mib == 2048:

@@ -88,12 +88,12 @@ QtObject {
     function _command(method, signature, argumentsList) {
         method = Utils.allowed(method, ["GetSnapshot", "GetTelemetry", "GetCpuUnlockStatus", "GetMeshStatus", "GetFsr4Inventory", "GetOperation",
             "SetCuWgp", "SetGpuFrequency", "SetLoadTarget", "SetCustomLoadTarget",
-            "SetRamp", "CpuOcAction", "CpuUnlockAction", "SetCpuMitigations", "CecAction", "SetCecToggle", "SetCecName",
+            "SetRamp", "CpuOcAction", "CpuUnlockAction", "SetCpuMitigations", "SetCpuSmtDisabled", "CecAction", "SetCecToggle", "SetCecName",
             "SetUmaSize", "SetTtmPages", "RemoveTtmOverride", "SetHdmiSurround", "InstallFsr4Dll", "UninstallFsr4Dll",
             "InstallOptiscaler", "UninstallOptiscaler", "InstallNativeMesh", "UninstallNativeMesh", "CancelOperation"]);
         signature = Utils.allowed(signature, ["", "b", "s", "u", "yy", "suu", "yyyb", "suuu", "sb", "ss"]);
         var interactive = ["SetCuWgp", "SetGpuFrequency", "SetLoadTarget",
-            "SetCustomLoadTarget", "SetRamp", "CpuOcAction", "CpuUnlockAction", "SetCpuMitigations",
+            "SetCustomLoadTarget", "SetRamp", "CpuOcAction", "CpuUnlockAction", "SetCpuMitigations", "SetCpuSmtDisabled",
             "InstallOptiscaler", "UninstallOptiscaler"].indexOf(method) >= 0;
         var command = "/usr/bin/busctl --system --json=short --timeout="
             + (interactive ? "130" : method === "GetFsr4Inventory" ? "120" : method === "GetMeshStatus" || method === "GetCpuUnlockStatus" ? "35" : "15") + " call " + service + " "
@@ -156,7 +156,7 @@ QtObject {
         notice = "";
         error = "";
         _operationPollFailures = 0;
-        var cancellable = ["CpuUnlockAction", "SetCpuMitigations", "SetUmaSize", "SetTtmPages",
+        var cancellable = ["CpuUnlockAction", "SetCpuMitigations", "SetCpuSmtDisabled", "SetUmaSize", "SetTtmPages",
             "RemoveTtmOverride", "SetHdmiSurround", "InstallFsr4Dll", "UninstallFsr4Dll",
             "InstallOptiscaler", "UninstallOptiscaler", "InstallNativeMesh", "UninstallNativeMesh"].indexOf(method) < 0;
         _enqueue("mutation", _command(method, signature, args), {
@@ -240,6 +240,11 @@ QtObject {
     function setCpuMitigations(enabled) {
         _startMutation("SetCpuMitigations", "b", [Utils.booleanToken(enabled)],
             (enabled ? "Enabling" : "Disabling") + " CPU mitigations");
+    }
+
+    function setCpuSmtDisabled(disabled) {
+        _startMutation("SetCpuSmtDisabled", "b", [Utils.booleanToken(disabled)],
+            (disabled ? "Disabling" : "Enabling") + " CPU SMT");
     }
 
     function setUmaSize(umaMiB) {

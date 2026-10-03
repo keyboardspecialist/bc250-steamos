@@ -247,6 +247,8 @@ voltage range is 700-1050 mV. Keep the voltage curve monotonic.
 | `sudo ./bc250-power.sh cpu-oc off` | Restore stock CPU settings |
 | `sudo ./bc250-power.sh cpu-mitigations disable` | Set `mitigations=off` |
 | `sudo ./bc250-power.sh cpu-mitigations enable` | Restore the kernel mitigation policy |
+| `sudo ./bc250-power.sh cpu-smt disable` | Disable SMT now and at boot |
+| `sudo ./bc250-power.sh cpu-smt enable` | Enable SMT now and remove boot persistence |
 
 **CAUTION:** CPU detection stress-tests each frequency step. Use a VID limit of
 1325 mV or less.

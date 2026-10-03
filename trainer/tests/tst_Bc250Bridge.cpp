@@ -224,6 +224,16 @@ private slots:
         QVERIFY(!bridge.operationCancellable());
     }
 
+    void acceptsCpuSmtToggle()
+    {
+        Bc250Bridge bridge(true);
+        bridge.setCpuSmtDisabled(true);
+        QVERIFY2(bridge.error().isEmpty(), qPrintable(bridge.error()));
+        QVERIFY(bridge.busy());
+        QVERIFY(bridge.busyLabel().contains(QStringLiteral("Disabling CPU SMT")));
+        QVERIFY(!bridge.operationCancellable());
+    }
+
     void mockRamSchemaMatchesService()
     {
         Bc250Bridge bridge(true);

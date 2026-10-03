@@ -64,6 +64,9 @@ GRUB_ACPI_DEFAULT="/etc/default/grub.d/bc250-acpi.cfg"
 GRUB_DEFAULT="${GRUB_DEFAULT:-/etc/default/grub}"
 CPU_MITIGATIONS_CONFIG="${CPU_MITIGATIONS_CONFIG:-/etc/default/grub.d/bc250-cpu-mitigations.cfg}"
 PROC_CMDLINE="${PROC_CMDLINE:-/proc/cmdline}"
+SMT_CONTROL="${SMT_CONTROL:-/sys/devices/system/cpu/smt/control}"
+SMT_UNIT="${SMT_UNIT:-/etc/systemd/system/bc250-disable-smt.service}"
+SMT_SVC="bc250-disable-smt.service"
 
 GOV_BIN="$BIN_DIR/cyan-skillfish-governor-smu"
 PERF_BIN="$BIN_DIR/cyan-skillfish-performance-mode"
@@ -556,6 +559,18 @@ badge_cpu_mitigations() {
         enabled:enabled) b_ok "enabled" ;;
         disabled:disabled) b_mid "disabled" ;;
         enabled:disabled|disabled:enabled) b_mid "reboot needed" ;;
+        *) b_mid "$configured" ;;
+    esac
+}
+
+badge_cpu_smt() {
+    local configured live
+    configured=$(cpu_smt_configured_state)
+    live=$(cpu_smt_live_state)
+    case "$configured:$live" in
+        disabled:off|disabled:forceoff) b_mid "SMT disabled" ;;
+        enabled:on) b_ok "SMT enabled" ;;
+        enabled:off|disabled:on) b_mid "state mismatch" ;;
         *) b_mid "$configured" ;;
     esac
 }
@@ -2592,7 +2607,7 @@ cmd_enable() {
 # count as an installation, so this returns not-installed after an uninstall.
 other_power_payload_is_installed() {
     [[ -e "$HEAL_UNIT" || -e "$CPUFREQ_UNIT" || -e "$GOV_UNIT" \
-        || -e "$RESTORE_UNIT" || -e "$OC_UNIT" || -e "$GRUB_ACPI_DEFAULT" \
+        || -e "$RESTORE_UNIT" || -e "$OC_UNIT" || -e "$SMT_UNIT" || -e "$GRUB_ACPI_DEFAULT" \
         || -e "$CPIO_BOOT" || -e "$DBUS_POLICY" \
         || -e "$HEAL_HELPER" || -e "$GOV_BIN" || -e "$PERF_BIN" \
         || -e "$RESTORE_BIN" || -e "$OC_DIR/bc250_apply.py" \
@@ -2602,7 +2617,8 @@ other_power_payload_is_installed() {
         || -L "$SYSTEMD_WANTS_DIR/bc250-cpufreq.service" \
         || -L "$SYSTEMD_WANTS_DIR/$GOV_SVC" \
         || -L "$SYSTEMD_WANTS_DIR/$RESTORE_SVC" \
-        || -L "$SYSTEMD_WANTS_DIR/$OC_SVC" ]]
+        || -L "$SYSTEMD_WANTS_DIR/$OC_SVC" \
+        || -L "$SYSTEMD_WANTS_DIR/$SMT_SVC" ]]
 }
 
 core_unlock_service_enabled() {
@@ -3102,10 +3118,10 @@ cmd_uninstall() {
         fi
     fi
     local service
-    systemctl disable --now "$RESTORE_SVC" "$GOV_SVC" "$OC_SVC" "$CORE_UNLOCK_SVC" \
+    systemctl disable --now "$RESTORE_SVC" "$GOV_SVC" "$OC_SVC" "$SMT_SVC" "$CORE_UNLOCK_SVC" \
         "$SMU_METRICS_SVC" \
         bc250-acpi-heal.service bc250-cpufreq.service >/dev/null 2>&1 || true
-    for service in "$RESTORE_SVC" "$GOV_SVC" "$OC_SVC" "$CORE_UNLOCK_SVC" \
+    for service in "$RESTORE_SVC" "$GOV_SVC" "$OC_SVC" "$SMT_SVC" "$CORE_UNLOCK_SVC" \
         "$SMU_METRICS_SVC" \
         bc250-acpi-heal.service bc250-cpufreq.service; do
         if systemctl is-active --quiet "$service"; then
@@ -3121,6 +3137,10 @@ cmd_uninstall() {
     if [[ -e "$CPU_MITIGATIONS_CONFIG" || -L "$CPU_MITIGATIONS_CONFIG" ]]; then
         cpu_mitigations_set enabled
     fi
+    if [[ -r "$SMT_CONTROL" ]] && [[ "$(cpu_smt_live_state)" == off ]]; then
+        echo on | tee "$SMT_CONTROL" >/dev/null \
+            || warn "Could not restore SMT live; reboot will restore the firmware default."
+    fi
 
     if [[ $acpi_reverted -eq 1 ]]; then
         remove_power_unit "$HEAL_UNIT"
@@ -3135,10 +3155,15 @@ cmd_uninstall() {
     remove_power_unit "$GOV_UNIT"
     remove_power_unit "$RESTORE_UNIT"
     remove_power_unit "$OC_UNIT"
+    if [[ ! -e "$SMT_UNIT" && ! -L "$SMT_UNIT" ]] || cpu_smt_unit_owned; then
+        remove_power_unit "$SMT_UNIT"
+    else
+        warn "Retaining unrecognized SMT unit: $SMT_UNIT"
+    fi
     remove_power_unit "$CORE_UNLOCK_UNIT"
     remove_power_unit "$SMU_METRICS_UNIT"
     rm -f "$SYSTEMD_WANTS_DIR/$GOV_SVC" "$SYSTEMD_WANTS_DIR/$RESTORE_SVC" \
-        "$SYSTEMD_WANTS_DIR/$OC_SVC" "$SYSTEMD_WANTS_DIR/$CORE_UNLOCK_SVC" \
+        "$SYSTEMD_WANTS_DIR/$OC_SVC" "$SYSTEMD_WANTS_DIR/$SMT_SVC" "$SYSTEMD_WANTS_DIR/$CORE_UNLOCK_SVC" \
         "$SYSTEMD_WANTS_DIR/$SMU_METRICS_SVC"
     rm -f "$DBUS_POLICY"
     rm -f "$GOV_BIN" "$PERF_BIN" "$RESTORE_BIN"
@@ -4019,6 +4044,176 @@ cmd_cpu_unlock() {
     esac
 }
 
+# ============================== CPU SMT ==================================
+render_cpu_smt_unit() {
+    cat <<'EOF'
+[Unit]
+Description=BC-250 disable simultaneous multithreading
+ConditionPathExists=/sys/devices/system/cpu/smt/control
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/bash -c 'echo off | /usr/bin/tee /sys/devices/system/cpu/smt/control >/dev/null'
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target
+EOF
+}
+
+cpu_smt_unit_owned() {
+    [[ -f "$SMT_UNIT" && ! -L "$SMT_UNIT" ]] || return 1
+    cmp -s "$SMT_UNIT" <(render_cpu_smt_unit)
+}
+
+cpu_smt_service_enabled() {
+    [[ "$(systemctl is-enabled "$SMT_SVC" 2>/dev/null || true)" == enabled \
+        || -L "$SYSTEMD_WANTS_DIR/$SMT_SVC" ]]
+}
+
+cpu_smt_live_state() {
+    local state
+    [[ -r "$SMT_CONTROL" ]] || { printf '%s\n' unavailable; return; }
+    IFS= read -r state < "$SMT_CONTROL" || { printf '%s\n' unavailable; return; }
+    case "$state" in
+        on|off|forceoff|notsupported|notimplemented) printf '%s\n' "$state" ;;
+        *) printf '%s\n' unknown ;;
+    esac
+}
+
+cpu_smt_configured_state() {
+    if [[ -e "$SMT_UNIT" || -L "$SMT_UNIT" ]]; then
+        if ! cpu_smt_unit_owned; then
+            printf '%s\n' foreign
+        elif cpu_smt_service_enabled; then
+            printf '%s\n' disabled
+        else
+            printf '%s\n' incomplete
+        fi
+    elif cpu_smt_service_enabled; then
+        printf '%s\n' foreign
+    else
+        printf '%s\n' enabled
+    fi
+}
+
+power_keep_has_cpu_smt() {
+    [[ -f "$POWER_KEEP_FILE" && ! -L "$POWER_KEEP_FILE" ]] \
+        && grep -Fxq /etc/systemd/system/bc250-disable-smt.service "$POWER_KEEP_FILE" \
+        && grep -Fxq /etc/systemd/system/multi-user.target.wants/bc250-disable-smt.service "$POWER_KEEP_FILE"
+}
+
+cpu_smt_set() {
+    require_root
+    local requested=$1 live configured relock_after=0
+    [[ "$requested" == enabled || "$requested" == disabled ]] \
+        || die "SMT state must be enabled or disabled."
+    live=$(cpu_smt_live_state)
+    case "$live" in
+        on|off) ;;
+        forceoff) die "SMT is forced off by the kernel and cannot be changed at runtime." ;;
+        notsupported|notimplemented) die "Runtime SMT control is not supported by this kernel." ;;
+        *) die "SMT control is unavailable: $SMT_CONTROL" ;;
+    esac
+    configured=$(cpu_smt_configured_state)
+    [[ "$configured" != foreign ]] \
+        || die "Existing SMT boot configuration is not toolkit-owned: $SMT_UNIT"
+
+    if [[ "$requested" == disabled ]]; then
+        echo off | tee "$SMT_CONTROL" >/dev/null
+        [[ "$(cpu_smt_live_state)" == off ]] || die "The kernel did not disable SMT."
+        if [[ $RO_WAS_DISABLED -eq 0 ]]; then unlock_rootfs; relock_after=1; fi
+        if ! mkdir -p "${SMT_UNIT%/*}" \
+            || ! render_cpu_smt_unit > "$SMT_UNIT.new.$$" \
+            || ! chown root:root "$SMT_UNIT.new.$$" \
+            || ! chmod 0644 "$SMT_UNIT.new.$$" \
+            || ! mv -f "$SMT_UNIT.new.$$" "$SMT_UNIT" \
+            || ! systemctl daemon-reload \
+            || ! systemctl enable "$SMT_SVC" \
+            || ! install_update_persistence; then
+            systemctl disable "$SMT_SVC" >/dev/null 2>&1 || true
+            rm -f "$SMT_UNIT.new.$$" "$SMT_UNIT" "$SYSTEMD_WANTS_DIR/$SMT_SVC"
+            systemctl daemon-reload >/dev/null 2>&1 || true
+            echo on | tee "$SMT_CONTROL" >/dev/null || true
+            [[ $relock_after -eq 0 ]] || relock_rootfs
+            die "Could not persist the SMT setting; SMT was restored."
+        fi
+        [[ $relock_after -eq 0 ]] || relock_rootfs
+        log "SMT disabled now and at every boot."
+        return
+    fi
+
+    echo on | tee "$SMT_CONTROL" >/dev/null
+    [[ "$(cpu_smt_live_state)" == on ]] || die "The kernel did not enable SMT."
+    if [[ $RO_WAS_DISABLED -eq 0 ]]; then unlock_rootfs; relock_after=1; fi
+    systemctl disable "$SMT_SVC" >/dev/null 2>&1 || true
+    rm -f "$SMT_UNIT" "$SYSTEMD_WANTS_DIR/$SMT_SVC"
+    if ! systemctl daemon-reload; then
+        [[ $relock_after -eq 0 ]] || relock_rootfs
+        die "SMT was enabled, but systemd could not reload after removing the boot unit."
+    fi
+    [[ $relock_after -eq 0 ]] || relock_rootfs
+    log "SMT enabled now; the boot-time disable command was removed."
+}
+
+cpu_smt_status_json() {
+    local configured live available=true configured_json=null live_json=null protected=false
+    configured=$(cpu_smt_configured_state)
+    live=$(cpu_smt_live_state)
+    case "$configured" in
+        enabled) configured_json=false ;;
+        disabled) configured_json=true ;;
+    esac
+    case "$live" in
+        on) live_json=false ;;
+        off|forceoff) live_json=true ;;
+        unavailable|unknown|notsupported|notimplemented) available=false ;;
+    esac
+    power_keep_has_cpu_smt && protected=true
+    printf '{"schemaVersion":1,"available":%s,"state":"%s","configuredDisabled":%s,' \
+        "$available" "$configured" "$configured_json"
+    printf '"liveDisabled":%s,"liveState":"%s","protected":%s}\n' \
+        "$live_json" "$live" "$protected"
+}
+
+cpu_smt_status() {
+    local configured live
+    configured=$(cpu_smt_configured_state)
+    live=$(cpu_smt_live_state)
+    printf 'SMT: configured=%s current=%s\n' "$configured" "$live"
+}
+
+cmd_cpu_smt() {
+    local sub=${1:-status}
+    shift || true
+    (($# == 0)) || die "Usage: $0 cpu-smt {enable|disable|status|status-json}"
+    case "$sub" in
+        enable) cpu_smt_set enabled ;;
+        disable) cpu_smt_set disabled ;;
+        status) cpu_smt_status ;;
+        status-json) cpu_smt_status_json ;;
+        *) die "Usage: $0 cpu-smt {enable|disable|status|status-json}" ;;
+    esac
+}
+
+menu_toggle_cpu_smt() {
+    local configured
+    configured=$(cpu_smt_configured_state)
+    if [[ "$configured" == disabled ]]; then
+        run_action cpu_smt_set enabled
+        return
+    fi
+    if [[ "$configured" == foreign ]]; then
+        run_action cpu_smt_status
+        return
+    fi
+    echo
+    warn "Disabling SMT can improve cache-sensitive game performance, but reduces logical CPU threads."
+    ask "Type DISABLE to continue" "cancel"
+    [[ "$REPLY" == DISABLE ]] || { warn "SMT unchanged."; return; }
+    run_action cpu_smt_set disabled
+}
+
 # =========================== CPU mitigations ==============================
 render_cpu_mitigations_config() {
     cat <<'EOF'
@@ -4659,6 +4854,7 @@ cmd_status() {
     cat /sys/class/drm/card*/device/pp_dpm_sclk 2>/dev/null || echo "  pp_dpm_sclk not exposed"
     echo
     echo "=== CPU (ACPI fix active if these exist) ==="
+    cpu_smt_status
     cpu_mitigations_status
     if compgen -G /sys/devices/system/cpu/cpu0/cpufreq >/dev/null; then
         echo "  governor: $(cat /sys/devices/system/cpu/cpu0/cpufreq/scaling_governor)"
@@ -4755,6 +4951,7 @@ power_menu_graph_badge() {
         action__governor) badge_governor ;;
         action__enable) badge_gov_boot ;;
         child__cpu_mitigations) badge_cpu_mitigations ;;
+        child__cpu_smt) badge_cpu_smt ;;
         action__oc_status) badge_oc_live ;;
         child__oc_detect) badge_oc_last ;;
         action__oc_enable) badge_oc_saved ;;
@@ -4812,6 +5009,7 @@ power_menu_graph_activate() {
             run_action temperature_set "$REPLY"
             ;;
         child__cpu_mitigations) menu_toggle_cpu_mitigations ;;
+        child__cpu_smt) menu_toggle_cpu_smt ;;
         action__oc_status) run_action oc_status ;;
         child__oc_detect)
             echo
@@ -5088,6 +5286,13 @@ power_menu_graph_render() {
                 items+=("CPU security mitigations (toggle)|${badge}|Trade kernel security mitigations for performance. Reboot required.")
                 targets+=("child__cpu_mitigations")
                 badges+=("$badge")
+                if ! badge=$(power_menu_graph_badge child__cpu_smt advanced); then badge=; fi
+                if [[ "$badge" == *"|"* || "$badge" == *$'\n'* ]]; then
+                    die "Invalid generated menu badge: child__cpu_smt"
+                fi
+                items+=("Disable SMT at boot (toggle)|${badge}|Apply immediately and persist for cache-sensitive games.")
+                targets+=("child__cpu_smt")
+                badges+=("$badge")
                 ;;
             menu__cpu_oc)
                 title="CPU overclock / undervolt  (bc250_smu_oc)"
@@ -5345,7 +5550,14 @@ CPU SECURITY MITIGATIONS
                      Remove only the toolkit-owned drop-in and return to secure
                      kernel defaults. REBOOT REQUIRED after a disabled boot.
                      Any mitigations= setting in another GRUB source is treated
-                     as foreign and must be resolved manually.
+                      as foreign and must be resolved manually.
+
+CPU SIMULTANEOUS MULTITHREADING (SMT)
+  cpu-smt status     Show the configured boot policy and current kernel state.
+  cpu-smt disable    Disable SMT immediately and install a boot service that
+                     writes "off" to /sys/devices/system/cpu/smt/control on
+                     every boot. This may help cache-sensitive games.
+  cpu-smt enable     Enable SMT immediately and remove the boot-time command.
 
 CPU CORE UNLOCK (test before enabling persistence)
   cpu-unlock menu      Open the dedicated guided CPU core-unlock menu.
@@ -5492,6 +5704,8 @@ FILE MAP
   /etc/bc250-smu-oc.conf       CPU OC config       (atomic-update keep list)
   /etc/default/grub.d/bc250-cpu-mitigations.cfg
                                optional mitigations=off (atomic-update keep list)
+  /etc/systemd/system/bc250-disable-smt.service
+                               optional boot-time SMT disable command
   /etc/cyan-skillfish-governor-smu/config.toml     (atomic-update keep list)
   /var/lib/bc250-control/governor/freq-state  last 'freq' setting,
                                replayed at boot by bc250-gpu-freq-restore
@@ -5522,6 +5736,7 @@ case "${1:-}" in
     cpu-oc)       shift; cmd_cpu_oc "$@" ;;
     cpu-unlock)   shift; cmd_cpu_unlock "$@" ;;
     cpu-mitigations) shift; cmd_cpu_mitigations "$@" ;;
+    cpu-smt)      shift; cmd_cpu_smt "$@" ;;
     enable)       cmd_enable ;;
     foundation-ready) (($# == 1)) || die "Usage: $0 foundation-ready"; power_foundation_ready ;;
     installed)    (($# == 1)) || die "Usage: $0 installed"; cmd_installed ;;
@@ -5534,7 +5749,7 @@ case "${1:-}" in
         cmd_menu "${1:-root}"
         ;;
     help|-h|--help) cmd_help ;;
-    *) echo "Usage: $0 {acpi|governor|helpers|freq|gpu-volt|load-target|temperature|ramp|cpu-oc|cpu-unlock|cpu-mitigations|enable|foundation-ready|installed|uninstall|status|all|menu [ENTRY]|help}"
+    *) echo "Usage: $0 {acpi|governor|helpers|freq|gpu-volt|load-target|temperature|ramp|cpu-oc|cpu-unlock|cpu-mitigations|cpu-smt|enable|foundation-ready|installed|uninstall|status|all|menu [ENTRY]|help}"
        echo "  (no arguments on a terminal opens the guided menu)"
        echo "  freq                 show performance-mode state"
        echo "  freq 1800            pin GPU at 1800 MHz (perf mode)"

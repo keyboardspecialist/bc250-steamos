@@ -71,6 +71,10 @@ class FakeControl:
         self.senders.append((sender, enabled))
         return "operation"
 
+    async def set_cpu_smt_disabled(self, sender, disabled):
+        self.senders.append((sender, disabled))
+        return "operation"
+
     async def install_optiscaler(self, sender, candidate_id, proxy):
         self.senders.append((sender, candidate_id, proxy))
         return "operation"
@@ -195,6 +199,13 @@ class AdapterHandlerTests(unittest.IsolatedAsyncioTestCase):
             ("b", "s", "set_cpu_mitigations"),
         )
         self.assertIn('<method name="SetCpuMitigations">', INTROSPECTION_XML)
+
+    def test_cpu_smt_dbus_signature_is_declared(self):
+        self.assertEqual(
+            DbusAdapter._METHODS["SetCpuSmtDisabled"],
+            ("b", "s", "set_cpu_smt_disabled"),
+        )
+        self.assertIn('<method name="SetCpuSmtDisabled">', INTROSPECTION_XML)
 
     def test_gpu_temperature_dbus_signature_is_declared(self):
         self.assertEqual(

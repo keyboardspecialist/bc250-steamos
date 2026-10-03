@@ -1694,6 +1694,19 @@ class BackendMutationTests(unittest.IsolatedAsyncioTestCase):
             "cpu-mitigations", "disable", timeout=180
         )
 
+    async def test_cpu_smt_requires_boolean_and_uses_allowlisted_arguments(self):
+        backend = object.__new__(ToolkitBackend)
+        prepare_mutation_backend(backend)
+        backend._cpu_tool = AsyncMock(return_value="")
+
+        with self.assertRaisesRegex(CommandError, "boolean"):
+            await backend.set_cpu_smt_disabled(1)
+        await backend.set_cpu_smt_disabled(True)
+
+        backend._cpu_tool.assert_awaited_once_with(
+            "cpu-smt", "disable", timeout=180
+        )
+
     async def test_cpu_status_validates_mitigations_json(self):
         backend = object.__new__(ToolkitBackend)
         backend._service = AsyncMock(
@@ -1732,6 +1745,27 @@ class BackendMutationTests(unittest.IsolatedAsyncioTestCase):
         status = await backend.get_cpu_status()
 
         self.assertFalse(status["mitigations"]["available"])
+
+    async def test_cpu_status_validates_smt_json(self):
+        backend = object.__new__(ToolkitBackend)
+        backend._service = AsyncMock(
+            return_value={"enabled": "disabled", "active": "inactive"}
+        )
+        backend._cpu_helper_available = MagicMock(return_value=True)
+        backend._trusted_root_file = MagicMock(return_value=False)
+        backend._cpu_tool = AsyncMock(
+            side_effect=[
+                "{}",
+                '{"schemaVersion":1,"available":true,"state":"disabled",'
+                '"configuredDisabled":true,"liveDisabled":true,'
+                '"liveState":"off","protected":true}',
+            ]
+        )
+
+        status = await backend.get_cpu_status()
+
+        self.assertTrue(status["smt"]["configuredDisabled"])
+        self.assertEqual(status["smt"]["liveState"], "off")
 
     async def test_cpu_unlock_rejects_unknown_action_before_lock_or_execution(self):
         backend = object.__new__(ToolkitBackend)

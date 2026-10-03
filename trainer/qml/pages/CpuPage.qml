@@ -10,6 +10,7 @@ ColumnLayout {
     readonly property var snap: backend.snapshot || ({})
     readonly property var cpu: snap.cpu || ({})
     readonly property var mitigations: cpu.mitigations || ({})
+    readonly property var smt: cpu.smt || ({})
     readonly property var unlock: backend.cpuUnlockStatus || ({})
     readonly property var guard: unlock.guard || ({})
     readonly property var actions: unlock.actions || ({})
@@ -186,6 +187,26 @@ ColumnLayout {
             ? "The GRUB source and generated boot configuration disagree. Reapply the setting from the terminal."
             : "Reboot required to apply the configured mitigation state."
         color: "#ffb06a"; font.family: "monospace"; font.pixelSize: 9; wrapMode: Text.Wrap; Layout.fillWidth: true
+    }
+    C.SectionHeader { text: "CPU simultaneous multithreading" }
+    Switch {
+        objectName: "cpuSmtSwitch"
+        text: "DISABLE SMT AT BOOT"
+        checked: root.smt.configuredDisabled === true
+        enabled: root.cpuControls && root.smt.available === true
+            && typeof root.smt.configuredDisabled === "boolean"
+        onClicked: {
+            var disabled = checked
+            checked = Qt.binding(function() { return root.smt.configuredDisabled === true })
+            root.backend.setCpuSmtDisabled(disabled)
+        }
+    }
+    C.StatusRow {
+        objectName: "cpuSmtStatus"
+        label: "Current state"
+        value: (root.smt.liveState || "unknown").toUpperCase()
+        health: typeof root.smt.liveDisabled === "boolean"
+            && root.smt.liveDisabled === root.smt.configuredDisabled ? 1 : 0
     }
     C.SectionHeader { text: "CPU topology and core unlock" }
     RowLayout {

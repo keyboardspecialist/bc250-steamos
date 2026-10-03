@@ -114,6 +114,15 @@ export interface CpuStatus {
     rebootRequired: boolean;
     protected: boolean;
   };
+  smt: {
+    schemaVersion: 1;
+    available: boolean;
+    state: "enabled" | "disabled" | "foreign" | "incomplete" | "unavailable";
+    configuredDisabled: boolean | null;
+    liveDisabled: boolean | null;
+    liveState: "on" | "off" | "forceoff" | "notsupported" | "notimplemented" | "unknown" | "unavailable";
+    protected: boolean;
+  };
 }
 
 export interface CpuUnlockActionStatus {

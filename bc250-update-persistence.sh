@@ -114,6 +114,7 @@ EOF
 /etc/systemd/system/bc250-acpi-heal.service
 /etc/systemd/system/bc250-acpi-heal.service.d/10-bc250-storage.conf
 /etc/systemd/system/bc250-cpufreq.service
+/etc/systemd/system/bc250-disable-smt.service
 /etc/systemd/system/bc250-gpu-freq-restore.service
 /etc/systemd/system/bc250-gpu-freq-restore.service.d/10-bc250-storage.conf
 /etc/systemd/system/bc250-smu-oc.service
@@ -122,6 +123,7 @@ EOF
 /etc/systemd/system/cyan-skillfish-governor-smu.service.d/10-bc250-storage.conf
 /etc/systemd/system/multi-user.target.wants/bc250-acpi-heal.service
 /etc/systemd/system/multi-user.target.wants/bc250-cpufreq.service
+/etc/systemd/system/multi-user.target.wants/bc250-disable-smt.service
 /etc/systemd/system/multi-user.target.wants/bc250-gpu-freq-restore.service
 /etc/systemd/system/multi-user.target.wants/bc250-smu-oc.service
 /etc/systemd/system/multi-user.target.wants/cyan-skillfish-governor-smu.service

@@ -59,13 +59,17 @@ TestCase {
         property bool busy: false
         property var snapshot: ({"toolkit": {"cpuControlAvailable": true}, "cpu": {
             "mitigations": {"available": true, "state": "enabled", "configuredEnabled": true,
-                "bootEnabled": true, "rebootRequired": false, "protected": true}}})
+                "bootEnabled": true, "rebootRequired": false, "protected": true},
+            "smt": {"available": true, "state": "enabled", "configuredDisabled": false,
+                "liveDisabled": false, "liveState": "on", "protected": true}}})
         property var cpuUnlockStatus: testCase.status({}, "none")
         property string lastUnlockAction: ""
         property var lastMitigationsEnabled: null
+        property var lastSmtDisabled: null
         function cpuUnlockAction(action) { lastUnlockAction = action }
         function cpuOcAction(action, frequency, voltage, temperature) {}
         function setCpuMitigations(enabled) { lastMitigationsEnabled = enabled }
+        function setCpuSmtDisabled(disabled) { lastSmtDisabled = disabled }
     }
 
     Pages.CpuPage {
@@ -323,5 +327,14 @@ TestCase {
         verify(dialog.detail.indexOf("reduces protection") >= 0)
         dialog.accept()
         compare(backend.lastMitigationsEnabled, false)
+    }
+
+    function test_smtToggleAppliesImmediately() {
+        var toggle = findChild(page, "cpuSmtSwitch")
+        verify(toggle !== null)
+        compare(toggle.checked, false)
+        toggle.checked = true
+        toggle.clicked()
+        compare(backend.lastSmtDisabled, true)
     }
 }

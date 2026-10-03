@@ -29,6 +29,9 @@ export const cpuOcAction = callable<
 export const setCpuMitigations = callable<[enabled: boolean], void>(
   "set_cpu_mitigations",
 );
+export const setCpuSmtDisabled = callable<[disabled: boolean], void>(
+  "set_cpu_smt_disabled",
+);
 export const cpuUnlockAction = callable<[action: string], void>(
   "cpu_unlock_action",
 );

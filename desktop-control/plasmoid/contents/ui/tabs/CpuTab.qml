@@ -15,6 +15,7 @@ ColumnLayout {
         && snapshot.toolkit.cpuControlAvailable && !backend.busy
     readonly property bool profileAvailable: Boolean(cpu.installed || cpu.staged)
     readonly property var mitigations: cpu.mitigations || ({})
+    readonly property var smt: cpu.smt || ({})
     readonly property var unlock: backend.cpuUnlockStatus || ({})
     readonly property var unlockActions: unlock.actions || ({})
     readonly property var unlockGuard: unlock.guard || ({})
@@ -188,6 +189,34 @@ ColumnLayout {
                 : root.mitigations.rebootRequired ? "Reboot required" : "Applied"
             health: root.mitigations.state === "foreign" || root.mitigations.state === "incomplete"
                 ? -1 : root.mitigations.rebootRequired ? 0 : 1
+        }
+    }
+
+    Components.Section {
+        title: "CPU Threading"
+        QQC2.Switch {
+            text: "Disable SMT at boot"
+            checked: root.smt.configuredDisabled === true
+            enabled: root.controlsEnabled && root.smt.available === true
+                && typeof root.smt.configuredDisabled === "boolean"
+            onClicked: {
+                var disabled = checked;
+                checked = Qt.binding(function() { return root.smt.configuredDisabled === true; });
+                root.backend.setCpuSmtDisabled(disabled);
+            }
+        }
+        Components.StatusRow {
+            label: "Current state"
+            value: root.smt.liveState || "Unavailable"
+            health: typeof root.smt.liveDisabled === "boolean"
+                && root.smt.liveDisabled === root.smt.configuredDisabled ? 1 : 0
+        }
+        Components.StatusRow {
+            label: "Boot persistence"
+            value: root.smt.state === "foreign" ? "Foreign unit"
+                : root.smt.state === "incomplete" ? "Unit not enabled"
+                : root.smt.configuredDisabled === true ? "Disabled at boot" : "Firmware default"
+            health: root.smt.state === "foreign" || root.smt.state === "incomplete" ? -1 : 1
         }
     }
 

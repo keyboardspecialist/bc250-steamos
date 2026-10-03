@@ -1,6 +1,6 @@
 import { PanelSection, SliderField, ToggleField } from "@decky/ui";
 import { useEffect, useState } from "react";
-import { cpuOcAction, cpuUnlockAction, setCpuMitigations } from "../api";
+import { cpuOcAction, cpuUnlockAction, setCpuMitigations, setCpuSmtDisabled } from "../api";
 import { ActionButton, EmptyState, StatusRow } from "../components/Common";
 import type { TabProps } from "./shared";
 
@@ -24,6 +24,14 @@ export function CpuTab({ snapshot, busy, runMutation }: TabProps) {
     configuredEnabled: null,
     bootEnabled: null,
     rebootRequired: false,
+    protected: false,
+  };
+  const smt = cpu.smt || {
+    available: false,
+    state: "unavailable" as const,
+    configuredDisabled: null,
+    liveDisabled: null,
+    liveState: "unavailable" as const,
     protected: false,
   };
   const unlock = snapshot.cpuUnlock;
@@ -191,6 +199,31 @@ export function CpuTab({ snapshot, busy, runMutation }: TabProps) {
           <EmptyState>{mitigations.state === "foreign"
             ? "A non-toolkit GRUB source controls mitigations. Remove it manually before using this toggle."
             : "The GRUB source and generated boot configuration disagree. Reapply the setting from the terminal."}</EmptyState>
+        )}
+      </PanelSection>
+
+      <PanelSection title="CPU Threading">
+        <ToggleField
+          label="Disable SMT at boot"
+          description="Applies immediately and persists at boot; cache-sensitive games may perform better with one thread per core."
+          checked={smt.configuredDisabled === true}
+          disabled={controlsDisabled || !smt.available || typeof smt.configuredDisabled !== "boolean"}
+          onChange={(disabled) =>
+            runMutation(
+              `SMT ${disabled ? "disabled" : "enabled"}`,
+              () => setCpuSmtDisabled(disabled),
+            )
+          }
+        />
+        <StatusRow
+          label="Current state"
+          value={smt.liveState}
+          good={typeof smt.liveDisabled === "boolean" && smt.liveDisabled === smt.configuredDisabled}
+        />
+        {(smt.state === "foreign" || smt.state === "incomplete") && (
+          <EmptyState>{smt.state === "foreign"
+            ? "A non-toolkit systemd unit controls SMT. Remove it manually before using this toggle."
+            : "The SMT boot unit is installed but not enabled. Reapply the setting."}</EmptyState>
         )}
       </PanelSection>
 

@@ -66,6 +66,7 @@ public:
     Q_INVOKABLE void setRamp(int milliseconds);
     Q_INVOKABLE void cpuOcAction(const QString &action, int frequency, int voltage, int temperature);
     Q_INVOKABLE void setCpuMitigations(bool enabled);
+    Q_INVOKABLE void setCpuSmtDisabled(bool disabled);
     Q_INVOKABLE void cpuUnlockAction(const QString &action);
     Q_INVOKABLE void setUmaSize(int umaMiB);
     Q_INVOKABLE void setTtmPages(int pages);
