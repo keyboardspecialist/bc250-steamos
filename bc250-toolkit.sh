@@ -1476,7 +1476,7 @@ menu_graph_render() {
         local items=() targets=() badges=()
         case "$menu_id" in
             menu__cmd_menu)
-                title="BC-250 SteamOS toolkit [${TOOLKIT_MENU_VERSION}]"
+                title="Yet Another SteamOS Toolkit [${TOOLKIT_MENU_VERSION}]"
                 if ! badge=$(menu_graph_badge action__auto_base_installation install); then badge=; fi
                 if [[ "$badge" == *"|"* || "$badge" == *$'\n'* ]]; then
                     die "Invalid generated menu badge: action__auto_base_installation"
