@@ -35,10 +35,13 @@ SMU_PATCH_SOURCES=(
     "$SRC_DIR/../smu-oc-patches/0001-transaction-level-flock.patch"
     "$SRC_DIR/../smu-oc-patches/0002-steamos-stress-fallback.patch"
     "$SRC_DIR/../smu-oc-patches/0003-atomic-config-write.patch"
+    "$SRC_DIR/../smu-oc-patches/0004-time-based-mailbox-timeout.patch"
     "$SRC_DIR/../smu-oc-patches/README.md"
     "$SRC_DIR/../smu-oc-patches/bc250_detect.py"
     "$SRC_DIR/../smu-oc-patches/stress_helper.py"
     "$SRC_DIR/../smu-oc-patches/transport.py"
+    "$SRC_DIR/../smu-oc-patches/mailbox.py"
+    "$SRC_DIR/../smu-oc-patches/api.py"
 )
 export PNPM_HOME="${PNPM_HOME:-$HOME/.local/share/pnpm}"
 export PATH="$PNPM_HOME/bin:$PATH"

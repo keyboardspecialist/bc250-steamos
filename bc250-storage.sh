@@ -257,6 +257,13 @@ install_recovery_helper() {
     secure_file "$RECOVERY_HELPER"
 }
 
+activate_recovery() {
+    # Running the helper directly repairs the mount without restarting the
+    # recovery unit and re-queuing every active reverse dependency.
+    "$RECOVERY_HELPER" repair-infrastructure
+    systemctl start "$RECOVERY_NAME"
+}
+
 repair_infrastructure() {
     require_root
     export PATH=/usr/sbin:/usr/bin:/sbin:/bin
@@ -452,7 +459,7 @@ install_storage() {
     write_infrastructure_files
     write_component_dropins
     systemctl daemon-reload
-    systemctl restart "$RECOVERY_NAME"
+    activate_recovery
     mountpoint -q "$ROOT_DIR" || die "Failed to mount $ROOT_DIR"
     secure_directory "$ROOT_DIR"
     BACKING_COMMITTED=1

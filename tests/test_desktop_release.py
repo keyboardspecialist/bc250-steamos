@@ -105,6 +105,8 @@ class DesktopReleaseTests(unittest.TestCase):
                     "smu-oc-patches/bc250_detect.py",
                     "smu-oc-patches/stress_helper.py",
                     "smu-oc-patches/transport.py",
+                    "smu-oc-patches/mailbox.py",
+                    "smu-oc-patches/api.py",
                     "core-unlock/bc250-unlock-cores.py",
                     "core-unlock/bc250-unlock-cores-efi.c",
                     "core-unlock/EFI-LICENSE",

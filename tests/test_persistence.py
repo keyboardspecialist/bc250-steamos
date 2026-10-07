@@ -26,6 +26,43 @@ def render(name: str) -> str:
 
 
 class PersistenceUnitTests(unittest.TestCase):
+    def test_storage_activation_does_not_restart_reverse_dependencies(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            helper = root / "recovery-helper"
+            log = root / "calls"
+            helper.write_text(
+                '#!/bin/sh\nprintf "helper %s\\n" "$*" >> "$CALL_LOG"\n',
+                encoding="ascii",
+            )
+            helper.chmod(0o755)
+            result = subprocess.run(
+                [
+                    "bash",
+                    "-c",
+                    'script=$1; helper=$2; log=$3; set -- help; '
+                    'source "$script" >/dev/null; RECOVERY_HELPER=$helper; '
+                    'export CALL_LOG=$log; '
+                    'systemctl() { printf "systemctl %s\\n" "$*" >> "$CALL_LOG"; }; '
+                    "activate_recovery",
+                    "_",
+                    str(STORAGE),
+                    str(helper),
+                    str(log),
+                ],
+                capture_output=True,
+                text=True,
+            )
+
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual(
+                log.read_text(encoding="ascii").splitlines(),
+                [
+                    "helper repair-infrastructure",
+                    "systemctl start bc250-persistence-recovery.service",
+                ],
+            )
+
     def test_component_keep_list_removal_preserves_legacy_and_storage(self):
         with tempfile.TemporaryDirectory() as directory:
             keep_dir = Path(directory)

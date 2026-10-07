@@ -3,7 +3,7 @@
 Local patches for [bc250-collective/bc250_smu_oc](https://github.com/bc250-collective/bc250_smu_oc)
 (CPU overclock/undervolt via SMU). Consumed by `bc250-power.sh cpu-oc`,
 which fetches the upstream repo as a tarball **pinned to the commit in
-`OC_PIN`**, overlays the three `.py` files here on top, and stages the result to
+`OC_PIN`**, overlays the five `.py` files here on top, and stages the result to
 `~/.local/share/bc250-fixes/bc250-steamos/smu-oc/`. No local clone is kept;
 `cpu-oc update`
 re-fetches.
@@ -36,11 +36,20 @@ Write and sync a temporary file in the same directory, then atomically replace
 the previous complete result so a reset cannot leave a truncated or NUL-padded
 profile. Marker: `os.replace(temporary, path)`.
 
+## mailbox.py - time-based response timeout (0004)
+
+Upstream polls each SMU response only 100 times with no delay. A valid command
+can therefore be reported as status `0x00` when the firmware does not respond
+within that very short attempt-count window. Poll for up to five seconds with a
+1 ms delay and report an explicit timeout instead. `api.py` changes the public
+default to the same five-second duration. Markers: `time.monotonic()` and
+`timeout: float = 5.0`.
+
 ## Bumping the pinned upstream commit
 
 1. Update `OC_PIN` in `bc250-power.sh`.
 2. Check the `.patch` files still apply to the new commit
    (`curl -fL <tarball> | tar -xz`; `git apply --check --directory=<dir> *.patch`)
-   — if upstream changed `transport.py` or `stress_helper.py`, re-merge the
+   — if upstream changed an overlay file, re-merge the
    overlay files by hand and regenerate the diffs.
 3. `sudo ./bc250-power.sh cpu-oc update` to restage.

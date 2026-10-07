@@ -1,0 +1,84 @@
+diff --git a/bc250_smu/mailbox.py b/bc250_smu/mailbox.py
+index ac44a5a..d7bef91 100644
+--- a/bc250_smu/mailbox.py
++++ b/bc250_smu/mailbox.py
+@@ -1,4 +1,5 @@
+ import threading
++import time
+ from typing import Optional
+ 
+ from .transport import Bc250PciTransport
+@@ -11,7 +12,7 @@ class Bc250Mailbox:
+     SMU_RETURN_UNKNOWN_CMD = 0xFE
+     SMU_RETURN_REJECTED_PREREQ = 0xFD
+     SMU_RETURN_REJECTED_BUSY = 0xFC
+-    
++
+     def __init__(
+         self,
+         transport: Bc250PciTransport,
+@@ -16,7 +17,7 @@ class Bc250Mailbox:
+         cmd_addr: int,
+         rsp_addr: int,
+         arg_addr: int,
+-        timeout: int = 100,
++        timeout: float = 5.0,
+         lock: Optional[threading.Lock] = None,
+     ) -> None:
+         self._transport = transport
+@@ -30,9 +31,11 @@ class Bc250Mailbox:
+     def send(self, msg_id: int, arg: int = 0, arg_high: Optional[int] = None) -> int:
+         with self._lock:
+             self._transport.write_smu_reg(self._rsp_addr, 0)
+             self._transport.write_smu_reg(self._arg_addr, arg)
+-            self._transport.write_smu_reg(self._arg_addr + 4, 0 if arg_high is None else arg_high)
++            self._transport.write_smu_reg(
++                self._arg_addr + 4, 0 if arg_high is None else arg_high
++            )
+             self._transport.write_smu_reg(self._cmd_addr, msg_id)
+-            return self._wait_done()
++            return self._wait_done(msg_id)
+ 
+     def read_arg(self) -> int:
+@@ -43,20 +46,23 @@ class Bc250Mailbox:
+     def read_arg_high(self) -> int:
+         with self._lock:
+             return self._transport.read_smu_reg(self._arg_addr + 4)
+ 
+-    def _wait_done(self) -> int:
++    def _wait_done(self, msg_id: int) -> int:
+         done_statuses = {
+             self.SMU_RETURN_OK,
+             self.SMU_RETURN_FAILED,
+             self.SMU_RETURN_UNKNOWN_CMD,
+             self.SMU_RETURN_REJECTED_PREREQ,
+             self.SMU_RETURN_REJECTED_BUSY,
+         }
+-        remaining = self._timeout
++        deadline = time.monotonic() + self._timeout
+         last_status = 0
+-        while remaining > 0:
+-            remaining -= 1
++        while time.monotonic() < deadline:
+             last_status = self._transport.read_smu_reg(self._rsp_addr)
+             if last_status in done_statuses:
+                 return last_status
+-        return last_status
++            time.sleep(0.001)
++        raise RuntimeError(
++            f"smu timed out after {self._timeout:g}s for msg 0x{msg_id:02X} "
++            f"(last status 0x{last_status:02X})"
++        )
+diff --git a/bc250_smu/api.py b/bc250_smu/api.py
+index 266f655..e7ab7f0 100644
+--- a/bc250_smu/api.py
++++ b/bc250_smu/api.py
+@@ -26,7 +26,7 @@ class Bc250Smu(Queue0Mixin, Queue1Mixin, Queue2Mixin, Queue3Mixin, Queue4Mixin):
+         allow_queue0: bool = False,
+         use_flock: bool = False,
+         queue_addrs: Optional[Dict[int, Tuple[int, int, int]]] = None,
+-        timeout: int = 100,
++        timeout: float = 5.0,
+     ) -> None:
+         self._allow_queue0 = allow_queue0
+         self._transport = Bc250PciTransport(bdf=bdf, use_flock=use_flock)

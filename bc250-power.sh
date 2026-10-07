@@ -4496,7 +4496,9 @@ fetch_oc_sources() {
     migrate_legacy_data
     [[ -f "$OC_PATCH_DIR/transport.py" \
         && -f "$OC_PATCH_DIR/stress_helper.py" \
-        && -f "$OC_PATCH_DIR/bc250_detect.py" ]] \
+        && -f "$OC_PATCH_DIR/bc250_detect.py" \
+        && -f "$OC_PATCH_DIR/mailbox.py" \
+        && -f "$OC_PATCH_DIR/api.py" ]] \
         || die "Patch overlays not found at $OC_PATCH_DIR (should ship next to this script)."
     local work
     work=$(mktemp -d /tmp/bc250-smu-oc.XXXXXX)
@@ -4504,9 +4506,11 @@ fetch_oc_sources() {
     log "Fetching bc250_smu_oc @ ${OC_PIN:0:7} (pinned)..."
     curl -fsSL "$OC_TARBALL" | tar -xz -C "$work" --strip-components=1 \
         || die "Fetch failed (network?): $OC_TARBALL"
-    log "Overlaying SteamOS patches (transaction flock, stress fallback, atomic config)..."
+    log "Overlaying SteamOS patches (transaction flock, SMU timeout, stress fallback, atomic config)..."
     install -m 644 "$OC_PATCH_DIR/bc250_detect.py" "$work/bc250_detect.py"
     install -m 644 "$OC_PATCH_DIR/transport.py"     "$work/bc250_smu/transport.py"
+    install -m 644 "$OC_PATCH_DIR/mailbox.py"       "$work/bc250_smu/mailbox.py"
+    install -m 644 "$OC_PATCH_DIR/api.py"           "$work/bc250_smu/api.py"
     install -m 644 "$OC_PATCH_DIR/stress_helper.py" "$work/stress_helper.py"
     mkdir -p "$OC_DIR/bc250_smu"
     install -m 644 "$work"/bc250_apply.py "$work"/bc250_detect.py \
@@ -4521,7 +4525,9 @@ fetch_oc_sources() {
 install_oc_files() {
     [[ -f "$OC_PATCH_DIR/transport.py" \
         && -f "$OC_PATCH_DIR/stress_helper.py" \
-        && -f "$OC_PATCH_DIR/bc250_detect.py" ]] \
+        && -f "$OC_PATCH_DIR/bc250_detect.py" \
+        && -f "$OC_PATCH_DIR/mailbox.py" \
+        && -f "$OC_PATCH_DIR/api.py" ]] \
         || die "Patch overlays not found at $OC_PATCH_DIR (should ship next to this script)."
     if [[ ! -f "$OC_DIR/bc250_apply.py" || "${1:-}" == force ]]; then
         fetch_oc_sources
@@ -4529,12 +4535,24 @@ install_oc_files() {
         log "Installing atomic CPU OC config writer..."
         install -m 644 "$OC_PATCH_DIR/bc250_detect.py" "$OC_DIR/bc250_detect.py"
     fi
+    if ! grep -q 'time.monotonic()' "$OC_DIR/bc250_smu/mailbox.py"; then
+        log "Installing bounded SMU mailbox timeout..."
+        install -m 644 "$OC_PATCH_DIR/mailbox.py" "$OC_DIR/bc250_smu/mailbox.py"
+    fi
+    if ! grep -q 'timeout: float = 5.0' "$OC_DIR/bc250_smu/api.py"; then
+        log "Installing the SMU mailbox timeout default..."
+        install -m 644 "$OC_PATCH_DIR/api.py" "$OC_DIR/bc250_smu/api.py"
+    fi
     grep -q 'lock across the whole pair' "$OC_DIR/bc250_smu/transport.py" \
         || warn "transport.py missing the transaction-flock patch -- SMU races with the governor possible; run '$0 cpu-oc update'."
     grep -q '_burn' "$OC_DIR/stress_helper.py" \
         || warn "stress_helper.py missing the no-'stress' fallback -- 'cpu-oc detect' needs the stress binary; run '$0 cpu-oc update'."
     grep -q 'os.replace(temporary, path)' "$OC_DIR/bc250_detect.py" \
         || warn "bc250_detect.py writes configs in place -- an interrupted detect can corrupt the profile; run '$0 cpu-oc update'."
+    grep -q 'time.monotonic()' "$OC_DIR/bc250_smu/mailbox.py" \
+        || warn "mailbox.py has a short attempt-count timeout -- SMU status 0x00 failures are possible; run '$0 cpu-oc update'."
+    grep -q 'timeout: float = 5.0' "$OC_DIR/bc250_smu/api.py" \
+        || warn "api.py does not use the bounded SMU timeout; run '$0 cpu-oc update'."
 }
 
 # detect prefers the real `stress` tool; pacman packages are wiped by SteamOS

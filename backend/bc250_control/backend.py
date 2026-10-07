@@ -64,6 +64,8 @@ CPU_HELPER_REQUIRED_PATHS = (
     CPU_HELPER_PATH.parent / "smu-oc-patches/bc250_detect.py",
     CPU_HELPER_PATH.parent / "smu-oc-patches/stress_helper.py",
     CPU_HELPER_PATH.parent / "smu-oc-patches/transport.py",
+    CPU_HELPER_PATH.parent / "smu-oc-patches/mailbox.py",
+    CPU_HELPER_PATH.parent / "smu-oc-patches/api.py",
     CPU_HELPER_PATH.parent / ".decky-helper-manifest",
 )
 DESKTOP_CPU_HELPER_REQUIRED_PATHS = (
@@ -73,6 +75,8 @@ DESKTOP_CPU_HELPER_REQUIRED_PATHS = (
     DESKTOP_HELPER_PATH.parent / "smu-oc-patches/bc250_detect.py",
     DESKTOP_HELPER_PATH.parent / "smu-oc-patches/stress_helper.py",
     DESKTOP_HELPER_PATH.parent / "smu-oc-patches/transport.py",
+    DESKTOP_HELPER_PATH.parent / "smu-oc-patches/mailbox.py",
+    DESKTOP_HELPER_PATH.parent / "smu-oc-patches/api.py",
 )
 RAM_HELPER_PATH = Path("/var/lib/bc250-control/desktop/bc250-ram-split.sh")
 DECKY_RAM_HELPER_PATH = Path("/var/lib/bc250-control/helper/bc250-ram-split.sh")

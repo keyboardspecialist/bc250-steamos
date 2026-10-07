@@ -318,10 +318,13 @@ class ToolkitTests(unittest.TestCase):
             "0001-transaction-level-flock.patch",
             "0002-steamos-stress-fallback.patch",
             "0003-atomic-config-write.patch",
+            "0004-time-based-mailbox-timeout.patch",
             "README.md",
             "bc250_detect.py",
             "stress_helper.py",
             "transport.py",
+            "mailbox.py",
+            "api.py",
         ):
             self.assertIn(f'"$SRC_DIR/../smu-oc-patches/{expected}"', installer)
         self.assertIn(
