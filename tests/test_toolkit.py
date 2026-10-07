@@ -62,6 +62,10 @@ class ToolkitTests(unittest.TestCase):
             "audio",
             "mesh",
             "native-mesh-install",
+            "helixsr-prepare",
+            "helixsr-payload-status",
+            "helixsr-install",
+            "helixsr-uninstall",
             "decky",
             "coolercontrol",
             "manage",
@@ -73,6 +77,9 @@ class ToolkitTests(unittest.TestCase):
         self.assertIn("Compatibility aliases: audio (amdgpu), mesh (radv)", result.stdout)
         self.assertIn("graphics-setup [--replace-unmanaged]", result.stdout)
         self.assertIn("native-mesh-remove", result.stdout)
+        self.assertIn("amd_fidelityfx_upscaler_dx12.dll", result.stdout)
+        self.assertIn("amd_fidelityfx_dx12.dll", result.stdout)
+        self.assertIn("anti-cheat games", result.stdout)
 
     def test_graphics_setup_without_option_does_not_expand_missing_argument(self):
         result = subprocess.run(
@@ -84,6 +91,16 @@ class ToolkitTests(unittest.TestCase):
         self.assertNotEqual(result.returncode, 0)
         self.assertNotIn("unbound variable", result.stderr)
         self.assertIn("requires an interactive terminal", result.stderr)
+
+    def test_readme_documents_pinned_user_local_helixsr(self):
+        readme = (ROOT / "README.md").read_text(encoding="utf-8")
+        self.assertIn("https://github.com/lonewolf0622/HelixSR", readme)
+        self.assertIn("HelixSR v1.2.0", readme)
+        self.assertIn("amd_fidelityfx_upscaler_dx12.dll", readme)
+        self.assertIn("amd_fidelityfx_dx12.dll", readme)
+        self.assertIn("generated NVIDIA-derived", readme)
+        self.assertIn("not redistributed", readme)
+        self.assertIn("non-anti-cheat games", readme)
 
     def test_main_menu_groups_related_workflows(self):
         source = TOOLKIT.read_text(encoding="utf-8")
@@ -158,6 +175,24 @@ class ToolkitTests(unittest.TestCase):
         self.assertIn("radv|mesh)", source)
         self.assertIn('python3 "$TRAINER_RELEASE_INSTALLER"', source)
         self.assertNotIn('bash "$TRAINER_INSTALL_SH" install', source)
+
+        mesh_graph = parse(ROOT / "menus/mesh-shader.mmd")
+        self.assertIn(
+            "menu__helixsr",
+            {node.id for node in mesh_graph.choices(mesh_graph.root.id)},
+        )
+        self.assertEqual(
+            {
+                "action__helixsr_status",
+                "action__helixsr_prepare",
+                "action__helixsr_install",
+                "action__helixsr_uninstall",
+            },
+            {node.id for node in mesh_graph.choices("menu__helixsr")},
+        )
+        helix_text = (ROOT / "menus/mesh-shader.mmd").read_text(encoding="utf-8")
+        self.assertIn("NVIDIA-derived files are not redistributed", helix_text)
+        self.assertIn("anti-cheat games", helix_text)
 
     def test_dense_component_menus_are_grouped_by_intent(self):
         power = (ROOT / "bc250-power.sh").read_text(encoding="utf-8")
@@ -356,6 +391,7 @@ class ToolkitTests(unittest.TestCase):
             "bc250-cec.sh",
             "bc250-update-persistence.sh",
             "bc250-mesh-shader.sh",
+            "bc250-helixsr.sh",
             "video-codec/bc250-video-codec.sh",
             "bc250-maintenance.sh",
             "aic8800/steamdeck-setup.sh",
@@ -846,6 +882,70 @@ class ToolkitTests(unittest.TestCase):
                         "|".join(expected) + "|machine=",
                     )
 
+    def test_helixsr_commands_delegate_arguments_without_sudo(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            toolkit, call_log, env = self.make_action_environment(root)
+            dlss = root / "local dlss.dll"
+            target = root / "amd_fidelityfx_upscaler_dx12.dll"
+            cases = (
+                (("helixsr-prepare",), ("bc250-helixsr.sh", "prepare")),
+                (
+                    ("helixsr-prepare", str(dlss)),
+                    ("bc250-helixsr.sh", "prepare", str(dlss)),
+                ),
+                (
+                    ("helixsr-payload-status",),
+                    ("bc250-helixsr.sh", "payload-status"),
+                ),
+                (
+                    ("helixsr-install", str(target)),
+                    ("bc250-helixsr.sh", "install", str(target)),
+                ),
+                (
+                    ("helixsr-uninstall", str(target)),
+                    ("bc250-helixsr.sh", "uninstall", str(target)),
+                ),
+                (
+                    ("helixsr-uninstall", "--all"),
+                    ("bc250-helixsr.sh", "uninstall", "--all"),
+                ),
+            )
+            for arguments, expected in cases:
+                with self.subTest(arguments=arguments):
+                    call_log.unlink(missing_ok=True)
+                    subprocess.run(
+                        ["bash", str(toolkit), *arguments],
+                        check=True,
+                        capture_output=True,
+                        text=True,
+                        env=env,
+                    )
+                    self.assertEqual(
+                        call_log.read_text(encoding="utf-8").strip(),
+                        "|".join(expected) + "|machine=",
+                    )
+
+    def test_helixsr_commands_reject_wrong_argument_counts(self):
+        with tempfile.TemporaryDirectory() as directory:
+            toolkit, call_log, env = self.make_action_environment(Path(directory))
+            for arguments in (
+                ("helixsr-prepare", "one", "two"),
+                ("helixsr-payload-status", "unexpected"),
+                ("helixsr-install",),
+                ("helixsr-install", "one", "two"),
+                ("helixsr-uninstall",),
+            ):
+                with self.subTest(arguments=arguments):
+                    result = subprocess.run(
+                        ["bash", str(toolkit), *arguments],
+                        capture_output=True,
+                        text=True,
+                        env=env,
+                    )
+                    self.assertNotEqual(result.returncode, 0)
+                    self.assertFalse(call_log.exists())
+
     def test_action_dispatch_is_a_fixed_allowlist(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -1161,6 +1261,7 @@ class ToolkitTests(unittest.TestCase):
                     "swap",
                     "compute",
                     "proton",
+                    "helixsr",
                     "native-mesh",
                     "video-codec",
                     "mesh",

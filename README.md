@@ -474,6 +474,34 @@ PROTON_FSR4_UPGRADE=0 PROTON_USE_OPTISCALER=0 WINEDLLOVERRIDES="winmm=n,b;amdxcf
 Close the game before each file operation. Use FSR4 injection with offline
 games. Anti-cheat software can take action against injected DLLs.
 
+### HelixSR v1.2.0
+
+Prepare the pinned [HelixSR](https://github.com/lonewolf0622/HelixSR) `v1.2.0`
+payload. You may supply a local DLSS DLL; otherwise HelixSR obtains its pinned
+input in user-local state:
+
+```bash
+./bc250-toolkit.sh helixsr-prepare
+./bc250-toolkit.sh helixsr-prepare "/path/to/nvngx_dlss.dll"
+./bc250-toolkit.sh helixsr-payload-status
+```
+
+Install only over an existing file named exactly
+`amd_fidelityfx_upscaler_dx12.dll` or `amd_fidelityfx_dx12.dll` (lowercase):
+
+```bash
+./bc250-toolkit.sh helixsr-install \
+  "/path/to/amd_fidelityfx_upscaler_dx12.dll"
+./bc250-toolkit.sh helixsr-uninstall \
+  "/path/to/amd_fidelityfx_upscaler_dx12.dll"
+```
+
+HelixSR is experimental. Close the game before file operations and use DLL
+injection only with offline, non-anti-cheat games. Anti-cheat software can take
+action against injected DLLs. HelixSR downloads and generated NVIDIA-derived
+files stay in user-local toolkit state and are not redistributed by this
+project.
+
 ### BC-250 GE-Proton
 
 Activate the global FSR4 RADV profile first. Then install BC-250 GE-Proton:
@@ -714,6 +742,7 @@ See these documents for component development:
 | GFX1013 Fix | [DryhoppedIPA/bc250-gfx1013-fix](https://github.com/DryhoppedIPA/bc250-gfx1013-fix) |
 | BC250 RADV R2 | [luckiskind/bc250-radv-r2](https://github.com/luckiskind/bc250-radv-r2) |
 | OptiScaler | [optiscaler/OptiScaler](https://github.com/optiscaler/OptiScaler) |
+| HelixSR v1.2.0 | [lonewolf0622/HelixSR](https://github.com/lonewolf0622/HelixSR) |
 | BC-250 FSR4 RC9 | [daniel-h-0/bc250-fsr4-fork](https://github.com/daniel-h-0/bc250-fsr4-fork) |
 | BC-250 GE-Proton and RADV | [MastaG/linux-cachyos-bc250](https://github.com/MastaG/linux-cachyos-bc250) |
 | AIC8800 | [shenmintao/aic8800d80](https://github.com/shenmintao/aic8800d80) |

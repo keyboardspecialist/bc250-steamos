@@ -89,6 +89,7 @@ class TrainerReleaseTests(unittest.TestCase):
                     "desktop-control/service/bc250-control-service",
                     "backend/bc250_control/backend.py",
                     "bc250-fsr4.sh",
+                    "bc250-helixsr.sh",
                     "bc250-optiscaler.sh",
                     "bc250-power.sh",
                     "bc250-ram-split.sh",
@@ -112,6 +113,10 @@ class TrainerReleaseTests(unittest.TestCase):
                 mode = archive.getinfo(prefix + "trainer/bc250-trainer").external_attr >> 16
                 self.assertEqual(mode & 0o777, 0o755)
                 mode = archive.getinfo(prefix + "bc250-optiscaler.sh").external_attr >> 16
+                self.assertEqual(mode & 0o777, 0o755)
+                mode = (
+                    archive.getinfo(prefix + "bc250-helixsr.sh").external_attr >> 16
+                )
                 self.assertEqual(mode & 0o777, 0o755)
                 for name in (
                     "core-unlock/bc250-unlock-cores-efi.c",
@@ -225,6 +230,7 @@ class TrainerReleaseTests(unittest.TestCase):
                     "desktop-control/service/bc250-control-service",
                     "backend/bc250_control/backend.py",
                     "bc250-fsr4.sh",
+                    "bc250-helixsr.sh",
                     "bc250-optiscaler.sh",
                     "bc250-storage.sh",
                     "bc250-update-persistence.sh",
@@ -240,6 +246,10 @@ class TrainerReleaseTests(unittest.TestCase):
                 mode = archive.getinfo(prefix + "trainer/install-flatpak.sh").external_attr >> 16
                 self.assertEqual(mode & 0o777, 0o755)
                 mode = archive.getinfo(prefix + "bc250-optiscaler.sh").external_attr >> 16
+                self.assertEqual(mode & 0o777, 0o755)
+                mode = (
+                    archive.getinfo(prefix + "bc250-helixsr.sh").external_attr >> 16
+                )
                 self.assertEqual(mode & 0o777, 0o755)
 
         installer = FLATPAK_INSTALLER.read_text(encoding="utf-8")
@@ -282,6 +292,7 @@ class TrainerReleaseTests(unittest.TestCase):
         source = SHARED.read_text(encoding="utf-8")
         for expected in (
             '"$SHARED_REPO_DIR/bc250-fsr4.sh"',
+            '"$SHARED_REPO_DIR/bc250-helixsr.sh"',
             '"$SHARED_REPO_DIR/bc250-optiscaler.sh"',
             '"$SHARED_REPO_DIR/bc250-power.sh"',
             '"$SHARED_REPO_DIR/bc250-storage.sh"',
@@ -303,7 +314,13 @@ class TrainerReleaseTests(unittest.TestCase):
             '"$SHARED_STAGE/bc250-optiscaler.sh"',
             source,
         )
+        self.assertIn(
+            '"$SHARED_REPO_DIR/bc250-helixsr.sh" '
+            '"$SHARED_STAGE/bc250-helixsr.sh"',
+            source,
+        )
         self.assertIn('&& -x "$SHARED_STAGE/bc250-fsr4.sh"', source)
+        self.assertIn('&& -x "$SHARED_STAGE/bc250-helixsr.sh"', source)
         self.assertIn('&& -x "$SHARED_STAGE/bc250-optiscaler.sh"', source)
         self.assertIn("/var/lib/bc250-control/service-clients", source)
         self.assertIn("plasma|trainer|trainer-flatpak|cracktro", source)
@@ -463,6 +480,7 @@ class TrainerReleaseTests(unittest.TestCase):
             '"$package_dir/trainer"',
             'printf \'%s\\n\' "$GITHUB_REF_NAME" > "$package_dir/VERSION"',
             'cp README.md bc250-*.sh',
+            'cp LICENSE.md "$package_dir/"',
             'cp MENU-GRAPH.md "$package_dir/"',
             "trainer/install-release.py trainer/install.sh trainer/install-flatpak.sh",
             "acpi-tables decky-plugin desktop-control coolercontrol core-unlock backend hdmi-ac3 menus scripts topology.sh",

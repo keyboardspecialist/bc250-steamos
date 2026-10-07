@@ -42,13 +42,22 @@ QtObject {
     property var fsr4Inventory: ({
         schemaVersion: 1, available: true, inventoryState: "ready",
         currentRelease: "v4.0.0-rc9", optiscalerAvailable: true,
-        currentOptiscalerRelease: "v0.9.4", errors: [], orphanedTargets: [],
+        currentOptiscalerRelease: "v0.9.4", helixsrAvailable: true,
+        currentHelixsrRelease: "v0.9.0", helixsrPayloadState: "ready",
+        errors: [], orphanedTargets: [],
+        orphanedHelixsr: [
+            { targetId: "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+                targetPath: "/mock/REMOVED/amd_fidelityfx_dx12.dll",
+                relativePath: "amd_fidelityfx_dx12.dll", state: "ready", release: "v0.9.0",
+                discovered: false }
+        ],
         orphanedOptiscaler: [
             { candidateId: "abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789",
                 installPath: "/mock/REMOVED/Binaries/Win64", relativePath: "Binaries/Win64",
                 executables: ["RemovedGame-Win64-Shipping.exe"], discovered: false,
                 state: "ready", release: "v0.8.1", currentRelease: false, proxy: "winmm.dll",
-                launchOption: "WINEDLLOVERRIDES=winmm=n,b %command%", fsr4Managed: false }
+                launchOption: "WINEDLLOVERRIDES=winmm=n,b %command%", fsr4Managed: false,
+                helixsrManaged: false }
         ],
         games: [
             { appKey: "1245620:/mock/GAME", appId: "1245620", name: "ELDEN RING",
@@ -59,18 +68,26 @@ QtObject {
                         executables: ["eldenring.exe"], discovered: true,
                         state: "not-installed", release: null, currentRelease: false, proxy: null,
                         launchOption: "",
-                        fsr4Managed: false },
+                        fsr4Managed: false, helixsrManaged: false },
                     { candidateId: "123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0",
                         installPath: "/mock/GAME/Game/Binaries/Win64", relativePath: "Game/Binaries/Win64",
                         executables: ["Game-Win64-Shipping.exe"], discovered: true,
                         state: "ready", release: "v0.9.4", currentRelease: true, proxy: "winmm.dll",
                         launchOption: "PROTON_FSR4_UPGRADE=0 PROTON_USE_OPTISCALER=0 WINEDLLOVERRIDES=\"winmm=n,b;amdxcffx64=\" %command%",
-                        fsr4Managed: false }
+                        fsr4Managed: false, helixsrManaged: false }
                 ], targets: [
                     { targetId: "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
                         targetPath: "/mock/GAME/OptiScaler/amd_fidelityfx_upscaler_dx12.dll",
                         relativePath: "OptiScaler/amd_fidelityfx_upscaler_dx12.dll",
-                        state: "ready", release: "v4.0.0-rc9" }
+                        state: "ready", release: "v4.0.0-rc9", discovered: true,
+                        helixsrState: "not-installed", helixsrRelease: null, helixsrManaged: false,
+                        optiscalerManaged: false },
+                    { targetId: "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+                        targetPath: "/mock/GAME/Game/amd_fidelityfx_dx12.dll",
+                        relativePath: "Game/amd_fidelityfx_dx12.dll",
+                        state: "available", release: null, discovered: true,
+                        helixsrState: "ready", helixsrRelease: "v0.9.0", helixsrManaged: true,
+                        optiscalerManaged: false }
                 ] },
             { appKey: "730:/mock/Counter-Strike Global Offensive", appId: "730",
                 name: "Counter-Strike 2", installPath: "/mock/Counter-Strike Global Offensive",
@@ -166,6 +183,9 @@ QtObject {
     function setCustomLoadTarget() { start("Applying custom load target"); }
     function setRamp() { start("Applying GPU ramp time"); }
     function setFsr4Dll() { start("Updating FSR4 game DLL"); }
+    function prepareHelixsr() { start("Preparing experimental HelixSR payload"); }
+    function installHelixsr() { start("Installing experimental HelixSR game DLL"); }
+    function uninstallHelixsr() { start("Restoring pre-HelixSR game DLL"); }
     function setNativeMeshEnabled(enabled) { start(enabled ? "Installing BC250 RADV R2" : "Removing BC250 RADV R2"); }
     function installOptiscaler() { start("Installing OptiScaler"); }
     function uninstallOptiscaler() { start("Restoring pre-OptiScaler game files"); }

@@ -98,6 +98,7 @@ class DesktopReleaseTests(unittest.TestCase):
                 for expected in (
                     "backend/bc250_control/backend.py",
                     "bc250-fsr4.sh",
+                    "bc250-helixsr.sh",
                     "bc250-optiscaler.sh",
                     "bc250-power.sh",
                     "bc250-ram-split.sh",
@@ -131,6 +132,10 @@ class DesktopReleaseTests(unittest.TestCase):
                 mode = archive.getinfo(prefix + "bc250-optiscaler.sh").external_attr >> 16
                 self.assertEqual(mode & 0o777, 0o755)
                 mode = archive.getinfo(prefix + "bc250-fsr4.sh").external_attr >> 16
+                self.assertEqual(mode & 0o777, 0o755)
+                mode = (
+                    archive.getinfo(prefix + "bc250-helixsr.sh").external_attr >> 16
+                )
                 self.assertEqual(mode & 0o777, 0o755)
                 for name in (
                     "core-unlock/bc250-unlock-cores-efi.c",

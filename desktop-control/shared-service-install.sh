@@ -50,6 +50,7 @@ shared_validate_sources() {
         "$SHARED_SOURCE_DIR/bc250-desktop-control-repair" \
         "$SHARED_SOURCE_DIR/templates" \
         "$SHARED_REPO_DIR/bc250-fsr4.sh" \
+        "$SHARED_REPO_DIR/bc250-helixsr.sh" \
         "$SHARED_REPO_DIR/bc250-optiscaler.sh" \
         "$SHARED_REPO_DIR/bc250-power.sh" \
         "$SHARED_REPO_DIR/bc250-ram-split.sh" \
@@ -121,6 +122,8 @@ shared_stage_payload() {
     install -o root -g root -m 0755 \
         "$SHARED_REPO_DIR/bc250-fsr4.sh" "$SHARED_STAGE/bc250-fsr4.sh"
     install -o root -g root -m 0755 \
+        "$SHARED_REPO_DIR/bc250-helixsr.sh" "$SHARED_STAGE/bc250-helixsr.sh"
+    install -o root -g root -m 0755 \
         "$SHARED_REPO_DIR/bc250-optiscaler.sh" "$SHARED_STAGE/bc250-optiscaler.sh"
     install -o root -g root -m 0755 \
         "$SHARED_REPO_DIR/bc250-power.sh" "$SHARED_STAGE/bc250-power.sh"
@@ -157,6 +160,7 @@ shared_stage_payload() {
     chmod -R go-w "$SHARED_STAGE"
     [[ -x "$SHARED_STAGE/bc250-control-service" \
         && -x "$SHARED_STAGE/bc250-fsr4.sh" \
+        && -x "$SHARED_STAGE/bc250-helixsr.sh" \
         && -x "$SHARED_STAGE/bc250-optiscaler.sh" \
         && -x "$SHARED_STAGE/bc250-power.sh" \
         && -x "$SHARED_STAGE/bc250-ram-split.sh" \

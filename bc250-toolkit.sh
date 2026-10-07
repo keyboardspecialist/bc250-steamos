@@ -19,6 +19,7 @@ AUDIO_CLEAN_SH="$SCRIPT_DIR/bc250-audio-fix/clean.sh"
 AMDGPU_BOOT_CONFIG_SH="$SCRIPT_DIR/bc250-audio-fix/boot-config.sh"
 HDMI_AC3_SH="$SCRIPT_DIR/hdmi-ac3/hdmi-ac3.sh"
 MESH_SHADER_SH="$SCRIPT_DIR/bc250-mesh-shader.sh"
+HELIXSR_SH="$SCRIPT_DIR/bc250-helixsr.sh"
 VIDEO_CODEC_SH="$SCRIPT_DIR/video-codec/bc250-video-codec.sh"
 PROTON_SH="${BC250_PROTON_TOOL:-$SCRIPT_DIR/bc250-proton.sh}"
 MEMORY_TEMP_SH="$SCRIPT_DIR/bc250-memory-temperature.sh"
@@ -1516,7 +1517,7 @@ menu_graph_render() {
                 if [[ "$badge" == *"|"* || "$badge" == *$'\n'* ]]; then
                     die "Invalid generated menu badge: menu__cmd_graphics_menu"
                 fi
-                items+=("Graphics Stack|${badge}|Manage AMDGPU, Mesa and RADV, FSR4, and GE-Proton.")
+                items+=("Graphics Stack|${badge}|Manage AMDGPU, Mesa and RADV, game upscalers, and GE-Proton.")
                 targets+=("menu__cmd_graphics_menu")
                 badges+=("$badge")
                 if ! badge=$(menu_graph_badge menu__cmd_unlocks_menu menu); then badge=; fi
@@ -1717,7 +1718,7 @@ menu_graph_render() {
                 if [[ "$badge" == *"|"* || "$badge" == *$'\n'* ]]; then
                     die "Invalid generated menu badge: child__radv"
                 fi
-                items+=("GPU Driver and FSR4 Options|${badge}|Manage Mesa and RADV, portable FSR4 DLLs, experimental BC250 RADV R2, or cleanup.")
+                items+=("GPU Driver and Game Upscalers|${badge}|Manage Mesa and RADV, portable FSR4 DLLs, experimental HelixSR and BC250 RADV R2, or cleanup.")
                 targets+=("child__radv")
                 badges+=("$badge")
                 if ! badge=$(menu_graph_badge menu__cmd_video_codec_menu menu); then badge=; fi
@@ -2180,7 +2181,7 @@ cmd_storage_updates_menu() {
 
 cmd_help() {
     cat << EOF
-Usage: $0 [menu|toolkit-update|toolkit-update-check|setup|auto-base-installation|graphics-setup|status|inventory-json|action OPERATION_ID|drivers|unlocks|storage-updates|interfaces|power [ENTRY]|ram|swap|compute|cpu-unlock|cec|audio-output|hdmi-ac3-enable|hdmi-ac3-revert|storage|persistence|wifi|fan-driver|memory-temperature|amdgpu|amdgpu-clean|scheduler-policy|kfd-runlist|radv|video-codec|video-codec-status|video-codec-install|video-codec-remove|proton|proton-install|proton-update|proton-status|proton-uninstall|decky|desktop|coolercontrol|trainer|manage|help]
+Usage: $0 [menu|toolkit-update|toolkit-update-check|setup|auto-base-installation|graphics-setup|status|inventory-json|action OPERATION_ID|drivers|unlocks|storage-updates|interfaces|power [ENTRY]|ram|swap|compute|cpu-unlock|cec|audio-output|hdmi-ac3-enable|hdmi-ac3-revert|storage|persistence|wifi|fan-driver|memory-temperature|amdgpu|amdgpu-clean|scheduler-policy|kfd-runlist|radv|helixsr-prepare [DLSS_DLL]|helixsr-payload-status|helixsr-install TARGET_DLL|helixsr-uninstall TARGET_DLL|--all|video-codec|video-codec-status|video-codec-install|video-codec-remove|proton|proton-install|proton-update|proton-status|proton-uninstall|decky|desktop|coolercontrol|trainer|manage|help]
 
 Run without arguments in a terminal to open the unified toolkit menu.
 Run the toolkit as the logged-in Deck user, not with sudo; child tools request
@@ -2220,6 +2221,13 @@ Commands:
   scheduler-policy       Advanced: toggle policy only after RADV is installed
   kfd-runlist            Experimental: toggle the KFD HWS TLB-flush workaround
   radv                   Open the global Mesa / RADV async-compute patch
+  helixsr-prepare [DLSS_DLL]
+                         Prepare pinned HelixSR v1.2.0, optionally from a local DLSS DLL
+  helixsr-payload-status Show HelixSR payload readiness
+  helixsr-install TARGET_DLL
+                         Install HelixSR over one eligible existing game DLL
+  helixsr-uninstall TARGET_DLL|--all
+                         Restore one or all recorded HelixSR targets
   video-codec            Open verified VA-API video codec controls
   video-codec-status     Verify the codec runtime and current session
   video-codec-test       Run FFmpeg VA-API encode and decode validation
@@ -2237,6 +2245,10 @@ Commands:
   manage                 Open installed-component maintenance and cleanup
 
 Compatibility aliases: audio (amdgpu), mesh (radv)
+
+HelixSR is experimental. Close the game before file operations and do not use
+DLL injection with anti-cheat games. TARGET_DLL must be named exactly
+amd_fidelityfx_upscaler_dx12.dll or amd_fidelityfx_dx12.dll (lowercase).
 
 Action operation IDs:
   auto-base-installation graphics-setup
@@ -2338,6 +2350,29 @@ case "$command_name" in
     scheduler-policy) (($# == 0)) || die "Usage: $0 scheduler-policy"; toggle_scheduler_policy ;;
     kfd-runlist) (($# == 0)) || die "Usage: $0 kfd-runlist"; toggle_kfd_runlist ;;
     radv|mesh) (($# == 0)) || die "Usage: $0 radv"; require_normal_user; run_script "$MESH_SHADER_SH" menu ;;
+    helixsr-prepare)
+        (($# <= 1)) || die "Usage: $0 helixsr-prepare [DLSS_DLL]"
+        require_normal_user
+        log "WARNING: HelixSR is experimental; do not use injected DLLs with anti-cheat games."
+        run_script "$HELIXSR_SH" prepare "$@"
+        ;;
+    helixsr-payload-status)
+        (($# == 0)) || die "Usage: $0 helixsr-payload-status"
+        require_normal_user
+        run_script "$HELIXSR_SH" payload-status
+        ;;
+    helixsr-install)
+        (($# == 1)) || die "Usage: $0 helixsr-install TARGET_DLL"
+        require_normal_user
+        log "WARNING: HelixSR is experimental; close the game and do not use injected DLLs with anti-cheat games."
+        run_script "$HELIXSR_SH" install "$1"
+        ;;
+    helixsr-uninstall)
+        (($# == 1)) || die "Usage: $0 helixsr-uninstall TARGET_DLL|--all"
+        require_normal_user
+        log "WARNING: Close affected games before restoring HelixSR-managed files."
+        run_script "$HELIXSR_SH" uninstall "$1"
+        ;;
     video-codec) (($# == 0)) || die "Usage: $0 video-codec"; cmd_video_codec_menu ;;
     video-codec-status) (($# == 0)) || die "Usage: $0 video-codec-status"; require_normal_user; run_script "$VIDEO_CODEC_SH" status ;;
     video-codec-test) (($# == 0)) || die "Usage: $0 video-codec-test"; require_normal_user; run_script "$VIDEO_CODEC_SH" test ;;

@@ -28,6 +28,7 @@ CORE_UNLOCK_FILES = (
 )
 EXECUTABLES = {
     Path("bc250-fsr4.sh"),
+    Path("bc250-helixsr.sh"),
     Path("bc250-optiscaler.sh"),
     Path("bc250-power.sh"),
     Path("bc250-ram-split.sh"),
@@ -95,6 +96,7 @@ def stage(output: Path, epoch: int) -> None:
     try:
         for name in (
             "bc250-fsr4.sh",
+            "bc250-helixsr.sh",
             "bc250-optiscaler.sh",
             "bc250-power.sh",
             "bc250-ram-split.sh",

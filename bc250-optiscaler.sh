@@ -16,9 +16,11 @@ CACHE_DIR="$STATE_DIR/cache"
 INSTALLS_DIR="$STATE_DIR/installs"
 RELEASE_DIR="$CACHE_DIR/releases/$RELEASE"
 ARCHIVE="$CACHE_DIR/$RELEASE-$ARCHIVE_NAME"
-LOCK_FILE="$STATE_DIR.lock"
+LOCK_FILE="${BC250_OPTISCALER_LOCK_FILE:-$STATE_DIR.lock}"
 FSR4_STATE="${BC250_FSR4_STATE_DIR:-$MESH_STATE/fsr4-dll}"
 FSR4_LOCK_FILE="${BC250_FSR4_LOCK_FILE:-$HOME/.cache/bc250-fsr4.lock}"
+HELIXSR_STATE="${BC250_HELIXSR_STATE_DIR:-$MESH_STATE/helixsr}"
+HELIXSR_LOCK_FILE="${BC250_HELIXSR_LOCK_FILE:-$HELIXSR_STATE.lock}"
 
 log() { printf '[bc250-optiscaler] %s\n' "$*"; }
 die() { log "$*" >&2; exit 1; }
@@ -45,7 +47,8 @@ PY
 ensure_state() {
     command -v flock >/dev/null 2>&1 || die "flock is required."
     command -v python3 >/dev/null 2>&1 || die "python3 is required."
-    [[ "$STATE_DIR" == /* && "$LOCK_FILE" == /* && "$FSR4_LOCK_FILE" == /* ]] \
+    [[ "$STATE_DIR" == /* && "$LOCK_FILE" == /* && "$FSR4_LOCK_FILE" == /* \
+        && "$HELIXSR_LOCK_FILE" == /* ]] \
         || die "OptiScaler state paths must be absolute."
     [[ ! -L "$STATE_DIR" && ! -L "$CACHE_DIR" && ! -L "$CACHE_DIR/releases" \
         && ! -L "$INSTALLS_DIR" && ! -L "$LOCK_FILE" ]] \
@@ -63,6 +66,13 @@ prepare_fsr4_lock() {
     mkdir -p "${FSR4_LOCK_FILE%/*}"
     [[ -d "${FSR4_LOCK_FILE%/*}" && ! -L "${FSR4_LOCK_FILE%/*}" ]] \
         || die "FSR4 lock directory is unsafe."
+}
+
+prepare_helixsr_lock() {
+    [[ ! -L "$HELIXSR_LOCK_FILE" ]] || die "Refusing symlinked HelixSR lock file."
+    mkdir -p "${HELIXSR_LOCK_FILE%/*}"
+    [[ -d "${HELIXSR_LOCK_FILE%/*}" && ! -L "${HELIXSR_LOCK_FILE%/*}" ]] \
+        || die "HelixSR lock directory is unsafe."
 }
 
 python_core() {
@@ -640,6 +650,41 @@ def fsr4_blocked(fsr_state, install_path):
             raise Refusal(f"FSR4 rollback record targets this install directory: {target}")
 
 
+def helixsr_blocked(helix_state, install_path):
+    installs = os.path.join(helix_state, "installs")
+    if os.path.islink(helix_state) or os.path.islink(installs):
+        if os.path.lexists(helix_state) or os.path.lexists(installs):
+            raise Refusal("HelixSR rollback state is unsafe; refusing this operation.")
+        return
+    if not os.path.exists(installs):
+        return
+    if not directory(installs):
+        raise Refusal("HelixSR rollback state is unsafe; refusing this operation.")
+    for name in os.listdir(installs):
+        record_dir = os.path.join(installs, name)
+        record_file = os.path.join(record_dir, "record.json")
+        if not SHA_RE.fullmatch(name) or not directory(record_dir) or not regular(record_file):
+            raise Refusal("HelixSR rollback state contains an invalid record; refusing this operation.")
+        try:
+            with open(record_file, encoding="utf-8") as stream:
+                record = json.load(stream)
+            target = record["targetPath"]
+            identifier = record["targetId"]
+        except (OSError, ValueError, KeyError, TypeError) as error:
+            raise Refusal("HelixSR rollback state contains an invalid record; refusing this operation.") from error
+        if (
+            not isinstance(target, str) or not target.startswith("/")
+            or identifier != name or candidate_id(target) != name
+        ):
+            raise Refusal("HelixSR rollback record identity is invalid; refusing this operation.")
+        try:
+            beneath = os.path.commonpath((install_path, target)) == install_path
+        except ValueError:
+            beneath = False
+        if beneath:
+            raise Refusal(f"HelixSR rollback record targets this install directory: {target}")
+
+
 def prepare_directories(install_path, install_descriptor):
     owned = []
     try:
@@ -827,7 +872,7 @@ def reconcile_ready_quarantines(record, install_descriptor):
             os.close(parent_descriptor)
 
 
-def install_runtime(release_dir, installs_dir, install_path, release, proxy, fsr_state, expected_id):
+def install_runtime(release_dir, installs_dir, install_path, release, proxy, fsr_state, helix_state, expected_id):
     if proxy not in PROXIES:
         raise Refusal(f"Unsupported proxy DLL: {proxy}")
     install_path, install_identity = canonical_install(install_path, expected_id)
@@ -835,7 +880,7 @@ def install_runtime(release_dir, installs_dir, install_path, release, proxy, fsr
     try:
         install_runtime_open(
             release_dir, installs_dir, install_path, install_identity,
-            install_descriptor, release, proxy, fsr_state,
+            install_descriptor, release, proxy, fsr_state, helix_state,
         )
     finally:
         os.close(install_descriptor)
@@ -843,11 +888,12 @@ def install_runtime(release_dir, installs_dir, install_path, release, proxy, fsr
 
 def install_runtime_open(
     release_dir, installs_dir, install_path, install_identity,
-    install_descriptor, release, proxy, fsr_state,
+    install_descriptor, release, proxy, fsr_state, helix_state,
 ):
     identifier = candidate_id(install_path)
     record_dir = os.path.join(installs_dir, identifier)
     fsr4_blocked(fsr_state, install_path)
+    helixsr_blocked(helix_state, install_path)
     existing = os.path.lexists(record_dir)
     if existing:
         previous_record = read_record(record_dir)
@@ -925,13 +971,13 @@ def install_runtime_open(
     print(f'[bc250-optiscaler] Launch option: WINEDLLOVERRIDES="{proxy[:-4]}=n,b" %command%')
 
 
-def uninstall_runtime(installs_dir, install_path, current_release, fsr_state, expected_id):
+def uninstall_runtime(installs_dir, install_path, current_release, fsr_state, helix_state, expected_id):
     install_path, install_identity = canonical_install(install_path, expected_id)
     install_descriptor = open_install_root(install_path, install_identity)
     try:
         uninstall_runtime_open(
             installs_dir, install_path, install_identity, install_descriptor,
-            current_release, fsr_state,
+            current_release, fsr_state, helix_state,
         )
     finally:
         os.close(install_descriptor)
@@ -939,7 +985,7 @@ def uninstall_runtime(installs_dir, install_path, current_release, fsr_state, ex
 
 def uninstall_runtime_open(
     installs_dir, install_path, install_identity, install_descriptor,
-    current_release, fsr_state,
+    current_release, fsr_state, helix_state,
 ):
     record_dir = os.path.join(installs_dir, candidate_id(install_path))
     if not os.path.lexists(record_dir):
@@ -948,6 +994,7 @@ def uninstall_runtime_open(
     if record["installPath"] != install_path:
         raise Refusal("OptiScaler record path does not match the requested directory.")
     fsr4_blocked(fsr_state, install_path)
+    helixsr_blocked(helix_state, install_path)
     for entry in record["files"]:
         if entry["kind"] != "runtime":
             continue
@@ -1169,7 +1216,9 @@ case "${1:-help}" in
         stage_release
         prepare_fsr4_lock
         exec 8> "$FSR4_LOCK_FILE"; flock 8
-        python_core install "$RELEASE_DIR" "$INSTALLS_DIR" "$2" "$RELEASE" "$3" "$FSR4_STATE" "$4"
+        prepare_helixsr_lock
+        exec 7> "$HELIXSR_LOCK_FILE"; flock 7
+        python_core install "$RELEASE_DIR" "$INSTALLS_DIR" "$2" "$RELEASE" "$3" "$FSR4_STATE" "$HELIXSR_STATE" "$4"
         ;;
     uninstall)
         (($# == 3)) || die "Usage: $0 uninstall ABSOLUTE_DIRECTORY CANDIDATE_ID"
@@ -1177,7 +1226,9 @@ case "${1:-help}" in
         exec 9> "$LOCK_FILE"; flock 9
         prepare_fsr4_lock
         exec 8> "$FSR4_LOCK_FILE"; flock 8
-        python_core uninstall "$INSTALLS_DIR" "$2" "$RELEASE" "$FSR4_STATE" "$3"
+        prepare_helixsr_lock
+        exec 7> "$HELIXSR_LOCK_FILE"; flock 7
+        python_core uninstall "$INSTALLS_DIR" "$2" "$RELEASE" "$FSR4_STATE" "$HELIXSR_STATE" "$3"
         ;;
     help|-h|--help) (($# == 1)) || exit 2; usage ;;
     *) usage >&2; exit 2 ;;

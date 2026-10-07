@@ -38,6 +38,9 @@ INTROSPECTION_XML = """<node>
     <method name="SetRamp"><arg name="climb_ms" type="u" direction="in"/><arg name="operation_id" type="s" direction="out"/></method>
     <method name="InstallFsr4Dll"><arg name="target_id" type="s" direction="in"/><arg name="operation_id" type="s" direction="out"/></method>
     <method name="UninstallFsr4Dll"><arg name="target_id" type="s" direction="in"/><arg name="operation_id" type="s" direction="out"/></method>
+    <method name="PrepareHelixsr"><arg name="operation_id" type="s" direction="out"/></method>
+    <method name="InstallHelixsr"><arg name="target_id" type="s" direction="in"/><arg name="operation_id" type="s" direction="out"/></method>
+    <method name="UninstallHelixsr"><arg name="target_id" type="s" direction="in"/><arg name="operation_id" type="s" direction="out"/></method>
     <method name="InstallOptiscaler"><arg name="candidate_id" type="s" direction="in"/><arg name="proxy" type="s" direction="in"/><arg name="operation_id" type="s" direction="out"/></method>
     <method name="UninstallOptiscaler"><arg name="candidate_id" type="s" direction="in"/><arg name="operation_id" type="s" direction="out"/></method>
     <method name="CpuOcAction"><arg name="action" type="s" direction="in"/><arg name="frequency" type="u" direction="in"/><arg name="voltage" type="u" direction="in"/><arg name="temperature" type="u" direction="in"/><arg name="operation_id" type="s" direction="out"/></method>
@@ -177,6 +180,9 @@ class DbusAdapter:
         "SetRamp": ("u", "s", "set_ramp"),
         "InstallFsr4Dll": ("s", "s", "install_fsr4_dll"),
         "UninstallFsr4Dll": ("s", "s", "uninstall_fsr4_dll"),
+        "PrepareHelixsr": ("", "s", "prepare_helixsr"),
+        "InstallHelixsr": ("s", "s", "install_helixsr"),
+        "UninstallHelixsr": ("s", "s", "uninstall_helixsr"),
         "InstallOptiscaler": ("ss", "s", "install_optiscaler"),
         "UninstallOptiscaler": ("s", "s", "uninstall_optiscaler"),
         "CpuOcAction": ("suuu", "s", "cpu_oc_action"),

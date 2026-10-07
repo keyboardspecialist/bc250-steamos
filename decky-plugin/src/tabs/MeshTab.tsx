@@ -3,15 +3,18 @@ import { useEffect, useRef, useState } from "react";
 import {
   getFsr4Inventory,
   getMeshStatus,
+  installHelixsr,
   installFsr4Dll,
   installNativeMesh,
   installOptiscaler,
+  prepareHelixsr,
+  uninstallHelixsr,
   uninstallFsr4Dll,
   uninstallNativeMesh,
   uninstallOptiscaler,
 } from "../api";
 import { ActionButton, EmptyState, StatusRow } from "../components/Common";
-import type { Fsr4Game, Fsr4Inventory, Fsr4Target, MeshStatus, OptiscalerCandidate } from "../types";
+import type { Fsr4Game, Fsr4GameTarget, Fsr4Inventory, Fsr4Target, MeshStatus, OptiscalerCandidate } from "../types";
 import type { MutationRunner } from "./shared";
 
 const optiscalerProxies = [
@@ -65,6 +68,37 @@ function preferredOptiscalerCandidate(candidates: OptiscalerCandidate[]) {
   ) ?? candidates.find((candidate) => candidate.discovered) ?? candidates[0];
 }
 
+function fsr4Managed(target: Fsr4Target) {
+  return target.state === "ready" || target.state === "upgrade-required";
+}
+
+function fsr4Compatible(target: Fsr4Target) {
+  const path = target.relativePath || target.targetPath || "";
+  return path.replace(/\\/g, "/").split("/").pop()?.toLocaleLowerCase()
+    === "amd_fidelityfx_upscaler_dx12.dll";
+}
+
+function integrityBlocked(state: string) {
+  return state === "modified" || state === "invalid";
+}
+
+function directoryOf(path: string | null | undefined) {
+  if (!path) return null;
+  const normalized = path.replace(/\\/g, "/").replace(/\/+$/, "");
+  const separator = normalized.lastIndexOf("/");
+  return separator < 0 ? "." : normalized.slice(0, separator) || "/";
+}
+
+function targetHasManagedOptiscaler(game: Fsr4Game, target: Fsr4GameTarget) {
+  const absoluteDirectory = directoryOf(target.targetPath);
+  const relativeDirectory = directoryOf(target.relativePath);
+  return game.optiscalerCandidates.some((candidate) => {
+    if (candidate.state === "not-installed" || candidate.state === "unavailable") return false;
+    return (absoluteDirectory !== null && candidate.installPath === absoluteDirectory)
+      || (relativeDirectory !== null && candidate.relativePath === relativeDirectory);
+  });
+}
+
 function OptiscalerGameControls({
   game,
   available,
@@ -99,20 +133,22 @@ function OptiscalerGameControls({
     && game.scanState === "complete";
   const integrityBlocked = candidate.state === "modified" || candidate.state === "invalid";
   const unavailable = candidate.state === "unavailable";
+  const managerBlocked = candidate.fsr4Managed || candidate.helixsrManaged;
   const installDisabled = busy
     || !available
     || !gameReady
     || !candidate.discovered
     || unavailable
-    || integrityBlocked;
-  const managedMutationDisabled = installDisabled || candidate.fsr4Managed;
+    || integrityBlocked
+    || managerBlocked;
+  const managedMutationDisabled = installDisabled;
   const proxyDisabled = candidate.state !== "not-installed" || installDisabled;
   const removeDisabled = busy
     || !available
     || !gameReady
     || unavailable
     || integrityBlocked
-    || candidate.fsr4Managed;
+    || managerBlocked;
   const path = candidate.relativePath || candidate.installPath;
   const executableSummary = candidate.executables.join(", ") || "No safe executable detected";
   const stateSummary = `${candidate.state}${candidate.release ? ` | ${candidate.release}` : ""}${candidate.proxy ? ` | ${candidate.proxy}` : ""}`;
@@ -217,8 +253,11 @@ function OptiscalerGameControls({
       {candidate.state === "unavailable" && (
         <ActionButton label="Install OptiScaler" disabled onClick={() => install(false)} />
       )}
-      {candidate.fsr4Managed && candidate.state !== "not-installed" && (
-        <EmptyState>Restore BC-250 FSR4 for this directory before updating or removing OptiScaler.</EmptyState>
+      {candidate.fsr4Managed && (
+        <EmptyState>Restore BC-250 FSR4 for this directory before changing OptiScaler.</EmptyState>
+      )}
+      {candidate.helixsrManaged && (
+        <EmptyState>Restore HelixSR for this directory before changing OptiScaler.</EmptyState>
       )}
       {candidate.state === "restorable" && !candidate.currentRelease && (
         <EmptyState>An interrupted older installation must be uninstalled before upgrading.</EmptyState>
@@ -289,6 +328,48 @@ export function MeshTab({ busy, runMutation }: { busy: boolean; runMutation: Mut
     );
   };
 
+  const toggleHelixsr = (
+    target: Pick<Fsr4Target, "targetId" | "targetPath" | "relativePath">,
+    enabled: boolean,
+  ) => {
+    const action = enabled ? installHelixsr : uninstallHelixsr;
+    runMutation(
+      enabled ? "HelixSR installed" : "Original game DLL restored",
+      async () => {
+        try {
+          await action(target.targetId);
+        } finally {
+          await refresh();
+        }
+      },
+      {
+        title: enabled ? "Install experimental HelixSR for this game?" : "Restore the pre-HelixSR game DLL?",
+        description: enabled
+          ? `Close the game first. Do not use HelixSR in anti-cheat or online games. The toolkit will install the locally generated payload at ${target.relativePath || target.targetPath || "the selected DLL"} and retain an exact rollback copy.`
+          : `Close the game first. The toolkit will restore the exact pre-HelixSR bytes for ${target.relativePath || target.targetPath || "this target"} and remove its rollback record.`,
+        destructive: true,
+      },
+      { refresh: false },
+    );
+  };
+
+  const prepareHelixsrPayload = () => runMutation(
+    "HelixSR payload prepared",
+    async () => {
+      try {
+        await prepareHelixsr();
+      } finally {
+        await refresh();
+      }
+    },
+    {
+      title: "Prepare the experimental HelixSR payload?",
+      description: "This downloads the official HelixSR release and NVIDIA DLSS input, generates files locally, and may take time. HelixSR should not be used in anti-cheat or online games.",
+      destructive: true,
+    },
+    { refresh: false },
+  );
+
   const toggleNativeMesh = (enabled: boolean) => runMutation(
     enabled ? "Private native-mesh profile installed" : "Private native-mesh profile removed",
     async () => {
@@ -331,26 +412,60 @@ export function MeshTab({ busy, runMutation }: { busy: boolean; runMutation: Mut
   const visibleGames = (inventory?.games ?? [])
     .filter((game) => !query || game.name.toLocaleLowerCase().includes(query) || game.appId.includes(query))
     .slice(0, 100);
-  const targetToggle = (target: Fsr4Target, label: string, gameReady = true) => {
-    const managed = target.state === "ready" || target.state === "upgrade-required";
-    const integrityBlocked = target.state === "modified" || target.state === "invalid";
+  const targetToggle = (target: Fsr4GameTarget, label: string, game: Fsr4Game) => {
+    const managed = fsr4Managed(target);
+    const supportsFsr4 = fsr4Compatible(target);
+    const targetIntegrityBlocked = integrityBlocked(target.state);
     const undiscoverableInstall = target.state === "restored" && !target.discovered;
-    const disabled = busy || !gameReady || integrityBlocked || target.state === "missing" || undiscoverableInstall;
-    const description = `${target.relativePath || target.targetPath || "Unknown target"} | ${target.state}${target.release ? ` | ${target.release}` : ""}${gameReady ? "" : " | Steam install/update incomplete"}${undiscoverableInstall ? " | target not found during scan" : ""}`;
+    const gameReady = game.fullyInstalled && game.installPresent;
+    const scanComplete = gameReady && game.scanState === "complete";
+    const helixsrState = target.helixsrState || "unavailable";
+    const helixsrIntegrityBlocked = integrityBlocked(helixsrState);
+    const optiscalerManaged = target.optiscalerManaged || targetHasManagedOptiscaler(game, target);
+    const fsr4ManagementBlocked = target.state !== "available";
+    const fsr4Disabled = busy || !supportsFsr4 || !gameReady || targetIntegrityBlocked || target.state === "missing"
+      || undiscoverableInstall || (!managed && target.helixsrManaged);
+    const helixsrInstallDisabled = busy
+      || !inventory?.helixsrAvailable
+      || inventory.helixsrPayloadState !== "ready"
+      || !scanComplete
+      || !target.discovered
+      || helixsrState === "unavailable"
+      || fsr4ManagementBlocked
+      || optiscalerManaged
+      || targetIntegrityBlocked
+      || helixsrIntegrityBlocked;
+    const helixsrRestoreDisabled = busy || !scanComplete || fsr4ManagementBlocked
+      || optiscalerManaged || helixsrIntegrityBlocked;
+    const description = `${target.relativePath || target.targetPath || "Unknown target"} | ${target.state}${target.release ? ` | ${target.release}` : ""}${supportsFsr4 ? "" : " | FSR4 unsupported target name"}${gameReady ? "" : " | Steam install/update incomplete"}${undiscoverableInstall ? " | target not found during scan" : ""}${target.helixsrManaged ? " | HelixSR managed" : ""}`;
+    const helixsrDescription = `${target.relativePath || target.targetPath || "Unknown target"} | ${helixsrState}${target.helixsrRelease ? ` | ${target.helixsrRelease}` : ""}${scanComplete ? "" : " | complete game scan required"}${fsr4ManagementBlocked ? " | restore FSR4 first" : ""}${optiscalerManaged ? " | OptiScaler directory managed" : ""}`;
     return (
       <div key={target.targetId}>
         <ToggleField
           label={label}
           description={description}
           checked={managed}
-          disabled={disabled}
+          disabled={fsr4Disabled}
           onChange={(enabled) => toggleTarget(target, enabled)}
         />
         {target.state === "upgrade-required" && (
-          <ActionButton label="Update this target" disabled={busy || !gameReady || !target.discovered} onClick={() => toggleTarget(target, true)} />
+          <ActionButton label="Update this target" disabled={busy || !gameReady || !target.discovered || target.helixsrManaged} onClick={() => toggleTarget(target, true)} />
         )}
         {target.state === "missing" && (
           <ActionButton label="Restore missing original DLL" disabled={busy || !gameReady} onClick={() => toggleTarget(target, false)} />
+        )}
+        <ToggleField
+          label="HelixSR (experimental)"
+          description={helixsrDescription}
+          checked={Boolean(target.helixsrManaged)}
+          disabled={target.helixsrManaged ? helixsrRestoreDisabled : helixsrInstallDisabled}
+          onChange={(enabled) => toggleHelixsr(target, enabled)}
+        />
+        {helixsrState === "upgrade-required" && target.helixsrManaged && (
+          <ActionButton label="Update HelixSR" disabled={helixsrInstallDisabled} onClick={() => toggleHelixsr(target, true)} />
+        )}
+        {helixsrState === "restorable" && target.helixsrManaged && (
+          <ActionButton label="Restore pre-HelixSR DLL" disabled={helixsrRestoreDisabled} onClick={() => toggleHelixsr(target, false)} />
         )}
       </div>
     );
@@ -358,6 +473,28 @@ export function MeshTab({ busy, runMutation }: { busy: boolean; runMutation: Mut
 
   const gameManager = (
     <>
+      <PanelSection title="HelixSR (Experimental)">
+        <StatusRow
+          label="Availability"
+          value={inventory?.helixsrAvailable ? "Available" : "Unavailable"}
+          good={inventory?.helixsrAvailable}
+        />
+        <StatusRow
+          label="Payload"
+          value={inventory
+            ? `${inventory.helixsrPayloadState}${inventory.currentHelixsrRelease ? ` | ${inventory.currentHelixsrRelease}` : ""}`
+            : "Loading"}
+          good={inventory?.helixsrPayloadState === "ready"}
+        />
+        {inventory && inventory.helixsrPayloadState !== "ready" && (
+          <ActionButton
+            label="Prepare HelixSR payload"
+            disabled={busy || !inventory.helixsrAvailable}
+            onClick={prepareHelixsrPayload}
+          />
+        )}
+        <EmptyState>Experimental. Do not use HelixSR in anti-cheat or online games.</EmptyState>
+      </PanelSection>
       <PanelSection title="FSR4 RC9 Game Manager">
         <TextField
           label="Installed Steam games"
@@ -392,7 +529,7 @@ export function MeshTab({ busy, runMutation }: { busy: boolean; runMutation: Mut
             ) : game.targets.map((target, index) => targetToggle(
               target,
               game.targets.length === 1 ? game.name : `${game.name} | target ${index + 1}`,
-              game.fullyInstalled && game.installPresent,
+              game,
             ))}
             {game.optiscalerCandidates.length > 0 && (
               <OptiscalerGameControls
@@ -427,6 +564,23 @@ export function MeshTab({ busy, runMutation }: { busy: boolean; runMutation: Mut
           ))}
         </PanelSection>
       )}
+      {inventory && inventory.orphanedHelixsr.length > 0 && (
+        <PanelSection title="Unassociated HelixSR Targets">
+          {inventory.orphanedHelixsr.map((target) => {
+            const state = target.state;
+            return (
+              <div key={target.targetId}>
+                <StatusRow label={target.targetPath || "Invalid rollback record"} value={`${state}${target.release ? ` | ${target.release}` : ""}`} />
+                <ActionButton
+                  label="Restore pre-HelixSR DLL"
+                  disabled={busy || integrityBlocked(state)}
+                  onClick={() => toggleHelixsr(target, false)}
+                />
+              </div>
+            );
+          })}
+        </PanelSection>
+      )}
       {inventory && inventory.orphanedOptiscaler.length > 0 && (
         <PanelSection title="Unassociated OptiScaler Records">
           {inventory.orphanedOptiscaler.map((candidate) => {
@@ -435,7 +589,8 @@ export function MeshTab({ busy, runMutation }: { busy: boolean; runMutation: Mut
               || candidate.state === "modified"
               || candidate.state === "invalid"
               || candidate.state === "unavailable"
-              || candidate.fsr4Managed;
+              || candidate.fsr4Managed
+              || candidate.helixsrManaged;
             return (
               <div key={candidate.candidateId}>
                 <StatusRow
@@ -449,6 +604,9 @@ export function MeshTab({ busy, runMutation }: { busy: boolean; runMutation: Mut
                 />
                 {candidate.fsr4Managed && (
                   <EmptyState>Restore BC-250 FSR4 for this directory before removing OptiScaler.</EmptyState>
+                )}
+                {candidate.helixsrManaged && (
+                  <EmptyState>Restore HelixSR for this directory before removing OptiScaler.</EmptyState>
                 )}
                 <LaunchOption value={candidate.launchOption} />
               </div>

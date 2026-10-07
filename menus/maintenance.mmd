@@ -14,6 +14,7 @@ action__remove_ram["Remove RAM / VRAM split<br/>Review the plan and remove only 
 action__remove_swap["Remove Compressed swap<br/>Review the plan and remove only this component."]:::cleanup
 action__remove_compute["Remove GPU compute-unit unlock<br/>Review the plan and remove only this component."]:::cleanup
 action__remove_proton["Remove BC-250 GE-Proton<br/>Review the plan and remove only this component."]:::cleanup
+action__remove_helixsr["Remove HelixSR game installs<br/>Restore every HelixSR-managed game DLL and sidecar from its verified rollback record."]:::cleanup
 action__remove_native_mesh["Remove BC250 RADV R2<br/>Remove R2 and its private Proton copy while preserving prefixes, saves, and global RADV."]:::cleanup
 action__remove_mesh["Remove Mesa / RADV async compute<br/>Review the plan and remove only this component."]:::cleanup
 action__remove_video_codec["Remove VA-API video codec<br/>Remove the verified compute codec and restore stock VA-API selection."]:::cleanup
@@ -35,6 +36,7 @@ menu__root --> action__remove_ram
 menu__root --> action__remove_swap
 menu__root --> action__remove_compute
 menu__root --> action__remove_proton
+menu__root --> action__remove_helixsr
 menu__root --> action__remove_native_mesh
 menu__root --> action__remove_mesh
 menu__root --> action__remove_video_codec

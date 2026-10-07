@@ -1,9 +1,14 @@
 %% menu-flow-v1
 flowchart TD
 
-menu__root["BC-250 GPU driver and FSR4<br/>Manage the alternate RADV runtime, FSR4, native mesh, and migration cleanup."]:::root
+menu__root["BC-250 GPU driver and game upscalers<br/>Manage RADV, FSR4, experimental HelixSR, native mesh, and migration cleanup."]:::root
+menu__helixsr["HelixSR v1.2.0 (experimental)<br/>Prepare and manage the user-local HelixSR payload. Do not use injected DLLs with anti-cheat games."]:::menu
 action__status["Status overview<br/>Verify the patched AMDGPU module, scheduler policy, RADV runtime, and global activation."]:::read_only
 action__fsr4_dll["Install FSR4 RC9 game DLL (recommended)<br/>Portable FSR4 route. Replaces one exact existing DLL and retains the original; no custom RADV installation is needed."]:::install
+action__helixsr_status["HelixSR payload status<br/>Check whether the pinned v1.2.0 payload is prepared and valid."]:::read_only
+action__helixsr_prepare["Prepare HelixSR payload<br/>Download and generate the user-local payload, optionally using a local DLSS DLL. NVIDIA-derived files are not redistributed."]:::experimental
+action__helixsr_install["Install HelixSR game DLL<br/>Experimental: replace an existing lowercase amd_fidelityfx_upscaler_dx12.dll or amd_fidelityfx_dx12.dll with verified rollback."]:::experimental
+action__helixsr_uninstall["Uninstall HelixSR game DLL<br/>Restore one exact target from its verified rollback record."]:::cleanup
 action__setup["Install / resume FSR4 RADV<br/>Installs AMDGPU first when needed, then builds async compute plus the FSR4 v4 driver for GE Proton."]:::install
 action__native_mesh_install["Install BC250 RADV R2 (experimental)<br/>Install the verified R2 driver and patched vkd3d into a private Proton 11.0-2c copy for explicit per-game use."]:::experimental
 action__native_mesh_remove["Remove BC250 RADV R2<br/>Remove R2 and its private Proton copy; preserve global RADV, the original Proton, game prefixes, and saves."]:::cleanup
@@ -13,9 +18,15 @@ action__help["Full help<br/>Show CLI commands, activation behavior, and upstream
 
 menu__root --> action__status
 menu__root --> action__fsr4_dll
+menu__root --> menu__helixsr
 menu__root --> action__setup
 menu__root --> action__native_mesh_install
 menu__root --> action__native_mesh_remove
 menu__root --> action__legacy_cleanup
 menu__root --> action__uninstall
 menu__root --> action__help
+
+menu__helixsr --> action__helixsr_status
+menu__helixsr --> action__helixsr_prepare
+menu__helixsr --> action__helixsr_install
+menu__helixsr --> action__helixsr_uninstall

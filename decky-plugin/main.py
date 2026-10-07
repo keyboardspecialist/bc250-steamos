@@ -45,6 +45,15 @@ class Plugin:
     async def uninstall_fsr4_dll(self, target_id: str):
         return await self.backend.uninstall_fsr4_dll(target_id)
 
+    async def prepare_helixsr(self):
+        return await self.backend.prepare_helixsr()
+
+    async def install_helixsr(self, target_id: str):
+        return await self.backend.install_helixsr(target_id)
+
+    async def uninstall_helixsr(self, target_id: str):
+        return await self.backend.uninstall_helixsr(target_id)
+
     async def install_optiscaler(self, candidate_id: str, proxy: str):
         return await self.backend.install_optiscaler(candidate_id, proxy)
 

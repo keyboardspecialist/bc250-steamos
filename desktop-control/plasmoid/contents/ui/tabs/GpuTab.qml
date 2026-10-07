@@ -11,7 +11,7 @@ ColumnLayout {
     readonly property var gpu: snapshot.gpu
     readonly property var mesh: backend.meshStatus || ({})
     readonly property var fsr4: backend.fsr4Inventory || ({
-        games: [], orphanedTargets: [], orphanedOptiscaler: [], errors: []
+        games: [], orphanedTargets: [], orphanedHelixsr: [], orphanedOptiscaler: [], errors: []
     })
     readonly property var optiscalerProxies: ["winmm.dll", "dxgi.dll", "d3d12.dll",
         "dbghelp.dll", "version.dll", "wininet.dll", "winhttp.dll"]
@@ -55,6 +55,37 @@ ColumnLayout {
                 visible.push(game);
         }
         return visible;
+    }
+
+    function directoryOf(path) {
+        if (!path)
+            return "";
+        var normalized = String(path).replace(/\\/g, "/").replace(/\/+$/, "");
+        var separator = normalized.lastIndexOf("/");
+        return separator < 0 ? "." : normalized.slice(0, separator) || "/";
+    }
+
+    function targetHasManagedOptiscaler(game, target) {
+        var absoluteDirectory = directoryOf(target.targetPath);
+        var relativeDirectory = directoryOf(target.relativePath);
+        var candidates = game.optiscalerCandidates || [];
+        for (var index = 0; index < candidates.length; ++index) {
+            var candidate = candidates[index];
+            var state = String(candidate.state || "");
+            if (state === "not-installed" || state === "unavailable")
+                continue;
+            if ((absoluteDirectory && String(candidate.installPath || "") === absoluteDirectory)
+                    || (relativeDirectory && String(candidate.relativePath || "") === relativeDirectory))
+                return true;
+        }
+        return false;
+    }
+
+    function fsr4TargetSupported(target) {
+        var path = String(target.relativePath || target.targetPath || "").replace(/\\/g, "/");
+        var parts = path.split("/");
+        return parts.length > 0
+            && parts[parts.length - 1].toLowerCase() === "amd_fidelityfx_upscaler_dx12.dll";
     }
 
     onGpuChanged: if (!backend.busy) syncFromSnapshot()
@@ -150,6 +181,39 @@ ColumnLayout {
             visible: true
             type: Kirigami.MessageType.Information
             text: "R2 is never enabled globally. Select BC250 R2 (experimental) in Steam and add the displayed runner to the game's launch options."
+        }
+    }
+
+    Components.Section {
+        title: "HelixSR (Experimental)"
+        Components.StatusRow {
+            label: "Availability"
+            value: root.fsr4.helixsrAvailable ? "Available" : "Unavailable"
+            health: root.fsr4.helixsrAvailable ? 0 : -1
+        }
+        Components.StatusRow {
+            label: "Payload"
+            value: (root.fsr4.helixsrPayloadState || "Unavailable")
+                + (root.fsr4.currentHelixsrRelease ? " | " + root.fsr4.currentHelixsrRelease : "")
+            health: root.fsr4.helixsrPayloadState === "ready" ? 1
+                : root.fsr4.helixsrPayloadState === "invalid" ? -1 : 0
+        }
+        Components.ActionButton {
+            visible: Boolean(root.backend.fsr4Inventory) && root.fsr4.helixsrPayloadState !== "ready"
+            text: "Prepare HelixSR payload"
+            enabled: !root.backend.busy && root.fsr4.helixsrAvailable
+            disabledReason: root.backend.busy ? root.backend.busyLabel : "The HelixSR helper is unavailable."
+            onClicked: confirmation.ask(
+                "Prepare the experimental HelixSR payload?",
+                "This downloads the official HelixSR release and NVIDIA DLSS input, generates files locally, and may take time. HelixSR should not be used in anti-cheat or online games.",
+                true,
+                function() { root.backend.prepareHelixsr(); })
+        }
+        Kirigami.InlineMessage {
+            Layout.fillWidth: true
+            visible: true
+            type: Kirigami.MessageType.Warning
+            text: "Experimental. Do not use HelixSR in anti-cheat or online games."
         }
     }
 
@@ -320,6 +384,7 @@ ColumnLayout {
                                 + (gameDelegate.selectedOptiscaler.release ? " | " + gameDelegate.selectedOptiscaler.release : "")
                                 + (gameDelegate.selectedOptiscaler.proxy ? " | " + gameDelegate.selectedOptiscaler.proxy : "")
                                 + (gameDelegate.selectedOptiscaler.fsr4Managed ? " | FSR4 managed" : " | FSR4 not managed")
+                                + (gameDelegate.selectedOptiscaler.helixsrManaged ? " | HelixSR managed" : "")
                             : "No OptiScaler candidate selected"
                         color: gameDelegate.optiscalerIntegrityBlocked
                             ? Kirigami.Theme.negativeTextColor : Kirigami.Theme.disabledTextColor
@@ -346,6 +411,7 @@ ColumnLayout {
                                 && gameDelegate.gameReady && Boolean(gameDelegate.selectedOptiscaler)
                                 && gameDelegate.selectedOptiscaler.discovered
                                 && !gameDelegate.selectedOptiscaler.fsr4Managed
+                                && !gameDelegate.selectedOptiscaler.helixsrManaged
                                 && !gameDelegate.optiscalerIntegrityBlocked
                                 && (["not-installed", "upgrade-required"].indexOf(gameDelegate.optiscalerState) >= 0
                                     || gameDelegate.optiscalerState === "repair-required"
@@ -357,6 +423,8 @@ ColumnLayout {
                                     ? "The executable directory was not found during the latest scan."
                                 : gameDelegate.selectedOptiscaler.fsr4Managed
                                     ? "Restore the managed FSR4 DLL in this directory first."
+                                : gameDelegate.selectedOptiscaler.helixsrManaged
+                                    ? "Restore the HelixSR-managed target in this directory first."
                                 : gameDelegate.optiscalerIntegrityBlocked ? "Resolve the install integrity warning manually."
                                 : "Refresh the game list before retrying."
                             onClicked: gameDelegate.confirmOptiscaler(true)
@@ -366,11 +434,14 @@ ColumnLayout {
                             text: gameDelegate.optiscalerState === "restorable" ? "Undo interrupted install" : "Uninstall OptiScaler"
                             enabled: !root.backend.busy && gameDelegate.gameReady
                                 && !gameDelegate.selectedOptiscaler.fsr4Managed
+                                && !gameDelegate.selectedOptiscaler.helixsrManaged
                                 && !gameDelegate.optiscalerIntegrityBlocked
                             disabledReason: root.backend.busy ? root.backend.busyLabel
                                 : !gameDelegate.gameReady ? "Finish the Steam install or update first."
                                 : gameDelegate.selectedOptiscaler.fsr4Managed
                                     ? "Restore the managed FSR4 DLL in this directory first."
+                                : gameDelegate.selectedOptiscaler.helixsrManaged
+                                    ? "Restore the HelixSR-managed target in this directory first."
                                 : gameDelegate.optiscalerIntegrityBlocked ? "Resolve the install integrity warning manually." : ""
                             onClicked: gameDelegate.confirmOptiscaler(false)
                         }
@@ -384,16 +455,33 @@ ColumnLayout {
                         Layout.fillWidth: true
                         readonly property bool gameReady: gameDelegate.modelData.fullyInstalled && gameDelegate.modelData.installPresent
                         readonly property bool managed: modelData.state === "ready" || modelData.state === "upgrade-required"
+                        readonly property bool supportsFsr4: root.fsr4TargetSupported(modelData)
                         readonly property bool integrityBlocked: modelData.state === "modified" || modelData.state === "invalid"
                         readonly property bool undiscoverableInstall: modelData.state === "restored" && !modelData.discovered
+                        readonly property string helixsrState: String(modelData.helixsrState || "unavailable")
+                        readonly property bool helixsrManaged: Boolean(modelData.helixsrManaged)
+                        readonly property bool helixsrIntegrityBlocked: helixsrState === "modified" || helixsrState === "invalid"
+                        readonly property bool scanComplete: gameReady && gameDelegate.modelData.scanState === "complete"
+                        readonly property bool optiscalerDirectoryManaged: Boolean(modelData.optiscalerManaged)
+                            || root.targetHasManagedOptiscaler(gameDelegate.modelData, modelData)
+                        readonly property bool fsr4ManagementBlocked: modelData.state !== "available"
+                        readonly property bool helixsrInstallAllowed: !root.backend.busy
+                            && root.fsr4.helixsrAvailable && root.fsr4.helixsrPayloadState === "ready"
+                            && scanComplete && modelData.discovered && !fsr4ManagementBlocked
+                            && helixsrState !== "unavailable" && !optiscalerDirectoryManaged
+                            && !integrityBlocked && !helixsrIntegrityBlocked
+                        readonly property bool helixsrRestoreAllowed: !root.backend.busy
+                            && scanComplete && !fsr4ManagementBlocked
+                            && !optiscalerDirectoryManaged && !helixsrIntegrityBlocked
                         QQC2.Switch {
                             id: targetSwitch
                             Layout.fillWidth: true
                             text: "FSR4 RC9"
                             checked: targetDelegate.managed
-                            enabled: !root.backend.busy && targetDelegate.gameReady
+                            enabled: !root.backend.busy && targetDelegate.supportsFsr4 && targetDelegate.gameReady
                                 && !targetDelegate.integrityBlocked && targetDelegate.modelData.state !== "missing"
                                 && !targetDelegate.undiscoverableInstall
+                                && (targetDelegate.managed || !targetDelegate.helixsrManaged)
                             onClicked: {
                                 var nextEnabled = checked;
                                 var targetId = String(targetDelegate.modelData.targetId);
@@ -408,8 +496,10 @@ ColumnLayout {
                             text: (targetDelegate.modelData.relativePath || targetDelegate.modelData.targetPath || "Unknown target")
                                 + " | " + targetDelegate.modelData.state
                                 + (targetDelegate.modelData.release ? " | " + targetDelegate.modelData.release : "")
+                                + (targetDelegate.supportsFsr4 ? "" : " | FSR4 unsupported target name")
                                 + (targetDelegate.gameReady ? "" : " | Steam install/update incomplete")
                                 + (targetDelegate.undiscoverableInstall ? " | target not found during scan" : "")
+                                + (targetDelegate.helixsrManaged ? " | HelixSR managed" : "")
                             color: targetDelegate.integrityBlocked ? Kirigami.Theme.negativeTextColor : Kirigami.Theme.disabledTextColor
                             wrapMode: Text.WrapAnywhere
                         }
@@ -417,6 +507,7 @@ ColumnLayout {
                             visible: targetDelegate.modelData.state === "upgrade-required"
                             text: "Update this target"
                             enabled: !root.backend.busy && targetDelegate.gameReady && targetDelegate.modelData.discovered
+                                && !targetDelegate.helixsrManaged
                             disabledReason: root.backend.busy ? root.backend.busyLabel
                                 : !targetDelegate.gameReady ? "Finish the Steam install or update first."
                                 : !targetDelegate.modelData.discovered ? "The target was not found during the latest scan." : ""
@@ -438,6 +529,76 @@ ColumnLayout {
                                 confirmation.ask("Restore the missing original DLL?",
                                     "Close the game first. The toolkit will recreate the target from its exact rollback copy.",
                                     true, function() { root.backend.setFsr4Dll(targetId, false); });
+                            }
+                        }
+                        QQC2.Switch {
+                            id: helixsrSwitch
+                            Layout.fillWidth: true
+                            text: "HelixSR (experimental)"
+                            checked: targetDelegate.helixsrManaged
+                            enabled: targetDelegate.helixsrManaged
+                                ? targetDelegate.helixsrRestoreAllowed
+                                : targetDelegate.helixsrInstallAllowed
+                            onClicked: {
+                                var nextEnabled = checked;
+                                var targetId = String(targetDelegate.modelData.targetId);
+                                checked = Qt.binding(function() { return targetDelegate.helixsrManaged; });
+                                confirmation.ask(nextEnabled ? "Install experimental HelixSR for this game?"
+                                        : "Restore the pre-HelixSR game DLL?",
+                                    nextEnabled
+                                        ? "Close the game first. Do not use HelixSR in anti-cheat or online games. The locally generated payload will be installed with an exact rollback copy."
+                                        : "Close the game first. The toolkit will restore the exact pre-HelixSR bytes and remove its rollback record.",
+                                    true, function() {
+                                        if (nextEnabled)
+                                            root.backend.installHelixsr(targetId);
+                                        else
+                                            root.backend.uninstallHelixsr(targetId);
+                                    });
+                            }
+                        }
+                        QQC2.Label {
+                            Layout.fillWidth: true
+                            text: (targetDelegate.modelData.relativePath || targetDelegate.modelData.targetPath || "Unknown target")
+                                + " | " + targetDelegate.helixsrState
+                                + (targetDelegate.modelData.helixsrRelease ? " | " + targetDelegate.modelData.helixsrRelease : "")
+                                + (targetDelegate.scanComplete ? "" : " | complete game scan required")
+                                + (targetDelegate.fsr4ManagementBlocked ? " | restore FSR4 first" : "")
+                                + (targetDelegate.optiscalerDirectoryManaged ? " | OptiScaler directory managed" : "")
+                            color: targetDelegate.helixsrIntegrityBlocked
+                                ? Kirigami.Theme.negativeTextColor : Kirigami.Theme.disabledTextColor
+                            wrapMode: Text.WrapAnywhere
+                        }
+                        Components.ActionButton {
+                            visible: targetDelegate.helixsrManaged && targetDelegate.helixsrState === "upgrade-required"
+                            text: "Update HelixSR"
+                            enabled: targetDelegate.helixsrInstallAllowed
+                            disabledReason: root.backend.busy ? root.backend.busyLabel
+                                : root.fsr4.helixsrPayloadState !== "ready" ? "Prepare the HelixSR payload first."
+                                : !targetDelegate.scanComplete ? "Finish the Steam install and complete game scan first."
+                                : targetDelegate.fsr4ManagementBlocked ? "Restore FSR4 for this target first."
+                                : targetDelegate.optiscalerDirectoryManaged ? "Remove OptiScaler from this directory first."
+                                : "Resolve the target integrity warning before updating."
+                            onClicked: {
+                                var targetId = String(targetDelegate.modelData.targetId);
+                                confirmation.ask("Update experimental HelixSR for this game?",
+                                    "Close the game first. Do not use HelixSR in anti-cheat or online games. The managed DLL will be updated from the locally generated payload.",
+                                    true, function() { root.backend.installHelixsr(targetId); });
+                            }
+                        }
+                        Components.ActionButton {
+                            visible: targetDelegate.helixsrManaged && targetDelegate.helixsrState === "restorable"
+                            text: "Restore pre-HelixSR DLL"
+                            enabled: targetDelegate.helixsrRestoreAllowed
+                            disabledReason: root.backend.busy ? root.backend.busyLabel
+                                : !targetDelegate.scanComplete ? "Finish the Steam install and complete game scan first."
+                                : targetDelegate.fsr4ManagementBlocked ? "Restore FSR4 for this target first."
+                                : targetDelegate.optiscalerDirectoryManaged ? "Remove OptiScaler from this directory first."
+                                : "Resolve the rollback integrity warning manually."
+                            onClicked: {
+                                var targetId = String(targetDelegate.modelData.targetId);
+                                confirmation.ask("Restore the pre-HelixSR game DLL?",
+                                    "Close the game first. The toolkit will recreate the target from its exact rollback copy.",
+                                    true, function() { root.backend.uninstallHelixsr(targetId); });
                             }
                         }
                     }
@@ -492,6 +653,39 @@ ColumnLayout {
             }
         }
         Repeater {
+            model: root.fsr4.orphanedHelixsr || []
+            ColumnLayout {
+                id: orphanedHelixsrDelegate
+                required property var modelData
+                Layout.fillWidth: true
+                readonly property string helixsrState: String(modelData.state || "unknown")
+                readonly property bool integrityBlocked: helixsrState === "modified" || helixsrState === "invalid"
+                QQC2.Label {
+                    Layout.fillWidth: true
+                    text: "Unassociated HelixSR rollback | "
+                        + (orphanedHelixsrDelegate.modelData.targetPath || "Invalid rollback record")
+                        + " | " + orphanedHelixsrDelegate.helixsrState
+                        + (orphanedHelixsrDelegate.modelData.release
+                            ? " | " + orphanedHelixsrDelegate.modelData.release : "")
+                    color: orphanedHelixsrDelegate.integrityBlocked
+                        ? Kirigami.Theme.negativeTextColor : Kirigami.Theme.disabledTextColor
+                    wrapMode: Text.WrapAnywhere
+                }
+                Components.ActionButton {
+                    text: "Restore pre-HelixSR DLL"
+                    enabled: !root.backend.busy && !orphanedHelixsrDelegate.integrityBlocked
+                    disabledReason: root.backend.busy ? root.backend.busyLabel
+                        : "Resolve the rollback integrity warning manually."
+                    onClicked: {
+                        var targetId = String(orphanedHelixsrDelegate.modelData.targetId);
+                        confirmation.ask("Restore the pre-HelixSR game DLL?",
+                            "Close the game first. The toolkit will validate this recorded target and restore its exact original bytes.",
+                            true, function() { root.backend.uninstallHelixsr(targetId); });
+                    }
+                }
+            }
+        }
+        Repeater {
             model: root.fsr4.orphanedOptiscaler || []
             ColumnLayout {
                 id: orphanedOptiscalerDelegate
@@ -513,9 +707,12 @@ ColumnLayout {
                     text: "Restore pre-OptiScaler files"
                     enabled: !root.backend.busy && !orphanedOptiscalerDelegate.integrityBlocked
                         && !orphanedOptiscalerDelegate.modelData.fsr4Managed
+                        && !orphanedOptiscalerDelegate.modelData.helixsrManaged
                     disabledReason: root.backend.busy ? root.backend.busyLabel
                         : orphanedOptiscalerDelegate.modelData.fsr4Managed
                             ? "Restore the managed FSR4 DLL in this directory first."
+                        : orphanedOptiscalerDelegate.modelData.helixsrManaged
+                            ? "Restore the HelixSR-managed target in this directory first."
                         : orphanedOptiscalerDelegate.integrityBlocked
                             ? "Resolve the rollback integrity warning manually." : ""
                     onClicked: {

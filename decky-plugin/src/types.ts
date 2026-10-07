@@ -275,6 +275,38 @@ export interface Fsr4Target {
   discovered: boolean;
 }
 
+export interface Fsr4GameTarget extends Fsr4Target {
+  helixsrState: HelixsrTargetState;
+  helixsrRelease: string | null;
+  helixsrManaged: boolean;
+  optiscalerManaged?: boolean;
+}
+
+export type HelixsrTargetState =
+  | "not-installed"
+  | "ready"
+  | "upgrade-required"
+  | "restorable"
+  | "restored"
+  | "modified"
+  | "invalid"
+  | "unavailable";
+
+export interface HelixsrTarget {
+  targetId: string;
+  targetPath: string | null;
+  release: string | null;
+  state: HelixsrTargetState;
+  currentRelease: boolean;
+  discovered: boolean;
+}
+
+export type HelixsrPayloadState =
+  | "ready"
+  | "not-prepared"
+  | "invalid"
+  | (string & {});
+
 export type OptiscalerCandidateState =
   | "not-installed"
   | "ready"
@@ -298,6 +330,7 @@ export interface OptiscalerCandidate {
   proxy: string | null;
   launchOption: string | null;
   fsr4Managed: boolean;
+  helixsrManaged: boolean;
 }
 
 export interface Fsr4Game {
@@ -309,7 +342,7 @@ export interface Fsr4Game {
   stateFlags: number;
   installPresent: boolean;
   scanState: "complete" | "partial" | "truncated" | "unavailable";
-  targets: Fsr4Target[];
+  targets: Fsr4GameTarget[];
   optiscalerCandidates: OptiscalerCandidate[];
 }
 
@@ -320,8 +353,12 @@ export interface Fsr4Inventory {
   currentRelease: string | null;
   optiscalerAvailable: boolean;
   currentOptiscalerRelease: string | null;
+  helixsrAvailable: boolean;
+  currentHelixsrRelease: string | null;
+  helixsrPayloadState: HelixsrPayloadState;
   games: Fsr4Game[];
   orphanedTargets: Fsr4Target[];
+  orphanedHelixsr: HelixsrTarget[];
   orphanedOptiscaler: OptiscalerCandidate[];
   errors: string[];
 }

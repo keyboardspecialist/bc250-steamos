@@ -16,7 +16,10 @@ class MaintenanceTests(unittest.TestCase):
         bindir = directory / "bin"
         bindir.mkdir()
         sudo = bindir / "sudo"
-        sudo.write_text('#!/bin/sh\nexec "$@"\n', encoding="utf-8")
+        sudo.write_text(
+            '#!/bin/sh\n[ "${1:-}" != rm ] || exit 0\nexec "$@"\n',
+            encoding="utf-8",
+        )
         sudo.chmod(0o755)
 
         env = os.environ.copy()
@@ -36,6 +39,7 @@ class MaintenanceTests(unittest.TestCase):
             "FAN_SH": "fan",
             "AUDIO_SH": "audio",
             "MESH_SH": "mesh",
+            "HELIXSR_SH": "helixsr",
             "VIDEO_CODEC_SH": "video-codec",
             "PROTON_SH": "proton",
             "DECKY_SH": "decky",
@@ -46,7 +50,10 @@ class MaintenanceTests(unittest.TestCase):
         for variable, name in scripts.items():
             script = directory / f"{name}.sh"
             status_json = (
-                "  status-json) echo '{\"runtimeState\":\"ready\",\"nativeMeshState\":\"ready\"}'; exit 0 ;;\n"
+                "  status-json) [ \"${ALL_NOT_INSTALLED:-0}\" != 1 ] || "
+                "echo '{\"runtimeState\":\"not-installed\",\"nativeMeshState\":\"not-installed\"}'; "
+                "[ \"${ALL_NOT_INSTALLED:-0}\" = 1 ] || "
+                "echo '{\"runtimeState\":\"ready\",\"nativeMeshState\":\"ready\"}'; exit 0 ;;\n"
                 if name == "mesh"
                 else ""
             )
@@ -58,10 +65,11 @@ class MaintenanceTests(unittest.TestCase):
             script.write_text(
                 "#!/usr/bin/env bash\n"
                 "case \"${1:-}\" in\n"
-                "  status|installed) echo installed; exit 0 ;;\n"
+                "  status|installed|probe) [ \"${ALL_NOT_INSTALLED:-0}\" = 1 ] && exit 1; echo installed; exit 0 ;;\n"
                 f"{status_json}"
                 f'  uninstall) {uninstall_log}printf "%s\\n" "{name}:uninstall" >> "$CALL_LOG"; '
                 f'[ "${{FAIL_COMPONENT:-}}" != "{name}" ] || exit "${{FAIL_CODE:-9}}" ;;\n'
+                f'  purge) printf "%s\\n" "{name}:purge" >> "$CALL_LOG" ;;\n'
                 f'  uninstall-legacy) printf "%s\\n" "{name}:uninstall-legacy" >> "$CALL_LOG" ;;\n'
                 "  *) exit 2 ;;\n"
                 "esac\n",
@@ -126,7 +134,8 @@ class MaintenanceTests(unittest.TestCase):
                 text=True,
                 env=env,
             )
-            self.assertEqual(status.stdout.count("installed"), 18)
+            self.assertEqual(status.stdout.count("installed"), 19)
+            self.assertIn("HelixSR game upscaler", status.stdout)
             self.assertIn("Saved tuning profiles", plan.stdout)
             self.assertFalse(call_log.exists())
 
@@ -160,6 +169,7 @@ class MaintenanceTests(unittest.TestCase):
                     "compute:uninstall",
                     "persistence:remove compute",
                     "proton:uninstall",
+                    "helixsr:uninstall",
                     "native-mesh:uninstall",
                     "video-codec:uninstall",
                     "mesh:uninstall",
@@ -252,6 +262,51 @@ class MaintenanceTests(unittest.TestCase):
             self.assertNotIn("persistence:remove all", calls)
             self.assertNotIn("storage:uninstall", calls)
             self.assertIn("aic:uninstall", calls)
+
+    def test_failed_helixsr_rollback_blocks_shared_storage_cleanup(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            env, call_log = self.make_environment(Path(temporary))
+            env["FAIL_COMPONENT"] = "helixsr"
+            result = subprocess.run(
+                ["bash", str(MAINTENANCE), "uninstall", "all", "--yes"],
+                capture_output=True,
+                text=True,
+                env=env,
+            )
+            self.assertNotEqual(result.returncode, 0)
+            calls = call_log.read_text(encoding="utf-8").splitlines()
+            self.assertLess(calls.index("helixsr:uninstall"), calls.index("mesh:uninstall"))
+            self.assertNotIn("persistence:remove all", calls)
+            self.assertNotIn("storage:uninstall", calls)
+
+    def test_purge_refuses_helixsr_records_when_helper_is_unavailable(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            env, call_log = self.make_environment(root)
+            record = root / "home/.local/share/bc250-mesh-shader/helixsr/installs/bad-record"
+            record.mkdir(parents=True)
+            env["HELIXSR_SH"] = str(root / "missing-helixsr.sh")
+            env["ALL_NOT_INSTALLED"] = "1"
+
+            result = subprocess.run(
+                ["bash", str(MAINTENANCE), "purge", "--yes"],
+                capture_output=True,
+                text=True,
+                env=env,
+            )
+
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("Installed or partial components remain", result.stderr)
+            self.assertTrue(record.is_dir())
+            self.assertFalse(call_log.exists())
+
+    def test_purge_runs_mesh_safety_cleanup_before_storage_purge(self):
+        source = MAINTENANCE.read_text(encoding="utf-8")
+        purge = source[source.index("purge_preserved_data() {") : source.index("tui_show_cursor() {")]
+        self.assertLess(
+            purge.index('bash "$MESH_SH" purge'),
+            purge.index('sudo bash "$STORAGE_SH" purge --yes'),
+        )
 
     def test_pending_swap_removal_blocks_storage_teardown(self):
         with tempfile.TemporaryDirectory() as temporary:

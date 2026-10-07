@@ -74,6 +74,8 @@ class OptiScalerTests(unittest.TestCase):
             "HOME": str(self.root / "home"),
             "BC250_OPTISCALER_STATE_DIR": str(self.root / "state"),
             "BC250_FSR4_STATE_DIR": str(self.root / "fsr4"),
+            "BC250_HELIXSR_STATE_DIR": str(self.root / "helixsr"),
+            "BC250_HELIXSR_LOCK_FILE": str(self.root / "helixsr.lock"),
             "BC250_OPTISCALER_ARCHIVE": str(self.archive),
             "BC250_OPTISCALER_ARCHIVE_SHA256": sha256(self.archive),
         }
@@ -360,6 +362,23 @@ class OptiScalerTests(unittest.TestCase):
 
         self.assertNotEqual(refused.returncode, 0)
         self.assertIn("FSR4 rollback record", refused.stderr)
+        self.assertEqual(list(self.game.iterdir()), [])
+        self.assertEqual(self.records()["state"], "not-installed")
+
+    def test_mutation_is_blocked_by_helixsr_record_in_directory(self):
+        target = self.game / "amd_fidelityfx_upscaler_dx12.dll"
+        identifier = hashlib.sha256(str(target).encode()).hexdigest()
+        record = self.root / "helixsr/installs" / identifier
+        record.mkdir(parents=True)
+        (record / "record.json").write_text(json.dumps({
+            "targetId": identifier,
+            "targetPath": str(target),
+        }), encoding="utf-8")
+
+        refused = self.install(check=False)
+
+        self.assertNotEqual(refused.returncode, 0)
+        self.assertIn("HelixSR rollback record", refused.stderr)
         self.assertEqual(list(self.game.iterdir()), [])
         self.assertEqual(self.records()["state"], "not-installed")
 

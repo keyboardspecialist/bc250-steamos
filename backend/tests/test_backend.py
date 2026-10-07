@@ -9,6 +9,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+import zipfile
 from contextlib import ExitStack, asynccontextmanager
 from pathlib import Path
 from types import SimpleNamespace
@@ -387,6 +388,7 @@ class Fsr4InventoryTests(unittest.IsolatedAsyncioTestCase):
         )
         self.backend = object.__new__(ToolkitBackend)
         self.backend.user_home = self.root
+        self.backend.toolkit = self.root
         self.backend._steam_root_override = self.steam
 
     def tearDown(self):
@@ -441,6 +443,43 @@ class Fsr4InventoryTests(unittest.IsolatedAsyncioTestCase):
             "state": "ready",
             "currentRelease": True,
             "launchOption": 'WINEDLLOVERRIDES="winmm=n,b" %command%',
+        }
+        record.update(overrides)
+        return record
+
+    @staticmethod
+    def helixsr_records(*items, payload_state="ready"):
+        invalid_count = sum(item["state"] == "invalid" for item in items)
+        states = {item["state"] for item in items}
+        if not items:
+            state = "not-installed"
+        elif invalid_count or states.intersection({"invalid", "modified"}):
+            state = "invalid"
+        elif states.intersection({"restorable", "restored"}):
+            state = "restorable"
+        elif "upgrade-required" in states:
+            state = "upgrade-required"
+        else:
+            state = "ready"
+        return {
+            "schemaVersion": 1,
+            "release": "v0.12.0",
+            "dllSha256": "b" * 64,
+            "payloadState": payload_state,
+            "state": state,
+            "invalidRecordCount": invalid_count,
+            "records": list(items),
+        }
+
+    @staticmethod
+    def helixsr_record(path, **overrides):
+        target_path = str(path)
+        record = {
+            "targetId": hashlib.sha256(target_path.encode()).hexdigest(),
+            "targetPath": target_path,
+            "release": "v0.12.0",
+            "state": "ready",
+            "currentRelease": True,
         }
         record.update(overrides)
         return record
@@ -558,6 +597,15 @@ class Fsr4InventoryTests(unittest.IsolatedAsyncioTestCase):
         self.backend._fsr4_tool.assert_awaited_once_with(
             "install", target_path, timeout=300
         )
+
+        alternate = str(self.root / "game" / "amd_fidelityfx_dx12.dll")
+        self.backend._build_fsr4_inventory.return_value["games"][0]["targets"][0][
+            "targetPath"
+        ] = alternate
+        self.backend._fsr4_tool.reset_mock()
+        with self.assertRaisesRegex(CommandError, "not supported"):
+            await self.backend.install_fsr4_dll(target_id)
+        self.backend._fsr4_tool.assert_not_awaited()
 
     async def test_record_json_schema_and_consistency_are_validated(self):
         payload = {
@@ -698,6 +746,140 @@ class Fsr4InventoryTests(unittest.IsolatedAsyncioTestCase):
             [backend_module.BASH, str(helper), "records-json"], timeout=30
         )
 
+    async def test_helixsr_helper_resolution_validates_payload_and_runs_as_user(self):
+        source = self.backend.toolkit / "bc250-helixsr.sh"
+        trusted = {backend_module.HELIXSR_DECKY_HELPER_PATH}
+        with patch.object(
+            ToolkitBackend,
+            "_trusted_root_file",
+            side_effect=lambda path: path in trusted,
+        ), patch.object(self.backend, "_toolkit_file", return_value=True):
+            self.assertEqual(self.backend._helixsr_helper_path(), source)
+
+        trusted.update(backend_module.HELIXSR_DECKY_REQUIRED_PATHS)
+        with patch.object(
+            ToolkitBackend,
+            "_trusted_root_file",
+            side_effect=lambda path: path in trusted,
+        ):
+            self.assertEqual(
+                self.backend._helixsr_helper_path(),
+                backend_module.HELIXSR_DECKY_HELPER_PATH,
+            )
+
+        trusted.update(backend_module.HELIXSR_DESKTOP_REQUIRED_PATHS)
+        with patch.object(
+            ToolkitBackend,
+            "_trusted_root_file",
+            side_effect=lambda path: path in trusted,
+        ):
+            self.assertEqual(
+                self.backend._helixsr_helper_path(),
+                backend_module.HELIXSR_DESKTOP_HELPER_PATH,
+            )
+
+        helper = Path("/trusted/bc250-helixsr.sh")
+        self.backend._helixsr_helper_path = MagicMock(return_value=helper)
+        self.backend._user_exec = AsyncMock(return_value=(0, "status", ""))
+        self.assertEqual(
+            await self.backend._helixsr_tool("payload-status", timeout=30),
+            "status",
+        )
+        self.backend._user_exec.assert_awaited_once_with(
+            [backend_module.BASH, str(helper), "payload-status"], timeout=30
+        )
+
+    async def test_helixsr_records_validate_identity_and_consistency(self):
+        path = self.root / "Game/amd_fidelityfx_dx12.dll"
+        record = self.helixsr_record(path)
+        payload = self.helixsr_records(record)
+        self.backend._helixsr_tool = AsyncMock(return_value=json.dumps(payload))
+
+        parsed = await self.backend._get_helixsr_records()
+
+        self.assertEqual(parsed, payload)
+        for invalid_record in (
+            {**record, "targetId": "a" * 64},
+            {**record, "targetPath": "/tmp/other.dll"},
+            {**record, "state": "unknown"},
+            {**record, "currentRelease": False},
+            self.helixsr_record(
+                self.root / "Game/AMD_FIDELITYFX_DX12.DLL"
+            ),
+        ):
+            with self.subTest(record=invalid_record):
+                self.backend._helixsr_tool.return_value = json.dumps(
+                    self.helixsr_records(invalid_record)
+                )
+                with self.assertRaises(CommandError):
+                    await self.backend._get_helixsr_records()
+
+        invalid_schemas = []
+        for missing in ("schemaVersion", "state", "invalidRecordCount"):
+            incomplete = dict(payload)
+            del incomplete[missing]
+            invalid_schemas.append(incomplete)
+        alias = dict(payload)
+        alias["invalidCount"] = alias.pop("invalidRecordCount")
+        invalid_schemas.append(alias)
+        invalid_schemas.append({**payload, "schemaVersion": 2})
+        invalid_schemas.append({**payload, "state": "unknown"})
+        for invalid_payload in invalid_schemas:
+            with self.subTest(payload=invalid_payload):
+                self.backend._helixsr_tool.return_value = json.dumps(
+                    invalid_payload
+                )
+                with self.assertRaises(CommandError):
+                    await self.backend._get_helixsr_records()
+
+    def test_helixsr_inventory_merges_both_dll_names_and_orphans(self):
+        game = self.add_game()
+        primary = game / "amd_fidelityfx_upscaler_dx12.dll"
+        alternate = game / "bin/amd_fidelityfx_dx12.dll"
+        mixed_case = game / "AMD_FIDELITYFX_DX12.DLL"
+        alternate.parent.mkdir()
+        primary.write_bytes(b"primary")
+        alternate.write_bytes(b"alternate")
+        mixed_case.write_bytes(b"mixed")
+        managed = self.helixsr_record(alternate.resolve())
+        orphan = self.helixsr_record(
+            self.root / "orphan/amd_fidelityfx_dx12.dll",
+            state="missing",
+        )
+
+        inventory = self.backend._build_fsr4_inventory(
+            self.records(),
+            self.optiscaler_records(),
+            self.helixsr_records(managed, orphan),
+        )
+
+        targets = {
+            target["relativePath"]: target
+            for target in inventory["games"][0]["targets"]
+        }
+        self.assertEqual(set(targets), {
+            "AMD_FIDELITYFX_DX12.DLL",
+            "amd_fidelityfx_upscaler_dx12.dll",
+            "bin/amd_fidelityfx_dx12.dll",
+        })
+        self.assertEqual(targets["amd_fidelityfx_upscaler_dx12.dll"]["helixsrState"], "not-installed")
+        self.assertEqual(targets["bin/amd_fidelityfx_dx12.dll"]["helixsrState"], "ready")
+        self.assertTrue(targets["bin/amd_fidelityfx_dx12.dll"]["helixsrManaged"])
+        self.assertEqual(
+            targets["AMD_FIDELITYFX_DX12.DLL"]["helixsrState"],
+            "unavailable",
+        )
+        self.assertFalse(
+            targets["AMD_FIDELITYFX_DX12.DLL"]["helixsrManaged"]
+        )
+        self.assertTrue(inventory["helixsrAvailable"])
+        self.assertEqual(inventory["currentHelixsrRelease"], "v0.12.0")
+        self.assertEqual(inventory["helixsrPayloadState"], "ready")
+        self.assertEqual(
+            [item["targetId"] for item in inventory["orphanedHelixsr"]],
+            [orphan["targetId"]],
+        )
+
     async def test_optiscaler_records_validate_schema_fields_and_consistency(self):
         path = self.root / "Game"
         record = self.optiscaler_record(path)
@@ -801,6 +983,7 @@ class Fsr4InventoryTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(root_candidate["state"], "not-installed")
         self.assertTrue(root_candidate["discovered"])
         self.assertFalse(root_candidate["fsr4Managed"])
+        self.assertFalse(root_candidate["helixsrManaged"])
         self.assertTrue(
             all("outside-executables" not in item["installPath"] for item in candidates)
         )
@@ -835,10 +1018,14 @@ class Fsr4InventoryTests(unittest.IsolatedAsyncioTestCase):
             "state": "missing",
             "currentRelease": True,
         }
+        helixsr_record = self.helixsr_record(
+            child / "bin/amd_fidelityfx_dx12.dll"
+        )
 
         inventory = self.backend._build_fsr4_inventory(
             self.records(fsr4_record),
             self.optiscaler_records(child_record, orphan_record),
+            self.helixsr_records(helixsr_record),
         )
 
         games = {game["appId"]: game for game in inventory["games"]}
@@ -848,6 +1035,7 @@ class Fsr4InventoryTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(child_candidates[0]["proxy"], "winmm.dll")
         self.assertTrue(child_candidates[0]["discovered"])
         self.assertTrue(child_candidates[0]["fsr4Managed"])
+        self.assertTrue(child_candidates[0]["helixsrManaged"])
         self.assertEqual(
             child_candidates[0]["launchOption"],
             'PROTON_FSR4_UPGRADE=0 PROTON_USE_OPTISCALER=0 '
@@ -879,6 +1067,189 @@ class Fsr4InventoryTests(unittest.IsolatedAsyncioTestCase):
         candidate = inventory["games"][0]["optiscalerCandidates"][0]
         self.assertEqual(candidate["state"], "unavailable")
 
+    async def test_inventory_survives_unavailable_helixsr_helper(self):
+        game = self.add_game()
+        target = game / "amd_fidelityfx_dx12.dll"
+        target.write_bytes(b"original")
+        self.backend._get_fsr4_records = AsyncMock(return_value=self.records())
+        self.backend._get_optiscaler_records = AsyncMock(
+            return_value=self.optiscaler_records()
+        )
+        self.backend._get_helixsr_records = AsyncMock(
+            side_effect=CommandError("helper unavailable")
+        )
+
+        inventory = await self.backend.get_fsr4_inventory()
+
+        self.assertFalse(inventory["helixsrAvailable"])
+        self.assertIsNone(inventory["currentHelixsrRelease"])
+        self.assertEqual(inventory["helixsrPayloadState"], "unavailable")
+        self.assertEqual(
+            inventory["games"][0]["targets"][0]["helixsrState"],
+            "unavailable",
+        )
+
+    async def test_helixsr_prepare_and_mutations_use_exact_helper_arguments(self):
+        prepare_mutation_backend(self.backend)
+        target_path = str(self.root / "game/amd_fidelityfx_dx12.dll")
+        target_id = hashlib.sha256(target_path.encode()).hexdigest()
+        target = {
+            "targetId": target_id,
+            "targetPath": target_path,
+            "state": "available",
+            "discovered": True,
+            "helixsrState": "not-installed",
+            "helixsrManaged": False,
+            "optiscalerManaged": False,
+        }
+        inventory = {
+            "games": [{
+                "appKey": "game",
+                "fullyInstalled": True,
+                "installPresent": True,
+                "scanState": "complete",
+                "targets": [target],
+            }],
+            "orphanedHelixsr": [],
+        }
+        self.backend._get_fsr4_records = AsyncMock(return_value=self.records())
+        self.backend._get_optiscaler_records = AsyncMock(
+            return_value=self.optiscaler_records()
+        )
+        self.backend._get_helixsr_records = AsyncMock(
+            return_value=self.helixsr_records()
+        )
+        self.backend._build_fsr4_inventory = MagicMock(return_value=inventory)
+        refreshed = {"schemaVersion": 1, "helixsrPayloadState": "ready"}
+        self.backend.get_fsr4_inventory = AsyncMock(return_value=refreshed)
+        self.backend._helixsr_tool = AsyncMock(return_value="")
+
+        self.assertEqual(await self.backend.prepare_helixsr(), refreshed)
+        self.backend._helixsr_tool.assert_awaited_once_with(
+            "prepare", timeout=1800
+        )
+
+        self.backend._helixsr_tool.reset_mock()
+        self.assertEqual(await self.backend.install_helixsr(target_id), refreshed)
+        self.backend._helixsr_tool.assert_awaited_once_with(
+            "install", target_path, target_id, timeout=300
+        )
+
+        target["helixsrState"] = "ready"
+        target["helixsrManaged"] = True
+        self.backend._helixsr_tool.reset_mock()
+        self.assertEqual(await self.backend.uninstall_helixsr(target_id), refreshed)
+        self.backend._helixsr_tool.assert_awaited_once_with(
+            "uninstall", target_path, target_id, timeout=300
+        )
+
+        target["targetPath"] = str(
+            self.root / "retargeted/amd_fidelityfx_dx12.dll"
+        )
+        self.backend._helixsr_tool.reset_mock()
+        with self.assertRaisesRegex(CommandError, "no longer matches its ID"):
+            await self.backend.uninstall_helixsr(target_id)
+        self.backend._helixsr_tool.assert_not_awaited()
+
+    async def test_helixsr_mutations_reject_raw_paths_stale_scans_and_conflicts(self):
+        prepare_mutation_backend(self.backend)
+        with self.assertRaisesRegex(CommandError, "target ID"):
+            await self.backend.install_helixsr("/tmp/game.dll")
+
+        target_path = str(self.root / "game/amd_fidelityfx_dx12.dll")
+        target_id = hashlib.sha256(target_path.encode()).hexdigest()
+        target = {
+            "targetId": target_id,
+            "targetPath": target_path,
+            "state": "available",
+            "discovered": True,
+            "helixsrState": "not-installed",
+            "helixsrManaged": False,
+            "optiscalerManaged": False,
+        }
+        game = {
+            "appKey": "game",
+            "fullyInstalled": True,
+            "installPresent": True,
+            "scanState": "partial",
+            "targets": [target],
+        }
+        self.backend._get_fsr4_records = AsyncMock(return_value=self.records())
+        self.backend._get_optiscaler_records = AsyncMock(
+            return_value=self.optiscaler_records()
+        )
+        self.backend._get_helixsr_records = AsyncMock(
+            return_value=self.helixsr_records()
+        )
+        self.backend._build_fsr4_inventory = MagicMock(return_value={
+            "games": [game],
+            "orphanedHelixsr": [],
+        })
+        self.backend._helixsr_tool = AsyncMock(return_value="")
+
+        self.backend._get_helixsr_records.return_value = self.helixsr_records(
+            payload_state="not-prepared"
+        )
+        with self.assertRaisesRegex(CommandError, "Prepare the HelixSR payload"):
+            await self.backend.install_helixsr(target_id)
+        self.backend._get_helixsr_records.return_value = self.helixsr_records()
+        with self.assertRaisesRegex(CommandError, "scan is incomplete"):
+            await self.backend.install_helixsr(target_id)
+        game["scanState"] = "complete"
+        game["fullyInstalled"] = False
+        with self.assertRaisesRegex(CommandError, "installing or updating"):
+            await self.backend.install_helixsr(target_id)
+        game["fullyInstalled"] = True
+        target["state"] = "ready"
+        with self.assertRaisesRegex(CommandError, "FSR4-managed"):
+            await self.backend.install_helixsr(target_id)
+        target["state"] = "available"
+        target["optiscalerManaged"] = True
+        with self.assertRaisesRegex(CommandError, "OptiScaler"):
+            await self.backend.install_helixsr(target_id)
+        self.backend._build_fsr4_inventory.return_value = {
+            "games": [],
+            "orphanedHelixsr": [],
+        }
+        with self.assertRaisesRegex(CommandError, "stale or ambiguous"):
+            await self.backend.install_helixsr(target_id)
+        self.backend._helixsr_tool.assert_not_awaited()
+
+    async def test_helixsr_mutation_rejects_mixed_case_target_name(self):
+        prepare_mutation_backend(self.backend)
+        target_path = str(self.root / "game/AMD_FIDELITYFX_DX12.DLL")
+        target_id = hashlib.sha256(target_path.encode()).hexdigest()
+        self.backend._get_fsr4_records = AsyncMock(return_value=self.records())
+        self.backend._get_optiscaler_records = AsyncMock(
+            return_value=self.optiscaler_records()
+        )
+        self.backend._get_helixsr_records = AsyncMock(
+            return_value=self.helixsr_records()
+        )
+        self.backend._build_fsr4_inventory = MagicMock(return_value={
+            "games": [{
+                "appKey": "game",
+                "fullyInstalled": True,
+                "installPresent": True,
+                "scanState": "complete",
+                "targets": [{
+                    "targetId": target_id,
+                    "targetPath": target_path,
+                    "state": "available",
+                    "discovered": True,
+                    "helixsrState": "unavailable",
+                    "helixsrManaged": False,
+                    "optiscalerManaged": False,
+                }],
+            }],
+            "orphanedHelixsr": [],
+        })
+        self.backend._helixsr_tool = AsyncMock(return_value="")
+
+        with self.assertRaisesRegex(CommandError, "not supported"):
+            await self.backend.install_helixsr(target_id)
+        self.backend._helixsr_tool.assert_not_awaited()
+
     async def test_optiscaler_mutations_rescan_and_use_exact_argv(self):
         prepare_mutation_backend(self.backend)
         candidate_path = str(self.root / "game")
@@ -886,6 +1257,9 @@ class Fsr4InventoryTests(unittest.IsolatedAsyncioTestCase):
         self.backend._get_fsr4_records = AsyncMock(return_value=self.records())
         self.backend._get_optiscaler_records = AsyncMock(
             return_value=self.optiscaler_records()
+        )
+        self.backend._get_helixsr_records = AsyncMock(
+            return_value=self.helixsr_records()
         )
         self.backend._build_fsr4_inventory = MagicMock(return_value={
             "games": [{
@@ -898,6 +1272,7 @@ class Fsr4InventoryTests(unittest.IsolatedAsyncioTestCase):
                     "state": "not-installed",
                     "discovered": True,
                     "fsr4Managed": False,
+                    "helixsrManaged": False,
                 }],
             }],
             "orphanedOptiscaler": [],
@@ -908,6 +1283,7 @@ class Fsr4InventoryTests(unittest.IsolatedAsyncioTestCase):
 
         self.backend._get_fsr4_records.assert_awaited_once()
         self.backend._get_optiscaler_records.assert_awaited_once()
+        self.backend._get_helixsr_records.assert_awaited_once()
         self.backend._optiscaler_tool.assert_awaited_once_with(
             "install", candidate_path, "dxgi.dll", candidate_id, timeout=300
         )
@@ -932,6 +1308,9 @@ class Fsr4InventoryTests(unittest.IsolatedAsyncioTestCase):
         self.backend._get_optiscaler_records = AsyncMock(
             return_value=self.optiscaler_records()
         )
+        self.backend._get_helixsr_records = AsyncMock(
+            return_value=self.helixsr_records()
+        )
         self.backend._build_fsr4_inventory = MagicMock(return_value={
             "games": [],
             "orphanedOptiscaler": [],
@@ -950,6 +1329,7 @@ class Fsr4InventoryTests(unittest.IsolatedAsyncioTestCase):
             "state": "not-installed",
             "discovered": True,
             "fsr4Managed": False,
+            "helixsrManaged": False,
         }
         game = {
             "appKey": "game",
@@ -960,6 +1340,9 @@ class Fsr4InventoryTests(unittest.IsolatedAsyncioTestCase):
         self.backend._get_fsr4_records = AsyncMock(return_value=self.records())
         self.backend._get_optiscaler_records = AsyncMock(
             return_value=self.optiscaler_records()
+        )
+        self.backend._get_helixsr_records = AsyncMock(
+            return_value=self.helixsr_records()
         )
         self.backend._build_fsr4_inventory = MagicMock(return_value={
             "games": [game],
@@ -979,6 +1362,14 @@ class Fsr4InventoryTests(unittest.IsolatedAsyncioTestCase):
             await self.backend.install_optiscaler(candidate_id, "winmm.dll")
         candidate["state"] = "ready"
         with self.assertRaisesRegex(CommandError, "managed FSR4"):
+            await self.backend.uninstall_optiscaler(candidate_id)
+        candidate["fsr4Managed"] = False
+        candidate["helixsrManaged"] = True
+        candidate["state"] = "not-installed"
+        with self.assertRaisesRegex(CommandError, "HelixSR-managed"):
+            await self.backend.install_optiscaler(candidate_id, "winmm.dll")
+        candidate["state"] = "ready"
+        with self.assertRaisesRegex(CommandError, "HelixSR-managed"):
             await self.backend.uninstall_optiscaler(candidate_id)
         self.backend._optiscaler_tool.assert_not_awaited()
 
@@ -2758,6 +3149,13 @@ class DeckyHelperBootstrapTests(unittest.TestCase):
         specification.loader.exec_module(module)
         return module
 
+    def test_helixsr_is_an_executable_payload(self):
+        bootstrap = self.load_bootstrap()
+        self.assertEqual(
+            dict(bootstrap.PAYLOAD_FILES)[Path("bc250-helixsr.sh")],
+            0o755,
+        )
+
     def test_missing_helper_payload_is_installed_and_then_left_unchanged(self):
         bootstrap = self.load_bootstrap()
         with tempfile.TemporaryDirectory() as directory:
@@ -2916,6 +3314,7 @@ class DeckyRuntimeTests(unittest.TestCase):
 
             payload_sources = {
                 Path("bc250-fsr4.sh"): repository / "bc250-fsr4.sh",
+                Path("bc250-helixsr.sh"): repository / "bc250-helixsr.sh",
                 Path("bc250-optiscaler.sh"): repository / "bc250-optiscaler.sh",
                 Path("bc250-power.sh"): repository / "bc250-power.sh",
                 Path("bc250-storage.sh"): repository / "bc250-storage.sh",
@@ -2962,6 +3361,17 @@ class DeckyRuntimeTests(unittest.TestCase):
                 staged = first / "privileged-helper" / relative
                 self.assertTrue(staged.is_file(), relative)
                 self.assertEqual(staged.read_bytes(), source.read_bytes())
+
+            helixsr = first / "privileged-helper/bc250-helixsr.sh"
+            self.assertEqual(helixsr.stat().st_mode & 0o777, 0o755)
+            with zipfile.ZipFile(first_archive) as archive:
+                archived = next(
+                    name
+                    for name in archive.namelist()
+                    if name.endswith("/privileged-helper/bc250-helixsr.sh")
+                )
+                mode = archive.getinfo(archived).external_attr >> 16
+                self.assertEqual(mode & 0o777, 0o755)
 
             code = (
                 "import pathlib, sys; sys.path.insert(0, sys.argv[1]); "

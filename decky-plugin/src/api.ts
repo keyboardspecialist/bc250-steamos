@@ -53,6 +53,9 @@ export const uninstallNativeMesh = callable<[], void>("uninstall_native_mesh");
 export const getFsr4Inventory = callable<[], Fsr4Inventory>("get_fsr4_inventory");
 export const installFsr4Dll = callable<[targetId: string], void>("install_fsr4_dll");
 export const uninstallFsr4Dll = callable<[targetId: string], void>("uninstall_fsr4_dll");
+export const prepareHelixsr = callable<[], void>("prepare_helixsr");
+export const installHelixsr = callable<[targetId: string], void>("install_helixsr");
+export const uninstallHelixsr = callable<[targetId: string], void>("uninstall_helixsr");
 export const installOptiscaler = callable<
   [candidateId: string, proxy: string],
   void

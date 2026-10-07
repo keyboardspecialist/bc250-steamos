@@ -101,6 +101,18 @@ class FakeBackend:
     async def uninstall_fsr4_dll(self, *args):
         await self._mutation("uninstall_fsr4_dll", *args)
 
+    async def prepare_helixsr(self, *args):
+        await self._mutation("prepare_helixsr", *args)
+        return {"helixsrPayloadState": "ready"}
+
+    async def install_helixsr(self, *args):
+        await self._mutation("install_helixsr", *args)
+        return {"helixsrPayloadState": "ready"}
+
+    async def uninstall_helixsr(self, *args):
+        await self._mutation("uninstall_helixsr", *args)
+        return {"helixsrPayloadState": "ready"}
+
     async def install_optiscaler(self, *args):
         await self._mutation("install_optiscaler", *args)
 
@@ -357,6 +369,40 @@ class ControlServiceTests(unittest.IsolatedAsyncioTestCase):
             self.backends[0].calls[-1], ("uninstall_optiscaler", (candidate_id,))
         )
 
+    async def test_helixsr_mutations_are_gpu_authorized_and_return_inventory(self):
+        target_id = "c" * 64
+        operations = [
+            await self.service.prepare_helixsr(":1.1"),
+            await self.service.install_helixsr(":1.1", target_id),
+            await self.service.uninstall_helixsr(":1.1", target_id),
+        ]
+        expected_methods = [
+            "PrepareHelixsr",
+            "InstallHelixsr",
+            "UninstallHelixsr",
+        ]
+        for operation_id, method in zip(operations, expected_methods):
+            operation = await self.wait_for_status(
+                ":1.1", operation_id, "succeeded"
+            )
+            self.assertFalse(operation["cancellable"])
+            self.assertEqual(operation["method"], method)
+            self.assertEqual(
+                operation["result"], {"helixsrPayloadState": "ready"}
+            )
+        self.assertEqual(
+            self.authorizer.calls,
+            [(":1.1", 1000, "audit:1000", "gpu")] * 3,
+        )
+        self.assertEqual(
+            self.backends[0].calls,
+            [
+                ("prepare_helixsr", ()),
+                ("install_helixsr", (target_id,)),
+                ("uninstall_helixsr", (target_id,)),
+            ],
+        )
+
     async def test_operations_are_private_to_uid_but_survive_sender_change(self):
         operation_id = await self.service.cec_action(":1.1", "mute")
         await self.wait_for_status(":9.9", operation_id, "succeeded")
@@ -383,6 +429,10 @@ class ControlServiceTests(unittest.IsolatedAsyncioTestCase):
         for target_id in ("", "/tmp/game.dll", "A" * 64, "a" * 63, 1):
             with self.subTest(target_id=target_id), self.assertRaises(InvalidArguments):
                 await self.service.uninstall_fsr4_dll(":1.1", target_id)
+            with self.subTest(target_id=target_id), self.assertRaises(InvalidArguments):
+                await self.service.install_helixsr(":1.1", target_id)
+            with self.subTest(target_id=target_id), self.assertRaises(InvalidArguments):
+                await self.service.uninstall_helixsr(":1.1", target_id)
         for candidate_id in ("", "/tmp/game", "A" * 64, "a" * 63, 1):
             with self.subTest(candidate_id=candidate_id), self.assertRaises(InvalidArguments):
                 await self.service.install_optiscaler(

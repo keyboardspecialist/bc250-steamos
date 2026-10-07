@@ -79,6 +79,10 @@ class FakeControl:
         self.senders.append((sender, candidate_id, proxy))
         return "operation"
 
+    async def install_helixsr(self, sender, target_id):
+        self.senders.append((sender, target_id))
+        return "operation"
+
 
 class IdentityResolverTests(unittest.IsolatedAsyncioTestCase):
     async def test_resolves_pid_and_validated_audit_session(self):
@@ -181,6 +185,23 @@ class AdapterHandlerTests(unittest.IsolatedAsyncioTestCase):
         )
         self.assertIn('<method name="InstallOptiscaler">', INTROSPECTION_XML)
         self.assertIn('<method name="UninstallOptiscaler">', INTROSPECTION_XML)
+
+    def test_helixsr_dbus_signatures_are_declared(self):
+        self.assertEqual(
+            DbusAdapter._METHODS["PrepareHelixsr"],
+            ("", "s", "prepare_helixsr"),
+        )
+        self.assertEqual(
+            DbusAdapter._METHODS["InstallHelixsr"],
+            ("s", "s", "install_helixsr"),
+        )
+        self.assertEqual(
+            DbusAdapter._METHODS["UninstallHelixsr"],
+            ("s", "s", "uninstall_helixsr"),
+        )
+        self.assertIn('<method name="PrepareHelixsr">', INTROSPECTION_XML)
+        self.assertIn('<method name="InstallHelixsr">', INTROSPECTION_XML)
+        self.assertIn('<method name="UninstallHelixsr">', INTROSPECTION_XML)
 
     def test_ram_dbus_signatures_are_declared(self):
         self.assertEqual(DbusAdapter._METHODS["SetUmaSize"], ("u", "s", "set_uma_size"))
@@ -303,4 +324,26 @@ class AdapterHandlerTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(
             control.senders, [(":1.22", candidate_id, "winmm.dll")]
         )
+        self.assertEqual(bus.sent[0].body, ["operation"])
+
+    async def test_helixsr_install_propagates_sender_and_opaque_id(self):
+        bus = HandlerBus()
+        control = FakeControl()
+        adapter = DbusAdapter(bus, control)
+        target_id = "d" * 64
+        call = Message(
+            path=OBJECT_PATH,
+            interface=INTERFACE,
+            member="InstallHelixsr",
+            signature="s",
+            body=[target_id],
+            sender=":1.23",
+            serial=45,
+        )
+
+        self.assertTrue(adapter.handle(call))
+        await asyncio.sleep(0)
+        await asyncio.sleep(0)
+
+        self.assertEqual(control.senders, [(":1.23", target_id)])
         self.assertEqual(bus.sent[0].body, ["operation"])

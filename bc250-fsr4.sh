@@ -17,6 +17,8 @@ INSTALLS_DIR="$STATE_DIR/installs"
 RELEASE_DIR="$CACHE_DIR/$RELEASE"
 ARCHIVE="$CACHE_DIR/$ARCHIVE_NAME"
 LOCK_FILE="${BC250_FSR4_LOCK_FILE:-$HOME/.cache/bc250-fsr4.lock}"
+HELIXSR_STATE="${BC250_HELIXSR_STATE_DIR:-$MESH_STATE/helixsr}"
+HELIXSR_LOCK_FILE="${BC250_HELIXSR_LOCK_FILE:-$HELIXSR_STATE.lock}"
 
 log() { printf '[bc250-fsr4] %s\n' "$*"; }
 die() { log "$*" >&2; exit 1; }
@@ -43,11 +45,75 @@ require_normal_user() {
 ensure_state() {
     command -v flock >/dev/null 2>&1 || die "flock is required."
     command -v python3 >/dev/null 2>&1 || die "python3 is required."
+    [[ "$STATE_DIR" == /* && "$LOCK_FILE" == /* && "$HELIXSR_LOCK_FILE" == /* ]] \
+        || die "FSR4 state and lock paths must be absolute."
     [[ ! -L "$STATE_DIR" && ! -L "$CACHE_DIR" && ! -L "$INSTALLS_DIR" ]] \
         || die "Refusing symlinked FSR4 state."
     mkdir -p "$CACHE_DIR" "$INSTALLS_DIR" "${LOCK_FILE%/*}"
     chmod 0700 "$STATE_DIR" "$CACHE_DIR" "$INSTALLS_DIR"
     [[ ! -L "$LOCK_FILE" ]] || die "Refusing symlinked FSR4 lock file."
+}
+
+prepare_helixsr_lock() {
+    [[ ! -L "$HELIXSR_LOCK_FILE" ]] || die "Refusing symlinked HelixSR lock file."
+    mkdir -p "${HELIXSR_LOCK_FILE%/*}"
+    [[ -d "${HELIXSR_LOCK_FILE%/*}" && ! -L "${HELIXSR_LOCK_FILE%/*}" ]] \
+        || die "HelixSR lock directory is unsafe."
+}
+
+refuse_helixsr_target() {
+    python3 - "$HELIXSR_STATE" "$REAL_TARGET" <<'PY'
+import hashlib
+import json
+import os
+import re
+import stat
+import sys
+
+state, target = sys.argv[1:]
+installs = os.path.join(state, "installs")
+sha = re.compile(r"^[0-9a-f]{64}$")
+
+def directory(path):
+    try:
+        return stat.S_ISDIR(os.lstat(path).st_mode)
+    except FileNotFoundError:
+        return False
+
+def regular(path):
+    try:
+        return stat.S_ISREG(os.lstat(path).st_mode)
+    except FileNotFoundError:
+        return False
+
+if os.path.islink(state) or os.path.islink(installs):
+    if os.path.lexists(state) or os.path.lexists(installs):
+        raise SystemExit("[bc250-fsr4] HelixSR state is unsafe; refusing this operation.")
+    raise SystemExit(0)
+if not os.path.exists(installs):
+    raise SystemExit(0)
+if not directory(installs):
+    raise SystemExit("[bc250-fsr4] HelixSR state is unsafe; refusing this operation.")
+for name in os.listdir(installs):
+    record_dir = os.path.join(installs, name)
+    record_path = os.path.join(record_dir, "record.json")
+    if not sha.fullmatch(name) or not directory(record_dir) or not regular(record_path):
+        raise SystemExit("[bc250-fsr4] HelixSR state contains an invalid record; refusing this operation.")
+    try:
+        with open(record_path, encoding="utf-8") as stream:
+            record = json.load(stream)
+        recorded = record["targetPath"]
+        identifier = record["targetId"]
+    except (OSError, ValueError, KeyError, TypeError):
+        raise SystemExit("[bc250-fsr4] HelixSR state contains an invalid record; refusing this operation.")
+    expected = hashlib.sha256(recorded.encode("utf-8", "surrogateescape")).hexdigest() \
+        if isinstance(recorded, str) else ""
+    if not isinstance(recorded, str) or not recorded.startswith("/") \
+            or identifier != name or expected != name:
+        raise SystemExit("[bc250-fsr4] HelixSR record identity is invalid; refusing this operation.")
+    if os.path.normpath(recorded) == target:
+        raise SystemExit(f"[bc250-fsr4] Target is managed by HelixSR: {target}")
+PY
 }
 
 normalize_target() {
@@ -431,6 +497,10 @@ case "${1:-help}" in
         (($# == 2)) || die "Usage: $0 install TARGET_DLL"
         require_normal_user; ensure_state
         exec 9> "$LOCK_FILE"; flock 9
+        prepare_helixsr_lock
+        exec 8> "$HELIXSR_LOCK_FILE"; flock 8
+        normalize_target "$2"
+        refuse_helixsr_target
         install_target "$2"
         ;;
     uninstall)

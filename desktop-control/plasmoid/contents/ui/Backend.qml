@@ -90,7 +90,8 @@ QtObject {
             "SetCuWgp", "SetGpuFrequency", "SetLoadTarget", "SetCustomLoadTarget",
             "SetRamp", "CpuOcAction", "CpuUnlockAction", "SetCpuMitigations", "SetCpuSmtDisabled", "CecAction", "SetCecToggle", "SetCecName",
             "SetUmaSize", "SetTtmPages", "RemoveTtmOverride", "SetHdmiSurround", "InstallFsr4Dll", "UninstallFsr4Dll",
-            "InstallOptiscaler", "UninstallOptiscaler", "InstallNativeMesh", "UninstallNativeMesh", "CancelOperation"]);
+            "PrepareHelixsr", "InstallHelixsr", "UninstallHelixsr", "InstallOptiscaler", "UninstallOptiscaler",
+            "InstallNativeMesh", "UninstallNativeMesh", "CancelOperation"]);
         signature = Utils.allowed(signature, ["", "b", "s", "u", "yy", "suu", "yyyb", "suuu", "sb", "ss"]);
         var interactive = ["SetCuWgp", "SetGpuFrequency", "SetLoadTarget",
             "SetCustomLoadTarget", "SetRamp", "CpuOcAction", "CpuUnlockAction", "SetCpuMitigations", "SetCpuSmtDisabled",
@@ -158,10 +159,12 @@ QtObject {
         _operationPollFailures = 0;
         var cancellable = ["CpuUnlockAction", "SetCpuMitigations", "SetCpuSmtDisabled", "SetUmaSize", "SetTtmPages",
             "RemoveTtmOverride", "SetHdmiSurround", "InstallFsr4Dll", "UninstallFsr4Dll",
-            "InstallOptiscaler", "UninstallOptiscaler", "InstallNativeMesh", "UninstallNativeMesh"].indexOf(method) < 0;
+            "PrepareHelixsr", "InstallHelixsr", "UninstallHelixsr", "InstallOptiscaler", "UninstallOptiscaler",
+            "InstallNativeMesh", "UninstallNativeMesh"].indexOf(method) < 0;
         _enqueue("mutation", _command(method, signature, args), {
             label: label,
             refreshFsr4: method === "InstallFsr4Dll" || method === "UninstallFsr4Dll"
+                || method === "PrepareHelixsr" || method === "InstallHelixsr" || method === "UninstallHelixsr"
                 || method === "InstallOptiscaler" || method === "UninstallOptiscaler",
             cancellable: cancellable
         });
@@ -205,6 +208,20 @@ QtObject {
         var safeId = Utils.safeTargetId(targetId);
         _startMutation(enabled ? "InstallFsr4Dll" : "UninstallFsr4Dll", "s", [safeId],
             (enabled ? "Installing" : "Restoring") + " FSR4 game DLL");
+    }
+
+    function prepareHelixsr() {
+        _startMutation("PrepareHelixsr", "", [], "Preparing experimental HelixSR payload");
+    }
+
+    function installHelixsr(targetId) {
+        _startMutation("InstallHelixsr", "s", [Utils.safeTargetId(targetId)],
+            "Installing experimental HelixSR game DLL");
+    }
+
+    function uninstallHelixsr(targetId) {
+        _startMutation("UninstallHelixsr", "s", [Utils.safeTargetId(targetId)],
+            "Restoring pre-HelixSR game DLL");
     }
 
     function setNativeMeshEnabled(enabled) {

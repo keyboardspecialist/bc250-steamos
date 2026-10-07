@@ -250,6 +250,43 @@ class ControlService:
             cancellable=False,
         )
 
+    async def prepare_helixsr(self, sender: str) -> str:
+        return await self._submit(
+            sender,
+            "gpu",
+            "PrepareHelixsr",
+            lambda backend: backend.prepare_helixsr(),
+            cancellable=False,
+        )
+
+    async def install_helixsr(self, sender: str, target_id: str) -> str:
+        if (
+            type(target_id) is not str
+            or re.fullmatch(r"[0-9a-f]{64}", target_id) is None
+        ):
+            raise InvalidArguments("HelixSR target ID is invalid.")
+        return await self._submit(
+            sender,
+            "gpu",
+            "InstallHelixsr",
+            lambda backend: backend.install_helixsr(target_id),
+            cancellable=False,
+        )
+
+    async def uninstall_helixsr(self, sender: str, target_id: str) -> str:
+        if (
+            type(target_id) is not str
+            or re.fullmatch(r"[0-9a-f]{64}", target_id) is None
+        ):
+            raise InvalidArguments("HelixSR target ID is invalid.")
+        return await self._submit(
+            sender,
+            "gpu",
+            "UninstallHelixsr",
+            lambda backend: backend.uninstall_helixsr(target_id),
+            cancellable=False,
+        )
+
     async def install_optiscaler(
         self, sender: str, candidate_id: str, proxy: str
     ) -> str:

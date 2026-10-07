@@ -53,6 +53,12 @@ FSR4_PROFILE_SHA256="835842eb8beccd6e0498a771c5ea4d8c9ac86ee994e4659045e9f3bf432
 FSR4_DLL_TOOL="${BC250_FSR4_TOOL:-${SELF%/*}/bc250-fsr4.sh}"
 FSR4_DLL_STATE="${BC250_FSR4_STATE_DIR:-$STATE_DIR/fsr4-dll}"
 FSR4_DLL_LOCK="${BC250_FSR4_LOCK_FILE:-$HOME/.cache/bc250-fsr4.lock}"
+OPTISCALER_TOOL="${BC250_OPTISCALER_TOOL:-${SELF%/*}/bc250-optiscaler.sh}"
+OPTISCALER_STATE="${BC250_OPTISCALER_STATE_DIR:-$STATE_DIR/optiscaler}"
+OPTISCALER_LOCK="${BC250_OPTISCALER_LOCK_FILE:-$OPTISCALER_STATE.lock}"
+HELIXSR_TOOL="${BC250_HELIXSR_TOOL:-${SELF%/*}/bc250-helixsr.sh}"
+HELIXSR_STATE="${BC250_HELIXSR_STATE_DIR:-$STATE_DIR/helixsr}"
+HELIXSR_LOCK="${BC250_HELIXSR_LOCK_FILE:-$HELIXSR_STATE.lock}"
 NATIVE_MESH_REPO="https://github.com/luckiskind/bc250-radv-r2"
 NATIVE_MESH_RELEASE="r2-20260921"
 NATIVE_MESH_COMMIT="3367cd5eed23ab38fddfc0fb52dbc4e17adf6e11"
@@ -3043,6 +3049,32 @@ fsr4_dll_count() {
     bash "$FSR4_DLL_TOOL" count
 }
 
+optiscaler_count() {
+    [[ -f "$OPTISCALER_TOOL" && ! -L "$OPTISCALER_TOOL" ]] || { printf '0\n'; return; }
+    bash "$OPTISCALER_TOOL" records-json | python3 -c '
+import json, sys
+data = json.load(sys.stdin)
+if not isinstance(data, dict):
+    raise SystemExit(2)
+records = data.get("records")
+invalid = data.get("invalidRecordCount")
+if (data.get("schemaVersion") != 1 or not isinstance(records, list)
+        or type(invalid) is not int or invalid < 0 or invalid > len(records)):
+    raise SystemExit(2)
+print(len(records))
+'
+}
+
+state_has_records() {
+    local state="$1" installs="$1/installs" record
+    [[ -L "$state" || ( -e "$state" && ! -d "$state" ) \
+        || -L "$installs" || ( -e "$installs" && ! -d "$installs" ) ]] && return 0
+    for record in "$installs"/* "$installs"/.[!.]* "$installs"/..?*; do
+        [[ -e "$record" || -L "$record" ]] && return 0
+    done
+    return 1
+}
+
 cmd_status() {
     local failed=0 fsr4_dll_rc=0 fsr4_dll_installs
     echo "BC-250 Mesa / RADV async-compute patch"
@@ -3282,6 +3314,38 @@ cmd_uninstall_fsr4_dll() {
     bash "$FSR4_DLL_TOOL" uninstall "$1"
 }
 
+require_helixsr_tool() {
+    [[ -f "$HELIXSR_TOOL" && ! -L "$HELIXSR_TOOL" ]] \
+        || die "The HelixSR helper is unavailable: $HELIXSR_TOOL"
+}
+
+cmd_helixsr_prepare() {
+    require_normal_user
+    require_helixsr_tool
+    log "WARNING: HelixSR is experimental; do not use injected DLLs with anti-cheat games."
+    bash "$HELIXSR_TOOL" prepare "$@"
+}
+
+cmd_helixsr_payload_status() {
+    require_normal_user
+    require_helixsr_tool
+    bash "$HELIXSR_TOOL" payload-status
+}
+
+cmd_helixsr_install() {
+    require_normal_user
+    require_helixsr_tool
+    log "WARNING: HelixSR is experimental; close the game and do not use injected DLLs with anti-cheat games."
+    bash "$HELIXSR_TOOL" install "$1"
+}
+
+cmd_helixsr_uninstall() {
+    require_normal_user
+    require_helixsr_tool
+    log "WARNING: Close the game before restoring HelixSR-managed files."
+    bash "$HELIXSR_TOOL" uninstall "$1"
+}
+
 cmd_uninstall() (
     require_normal_user
     local ro_was_enabled=0 legacy_games environment
@@ -3361,12 +3425,44 @@ cmd_uninstall() (
 )
 
 cmd_purge() (
+    local optiscaler_count_value fsr4_count helixsr_count path
     require_normal_user
     command -v flock >/dev/null 2>&1 || die "flock is required"
-    mkdir -p "${LOCK_FILE%/*}"
+
+    # Query helpers before taking manager locks so their internal locking cannot
+    # invert the shared OptiScaler -> FSR4 -> HelixSR order.
+    if [[ -f "$OPTISCALER_TOOL" && ! -L "$OPTISCALER_TOOL" ]]; then
+        optiscaler_count_value=$(optiscaler_count) \
+            || die "OptiScaler rollback state is invalid; refusing purge."
+        [[ "$optiscaler_count_value" =~ ^[0-9]+$ && "$optiscaler_count_value" -eq 0 ]] \
+            || die "OptiScaler rollback records remain; uninstall those targets before purge."
+    elif [[ -e "$OPTISCALER_STATE" || -L "$OPTISCALER_STATE" ]]; then
+        die "OptiScaler state exists but its helper is unavailable; refusing purge."
+    fi
+    if [[ -f "$FSR4_DLL_TOOL" && ! -L "$FSR4_DLL_TOOL" ]]; then
+        fsr4_count=$(fsr4_dll_count) \
+            || die "FSR4 DLL rollback state is invalid; refusing purge."
+        [[ "$fsr4_count" =~ ^[0-9]+$ && "$fsr4_count" -eq 0 ]] \
+            || die "Game-local FSR4 DLL rollback records remain; uninstall those targets before purge."
+    elif state_has_records "$FSR4_DLL_STATE"; then
+        die "FSR4 DLL rollback state exists but its helper is unavailable; refusing purge."
+    fi
+    if [[ -f "$HELIXSR_TOOL" && ! -L "$HELIXSR_TOOL" ]]; then
+        helixsr_count=$(bash "$HELIXSR_TOOL" count) \
+            || die "HelixSR rollback state is invalid; refusing purge."
+        [[ "$helixsr_count" =~ ^[0-9]+$ && "$helixsr_count" -eq 0 ]] \
+            || die "HelixSR rollback records remain; uninstall those targets before purge."
+    elif [[ -e "$HELIXSR_STATE" || -L "$HELIXSR_STATE" ]]; then
+        die "HelixSR state exists but its helper is unavailable; refusing purge."
+    fi
+
+    mkdir -p "${LOCK_FILE%/*}" "${OPTISCALER_LOCK%/*}"
     [[ ! -L "$LOCK_FILE" ]] || die "Refusing symlinked lock file: $LOCK_FILE"
+    [[ ! -L "$OPTISCALER_LOCK" ]] || die "Refusing symlinked OptiScaler lock file: $OPTISCALER_LOCK"
     exec 9> "$LOCK_FILE"
     flock 9
+    exec 7> "$OPTISCALER_LOCK"
+    flock 7
     mkdir -p "${FSR4_DLL_LOCK%/*}"
     [[ ! -L "$FSR4_DLL_LOCK" ]] || die "Refusing symlinked FSR4 DLL lock file: $FSR4_DLL_LOCK"
     exec 8> "$FSR4_DLL_LOCK"
@@ -3380,18 +3476,35 @@ cmd_purge() (
         && ! -e "$NATIVE_MESH_TOOL" && ! -L "$NATIVE_MESH_TOOL" \
         && ! -e "$NATIVE_MESH_TRANSACTION_DIR" && ! -L "$NATIVE_MESH_TRANSACTION_DIR" ]] \
         || die "Mesa / RADV runtime remains; run '$0 uninstall' before purge."
-    if [[ -x "$FSR4_DLL_TOOL" && ! -L "$FSR4_DLL_TOOL" ]]; then
-        [[ "$(fsr4_dll_count)" -eq 0 ]] \
-            || die "Game-local FSR4 DLL rollback records remain; uninstall those targets before purge."
-    else
-        [[ ! -e "$FSR4_DLL_STATE" && ! -L "$FSR4_DLL_STATE" ]] \
-            || die "FSR4 DLL rollback state exists but its helper is unavailable; refusing purge."
-    fi
+    state_has_records "$OPTISCALER_STATE" \
+        && die "OptiScaler rollback records appeared during purge; refusing cleanup."
+    state_has_records "$FSR4_DLL_STATE" \
+        && die "FSR4 DLL rollback records appeared during purge; refusing cleanup."
+    state_has_records "$HELIXSR_STATE" \
+        && die "HelixSR rollback records appeared during purge; refusing cleanup."
     if grep -qF '<!-- BEGIN BC250 MESH SHADER MANAGED -->' "$DRIRC" 2>/dev/null; then
         die "Managed game entries remain; run '$0 uninstall' before purge."
     fi
+    if [[ -f "$HELIXSR_TOOL" && ! -L "$HELIXSR_TOOL" ]]; then
+        # The FSR4 lock is already held, so the helper's HelixSR lock follows
+        # the global manager order and keeps payload cleanup serialized.
+        bash "$HELIXSR_TOOL" purge
+    fi
     [[ ! -L "$STATE_DIR" ]] || die "Refusing symlinked state directory: $STATE_DIR"
-    rm -rf "$STATE_DIR"
+    if [[ "$HELIXSR_STATE" != "$STATE_DIR" ]]; then
+        for path in "$STATE_DIR"/* "$STATE_DIR"/.[!.]* "$STATE_DIR"/..?*; do
+            [[ -e "$path" || -L "$path" ]] || continue
+            if [[ "$path" == "$HELIXSR_STATE" || "$HELIXSR_STATE" == "$path/"* \
+                || "$path" == "$LOCK_FILE" || "$LOCK_FILE" == "$path/"* \
+                || "$path" == "$OPTISCALER_LOCK" || "$OPTISCALER_LOCK" == "$path/"* \
+                || "$path" == "$FSR4_DLL_LOCK" || "$FSR4_DLL_LOCK" == "$path/"* \
+                || "$path" == "$HELIXSR_LOCK" || "$HELIXSR_LOCK" == "$path/"* ]]; then
+                continue
+            fi
+            rm -rf -- "$path"
+        done
+    fi
+    rmdir "$STATE_DIR" 2>/dev/null || true
     log "Removed downloaded patch and toolkit-owned Mesa build cache."
 )
 
@@ -3490,6 +3603,34 @@ fsr4_dll_badge() {
     esac
 }
 
+helixsr_payload_badge() {
+    local rc=0
+    if [[ ! -f "$HELIXSR_TOOL" || -L "$HELIXSR_TOOL" ]]; then
+        printf '%s' "${CR}[unavailable]${C0}"
+        return
+    fi
+    bash "$HELIXSR_TOOL" payload-status >/dev/null 2>&1 || rc=$?
+    case "$rc" in
+        0) printf '%s' "${CG}[ready]${C0}" ;;
+        1) printf '%s' "${CY}[prepare]${C0}" ;;
+        *) printf '%s' "${CR}[repair]${C0}" ;;
+    esac
+}
+
+helixsr_install_badge() {
+    local rc=0
+    if [[ ! -f "$HELIXSR_TOOL" || -L "$HELIXSR_TOOL" ]]; then
+        printf '%s' "${CR}[unavailable]${C0}"
+        return
+    fi
+    bash "$HELIXSR_TOOL" probe >/dev/null 2>&1 || rc=$?
+    case "$rc" in
+        0) printf '%s' "${CG}[installed]${C0}" ;;
+        1) printf '%s' "${CD}[none]${C0}" ;;
+        *) printf '%s' "${CR}[repair]${C0}" ;;
+    esac
+}
+
 run_menu_action() {
     local rc=0
     echo
@@ -3529,11 +3670,57 @@ prompt_fsr4_target() {
     run_menu_action setup --fsr4 "$target"
 }
 
+show_helixsr_payload_status() {
+    local rc=0
+    echo
+    cmd_helixsr_payload_status || rc=$?
+    if [[ $rc -gt 1 ]]; then
+        printf '%s\n' "${CR}${CB}[bc250-mesh]${C0} HelixSR payload status failed (exit $rc)"
+    fi
+    pause_key
+}
+
+prompt_helixsr_prepare() {
+    local dlss
+    printf '%s' "${CB}Optional local DLSS DLL path (blank for HelixSR's user-local download): ${C0}"
+    IFS= read -r dlss
+    if [[ -n "$dlss" ]]; then
+        confirm_menu_action \
+            "Prepare experimental HelixSR v1.2.0 from this DLL? Generated NVIDIA-derived files stay user-local and anti-cheat games must not use injection." \
+            helixsr-prepare "$dlss"
+    else
+        confirm_menu_action \
+            "Prepare experimental HelixSR v1.2.0? Downloads and generated NVIDIA-derived files stay user-local and anti-cheat games must not use injection." \
+            helixsr-prepare
+    fi
+}
+
+prompt_helixsr_install() {
+    local target
+    printf '%s' "${CB}Existing lowercase amd_fidelityfx_upscaler_dx12.dll or amd_fidelityfx_dx12.dll (absolute path): ${C0}"
+    IFS= read -r target
+    if [[ -z "$target" ]]; then log "Cancelled."; pause_key; return; fi
+    confirm_menu_action \
+        "Install experimental HelixSR into this closed game? Do not use injected DLLs with anti-cheat games." \
+        helixsr-install "$target"
+}
+
+prompt_helixsr_uninstall() {
+    local target
+    printf '%s' "${CB}Recorded HelixSR target DLL to restore (absolute path): ${C0}"
+    IFS= read -r target
+    if [[ -z "$target" ]]; then log "Cancelled."; pause_key; return; fi
+    confirm_menu_action "Restore this closed game's files from its verified HelixSR rollback record?" \
+        helixsr-uninstall "$target"
+}
+
 mesh_menu_graph_badge() {
     local legacy_games
     case "$1" in
         action__status|action__setup|action__uninstall) runtime_badge ;;
         action__fsr4_dll) fsr4_dll_badge ;;
+        menu__helixsr|action__helixsr_status|action__helixsr_prepare|action__helixsr_install) helixsr_payload_badge ;;
+        action__helixsr_uninstall) helixsr_install_badge ;;
         action__native_mesh_install|action__native_mesh_remove) native_mesh_badge ;;
         action__legacy_cleanup)
             if ! legacy_games=$(manage_games list 2>/dev/null); then
@@ -3553,6 +3740,10 @@ mesh_menu_graph_activate() {
     case "$1" in
         action__status) show_menu_status ;;
         action__fsr4_dll) prompt_fsr4_target ;;
+        action__helixsr_status) show_helixsr_payload_status ;;
+        action__helixsr_prepare) prompt_helixsr_prepare ;;
+        action__helixsr_install) prompt_helixsr_install ;;
+        action__helixsr_uninstall) prompt_helixsr_uninstall ;;
         action__setup)
             confirm_menu_action \
                 "Install or resume FSR4 RADV and its AMDGPU prerequisite? This is not required for the portable FSR4 RC9 route." setup
@@ -3587,7 +3778,7 @@ mesh_menu_graph_render() {
         local items=() targets=() badges=()
         case "$menu_id" in
             menu__root)
-                title="BC-250 GPU driver and FSR4"
+                title="BC-250 GPU driver and game upscalers"
                 if ! badge=$(mesh_menu_graph_badge action__status read_only); then badge=; fi
                 if [[ "$badge" == *"|"* || "$badge" == *$'\n'* ]]; then
                     die "Invalid generated menu badge: action__status"
@@ -3601,6 +3792,13 @@ mesh_menu_graph_render() {
                 fi
                 items+=("Install FSR4 RC9 game DLL (recommended)|${badge}|Portable FSR4 route. Replaces one exact existing DLL and retains the original; no custom RADV installation is needed.")
                 targets+=("action__fsr4_dll")
+                badges+=("$badge")
+                if ! badge=$(mesh_menu_graph_badge menu__helixsr menu); then badge=; fi
+                if [[ "$badge" == *"|"* || "$badge" == *$'\n'* ]]; then
+                    die "Invalid generated menu badge: menu__helixsr"
+                fi
+                items+=("HelixSR v1.2.0 (experimental)|${badge}|Prepare and manage the user-local HelixSR payload. Do not use injected DLLs with anti-cheat games.")
+                targets+=("menu__helixsr")
                 badges+=("$badge")
                 if ! badge=$(mesh_menu_graph_badge action__setup install); then badge=; fi
                 if [[ "$badge" == *"|"* || "$badge" == *$'\n'* ]]; then
@@ -3645,6 +3843,37 @@ mesh_menu_graph_render() {
                 targets+=("action__help")
                 badges+=("$badge")
                 ;;
+            menu__helixsr)
+                title="HelixSR v1.2.0 (experimental)"
+                if ! badge=$(mesh_menu_graph_badge action__helixsr_status read_only); then badge=; fi
+                if [[ "$badge" == *"|"* || "$badge" == *$'\n'* ]]; then
+                    die "Invalid generated menu badge: action__helixsr_status"
+                fi
+                items+=("HelixSR payload status|${badge}|Check whether the pinned v1.2.0 payload is prepared and valid.")
+                targets+=("action__helixsr_status")
+                badges+=("$badge")
+                if ! badge=$(mesh_menu_graph_badge action__helixsr_prepare experimental); then badge=; fi
+                if [[ "$badge" == *"|"* || "$badge" == *$'\n'* ]]; then
+                    die "Invalid generated menu badge: action__helixsr_prepare"
+                fi
+                items+=("Prepare HelixSR payload|${badge}|Download and generate the user-local payload, optionally using a local DLSS DLL. NVIDIA-derived files are not redistributed.")
+                targets+=("action__helixsr_prepare")
+                badges+=("$badge")
+                if ! badge=$(mesh_menu_graph_badge action__helixsr_install experimental); then badge=; fi
+                if [[ "$badge" == *"|"* || "$badge" == *$'\n'* ]]; then
+                    die "Invalid generated menu badge: action__helixsr_install"
+                fi
+                items+=("Install HelixSR game DLL|${badge}|Experimental: replace an existing lowercase amd_fidelityfx_upscaler_dx12.dll or amd_fidelityfx_dx12.dll with verified rollback.")
+                targets+=("action__helixsr_install")
+                badges+=("$badge")
+                if ! badge=$(mesh_menu_graph_badge action__helixsr_uninstall cleanup); then badge=; fi
+                if [[ "$badge" == *"|"* || "$badge" == *$'\n'* ]]; then
+                    die "Invalid generated menu badge: action__helixsr_uninstall"
+                fi
+                items+=("Uninstall HelixSR game DLL|${badge}|Restore one exact target from its verified rollback record.")
+                targets+=("action__helixsr_uninstall")
+                badges+=("$badge")
+                ;;
             *) die "Unknown generated mesh-shader menu ID: $menu_id" ;;
         esac
         if [[ "$title" == *"|"* || "$title" == *[[:cntrl:]]* ]]; then
@@ -3678,7 +3907,7 @@ cmd_menu() {
 
 cmd_help() {
     cat <<EOF
-Usage: $0 [menu|setup [--replace-unmanaged|--native-mesh|--fsr4 TARGET_DLL|--fsr4-legacy]|status|status-json|legacy-clear|uninstall [--native-mesh|--fsr4 TARGET_DLL|--fsr4-legacy]|purge|help]
+Usage: $0 [menu|setup [--replace-unmanaged|--native-mesh|--fsr4 TARGET_DLL|--fsr4-legacy]|helixsr-prepare [DLSS_DLL]|helixsr-payload-status|helixsr-install TARGET_DLL|helixsr-uninstall TARGET_DLL|--all|status|status-json|legacy-clear|uninstall [--native-mesh|--fsr4 TARGET_DLL|--fsr4-legacy]|purge|help]
 
   setup                        Fetch the verified upstream series, build the
                                audited Mesa RADV driver with GFX1013 async
@@ -3700,6 +3929,14 @@ Usage: $0 [menu|setup [--replace-unmanaged|--native-mesh|--fsr4 TARGET_DLL|--fsr
                                Absolute paths are recommended; quote spaces at the shell.
   setup --fsr4-legacy          Retired compatibility command; exits without
                                changing an existing legacy profile.
+  helixsr-prepare [DLSS_DLL]   Prepare pinned HelixSR v1.2.0, optionally using
+                               a local DLSS DLL instead of its user-local download.
+  helixsr-payload-status       Show whether the HelixSR payload is ready.
+  helixsr-install TARGET_DLL   Install over one exact existing lowercase
+                               amd_fidelityfx_upscaler_dx12.dll or
+                               amd_fidelityfx_dx12.dll.
+  helixsr-uninstall TARGET_DLL|--all
+                               Restore one or all recorded HelixSR targets.
   status                       Verify the AMDGPU module, scheduler policy, and
                                global runtime ownership.
   status-json                  Print machine-readable runtime status.
@@ -3733,6 +3970,10 @@ patched vkd3d compute-to-graphics queue workaround. It remains experimental.
 Legacy FSR4 V3 RADV setup has been retired. Existing recorded legacy profiles can
 still be inspected and removed with 'uninstall --fsr4-legacy'.
 
+HelixSR is experimental. Close games before file operations and do not use DLL
+injection with anti-cheat games. Its downloads and generated NVIDIA-derived
+files stay in user-local state and are not redistributed by this toolkit.
+
 Async-compute upstream (pinned to $UPSTREAM_COMMIT):
   $UPSTREAM_REPO
 FSR4 patches (pinned to $FSR4_RADV_COMMIT):
@@ -3755,6 +3996,13 @@ case "${1:-menu}" in
             die "Legacy FSR4 V3 builds are retired; use FSR4 RADV or the portable RC9 DLL."
         else die "Usage: $0 setup [--replace-unmanaged|--native-mesh|--fsr4 TARGET_DLL|--fsr4-legacy]"
         fi ;;
+    helixsr-prepare)
+        (($# <= 2)) || die "Usage: $0 helixsr-prepare [DLSS_DLL]"
+        if (($# == 2)); then cmd_helixsr_prepare "$2"; else cmd_helixsr_prepare; fi
+        ;;
+    helixsr-payload-status) (($# == 1)) || die "Usage: $0 helixsr-payload-status"; cmd_helixsr_payload_status ;;
+    helixsr-install) (($# == 2)) || die "Usage: $0 helixsr-install TARGET_DLL"; cmd_helixsr_install "$2" ;;
+    helixsr-uninstall) (($# == 2)) || die "Usage: $0 helixsr-uninstall TARGET_DLL|--all"; cmd_helixsr_uninstall "$2" ;;
     status) (($# == 1)) || die "Usage: $0 status"; cmd_status ;;
     status-json) (($# == 1)) || die "Usage: $0 status-json"; cmd_status_json ;;
     game) shift; cmd_game "$@" ;;

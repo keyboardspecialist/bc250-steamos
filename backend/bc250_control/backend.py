@@ -49,6 +49,21 @@ OPTISCALER_DECKY_MANIFEST_PATH = Path(
 )
 FSR4_DESKTOP_HELPER_PATH = Path("/var/lib/bc250-control/desktop/bc250-fsr4.sh")
 FSR4_DECKY_HELPER_PATH = Path("/var/lib/bc250-control/helper/bc250-fsr4.sh")
+HELIXSR_DESKTOP_HELPER_PATH = Path(
+    "/var/lib/bc250-control/desktop/bc250-helixsr.sh"
+)
+HELIXSR_DECKY_HELPER_PATH = Path(
+    "/var/lib/bc250-control/helper/bc250-helixsr.sh"
+)
+HELIXSR_DESKTOP_REQUIRED_PATHS = (HELIXSR_DESKTOP_HELPER_PATH,)
+HELIXSR_DECKY_REQUIRED_PATHS = (
+    HELIXSR_DECKY_HELPER_PATH,
+    OPTISCALER_DECKY_MANIFEST_PATH,
+)
+HELIXSR_TARGET_NAMES = frozenset({
+    "amd_fidelityfx_upscaler_dx12.dll",
+    "amd_fidelityfx_dx12.dll",
+})
 HDMI_AUDIO_HELPER_PATH = Path(
     "/var/lib/bc250-control/helper/hdmi-ac3/hdmi-ac3.sh"
 )
@@ -456,6 +471,31 @@ class ToolkitBackend:
         if helper is None:
             raise CommandError(
                 "The FSR4 DLL helper is missing or unsafe; update the toolkit checkout."
+            )
+        _, out, _ = await self._user_exec(
+            [BASH, str(helper), *args], timeout=timeout
+        )
+        return out
+
+    def _helixsr_helper_path(self) -> Optional[Path]:
+        if all(
+            self._trusted_root_file(path)
+            for path in HELIXSR_DESKTOP_REQUIRED_PATHS
+        ):
+            return HELIXSR_DESKTOP_HELPER_PATH
+        if all(
+            self._trusted_root_file(path)
+            for path in HELIXSR_DECKY_REQUIRED_PATHS
+        ):
+            return HELIXSR_DECKY_HELPER_PATH
+        source = self.toolkit / "bc250-helixsr.sh"
+        return source if self._toolkit_file(source) else None
+
+    async def _helixsr_tool(self, *args: str, timeout: float = 30) -> str:
+        helper = self._helixsr_helper_path()
+        if helper is None:
+            raise CommandError(
+                "The HelixSR helper is missing or unsafe; update the toolkit checkout."
             )
         _, out, _ = await self._user_exec(
             [BASH, str(helper), *args], timeout=timeout
@@ -2891,6 +2931,166 @@ class ToolkitBackend:
             "records": records,
         }
 
+    async def _get_helixsr_records(self) -> dict[str, Any]:
+        output = await self._helixsr_tool("records-json", timeout=30)
+        try:
+            payload = json.loads(output)
+        except (TypeError, ValueError) as error:
+            raise CommandError("HelixSR status returned invalid JSON.") from error
+        canonical_fields = {
+            "schemaVersion",
+            "release",
+            "dllSha256",
+            "payloadState",
+            "state",
+            "invalidRecordCount",
+            "records",
+        }
+        if (
+            not isinstance(payload, dict)
+            or type(payload.get("schemaVersion")) is not int
+            or payload.get("schemaVersion") != 1
+        ):
+            raise CommandError("HelixSR status returned an unsupported schema.")
+        if set(payload) != canonical_fields:
+            raise CommandError("HelixSR status returned invalid data.")
+
+        release = payload.get("release")
+        dll_sha = payload.get("dllSha256")
+        payload_state = payload.get("payloadState")
+        state_value = payload.get("state")
+        invalid_count = payload.get("invalidRecordCount")
+        raw_records = payload.get("records")
+        if (
+            not isinstance(release, str)
+            or re.fullmatch(r"v[0-9][0-9A-Za-z._-]*", release) is None
+            or not isinstance(dll_sha, str)
+            or re.fullmatch(r"[0-9a-f]{64}", dll_sha) is None
+            or payload_state not in {"ready", "not-prepared", "invalid"}
+            or state_value
+            not in {
+                "ready",
+                "upgrade-required",
+                "restorable",
+                "not-installed",
+                "invalid",
+            }
+            or type(invalid_count) is not int
+            or not 0 <= invalid_count <= 4097
+            or not isinstance(raw_records, list)
+            or len(raw_records) > 4097
+        ):
+            raise CommandError("HelixSR status returned invalid data.")
+
+        records = []
+        target_ids = set()
+        target_paths = set()
+        valid_states = {
+            "ready",
+            "upgrade-required",
+            "restorable",
+            "restored",
+            "modified",
+            "invalid",
+        }
+        for raw in raw_records:
+            if not isinstance(raw, dict):
+                raise CommandError("HelixSR status returned an invalid record.")
+            target_id = raw.get("targetId")
+            target_path = raw.get("targetPath")
+            record_release = raw.get("release")
+            record_state = raw.get("state")
+            current = raw.get("currentRelease")
+            invalid_record = record_state == "invalid"
+            valid_identity = (
+                isinstance(target_id, str)
+                and re.fullmatch(r"[0-9a-f]{64}", target_id) is not None
+                and target_id not in target_ids
+            )
+            valid_target = (
+                isinstance(target_path, str)
+                and target_path.startswith("/")
+                and target_path.isprintable()
+                and len(os.fsencode(target_path)) <= 4096
+                and os.path.normpath(target_path) == target_path
+                and target_id == hashlib.sha256(os.fsencode(target_path)).hexdigest()
+                and target_path not in target_paths
+                and Path(target_path).name in HELIXSR_TARGET_NAMES
+            )
+            if (
+                not valid_identity
+                or record_state not in valid_states
+                or type(current) is not bool
+                or (
+                    invalid_record
+                    and (
+                        target_path is not None
+                        or record_release is not None
+                        or current
+                    )
+                )
+                or (
+                    not invalid_record
+                    and (
+                        not valid_target
+                        or not isinstance(record_release, str)
+                        or re.fullmatch(
+                            r"v[0-9][0-9A-Za-z._-]*", record_release
+                        )
+                        is None
+                    )
+                )
+            ):
+                raise CommandError("HelixSR status returned an invalid record.")
+            target_ids.add(target_id)
+            if target_path is not None:
+                target_paths.add(target_path)
+            records.append({
+                "targetId": target_id,
+                "targetPath": target_path,
+                "release": record_release,
+                "state": record_state,
+                "currentRelease": current,
+            })
+
+        if (
+            invalid_count != sum(record["state"] == "invalid" for record in records)
+            or any(
+                (record["state"] == "ready" and not record["currentRelease"])
+                or (
+                    record["state"] == "upgrade-required"
+                    and record["currentRelease"]
+                )
+                for record in records
+            )
+        ):
+            raise CommandError("HelixSR status is internally inconsistent.")
+        if not records:
+            expected_state = "not-installed"
+        elif invalid_count or any(
+            record["state"] in {"invalid", "modified"} for record in records
+        ):
+            expected_state = "invalid"
+        elif any(
+            record["state"] in {"restorable", "restored"} for record in records
+        ):
+            expected_state = "restorable"
+        elif any(record["state"] == "upgrade-required" for record in records):
+            expected_state = "upgrade-required"
+        else:
+            expected_state = "ready"
+        if state_value != expected_state:
+            raise CommandError("HelixSR status is internally inconsistent.")
+        return {
+            "schemaVersion": 1,
+            "release": release,
+            "dllSha256": dll_sha,
+            "payloadState": payload_state,
+            "state": state_value,
+            "invalidRecordCount": invalid_count,
+            "records": records,
+        }
+
     async def _get_optiscaler_records(self) -> dict[str, Any]:
         output = await self._optiscaler_tool("records-json", timeout=30)
         try:
@@ -3107,6 +3307,8 @@ class ToolkitBackend:
         optiscaler_candidates: Optional[list[dict[str, Any]]] = None,
         optiscaler_available: bool = False,
         optiscaler_budget: Optional[list[int]] = None,
+        helixsr_records_by_path: Optional[dict[str, dict[str, Any]]] = None,
+        helixsr_available: bool = False,
     ) -> tuple[list[dict[str, Any]], str]:
         if (
             not install_path.is_dir()
@@ -3164,7 +3366,7 @@ class ToolkitBackend:
                                     executable_names.append(entry.name)
                                 else:
                                     executable_name_limit_reached = True
-                        if entry.name.casefold() != "amd_fidelityfx_upscaler_dx12.dll":
+                        if entry.name.casefold() not in HELIXSR_TARGET_NAMES:
                             continue
                         target = Path(entry.path).resolve(strict=True)
                     except (OSError, RuntimeError):
@@ -3181,6 +3383,13 @@ class ToolkitBackend:
                     target_budget[0] -= 1
                     target_text = str(target)
                     record = records_by_path.get(target_text)
+                    helixsr_eligible = target.name in HELIXSR_TARGET_NAMES
+                    helixsr_record = (
+                        helixsr_records_by_path.get(target_text)
+                        if helixsr_eligible
+                        and helixsr_records_by_path is not None
+                        else None
+                    )
                     targets.append({
                         "targetId": hashlib.sha256(os.fsencode(target_text)).hexdigest(),
                         "targetPath": target_text,
@@ -3188,6 +3397,21 @@ class ToolkitBackend:
                         "state": record["state"] if record else "available",
                         "release": record["release"] if record else None,
                         "discovered": True,
+                        "helixsrState": (
+                            helixsr_record["state"]
+                            if helixsr_record is not None
+                            else (
+                                "not-installed"
+                                if helixsr_available and helixsr_eligible
+                                else "unavailable"
+                            )
+                        ),
+                        "helixsrRelease": (
+                            helixsr_record["release"]
+                            if helixsr_record is not None
+                            else None
+                        ),
+                        "helixsrManaged": helixsr_record is not None,
                     })
             if executable_name_limit_reached:
                 scan_state = "truncated"
@@ -3223,6 +3447,7 @@ class ToolkitBackend:
                     "proxy": None,
                     "launchOption": "",
                     "fsr4Managed": False,
+                    "helixsrManaged": False,
                 })
         targets.sort(key=lambda item: item["relativePath"].casefold())
         if optiscaler_candidates is not None:
@@ -3235,11 +3460,20 @@ class ToolkitBackend:
         self,
         record_status: dict[str, Any],
         optiscaler_status: Optional[dict[str, Any]] = None,
+        helixsr_status: Optional[dict[str, Any]] = None,
     ) -> dict[str, Any]:
         records = record_status["records"]
         records_by_path = {
             record["targetPath"]: record
             for record in records
+            if record["targetPath"] is not None
+        }
+        helixsr_records = (
+            helixsr_status["records"] if helixsr_status is not None else []
+        )
+        helixsr_records_by_path = {
+            record["targetPath"]: record
+            for record in helixsr_records
             if record["targetPath"] is not None
         }
         errors = []
@@ -3391,6 +3625,8 @@ class ToolkitBackend:
                     optiscaler_candidates,
                     optiscaler_status is not None,
                     optiscaler_budget,
+                    helixsr_records_by_path,
+                    helixsr_status is not None,
                 )
                 if scan_state == "truncated" and "The Steam game scan limit was reached." not in errors:
                     errors.append("The Steam game scan limit was reached.")
@@ -3459,6 +3695,7 @@ class ToolkitBackend:
                         "executables": [],
                         "discovered": False,
                         "fsr4Managed": False,
+                        "helixsrManaged": False,
                     }
                     app["optiscalerCandidates"].append(candidate)
                     candidates_by_path[record["installPath"]] = candidate
@@ -3494,6 +3731,13 @@ class ToolkitBackend:
                         "state": record["state"],
                         "release": record["release"],
                         "discovered": False,
+                        "helixsrState": (
+                            "not-installed"
+                            if helixsr_status is not None
+                            else "unavailable"
+                        ),
+                        "helixsrRelease": None,
+                        "helixsrManaged": False,
                     })
                     associated.add(record["targetId"])
             for target in app["targets"]:
@@ -3501,9 +3745,76 @@ class ToolkitBackend:
                     associated.add(target["targetId"])
             app["targets"].sort(key=lambda item: item["relativePath"].casefold())
 
+        associated_helixsr = set()
+        for app in apps:
+            install_path = Path(app["installPath"])
+            targets_by_path = {
+                target["targetPath"]: target for target in app["targets"]
+            }
+            for target in app["targets"]:
+                record = helixsr_records_by_path.get(target["targetPath"])
+                if record is None:
+                    continue
+                if record["targetId"] in associated_helixsr:
+                    target.update({
+                        "helixsrState": (
+                            "not-installed"
+                            if helixsr_status is not None
+                            else "unavailable"
+                        ),
+                        "helixsrRelease": None,
+                        "helixsrManaged": False,
+                    })
+                    continue
+                associated_helixsr.add(record["targetId"])
+            for record in helixsr_records:
+                target_path = record["targetPath"]
+                if (
+                    target_path is None
+                    or record["targetId"] in associated_helixsr
+                    or not self._path_below(Path(target_path), install_path)
+                ):
+                    continue
+                target = targets_by_path.get(target_path)
+                if target is None:
+                    fsr4_record = records_by_path.get(target_path)
+                    target_path_object = Path(target_path)
+                    target = {
+                        "targetId": record["targetId"],
+                        "targetPath": target_path,
+                        "relativePath": target_path_object.relative_to(
+                            install_path
+                        ).as_posix(),
+                        "state": (
+                            fsr4_record["state"]
+                            if fsr4_record is not None
+                            else "available"
+                        ),
+                        "release": (
+                            fsr4_record["release"]
+                            if fsr4_record is not None
+                            else None
+                        ),
+                        "discovered": False,
+                    }
+                    app["targets"].append(target)
+                    targets_by_path[target_path] = target
+                target.update({
+                    "helixsrState": record["state"],
+                    "helixsrRelease": record["release"],
+                    "helixsrManaged": True,
+                })
+                associated_helixsr.add(record["targetId"])
+            app["targets"].sort(key=lambda item: item["relativePath"].casefold())
+
         fsr4_managed_targets = [
             Path(record["targetPath"])
             for record in records
+            if record["targetPath"] is not None
+        ]
+        helixsr_managed_targets = [
+            Path(record["targetPath"])
+            for record in helixsr_records
             if record["targetPath"] is not None
         ]
         for app in apps:
@@ -3513,12 +3824,23 @@ class ToolkitBackend:
                     self._path_below(target, candidate_path)
                     for target in fsr4_managed_targets
                 )
+                candidate["helixsrManaged"] = any(
+                    self._path_below(target, candidate_path)
+                    for target in helixsr_managed_targets
+                )
                 if candidate["proxy"] and candidate["fsr4Managed"]:
                     proxy = candidate["proxy"][:-4]
                     candidate["launchOption"] = (
                         "PROTON_FSR4_UPGRADE=0 PROTON_USE_OPTISCALER=0 "
                         f'WINEDLLOVERRIDES="{proxy}=n,b;amdxcffx64=" %command%'
                     )
+            for target in app["targets"]:
+                target_path = Path(target["targetPath"])
+                target["optiscalerManaged"] = any(
+                    record["installPath"] is not None
+                    and target_path.parent == Path(record["installPath"])
+                    for record in optiscaler_records
+                )
 
         orphaned = [
             {**record, "discovered": False}
@@ -3535,9 +3857,19 @@ class ToolkitBackend:
                     and self._path_below(target, Path(record["installPath"]))
                     for target in fsr4_managed_targets
                 ),
+                "helixsrManaged": any(
+                    record["installPath"] is not None
+                    and self._path_below(target, Path(record["installPath"]))
+                    for target in helixsr_managed_targets
+                ),
             }
             for record in optiscaler_records
             if record["candidateId"] not in associated_optiscaler
+        ]
+        orphaned_helixsr = [
+            {**record, "discovered": False}
+            for record in helixsr_records
+            if record["targetId"] not in associated_helixsr
         ]
         for candidate in orphaned_optiscaler:
             if candidate["proxy"] and candidate["fsr4Managed"]:
@@ -3559,16 +3891,27 @@ class ToolkitBackend:
                 if optiscaler_status is not None
                 else None
             ),
+            "helixsrAvailable": helixsr_status is not None,
+            "currentHelixsrRelease": (
+                helixsr_status["release"] if helixsr_status is not None else None
+            ),
+            "helixsrPayloadState": (
+                helixsr_status["payloadState"]
+                if helixsr_status is not None
+                else "unavailable"
+            ),
             "games": apps,
             "orphanedTargets": orphaned,
             "orphanedOptiscaler": orphaned_optiscaler,
+            "orphanedHelixsr": orphaned_helixsr,
             "errors": errors[:50],
         }
 
     async def get_fsr4_inventory(self) -> dict[str, Any]:
-        fsr4_result, optiscaler_result = await asyncio.gather(
+        fsr4_result, optiscaler_result, helixsr_result = await asyncio.gather(
             self._get_fsr4_records(),
             self._get_optiscaler_records(),
+            self._get_helixsr_records(),
             return_exceptions=True,
         )
         if isinstance(fsr4_result, Exception) and not isinstance(
@@ -3579,6 +3922,10 @@ class ToolkitBackend:
             optiscaler_result, CommandError
         ):
             raise optiscaler_result
+        if isinstance(helixsr_result, Exception) and not isinstance(
+            helixsr_result, CommandError
+        ):
+            raise helixsr_result
         if isinstance(fsr4_result, CommandError):
             return {
                 "schemaVersion": 1,
@@ -3593,9 +3940,23 @@ class ToolkitBackend:
                     if not isinstance(optiscaler_result, CommandError)
                     else None
                 ),
+                "helixsrAvailable": not isinstance(
+                    helixsr_result, CommandError
+                ),
+                "currentHelixsrRelease": (
+                    helixsr_result["release"]
+                    if not isinstance(helixsr_result, CommandError)
+                    else None
+                ),
+                "helixsrPayloadState": (
+                    helixsr_result["payloadState"]
+                    if not isinstance(helixsr_result, CommandError)
+                    else "unavailable"
+                ),
                 "games": [],
                 "orphanedTargets": [],
                 "orphanedOptiscaler": [],
+                "orphanedHelixsr": [],
                 "errors": [str(fsr4_result)],
             }
         loop = asyncio.get_running_loop()
@@ -3604,8 +3965,15 @@ class ToolkitBackend:
             if isinstance(optiscaler_result, CommandError)
             else optiscaler_result
         )
+        helixsr_status = (
+            None if isinstance(helixsr_result, CommandError) else helixsr_result
+        )
         return await loop.run_in_executor(
-            None, self._build_fsr4_inventory, fsr4_result, optiscaler_status
+            None,
+            self._build_fsr4_inventory,
+            fsr4_result,
+            optiscaler_status,
+            helixsr_status,
         )
 
     async def get_mesh_status(self) -> dict[str, Any]:
@@ -3803,6 +4171,157 @@ class ToolkitBackend:
         ):
             raise CommandError("FSR4 target ID is invalid.")
 
+    @staticmethod
+    def _validate_helixsr_target_id(target_id: str) -> None:
+        if (
+            type(target_id) is not str
+            or re.fullmatch(r"[0-9a-f]{64}", target_id) is None
+        ):
+            raise CommandError("HelixSR target ID is invalid.")
+
+    async def prepare_helixsr(self) -> dict[str, Any]:
+        async def action() -> dict[str, Any]:
+            await self._helixsr_tool("prepare", timeout=1800)
+            return await self.get_fsr4_inventory()
+
+        return await self._mutate(action)
+
+    async def _resolve_helixsr_target(
+        self,
+        target_id: str,
+        allowed_states: set[str],
+        require_discovered: bool = False,
+        require_payload: bool = False,
+    ) -> dict[str, Any]:
+        fsr4_records, optiscaler_records, helixsr_records = await asyncio.gather(
+            self._get_fsr4_records(),
+            self._get_optiscaler_records(),
+            self._get_helixsr_records(),
+        )
+        if require_payload and helixsr_records["payloadState"] != "ready":
+            raise CommandError(
+                "Prepare the HelixSR payload before installing it."
+            )
+        loop = asyncio.get_running_loop()
+        inventory = await loop.run_in_executor(
+            None,
+            self._build_fsr4_inventory,
+            fsr4_records,
+            optiscaler_records,
+            helixsr_records,
+        )
+        matches = []
+        for game in inventory["games"]:
+            matches.extend(
+                (target, game)
+                for target in game["targets"]
+                if target["targetId"] == target_id
+            )
+        matches.extend(
+            (
+                {
+                    **record,
+                    "helixsrState": record["state"],
+                    "helixsrRelease": record["release"],
+                    "helixsrManaged": True,
+                    "state": next(
+                        (
+                            fsr4_record["state"]
+                            for fsr4_record in fsr4_records["records"]
+                            if fsr4_record["targetPath"] == record["targetPath"]
+                        ),
+                        "available",
+                    ),
+                    "optiscalerManaged": any(
+                        candidate["installPath"] is not None
+                        and record["targetPath"] is not None
+                        and Path(record["targetPath"]).parent
+                        == Path(candidate["installPath"])
+                        for candidate in optiscaler_records["records"]
+                    ),
+                },
+                None,
+            )
+            for record in inventory["orphanedHelixsr"]
+            if record["targetId"] == target_id
+        )
+        paths = {target.get("targetPath") for target, _game in matches}
+        owners = {
+            game["appKey"] for _target, game in matches if game is not None
+        }
+        if len(paths) != 1 or None in paths or len(owners) > 1:
+            raise CommandError(
+                "HelixSR target is stale or ambiguous; refresh the game list."
+            )
+        target, game = matches[0]
+        target_path = target["targetPath"]
+        if hashlib.sha256(os.fsencode(target_path)).hexdigest() != target_id:
+            raise CommandError(
+                "HelixSR target path no longer matches its ID; refresh the game list."
+            )
+        if Path(target_path).name not in HELIXSR_TARGET_NAMES:
+            raise CommandError(
+                "This DLL name is not supported by the HelixSR helper."
+            )
+        if game is not None:
+            if not game["fullyInstalled"] or not game["installPresent"]:
+                raise CommandError(
+                    "Steam is installing or updating this game; finish the Steam operation first."
+                )
+            if game.get("scanState") != "complete":
+                raise CommandError(
+                    "The Steam game scan is incomplete; refresh the game list before changing HelixSR."
+                )
+        if require_discovered and not target["discovered"]:
+            raise CommandError(
+                "HelixSR target is no longer discoverable; refresh the game list."
+            )
+        if target["helixsrState"] not in allowed_states:
+            raise CommandError(
+                f"HelixSR target is {target['helixsrState']}; refresh it or resolve the integrity warning first."
+            )
+        if target.get("state") != "available":
+            raise CommandError(
+                "Restore the FSR4-managed target before changing HelixSR."
+            )
+        if target.get("optiscalerManaged"):
+            raise CommandError(
+                "Remove OptiScaler from this target directory before changing HelixSR."
+            )
+        return target
+
+    async def install_helixsr(self, target_id: str) -> dict[str, Any]:
+        self._validate_helixsr_target_id(target_id)
+
+        async def action() -> dict[str, Any]:
+            target = await self._resolve_helixsr_target(
+                target_id,
+                {"not-installed", "ready", "upgrade-required", "restored"},
+                require_discovered=True,
+                require_payload=True,
+            )
+            await self._helixsr_tool(
+                "install", target["targetPath"], target_id, timeout=300
+            )
+            return await self.get_fsr4_inventory()
+
+        return await self._mutate(action)
+
+    async def uninstall_helixsr(self, target_id: str) -> dict[str, Any]:
+        self._validate_helixsr_target_id(target_id)
+
+        async def action() -> dict[str, Any]:
+            target = await self._resolve_helixsr_target(
+                target_id,
+                {"ready", "upgrade-required", "restorable", "restored"},
+            )
+            await self._helixsr_tool(
+                "uninstall", target["targetPath"], target_id, timeout=300
+            )
+            return await self.get_fsr4_inventory()
+
+        return await self._mutate(action)
+
     async def _resolve_fsr4_target(
         self,
         target_id: str,
@@ -3854,6 +4373,13 @@ class ToolkitBackend:
                 {"available", "ready", "upgrade-required", "restored"},
                 require_discovered=True,
             )
+            if (
+                Path(target["targetPath"]).name.casefold()
+                != "amd_fidelityfx_upscaler_dx12.dll"
+            ):
+                raise CommandError(
+                    "This DLL name is not supported by the FSR4 helper."
+                )
             await self._fsr4_tool("install", target["targetPath"], timeout=300)
             return {"message": "FSR4 RC9 installed for the selected game."}
 
@@ -3898,8 +4424,10 @@ class ToolkitBackend:
         allowed_states: set[str],
         require_discovered: bool = False,
     ) -> dict[str, Any]:
-        fsr4_records, optiscaler_records = await asyncio.gather(
-            self._get_fsr4_records(), self._get_optiscaler_records()
+        fsr4_records, optiscaler_records, helixsr_records = await asyncio.gather(
+            self._get_fsr4_records(),
+            self._get_optiscaler_records(),
+            self._get_helixsr_records(),
         )
         loop = asyncio.get_running_loop()
         inventory = await loop.run_in_executor(
@@ -3907,6 +4435,7 @@ class ToolkitBackend:
             self._build_fsr4_inventory,
             fsr4_records,
             optiscaler_records,
+            helixsr_records,
         )
         matches = []
         for game in inventory["games"]:
@@ -3960,6 +4489,10 @@ class ToolkitBackend:
                 raise CommandError(
                     "Remove the managed FSR4 DLL from this directory before installing OptiScaler."
                 )
+            if candidate["helixsrManaged"]:
+                raise CommandError(
+                    "Restore the HelixSR-managed target in this directory before installing OptiScaler."
+                )
             if candidate["state"] == "restorable" and not candidate["currentRelease"]:
                 raise CommandError(
                     "Uninstall the interrupted OptiScaler operation before upgrading it."
@@ -3982,6 +4515,10 @@ class ToolkitBackend:
             if candidate["fsr4Managed"]:
                 raise CommandError(
                     "Remove the managed FSR4 DLL from this directory before uninstalling OptiScaler."
+                )
+            if candidate["helixsrManaged"]:
+                raise CommandError(
+                    "Restore the HelixSR-managed target in this directory before uninstalling OptiScaler."
                 )
             await self._optiscaler_tool(
                 "uninstall", candidate["installPath"], candidate_id, timeout=120

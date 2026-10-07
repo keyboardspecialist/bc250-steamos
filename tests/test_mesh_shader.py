@@ -2690,9 +2690,167 @@ ensure_radv_prerequisites
     def test_purge_serializes_with_fsr4_dll_rollback_state(self):
         script = MESH.read_text(encoding="utf-8")
         purge = script[script.index("cmd_purge() (") : script.index("menu_select() {")]
+        self.assertIn('exec 7> "$OPTISCALER_LOCK"', purge)
         self.assertIn('exec 8> "$FSR4_DLL_LOCK"', purge)
+        self.assertLess(
+            purge.index('exec 7> "$OPTISCALER_LOCK"'),
+            purge.index('exec 8> "$FSR4_DLL_LOCK"'),
+        )
         self.assertIn('flock 8', purge)
         self.assertIn('FSR4 DLL rollback state exists but its helper is unavailable', purge)
+        self.assertLess(purge.index("optiscaler_count)"), purge.index('flock 7'))
+        self.assertLess(purge.index('bash "$HELIXSR_TOOL" count'), purge.index('flock 8'))
+
+    def test_purge_preserves_optiscaler_rollback_records(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            env = self.environment(root)
+            state = Path(env["BC250_MESH_STATE_DIR"])
+            record = state / "optiscaler/installs/record"
+            record.mkdir(parents=True)
+            helper = root / "optiscaler-helper.sh"
+            helper.write_text(
+                "#!/bin/sh\n"
+                "[ \"$1\" = records-json ] || exit 2\n"
+                "printf '%s\\n' '{\"schemaVersion\":1,\"invalidRecordCount\":0,\"records\":[{}]}'\n",
+                encoding="ascii",
+            )
+            helper.chmod(0o755)
+            env["BC250_OPTISCALER_TOOL"] = str(helper)
+
+            result = subprocess.run(
+                ["bash", str(MESH), "purge"],
+                capture_output=True,
+                text=True,
+                env=env,
+            )
+
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("OptiScaler rollback records remain", result.stderr)
+            self.assertTrue(record.is_dir())
+
+    def test_purge_refuses_optiscaler_state_when_helper_is_unavailable(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            env = self.environment(root)
+            state = Path(env["BC250_MESH_STATE_DIR"])
+            record = state / "optiscaler/installs/record"
+            record.mkdir(parents=True)
+            env["BC250_OPTISCALER_TOOL"] = str(root / "missing-helper.sh")
+
+            result = subprocess.run(
+                ["bash", str(MESH), "purge"],
+                capture_output=True,
+                text=True,
+                env=env,
+            )
+
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("OptiScaler state exists but its helper is unavailable", result.stderr)
+            self.assertTrue(record.is_dir())
+
+    def test_purge_preserves_overridden_locks_inside_state(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            env = self.environment(root)
+            state = Path(env["BC250_MESH_STATE_DIR"])
+            locks = state / "locks"
+            env["BC250_MESH_LOCK_FILE"] = str(locks / "mesh.lock")
+            env["BC250_FSR4_LOCK_FILE"] = str(locks / "fsr4.lock")
+
+            subprocess.run(
+                ["bash", str(MESH), "purge"],
+                check=True,
+                capture_output=True,
+                text=True,
+                env=env,
+            )
+
+            self.assertTrue((locks / "mesh.lock").is_file())
+            self.assertTrue((locks / "fsr4.lock").is_file())
+
+    def test_purge_preserves_valid_and_invalid_helixsr_records(self):
+        for label, helper_status in (("valid", 0), ("invalid", 2)):
+            with self.subTest(label=label), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                env = self.environment(root)
+                state = Path(env["BC250_MESH_STATE_DIR"])
+                record = state / "helixsr/installs/record"
+                record.mkdir(parents=True)
+                helper = root / "helixsr-helper.sh"
+                helper.write_text(
+                    "#!/bin/sh\n"
+                    f'[ "$1" != count ] || {{ printf "1\\n"; exit {helper_status}; }}\n'
+                    "exit 2\n",
+                    encoding="ascii",
+                )
+                helper.chmod(0o755)
+                env["BC250_HELIXSR_TOOL"] = str(helper)
+
+                result = subprocess.run(
+                    ["bash", str(MESH), "purge"],
+                    capture_output=True,
+                    text=True,
+                    env=env,
+                )
+
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn("HelixSR rollback", result.stderr)
+                self.assertTrue(record.is_dir())
+
+    def test_purge_refuses_helixsr_state_when_helper_is_unavailable(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            env = self.environment(root)
+            state = Path(env["BC250_MESH_STATE_DIR"])
+            record = state / "helixsr/installs/record"
+            record.mkdir(parents=True)
+            env["BC250_HELIXSR_TOOL"] = str(root / "missing-helper.sh")
+
+            result = subprocess.run(
+                ["bash", str(MESH), "purge"],
+                capture_output=True,
+                text=True,
+                env=env,
+            )
+
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("helper is unavailable", result.stderr)
+            self.assertTrue(record.is_dir())
+
+    def test_purge_does_not_delete_helixsr_payload_when_runtime_blocks_cleanup(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            env = self.environment(root)
+            state = Path(env["BC250_MESH_STATE_DIR"])
+            payload = state / "helixsr/payload"
+            payload.mkdir(parents=True)
+            (payload / "manifest.json").write_text("fixture\n", encoding="ascii")
+            driver = Path(env["BC250_MESH_DRIVER"])
+            driver.write_text("installed runtime\n", encoding="ascii")
+            call_log = root / "helixsr-calls"
+            helper = root / "helixsr-helper.sh"
+            helper.write_text(
+                "#!/bin/sh\n"
+                '[ "$1" != count ] || { printf "0\\n"; exit 0; }\n'
+                'printf "%s\\n" "$1" >> "$HELIXSR_CALL_LOG"\n',
+                encoding="ascii",
+            )
+            helper.chmod(0o755)
+            env["BC250_HELIXSR_TOOL"] = str(helper)
+            env["HELIXSR_CALL_LOG"] = str(call_log)
+
+            result = subprocess.run(
+                ["bash", str(MESH), "purge"],
+                capture_output=True,
+                text=True,
+                env=env,
+            )
+
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("runtime remains", result.stderr)
+            self.assertTrue((payload / "manifest.json").is_file())
+            self.assertFalse(call_log.exists())
 
     def test_interactive_menu_can_remove_only_native_mesh(self):
         script = MESH.read_text(encoding="utf-8")
@@ -2709,6 +2867,7 @@ ensure_radv_prerequisites
         )
         self.assertTrue(os.access(FSR4, os.X_OK))
         self.assertIn("cp README.md bc250-*.sh", workflow)
+        self.assertIn('cp LICENSE.md "$package_dir/"', workflow)
         helper = FSR4.read_text(encoding="utf-8")
         self.assertIn('RELEASE="${BC250_FSR4_RELEASE:-v4.0.0-rc9}"', helper)
         self.assertIn(

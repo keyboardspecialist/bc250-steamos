@@ -17,6 +17,7 @@ AUDIO_SH="${AUDIO_SH:-$SCRIPT_DIR/bc250-audio-fix/patch-driver.sh}"
 AUDIO_CLEAN_SH="${AUDIO_CLEAN_SH:-$SCRIPT_DIR/bc250-audio-fix/clean.sh}"
 HDMI_AC3_SH="${HDMI_AC3_SH:-$SCRIPT_DIR/hdmi-ac3/hdmi-ac3.sh}"
 MESH_SH="${MESH_SH:-$SCRIPT_DIR/bc250-mesh-shader.sh}"
+HELIXSR_SH="${HELIXSR_SH:-$SCRIPT_DIR/bc250-helixsr.sh}"
 VIDEO_CODEC_SH="${VIDEO_CODEC_SH:-$SCRIPT_DIR/video-codec/bc250-video-codec.sh}"
 PROTON_SH="${PROTON_SH:-$SCRIPT_DIR/bc250-proton.sh}"
 DECKY_SH="${DECKY_SH:-$SCRIPT_DIR/decky-plugin/install.sh}"
@@ -26,10 +27,10 @@ TRAINER_FLATPAK_SH="${TRAINER_FLATPAK_SH:-$SCRIPT_DIR/trainer/install-flatpak.sh
 COOLERCONTROL_SH="${COOLERCONTROL_SH:-$SCRIPT_DIR/coolercontrol/install.sh}"
 SERVICE_CLIENT_DIR="${BC250_SERVICE_CLIENT_DIR:-/var/lib/bc250-control/service-clients}"
 
-COMPONENTS=(trainer desktop decky coolercontrol cec ac3 power ram swap compute proton native-mesh video-codec mesh audio fan aic)
-UNINSTALL_ORDER=(trainer desktop decky coolercontrol cec ac3 power ram swap compute proton native-mesh video-codec mesh audio fan aic)
+COMPONENTS=(trainer desktop decky coolercontrol cec ac3 power ram swap compute proton helixsr native-mesh video-codec mesh audio fan aic)
+UNINSTALL_ORDER=(trainer desktop decky coolercontrol cec ac3 power ram swap compute proton helixsr native-mesh video-codec mesh audio fan aic)
 MESH_STATE_DIR="${BC250_MESH_STATE_DIR:-$HOME/.local/share/bc250-mesh-shader}"
-MESH_LOCK_FILE="${BC250_MESH_LOCK_FILE:-$HOME/.cache/bc250-mesh-shader.lock}"
+HELIXSR_STATE_DIR="${BC250_HELIXSR_STATE_DIR:-$MESH_STATE_DIR/helixsr}"
 MESH_GENERATOR="${BC250_GFX1013_GENERATOR:-/usr/lib/systemd/user-environment-generators/60-bc250-gfx1013}"
 PROTON_STATE_DIR="${BC250_PROTON_STATE_DIR:-$HOME/.local/share/bc250-proton}"
 PROTON_COMPAT_DIR="${BC250_PROTON_COMPAT_DIR:-$HOME/.local/share/Steam/compatibilitytools.d}"
@@ -60,6 +61,7 @@ component_label() {
         swap) echo "Compressed swap" ;;
         compute) echo "GPU compute-unit unlock" ;;
         mesh) echo "Mesa / RADV async compute" ;;
+        helixsr) echo "HelixSR game upscaler" ;;
         video-codec) echo "VA-API video codec" ;;
         native-mesh) echo "BC250 RADV R2" ;;
         proton) echo "BC-250 GE-Proton" ;;
@@ -84,6 +86,7 @@ component_script() {
         swap) echo "$SWAP_SH" ;;
         compute) echo "$COMPUTE_SH" ;;
         mesh|native-mesh) echo "$MESH_SH" ;;
+        helixsr) echo "$HELIXSR_SH" ;;
         video-codec) echo "$VIDEO_CODEC_SH" ;;
         proton) echo "$PROTON_SH" ;;
         audio) echo "$AUDIO_SH" ;;
@@ -97,6 +100,9 @@ component_script() {
 component_probe() {
     local component="$1" script
     script=$(component_script "$component")
+    if [[ "$component" == helixsr && ( ! -f "$script" || -L "$script" ) ]]; then
+        return 1
+    fi
     require_script "$script"
     case "$component" in
         power|ram|swap|compute|cec) bash "$script" installed >/dev/null 2>&1 ;;
@@ -109,6 +115,7 @@ component_probe() {
             ;;
         native-mesh) bash "$script" status-json 2>/dev/null | grep -qF '"nativeMeshState":"ready"' ;;
         mesh) bash "$script" status-json 2>/dev/null | grep -qF '"runtimeState":"ready"' ;;
+        helixsr) bash "$script" probe >/dev/null 2>&1 ;;
         desktop|decky|coolercontrol|proton|video-codec|audio|aic|fan|ac3) bash "$script" status >/dev/null 2>&1 ;;
         storage) bash "$script" installed >/dev/null 2>&1 ;;
     esac
@@ -194,6 +201,15 @@ component_has_artifacts() {
                 || -e "$MESH_GENERATOR" || -L "$MESH_GENERATOR" \
                 || -e /usr/lib/libvulkan_radeon_driconf.so ]] \
                 || grep -qF '<!-- BEGIN BC250 MESH SHADER MANAGED -->' "$HOME/.drirc" 2>/dev/null
+            ;;
+        helixsr)
+            local installs="$HELIXSR_STATE_DIR/installs" record
+            [[ -L "$HELIXSR_STATE_DIR" || ( -e "$HELIXSR_STATE_DIR" && ! -d "$HELIXSR_STATE_DIR" ) \
+                || -L "$installs" || ( -e "$installs" && ! -d "$installs" ) ]] && return 0
+            for record in "$installs"/* "$installs"/.[!.]* "$installs"/..?*; do
+                [[ -e "$record" || -L "$record" ]] && return 0
+            done
+            return 1
             ;;
         video-codec)
             [[ -e /var/lib/bc250-control/video-codec/runtime \
@@ -347,6 +363,7 @@ plan_component() {
         swap) echo "  Disable toolkit swap boot integration and safely remove its inactive disk swapfile after any required reboot." ;;
         compute) echo "  Restore stock CU dispatch when possible and remove boot integration; preserve the WGP profile and UMR." ;;
         mesh) echo "  Remove the alternate RADV ICD and global user environment generator; preserve build caches." ;;
+        helixsr) echo "  Restore every HelixSR-managed game DLL and sidecar from its verified rollback record." ;;
         video-codec) echo "  Remove the verified VA-API driver, shaders, and managed environment selection." ;;
         native-mesh) echo "  Remove BC250 RADV R2 and its private Proton copy; preserve global RADV, prefixes, saves, and the original Proton." ;;
         proton) echo "  Remove only BC-250 GE-Proton; preserve Steam prefixes, game saves, and game data." ;;
@@ -424,6 +441,7 @@ run_component_uninstall() {
                 || bash "$script" uninstall || rc=$?
             ;;
         native-mesh) bash "$script" uninstall --native-mesh || rc=$? ;;
+        helixsr) bash "$script" uninstall --all || rc=$? ;;
         desktop|decky|coolercontrol|cec|mesh|proton|audio|ac3) bash "$script" uninstall || rc=$? ;;
         power|ram|swap|compute|video-codec|aic|fan|storage) sudo bash "$script" uninstall || rc=$? ;;
         *) die "Unknown component: $component" ;;
@@ -503,11 +521,6 @@ all_components_removed() {
 }
 
 purge_preserved_data() {
-    command -v flock >/dev/null 2>&1 || die "flock is required for safe mesh-shader cleanup."
-    mkdir -p "${MESH_LOCK_FILE%/*}"
-    [[ ! -L "$MESH_LOCK_FILE" ]] || die "Refusing symlinked mesh-shader lock: $MESH_LOCK_FILE"
-    exec 8> "$MESH_LOCK_FILE"
-    flock 8
     all_components_removed \
         || die "Installed or partial components remain. Run '$SELF uninstall all' first."
     require_script "$STORAGE_SH"
@@ -520,6 +533,8 @@ purge_preserved_data() {
     require_script "$AUDIO_SH"
     bash "$AUDIO_SH" uninstall
     bash "$AUDIO_CLEAN_SH" --all --dry-run >/dev/null
+    require_script "$MESH_SH"
+    bash "$MESH_SH" purge
     sudo bash "$STORAGE_SH" purge --yes
 
     sudo rm -f -- /etc/bc250-cu-live-manager.conf /etc/bc250-smu-oc.conf
@@ -531,8 +546,6 @@ purge_preserved_data() {
     rmdir "$HOME/.config/cecd/config.d" "$HOME/.config/cecd" 2>/dev/null || true
 
     bash "$AUDIO_CLEAN_SH" --all
-    [[ ! -L "$MESH_STATE_DIR" ]] || die "Refusing symlinked mesh-shader state: $MESH_STATE_DIR"
-    rm -rf -- "$MESH_STATE_DIR"
     [[ ! -L "$PROTON_STATE_DIR" ]] || die "Refusing symlinked GE-Proton state: $PROTON_STATE_DIR"
     rm -rf -- "$PROTON_STATE_DIR"
     rm -rf -- "$SCRIPT_DIR/decky-plugin/out" "$SCRIPT_DIR/decky-plugin/node_modules"
@@ -615,6 +628,7 @@ maintenance_menu_graph_badge() {
         action__remove_swap) state_badge "$(component_state swap)" ;;
         action__remove_compute) state_badge "$(component_state compute)" ;;
         action__remove_proton) state_badge "$(component_state proton)" ;;
+        action__remove_helixsr) state_badge "$(component_state helixsr)" ;;
         action__remove_native_mesh) state_badge "$(component_state native-mesh)" ;;
         action__remove_mesh) state_badge "$(component_state mesh)" ;;
         action__remove_video_codec) state_badge "$(component_state video-codec)" ;;
@@ -641,6 +655,7 @@ maintenance_menu_graph_activate() {
         action__remove_swap) run_menu_action uninstall swap ;;
         action__remove_compute) run_menu_action uninstall compute ;;
         action__remove_proton) run_menu_action uninstall proton ;;
+        action__remove_helixsr) run_menu_action uninstall helixsr ;;
         action__remove_native_mesh) run_menu_action uninstall native-mesh ;;
         action__remove_mesh) run_menu_action uninstall mesh ;;
         action__remove_video_codec) run_menu_action uninstall video-codec ;;
@@ -748,6 +763,13 @@ maintenance_menu_graph_render() {
                 items+=("Remove BC-250 GE-Proton|${badge}|Review the plan and remove only this component.")
                 targets+=("action__remove_proton")
                 badges+=("$badge")
+                if ! badge=$(maintenance_menu_graph_badge action__remove_helixsr cleanup); then badge=; fi
+                if [[ "$badge" == *"|"* || "$badge" == *$'\n'* ]]; then
+                    die "Invalid generated menu badge: action__remove_helixsr"
+                fi
+                items+=("Remove HelixSR game installs|${badge}|Restore every HelixSR-managed game DLL and sidecar from its verified rollback record.")
+                targets+=("action__remove_helixsr")
+                badges+=("$badge")
                 if ! badge=$(maintenance_menu_graph_badge action__remove_native_mesh cleanup); then badge=; fi
                 if [[ "$badge" == *"|"* || "$badge" == *$'\n'* ]]; then
                     die "Invalid generated menu badge: action__remove_native_mesh"
@@ -839,7 +861,7 @@ cmd_help() {
     cat << EOF
 Usage: $0 {menu|status|status-json|plan [COMPONENT|all]|uninstall COMPONENT|all [--yes]|purge [--yes]|help}
 
-Components: trainer, desktop, decky, coolercontrol, cec, ac3, power, ram, swap, compute, proton, native-mesh, video-codec, mesh, audio, fan, aic, storage
+Components: trainer, desktop, decky, coolercontrol, cec, ac3, power, ram, swap, compute, proton, helixsr, native-mesh, video-codec, mesh, audio, fan, aic, storage
 
   status                 Show lifecycle state for every component.
   status-json            Emit versioned JSON lifecycle state for automation.
@@ -861,6 +883,7 @@ Purge permanently deletes preserved BC-250 data:
   - persistent backing data under /home/.steamos/offload/var/lib/bc250-control
   - reproducible AMDGPU and Decky build caches in this checkout
   - toolkit-created Mesa / RADV build and downloaded upstream patch
+  - prepared HelixSR payload and download cache after all rollback records are removed
   - GE-Proton transaction metadata (Steam prefixes and saves remain untouched)
 
 The toolkit checkout and shared pnpm installation are retained. Purge is only
