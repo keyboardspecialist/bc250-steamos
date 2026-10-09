@@ -155,7 +155,7 @@ class MenuGraphTests(unittest.TestCase):
     def test_documented_aggregate_metrics_are_current(self):
         graphs = self.graphs.values()
         self.assertEqual(
-            (42, 225, 243, 9),
+            (42, 226, 244, 9),
             (
                 sum(node.kind == "menu" for graph in graphs for node in graph.nodes.values()),
                 sum(

@@ -2181,7 +2181,7 @@ cmd_storage_updates_menu() {
 
 cmd_help() {
     cat << EOF
-Usage: $0 [menu|toolkit-update|toolkit-update-check|setup|auto-base-installation|graphics-setup|status|inventory-json|action OPERATION_ID|drivers|unlocks|storage-updates|interfaces|power [ENTRY]|ram|swap|compute|cpu-unlock|cec|audio-output|hdmi-ac3-enable|hdmi-ac3-revert|storage|persistence|wifi|fan-driver|memory-temperature|amdgpu|amdgpu-clean|scheduler-policy|kfd-runlist|radv|helixsr-prepare [DLSS_DLL]|helixsr-payload-status|helixsr-install TARGET_DLL|helixsr-uninstall TARGET_DLL|--all|video-codec|video-codec-status|video-codec-install|video-codec-remove|proton|proton-install|proton-update|proton-status|proton-uninstall|decky|desktop|coolercontrol|trainer|manage|help]
+Usage: $0 [menu|toolkit-update|toolkit-update-check|setup|auto-base-installation|graphics-setup|status|inventory-json|action OPERATION_ID|drivers|unlocks|storage-updates|interfaces|power [ENTRY]|ram|swap|compute|cpu-unlock|cec|audio-output|hdmi-ac3-enable|hdmi-ac3-revert|storage|persistence|wifi|fan-driver|memory-temperature|amdgpu|amdgpu-clean|scheduler-policy|kfd-runlist|radv|helixsr-prepare [--latest] [DLSS_DLL]|helixsr-payload-status|helixsr-install TARGET_DLL|helixsr-uninstall TARGET_DLL|--all|video-codec|video-codec-status|video-codec-install|video-codec-remove|proton|proton-install|proton-update|proton-status|proton-uninstall|decky|desktop|coolercontrol|trainer|manage|help]
 
 Run without arguments in a terminal to open the unified toolkit menu.
 Run the toolkit as the logged-in Deck user, not with sudo; child tools request
@@ -2221,8 +2221,9 @@ Commands:
   scheduler-policy       Advanced: toggle policy only after RADV is installed
   kfd-runlist            Experimental: toggle the KFD HWS TLB-flush workaround
   radv                   Open the global Mesa / RADV async-compute patch
-  helixsr-prepare [DLSS_DLL]
-                         Prepare pinned HelixSR v1.2.0, optionally from a local DLSS DLL
+  helixsr-prepare [--latest] [DLSS_DLL]
+                         Prepare pinned HelixSR v1.4.3 by default; --latest opts into
+                         GitHub's current release (YMMV). Either mode accepts a local DLSS DLL.
   helixsr-payload-status Show HelixSR payload readiness
   helixsr-install TARGET_DLL
                          Install HelixSR over one eligible existing game DLL
@@ -2351,7 +2352,7 @@ case "$command_name" in
     kfd-runlist) (($# == 0)) || die "Usage: $0 kfd-runlist"; toggle_kfd_runlist ;;
     radv|mesh) (($# == 0)) || die "Usage: $0 radv"; require_normal_user; run_script "$MESH_SHADER_SH" menu ;;
     helixsr-prepare)
-        (($# <= 1)) || die "Usage: $0 helixsr-prepare [DLSS_DLL]"
+        (($# <= 2)) || die "Usage: $0 helixsr-prepare [--latest] [DLSS_DLL]"
         require_normal_user
         log "WARNING: HelixSR is experimental; do not use injected DLLs with anti-cheat games."
         run_script "$HELIXSR_SH" prepare "$@"

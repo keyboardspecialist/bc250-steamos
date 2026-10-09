@@ -38,6 +38,10 @@ ARCHIVE_FILES = (
     "setup/lib/model/launch_synth.exe", "setup/lib/model/model.cpp",
     "setup/lib/model/model.h", "setup/lib/model/model_gen.inc",
 )
+PINNED_ARCHIVE_EXTRA_FILES = (
+    "LICENSE-APACHE-2.0", "helixsr-install.bat", "helixsr-install.sh",
+    "setup/helixsr_install.py", "setup/lib/splitk_hlsl.py",
+)
 
 FAKE_SETUP = b"""#!/usr/bin/env bash
 set -euo pipefail
@@ -58,7 +62,7 @@ from pathlib import Path
 out = Path(sys.argv[1])
 weights = b"fixture generated weights\\n"
 (out / "helixsr_weights.bin").write_bytes(weights)
-blobs = [(f"shader-{index}".encode(), bytes([index])) for index in range(30)]
+blobs = [(f"shader-{index}".encode(), bytes([index % 256])) for index in range(60)]
 offset = 16 + 40 * len(blobs)
 table = []
 body = []
@@ -67,12 +71,13 @@ for name, blob in blobs:
     body.append(blob)
     offset += len(blob)
 (out / "helixsr_kernels.pak").write_bytes(
-    b"HXSRKPAK" + struct.pack("<II", 1, len(blobs)) + b"".join(table) + b"".join(body)
+    b"HXSRKPAK" + struct.pack("<II", 2, len(blobs)) + b"".join(table) + b"".join(body)
 )
 (out / "helixsr_setup.json").write_text(json.dumps({
     "source_sha256": sys.argv[2],
     "ptx_target": "sm_89",
-    "shaders": 30,
+    "shaders": len(blobs),
+    "wave64": True,
     "weights_sha256": hashlib.sha256(weights).hexdigest(),
 }) + "\\n", encoding="ascii")
 PY
@@ -94,11 +99,14 @@ def archive_entry(name: str, value: bytes, mode: int = 0o644) -> zipfile.ZipInfo
     return info
 
 
-def make_archive(path: Path, *, dll=DLL, unsafe_name=None, symlink=False) -> Path:
+def make_archive(
+    path: Path, *, release="1.4.3", dll=DLL, unsafe_name=None, symlink=False,
+    extra_entries=(),
+) -> Path:
     path.parent.mkdir(parents=True, exist_ok=True)
     with zipfile.ZipFile(path, "w", zipfile.ZIP_DEFLATED) as archive:
-        for relative in ARCHIVE_FILES:
-            name = f"HelixSR-1.2.0/{relative}"
+        for relative in (*ARCHIVE_FILES, *PINNED_ARCHIVE_EXTRA_FILES):
+            name = f"HelixSR-{release}/{relative}"
             value = b"fixture:" + relative.encode("ascii") + b"\n"
             mode = 0o644
             if relative == "amd_fidelityfx_dx12.dll":
@@ -111,10 +119,13 @@ def make_archive(path: Path, *, dll=DLL, unsafe_name=None, symlink=False) -> Pat
             elif relative == "setup/lib/model/launch_synth":
                 mode = 0o755
             archive.writestr(archive_entry(name, value, mode), value)
+        for name in extra_entries:
+            value = b"future safe upstream file\n"
+            archive.writestr(archive_entry(name, value), value)
         if unsafe_name is not None:
             archive.writestr(archive_entry(unsafe_name, b"unsafe\n"), b"unsafe\n")
         if symlink:
-            name = "HelixSR-1.2.0/setup/lib/model/launch_synth"
+            name = f"HelixSR-{release}/setup/lib/model/launch_synth"
             # Replace the archive with one containing a symlink at an expected path.
     if symlink:
         values = {}
@@ -137,7 +148,7 @@ class HelixSRTests(unittest.TestCase):
     def setUp(self):
         self.temporary = tempfile.TemporaryDirectory()
         self.root = Path(self.temporary.name)
-        self.archive = make_archive(self.root / "HelixSR-1.2.0.zip")
+        self.archive = make_archive(self.root / "HelixSR-1.4.3.zip")
         self.state = self.root / "state"
         self.game = self.root / "game with spaces"
         self.game.mkdir()
@@ -167,6 +178,46 @@ class HelixSRTests(unittest.TestCase):
             text=True,
         )
 
+    def latest_environment(self, release="1.4.4", *, published_digest=None):
+        archive = make_archive(
+            self.root / f"HelixSR-{release}.zip", release=release,
+            extra_entries=(f"HelixSR-{release}/future/upstream-note.txt",),
+        )
+        digest = published_digest or sha256_file(archive)
+        asset_name = f"HelixSR-{release}.zip"
+        asset_url = (
+            f"https://github.com/lonewolf0622/HelixSR/releases/download/v{release}/{asset_name}"
+        )
+        metadata = self.root / "latest-release.json"
+        metadata.write_text(json.dumps({
+            "tag_name": f"v{release}",
+            "assets": [{
+                "name": asset_name,
+                "browser_download_url": asset_url,
+                "digest": f"sha256:{digest}",
+            }],
+        }), encoding="utf-8")
+        curl_dir = self.root / "fake-bin"
+        curl_dir.mkdir(exist_ok=True)
+        curl = curl_dir / "curl"
+        curl.write_text(
+            "#!/usr/bin/env python3\n"
+            "import os, shutil, sys\n"
+            "args = sys.argv[1:]\n"
+            "url = next(value for value in args if value.startswith('https://'))\n"
+            "if url != 'https://api.github.com/repos/lonewolf0622/HelixSR/releases/latest':\n"
+            "    raise SystemExit('unexpected curl URL: ' + url)\n"
+            "shutil.copyfile(os.environ['BC250_HELIXSR_TEST_LATEST_JSON'], args[args.index('-o') + 1])\n",
+            encoding="utf-8",
+        )
+        curl.chmod(0o755)
+        return {
+            **self.env,
+            "PATH": str(curl_dir) + os.pathsep + self.env["PATH"],
+            "BC250_HELIXSR_ARCHIVE": str(archive),
+            "BC250_HELIXSR_TEST_LATEST_JSON": str(metadata),
+        }
+
     def prepare(self):
         return self.run_helper("prepare")
 
@@ -186,6 +237,30 @@ class HelixSRTests(unittest.TestCase):
             self.assertIn(command, help_result.stdout)
         self.assertIn("install TARGET_DLL [EXPECTED_ID]", help_result.stdout)
         self.assertIn("uninstall TARGET_DLL [EXPECTED_ID]", help_result.stdout)
+        self.assertIn("prepare [--latest] [DLSS_DLL]", help_result.stdout)
+
+    def test_latest_option_uses_published_digest_and_payload_identity(self):
+        env = self.latest_environment()
+        self.run_helper("prepare", "--latest", env=env)
+
+        manifest = json.loads((self.state / "payload/manifest.json").read_text())
+        self.assertEqual(manifest["release"], "v1.4.4")
+        self.assertEqual(manifest["dllSha256"], sha256_bytes(DLL))
+        self.assertEqual(self.run_helper("payload-status").stdout, "ready\n")
+        self.assertEqual(self.records()["release"], "v1.4.4")
+
+        # Preparing without --latest returns to the known, checksum-pinned stable release.
+        self.prepare()
+        stable_manifest = json.loads((self.state / "payload/manifest.json").read_text())
+        self.assertEqual(stable_manifest["release"], "v1.4.3")
+        self.assertEqual(self.run_helper("payload-status").stdout, "ready\n")
+
+    def test_latest_option_rejects_an_asset_digest_mismatch(self):
+        env = self.latest_environment(published_digest="0" * 64)
+        refused = self.run_helper("prepare", "--latest", env=env, check=False)
+        self.assertNotEqual(refused.returncode, 0)
+        self.assertIn("checksum mismatch", refused.stderr)
+        self.assertFalse((self.state / "payload").exists())
 
     def test_prepare_validates_output_and_repairs_private_modes(self):
         self.prepare()
@@ -196,7 +271,7 @@ class HelixSRTests(unittest.TestCase):
         for path in payload.iterdir():
             self.assertEqual(stat.S_IMODE(path.stat().st_mode), 0o600)
         manifest = json.loads((payload / "manifest.json").read_text())
-        self.assertEqual(manifest["shaderCount"], 30)
+        self.assertEqual(manifest["shaderCount"], 60)
         self.assertEqual(manifest["weightsSha256"], sha256_bytes(WEIGHTS))
         self.assertEqual(manifest["kernelsSha256"], sha256_file(payload / "helixsr_kernels.pak"))
 
@@ -469,7 +544,7 @@ class HelixSRTests(unittest.TestCase):
         ini = self.game / "helixsr.ini"
         ini.write_bytes(b"user settings for update\n")
         updated_dll = b"updated fixture helix dll\n"
-        archive = make_archive(self.root / "update/HelixSR-1.2.0.zip", dll=updated_dll)
+        archive = make_archive(self.root / "update/HelixSR-1.4.3.zip", dll=updated_dll)
         update_env = {
             **self.env,
             "BC250_HELIXSR_ARCHIVE": str(archive),
@@ -516,13 +591,13 @@ class HelixSRTests(unittest.TestCase):
 
         self.run_helper("install", target)
         data = self.records()
-        self.assertEqual(data["release"], "v1.2.0")
+        self.assertEqual(data["release"], "v1.4.3")
         self.assertEqual(data["dllSha256"], sha256_bytes(DLL))
         self.assertEqual(data["payloadState"], "ready")
         self.assertEqual(data["invalidRecordCount"], 0)
         self.assertEqual(data["records"], [{
             "targetId": hashlib.sha256(str(target).encode()).hexdigest(),
-            "targetPath": str(target), "release": "v1.2.0",
+            "targetPath": str(target), "release": "v1.4.3",
             "state": "ready", "currentRelease": True,
         }])
 

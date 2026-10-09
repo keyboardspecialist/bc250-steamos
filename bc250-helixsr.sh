@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
-# Prepare and install the pinned HelixSR runtime with verified rollback records.
+# Prepare and install pinned or latest HelixSR with verified rollback records.
 set -euo pipefail
 umask 077
 
-RELEASE="${BC250_HELIXSR_RELEASE:-v1.2.0}"
+RELEASE="${BC250_HELIXSR_RELEASE:-v1.4.3}"
 [[ "$RELEASE" =~ ^v[0-9][0-9A-Za-z._-]*$ ]] \
     || { printf '[bc250-helixsr] Invalid release identifier.\n' >&2; exit 1; }
 ARCHIVE_NAME="${BC250_HELIXSR_ARCHIVE_NAME:-HelixSR-${RELEASE#v}.zip}"
@@ -11,14 +11,17 @@ ARCHIVE_NAME="${BC250_HELIXSR_ARCHIVE_NAME:-HelixSR-${RELEASE#v}.zip}"
     && "$ARCHIVE_NAME" != *$'\r'* ]] \
     || { printf '[bc250-helixsr] Invalid archive name.\n' >&2; exit 1; }
 ARCHIVE_URL="https://github.com/lonewolf0622/HelixSR/releases/download/$RELEASE/$ARCHIVE_NAME"
-ARCHIVE_SHA256="${BC250_HELIXSR_ARCHIVE_SHA256:-7c9aeac2e3dcd73f6e9b2dd8b04c41a828fd8e1a8fe30a2ac77787097ddbeb0e}"
-DLL_SHA256="${BC250_HELIXSR_DLL_SHA256:-745477ee77c5cccd2de4bd251fc950d33895387f411815e889625fbbdc12a7e4}"
+ARCHIVE_SHA256="${BC250_HELIXSR_ARCHIVE_SHA256:-d79e849444e0ea8928c0b8df22ec21368ac08ec038417c087a3d2df7a6722119}"
+DLL_SHA256="${BC250_HELIXSR_DLL_SHA256:-3fe8d532516b6441bd8893d986c494a19795375ebd2a6dffb1a9742e3db7dcfd}"
 WEIGHTS_SHA256="${BC250_HELIXSR_WEIGHTS_SHA256:-762adfde720035f7ac43910846e0ce6826c239bcd41f863196f77c547ae57153}"
 DLSS_SHA256="${BC250_HELIXSR_DLSS_SHA256:-be6e434a94ca32499515eb62ca0e6c274526055d568d0426e4c652dcdfb6ee6e}"
 for checksum in "$ARCHIVE_SHA256" "$DLL_SHA256" "$WEIGHTS_SHA256" "$DLSS_SHA256"; do
     [[ "$checksum" =~ ^[0-9a-f]{64}$ ]] \
         || { printf '[bc250-helixsr] Invalid pinned checksum.\n' >&2; exit 1; }
 done
+STABLE_RELEASE="$RELEASE"
+STABLE_DLL_SHA256="$DLL_SHA256"
+STABLE_WEIGHTS_SHA256="$WEIGHTS_SHA256"
 
 MESH_STATE="${BC250_MESH_STATE_DIR:-$HOME/.local/share/bc250-mesh-shader}"
 STATE_DIR="${BC250_HELIXSR_STATE_DIR:-$MESH_STATE/helixsr}"
@@ -148,6 +151,10 @@ ARCHIVE_FILES = (
     "setup/lib/model/launch_synth.exe", "setup/lib/model/model.cpp",
     "setup/lib/model/model.h", "setup/lib/model/model_gen.inc",
 )
+PINNED_ARCHIVE_EXTRA_FILES = (
+    "LICENSE-APACHE-2.0", "helixsr-install.bat", "helixsr-install.sh",
+    "setup/helixsr_install.py", "setup/lib/splitk_hlsl.py",
+)
 
 
 class Refusal(Exception):
@@ -201,8 +208,9 @@ def verify_expected_id(target, expected_id):
         raise Refusal("Expected HelixSR target ID does not match the canonical target path.")
 
 
-def validate_archive(archive, destination, root_name):
-    expected = {f"{root_name}/{name}" for name in ARCHIVE_FILES}
+def validate_archive(archive, destination, root_name, allow_extra=False):
+    required = {f"{root_name}/{name}" for name in ARCHIVE_FILES}
+    pinned = required | {f"{root_name}/{name}" for name in PINNED_ARCHIVE_EXTRA_FILES}
     try:
         source = zipfile.ZipFile(archive)
     except (OSError, zipfile.BadZipFile) as error:
@@ -210,7 +218,9 @@ def validate_archive(archive, destination, root_name):
     with source:
         entries = source.infolist()
         names = [entry.filename for entry in entries]
-        if len(names) != len(expected) or set(names) != expected:
+        expected = required if allow_extra else pinned
+        if len(names) != len(set(names)) or not required.issubset(names) \
+                or (not allow_extra and (len(names) != len(expected) or set(names) != expected)):
             raise Refusal("HelixSR archive has an unexpected payload layout.")
         if sum(entry.file_size for entry in entries) > 128 * 1024 * 1024:
             raise Refusal("HelixSR archive is unexpectedly large.")
@@ -222,12 +232,15 @@ def validate_archive(archive, destination, root_name):
             if (
                 "" in parts or "." in parts or ".." in parts
                 or name.startswith("/") or "\\" in name or entry.is_dir()
+                or not name.startswith(root_name + "/")
                 or entry.flag_bits & 1
                 or kind not in (0, stat.S_IFREG)
             ):
                 raise Refusal(f"Unsafe HelixSR archive entry: {name}")
         os.mkdir(destination, 0o700)
         for entry in entries:
+            if entry.filename not in expected:
+                continue
             relative = entry.filename[len(root_name) + 1:]
             target = os.path.join(destination, relative)
             os.makedirs(os.path.dirname(target), mode=0o700, exist_ok=True)
@@ -247,35 +260,90 @@ def validate_archive(archive, destination, root_name):
                 if not regular(path):
                     raise Refusal(f"Unsafe extracted HelixSR file: {relative}")
                 actual.add(relative)
-    if actual != set(ARCHIVE_FILES):
+    wanted_files = set(ARCHIVE_FILES) if allow_extra else set(ARCHIVE_FILES) | set(PINNED_ARCHIVE_EXTRA_FILES)
+    if actual != wanted_files:
         raise Refusal("Extracted HelixSR payload failed validation.")
 
 
-def validate_kernel_pack(path):
+def latest_metadata(path):
+    try:
+        with open(path, encoding="utf-8") as stream:
+            release_data = json.load(stream)
+    except (OSError, ValueError) as error:
+        raise Refusal("Could not parse GitHub's latest HelixSR release metadata.") from error
+    if not isinstance(release_data, dict) or not isinstance(release_data.get("assets"), list):
+        raise Refusal("GitHub returned malformed latest HelixSR release metadata.")
+    release = release_data.get("tag_name")
+    if not isinstance(release, str) or not RELEASE_RE.fullmatch(release):
+        raise Refusal("GitHub returned an invalid latest HelixSR release tag.")
+    name = f"HelixSR-{release[1:]}.zip"
+    matches = [item for item in release_data.get("assets", [])
+               if isinstance(item, dict) and item.get("name") == name]
+    if len(matches) != 1:
+        raise Refusal("Latest HelixSR release does not have its expected ZIP asset.")
+    asset = matches[0]
+    digest_value = asset.get("digest")
+    url = f"https://github.com/lonewolf0622/HelixSR/releases/download/{release}/{name}"
+    if asset.get("browser_download_url") != url or not isinstance(digest_value, str) \
+            or not re.fullmatch(r"sha256:[0-9a-f]{64}", digest_value):
+        raise Refusal("Latest HelixSR release asset lacks a valid GitHub SHA-256 digest.")
+    print(f"{release}\t{name}\t{digest_value[7:]}")
+
+
+def payload_identity(root):
+    manifest_path = os.path.join(root, "manifest.json")
+    if not regular(manifest_path):
+        raise Refusal("Prepared HelixSR payload has no valid identity manifest.")
+    try:
+        with open(manifest_path, encoding="utf-8") as stream:
+            value = json.load(stream)
+    except (OSError, ValueError) as error:
+        raise Refusal("Prepared HelixSR identity manifest is malformed.") from error
+    if not isinstance(value, dict) or set(value) != {
+        "schemaVersion", "release", "dllSha256", "weightsSha256", "kernelsSha256",
+        "iniSha256", "setupSha256", "sourceSha256", "shaderCount",
+    } or type(value["schemaVersion"]) is not int or value["schemaVersion"] != 1 \
+            or not isinstance(value["release"], str) or not RELEASE_RE.fullmatch(value["release"]) \
+            or any(not isinstance(value[key], str) or not SHA_RE.fullmatch(value[key]) for key in (
+                "dllSha256", "weightsSha256", "kernelsSha256", "iniSha256",
+                "setupSha256", "sourceSha256",
+            )) or type(value["shaderCount"]) is not int or value["shaderCount"] not in (30, 60):
+        raise Refusal("Prepared HelixSR identity manifest is invalid.")
+    print(f"{value['release']}\t{value['dllSha256']}\t{value['weightsSha256']}")
+
+
+def setup_source_sha(path, weights_sha):
+    metadata = setup_metadata(path, weights_sha)
+    if metadata is None:
+        raise Refusal("Generated HelixSR setup metadata is invalid.")
+    print(metadata["source_sha256"])
+
+
+def kernel_pack_count(path):
     if not regular(path):
-        return False
+        return None
     try:
         data = open(path, "rb").read()
     except OSError:
-        return False
+        return None
     if len(data) < 16 or data[:8] != b"HXSRKPAK":
-        return False
+        return None
     version, count = struct.unpack_from("<II", data, 8)
-    if version != 1 or count != 30 or len(data) < 16 + count * 40:
-        return False
+    valid_counts = {1: {30}, 2: {30, 60}}
+    if version not in valid_counts or count not in valid_counts[version] \
+            or len(data) < 16 + count * 40:
+        return None
     previous_end = 16 + count * 40
     names = set()
     for index in range(count):
         raw_name, offset, size = struct.unpack_from("<32sII", data, 16 + index * 40)
         name = raw_name.split(b"\0", 1)[0]
         if not name or name in names or offset != previous_end or offset + size > len(data):
-            return False
+            return None
         names.add(name)
         previous_end = offset + size
-    return previous_end == len(data)
-
-
-def setup_metadata(path, weights_sha, source_sha=None):
+    return count if previous_end == len(data) else None
+def setup_metadata(path, weights_sha, source_sha=None, shader_count=None):
     if not regular(path):
         return None
     try:
@@ -283,14 +351,20 @@ def setup_metadata(path, weights_sha, source_sha=None):
             value = json.load(stream)
     except (OSError, ValueError):
         return None
-    if set(value) != {"source_sha256", "ptx_target", "shaders", "weights_sha256"}:
+    required = {"source_sha256", "ptx_target", "shaders", "weights_sha256"}
+    if not isinstance(value, dict) or set(value) not in (required, required | {"wave64"}):
         return None
     if (
         not isinstance(value["source_sha256"], str)
         or not SHA_RE.fullmatch(value["source_sha256"])
         or value["ptx_target"] not in ("sm_80", "sm_89")
-        or value["shaders"] != 30
+        or type(value["shaders"]) is not int
+        or value["shaders"] not in (30, 60)
         or value["weights_sha256"] != weights_sha
+        or ("wave64" in value and type(value["wave64"]) is not bool)
+        or ("wave64" in value and value["shaders"] != (60 if value["wave64"] else 30))
+        or ("wave64" not in value and value["shaders"] != 30)
+        or (shader_count is not None and value["shaders"] != shader_count)
         or (source_sha is not None and value["source_sha256"] != source_sha)
     ):
         return None
@@ -312,9 +386,10 @@ def payload_values(root, release, dll_sha, weights_sha):
     ini = os.path.join(root, "helixsr.ini")
     setup = os.path.join(root, "helixsr_setup.json")
     manifest_path = os.path.join(root, "manifest.json")
-    if not validate_kernel_pack(kernel) or not regular(ini):
+    shader_count = kernel_pack_count(kernel)
+    if shader_count is None or not regular(ini):
         return None
-    metadata = setup_metadata(setup, weights_sha)
+    metadata = setup_metadata(setup, weights_sha, shader_count=shader_count)
     if metadata is None or not regular(manifest_path):
         return None
     values = {
@@ -326,7 +401,7 @@ def payload_values(root, release, dll_sha, weights_sha):
         "iniSha256": digest(ini),
         "setupSha256": digest(setup),
         "sourceSha256": metadata["source_sha256"],
-        "shaderCount": 30,
+        "shaderCount": metadata["shaders"],
     }
     try:
         with open(manifest_path, encoding="utf-8") as stream:
@@ -379,16 +454,17 @@ def write_manifest(root, release, dll_sha, weights_sha, source_sha):
         raise Refusal("Generated HelixSR DLL failed validation.")
     if not regular(weights) or digest(weights) != weights_sha:
         raise Refusal("Generated HelixSR weights failed validation.")
-    if not validate_kernel_pack(kernel) or not regular(ini):
+    shader_count = kernel_pack_count(kernel)
+    if shader_count is None or not regular(ini):
         raise Refusal("Generated HelixSR kernel pack or configuration failed validation.")
-    metadata = setup_metadata(setup, weights_sha, source_sha)
+    metadata = setup_metadata(setup, weights_sha, source_sha, shader_count)
     if metadata is None:
         raise Refusal("Generated HelixSR setup metadata failed validation.")
     manifest = {
         "schemaVersion": 1, "release": release, "dllSha256": dll_sha,
         "weightsSha256": weights_sha, "kernelsSha256": digest(kernel),
         "iniSha256": digest(ini), "setupSha256": digest(setup),
-        "sourceSha256": metadata["source_sha256"], "shaderCount": 30,
+        "sourceSha256": metadata["source_sha256"], "shaderCount": metadata["shaders"],
     }
     path = os.path.join(root, "manifest.json")
     with open(path, "x", encoding="ascii") as stream:
@@ -1062,7 +1138,13 @@ def records_data(installs, release, dll_sha, payload_state):
 def main():
     action = sys.argv[1]
     if action == "extract":
-        validate_archive(*sys.argv[2:])
+        validate_archive(*sys.argv[2:5], allow_extra=sys.argv[5] == "allow-extra")
+    elif action == "latest-metadata":
+        latest_metadata(sys.argv[2])
+    elif action == "payload-identity":
+        payload_identity(sys.argv[2])
+    elif action == "setup-source-sha":
+        setup_source_sha(sys.argv[2], sys.argv[3])
     elif action == "manifest":
         write_manifest(*sys.argv[2:])
     elif action == "validate-payload":
@@ -1090,7 +1172,62 @@ except Refusal as error:
 PY
 }
 
+resolve_latest_release() {
+    local metadata resolved
+    command -v curl >/dev/null 2>&1 || die "curl is required to resolve the latest HelixSR release."
+    metadata=$(mktemp "$CACHE_DIR/.release.XXXXXX")
+    if ! curl --retry 3 --retry-all-errors -fsSL \
+        -H 'Accept: application/vnd.github+json' \
+        'https://api.github.com/repos/lonewolf0622/HelixSR/releases/latest' \
+        -o "$metadata"; then
+        rm -f -- "$metadata"
+        die "Could not resolve the latest HelixSR release from GitHub."
+    fi
+    if ! resolved=$(python_core latest-metadata "$metadata"); then
+        rm -f -- "$metadata"
+        die "GitHub's latest HelixSR release metadata is invalid."
+    fi
+    rm -f -- "$metadata"
+    IFS=$'\t' read -r RELEASE ARCHIVE_NAME ARCHIVE_SHA256 <<< "$resolved"
+    [[ "$RELEASE" =~ ^v[0-9][0-9A-Za-z._-]*$ \
+        && "$ARCHIVE_NAME" == "HelixSR-${RELEASE#v}.zip" \
+        && "$ARCHIVE_SHA256" =~ ^[0-9a-f]{64}$ ]] \
+        || die "Latest HelixSR release metadata failed validation."
+    ARCHIVE_URL="https://github.com/lonewolf0622/HelixSR/releases/download/$RELEASE/$ARCHIVE_NAME"
+    ARCHIVE="$CACHE_DIR/$ARCHIVE_NAME"
+    DLL_SHA256=""
+    WEIGHTS_SHA256=""
+    log "Latest HelixSR release resolved to $RELEASE (YMMV; the stable pinned release remains v1.4.3)."
+}
+
+use_payload_identity() {
+    local identity active_release active_dll active_weights
+    [[ -d "$PAYLOAD_DIR" && ! -L "$PAYLOAD_DIR" ]] || return 1
+    identity=$(python_core payload-identity "$PAYLOAD_DIR" 2>/dev/null) || return 1
+    IFS=$'\t' read -r active_release active_dll active_weights <<< "$identity"
+    [[ "$active_release" =~ ^v[0-9][0-9A-Za-z._-]*$ \
+        && "$active_dll" =~ ^[0-9a-f]{64}$ \
+        && "$active_weights" =~ ^[0-9a-f]{64}$ ]] || return 1
+    # Keep the known stable pins authoritative; use the local manifest only for
+    # payloads whose versions are outside the stable pin.
+    if [[ "$active_release" == "$STABLE_RELEASE" ]]; then
+        [[ "$active_dll" == "$STABLE_DLL_SHA256" \
+            && "$active_weights" == "$STABLE_WEIGHTS_SHA256" ]] || return 1
+        RELEASE=$STABLE_RELEASE
+        DLL_SHA256=$STABLE_DLL_SHA256
+        WEIGHTS_SHA256=$STABLE_WEIGHTS_SHA256
+    else
+        RELEASE=$active_release
+        DLL_SHA256=$active_dll
+        WEIGHTS_SHA256=$active_weights
+    fi
+    ARCHIVE_NAME="HelixSR-${RELEASE#v}.zip"
+    ARCHIVE_URL="https://github.com/lonewolf0622/HelixSR/releases/download/$RELEASE/$ARCHIVE_NAME"
+    ARCHIVE="$CACHE_DIR/$ARCHIVE_NAME"
+}
+
 payload_state() {
+    use_payload_identity || true
     if [[ -L "$STATE_DIR" || ( -e "$STATE_DIR" && ! -d "$STATE_DIR" ) ]]; then
         printf 'invalid\n'
         return 2
@@ -1110,9 +1247,30 @@ payload_state() {
 }
 
 prepare_payload() {
-    local dlss=${1:-} source_archive=${BC250_HELIXSR_ARCHIVE:-} temporary extract output old
-    local expected_source_sha=$DLSS_SHA256
-    if [[ -d "$PAYLOAD_DIR" && ! -L "$PAYLOAD_DIR" ]] \
+    local dlss=${1:-} latest=${2:-0} source_archive=${BC250_HELIXSR_ARCHIVE:-}
+    local temporary extract output old expected_source_sha active_identity
+    local active_release active_dll active_weights requested_release=$RELEASE
+    expected_source_sha=$DLSS_SHA256
+    if [[ "$latest" == 1 ]]; then
+        if [[ -d "$PAYLOAD_DIR" && ! -L "$PAYLOAD_DIR" ]] \
+            && active_identity=$(python_core payload-identity "$PAYLOAD_DIR" 2>/dev/null); then
+            IFS=$'\t' read -r active_release active_dll active_weights <<< "$active_identity"
+            if [[ "$active_release" == "$requested_release" ]] \
+                && [[ -f "$ARCHIVE" && ! -L "$ARCHIVE" ]] \
+                && [[ "$(sha256_file "$ARCHIVE")" == "$ARCHIVE_SHA256" ]] \
+                && python_core validate-payload "$PAYLOAD_DIR" "$active_release" "$active_dll" "$active_weights" repair \
+                    >/dev/null 2>&1; then
+                RELEASE=$active_release
+                DLL_SHA256=$active_dll
+                WEIGHTS_SHA256=$active_weights
+                log "HelixSR $RELEASE payload is already prepared."
+                return
+            fi
+        fi
+        DLL_SHA256=""
+        WEIGHTS_SHA256=""
+        expected_source_sha=""
+    elif [[ -d "$PAYLOAD_DIR" && ! -L "$PAYLOAD_DIR" ]] \
         && python_core validate-payload "$PAYLOAD_DIR" "$RELEASE" "$DLL_SHA256" "$WEIGHTS_SHA256" repair \
             >/dev/null 2>&1; then
         log "HelixSR $RELEASE payload is already prepared."
@@ -1155,7 +1313,12 @@ prepare_payload() {
     output=$(mktemp -d "$STATE_DIR/.payload.XXXXXX")
     trap 'rm -rf -- "$extract" "$output"' RETURN
     rmdir "$extract"
-    python_core extract "$ARCHIVE" "$extract" "HelixSR-${RELEASE#v}"
+    if [[ "$latest" == 1 ]]; then
+        python_core extract "$ARCHIVE" "$extract" "HelixSR-${RELEASE#v}" allow-extra
+        DLL_SHA256=$(sha256_file "$extract/amd_fidelityfx_dx12.dll")
+    else
+        python_core extract "$ARCHIVE" "$extract" "HelixSR-${RELEASE#v}" strict
+    fi
     chmod 0755 "$extract/helixsr-setup.sh" "$extract/setup" "$extract/setup/lib" \
         "$extract/setup/lib/model" "$extract/setup/lib/model/launch_synth"
     install -m 0600 "$extract/amd_fidelityfx_dx12.dll" "$output/amd_fidelityfx_dx12.dll"
@@ -1168,6 +1331,14 @@ prepare_payload() {
         XDG_DATA_HOME="$SETUP_DATA" "$extract/helixsr-setup.sh" "$output" --yes
     fi
     chmod -R go-rwx "$SETUP_DATA"
+    if [[ "$latest" == 1 ]]; then
+        WEIGHTS_SHA256=$(sha256_file "$output/helixsr_weights.bin")
+        if [[ -z "$dlss" ]]; then
+            expected_source_sha=$(python_core setup-source-sha \
+                "$output/helixsr_setup.json" "$WEIGHTS_SHA256") \
+                || die "Could not verify HelixSR's generated setup metadata."
+        fi
+    fi
     python_core manifest "$output" "$RELEASE" "$DLL_SHA256" "$WEIGHTS_SHA256" \
         "$expected_source_sha"
     old="$STATE_DIR/.payload-old"
@@ -1188,11 +1359,16 @@ prepare_payload() {
     extract=""
     fsync_paths "$STATE_DIR"
     trap - RETURN
-    log "Prepared HelixSR $RELEASE payload at $PAYLOAD_DIR"
+    if [[ "$latest" == 1 ]]; then
+        log "Prepared latest HelixSR $RELEASE payload at $PAYLOAD_DIR (YMMV)."
+    else
+        log "Prepared pinned HelixSR $RELEASE payload at $PAYLOAD_DIR"
+    fi
 }
 
 records_json() {
     local state_value
+    use_payload_identity || true
     if state_value=$(payload_state); then :; else :; fi
     python_core records "$INSTALLS_DIR" "$RELEASE" "$DLL_SHA256" "$state_value"
 }
@@ -1225,7 +1401,7 @@ purge_payload() {
 
 usage() {
     cat <<EOF
-Usage: $0 prepare [DLSS_DLL]
+Usage: $0 prepare [--latest] [DLSS_DLL]
        $0 payload-status
        $0 records-json
        $0 probe
@@ -1235,19 +1411,39 @@ Usage: $0 prepare [DLSS_DLL]
        $0 uninstall --all
        $0 purge
 
-Prepares checksum-pinned HelixSR $RELEASE and installs it over either
+By default, prepares checksum-pinned HelixSR $RELEASE. --latest opts into the
+current GitHub latest release (YMMV) and verifies its published asset digest.
+Both modes install over either
 amd_fidelityfx_upscaler_dx12.dll or amd_fidelityfx_dx12.dll. The target and
 all sidecar collisions are retained for exact, verified rollback.
 EOF
 }
 
+prepare_command() {
+    shift
+    local latest=0 dlss=""
+    while (($#)); do
+        case "$1" in
+            --latest)
+                [[ "$latest" == 0 ]] || die "Usage: $0 prepare [--latest] [DLSS_DLL]"
+                latest=1
+                ;;
+            --*) die "Usage: $0 prepare [--latest] [DLSS_DLL]" ;;
+            *)
+                [[ -z "$dlss" ]] || die "Usage: $0 prepare [--latest] [DLSS_DLL]"
+                dlss=$1
+                ;;
+        esac
+        shift
+    done
+    require_normal_user; ensure_state
+    exec 9> "$LOCK_FILE"; flock 9
+    if [[ "$latest" == 1 ]]; then resolve_latest_release; fi
+    prepare_payload "$dlss" "$latest"
+}
+
 case "${1:-help}" in
-    prepare)
-        (($# <= 2)) || die "Usage: $0 prepare [DLSS_DLL]"
-        require_normal_user; ensure_state
-        exec 9> "$LOCK_FILE"; flock 9
-        prepare_payload "${2:-}"
-        ;;
+    prepare) prepare_command "$@" ;;
     payload-status)
         (($# == 1)) || exit 2
         require_normal_user; prepare_query_lock
@@ -1284,6 +1480,7 @@ case "${1:-help}" in
             python_core check-target-id "$2" "$3" optional
         fi
         ensure_state; lock_all_managers
+        use_payload_identity || true
         python_core install "$PAYLOAD_DIR" "$INSTALLS_DIR" "$2" "$RELEASE" \
             "$DLL_SHA256" "$WEIGHTS_SHA256" "$FSR4_STATE" "$OPTISCALER_STATE" \
             "${3:-}"

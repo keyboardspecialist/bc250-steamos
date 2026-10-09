@@ -3681,16 +3681,26 @@ show_helixsr_payload_status() {
 }
 
 prompt_helixsr_prepare() {
-    local dlss
+    local dlss latest=${1:-0}
     printf '%s' "${CB}Optional local DLSS DLL path (blank for HelixSR's user-local download): ${C0}"
     IFS= read -r dlss
-    if [[ -n "$dlss" ]]; then
+    if [[ "$latest" == 1 ]]; then
+        if [[ -n "$dlss" ]]; then
+            confirm_menu_action \
+                "Prepare latest experimental HelixSR from this DLL? This YMMV release is not the pinned v1.4.3; generated NVIDIA-derived files stay user-local and anti-cheat games must not use injection." \
+                helixsr-prepare --latest "$dlss"
+        else
+            confirm_menu_action \
+                "Prepare latest experimental HelixSR? This YMMV release is not the pinned v1.4.3; downloads and generated NVIDIA-derived files stay user-local and anti-cheat games must not use injection." \
+                helixsr-prepare --latest
+        fi
+    elif [[ -n "$dlss" ]]; then
         confirm_menu_action \
-            "Prepare experimental HelixSR v1.2.0 from this DLL? Generated NVIDIA-derived files stay user-local and anti-cheat games must not use injection." \
+            "Prepare pinned experimental HelixSR v1.4.3 from this DLL? Generated NVIDIA-derived files stay user-local and anti-cheat games must not use injection." \
             helixsr-prepare "$dlss"
     else
         confirm_menu_action \
-            "Prepare experimental HelixSR v1.2.0? Downloads and generated NVIDIA-derived files stay user-local and anti-cheat games must not use injection." \
+            "Prepare pinned experimental HelixSR v1.4.3? Downloads and generated NVIDIA-derived files stay user-local and anti-cheat games must not use injection." \
             helixsr-prepare
     fi
 }
@@ -3719,7 +3729,7 @@ mesh_menu_graph_badge() {
     case "$1" in
         action__status|action__setup|action__uninstall) runtime_badge ;;
         action__fsr4_dll) fsr4_dll_badge ;;
-        menu__helixsr|action__helixsr_status|action__helixsr_prepare|action__helixsr_install) helixsr_payload_badge ;;
+        menu__helixsr|action__helixsr_status|action__helixsr_prepare|action__helixsr_prepare_latest|action__helixsr_install) helixsr_payload_badge ;;
         action__helixsr_uninstall) helixsr_install_badge ;;
         action__native_mesh_install|action__native_mesh_remove) native_mesh_badge ;;
         action__legacy_cleanup)
@@ -3741,7 +3751,8 @@ mesh_menu_graph_activate() {
         action__status) show_menu_status ;;
         action__fsr4_dll) prompt_fsr4_target ;;
         action__helixsr_status) show_helixsr_payload_status ;;
-        action__helixsr_prepare) prompt_helixsr_prepare ;;
+        action__helixsr_prepare) prompt_helixsr_prepare 0 ;;
+        action__helixsr_prepare_latest) prompt_helixsr_prepare 1 ;;
         action__helixsr_install) prompt_helixsr_install ;;
         action__helixsr_uninstall) prompt_helixsr_uninstall ;;
         action__setup)
@@ -3797,7 +3808,7 @@ mesh_menu_graph_render() {
                 if [[ "$badge" == *"|"* || "$badge" == *$'\n'* ]]; then
                     die "Invalid generated menu badge: menu__helixsr"
                 fi
-                items+=("HelixSR v1.2.0 (experimental)|${badge}|Prepare and manage the user-local HelixSR payload. Do not use injected DLLs with anti-cheat games.")
+                items+=("HelixSR v1.4.3 pinned (experimental)|${badge}|Prepare and manage the user-local HelixSR payload. Do not use injected DLLs with anti-cheat games.")
                 targets+=("menu__helixsr")
                 badges+=("$badge")
                 if ! badge=$(mesh_menu_graph_badge action__setup install); then badge=; fi
@@ -3844,20 +3855,27 @@ mesh_menu_graph_render() {
                 badges+=("$badge")
                 ;;
             menu__helixsr)
-                title="HelixSR v1.2.0 (experimental)"
+                title="HelixSR v1.4.3 pinned (experimental)"
                 if ! badge=$(mesh_menu_graph_badge action__helixsr_status read_only); then badge=; fi
                 if [[ "$badge" == *"|"* || "$badge" == *$'\n'* ]]; then
                     die "Invalid generated menu badge: action__helixsr_status"
                 fi
-                items+=("HelixSR payload status|${badge}|Check whether the pinned v1.2.0 payload is prepared and valid.")
+                items+=("HelixSR payload status|${badge}|Check whether the prepared HelixSR payload is valid.")
                 targets+=("action__helixsr_status")
                 badges+=("$badge")
                 if ! badge=$(mesh_menu_graph_badge action__helixsr_prepare experimental); then badge=; fi
                 if [[ "$badge" == *"|"* || "$badge" == *$'\n'* ]]; then
                     die "Invalid generated menu badge: action__helixsr_prepare"
                 fi
-                items+=("Prepare HelixSR payload|${badge}|Download and generate the user-local payload, optionally using a local DLSS DLL. NVIDIA-derived files are not redistributed.")
+                items+=("Prepare pinned HelixSR v1.4.3|${badge}|Use the known stable release, optionally with a local DLSS DLL. NVIDIA-derived files are not redistributed.")
                 targets+=("action__helixsr_prepare")
+                badges+=("$badge")
+                if ! badge=$(mesh_menu_graph_badge action__helixsr_prepare_latest experimental); then badge=; fi
+                if [[ "$badge" == *"|"* || "$badge" == *$'\n'* ]]; then
+                    die "Invalid generated menu badge: action__helixsr_prepare_latest"
+                fi
+                items+=("Prepare latest HelixSR (YMMV)|${badge}|Opt in to GitHub's latest release; changes may not yet be tested. NVIDIA-derived files are not redistributed.")
+                targets+=("action__helixsr_prepare_latest")
                 badges+=("$badge")
                 if ! badge=$(mesh_menu_graph_badge action__helixsr_install experimental); then badge=; fi
                 if [[ "$badge" == *"|"* || "$badge" == *$'\n'* ]]; then
@@ -3907,7 +3925,7 @@ cmd_menu() {
 
 cmd_help() {
     cat <<EOF
-Usage: $0 [menu|setup [--replace-unmanaged|--native-mesh|--fsr4 TARGET_DLL|--fsr4-legacy]|helixsr-prepare [DLSS_DLL]|helixsr-payload-status|helixsr-install TARGET_DLL|helixsr-uninstall TARGET_DLL|--all|status|status-json|legacy-clear|uninstall [--native-mesh|--fsr4 TARGET_DLL|--fsr4-legacy]|purge|help]
+Usage: $0 [menu|setup [--replace-unmanaged|--native-mesh|--fsr4 TARGET_DLL|--fsr4-legacy]|helixsr-prepare [--latest] [DLSS_DLL]|helixsr-payload-status|helixsr-install TARGET_DLL|helixsr-uninstall TARGET_DLL|--all|status|status-json|legacy-clear|uninstall [--native-mesh|--fsr4 TARGET_DLL|--fsr4-legacy]|purge|help]
 
   setup                        Fetch the verified upstream series, build the
                                audited Mesa RADV driver with GFX1013 async
@@ -3929,8 +3947,10 @@ Usage: $0 [menu|setup [--replace-unmanaged|--native-mesh|--fsr4 TARGET_DLL|--fsr
                                Absolute paths are recommended; quote spaces at the shell.
   setup --fsr4-legacy          Retired compatibility command; exits without
                                changing an existing legacy profile.
-  helixsr-prepare [DLSS_DLL]   Prepare pinned HelixSR v1.2.0, optionally using
-                               a local DLSS DLL instead of its user-local download.
+  helixsr-prepare [--latest] [DLSS_DLL]
+                               Prepare pinned HelixSR v1.4.3 by default; --latest
+                               opts into GitHub's latest release (YMMV). Either
+                               mode can use a local DLSS DLL.
   helixsr-payload-status       Show whether the HelixSR payload is ready.
   helixsr-install TARGET_DLL   Install over one exact existing lowercase
                                amd_fidelityfx_upscaler_dx12.dll or

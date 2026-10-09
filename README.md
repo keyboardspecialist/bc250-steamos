@@ -474,15 +474,20 @@ PROTON_FSR4_UPGRADE=0 PROTON_USE_OPTISCALER=0 WINEDLLOVERRIDES="winmm=n,b;amdxcf
 Close the game before each file operation. Use FSR4 injection with offline
 games. Anti-cheat software can take action against injected DLLs.
 
-### HelixSR v1.2.0
+### HelixSR v1.4.3
 
-Prepare the pinned [HelixSR](https://github.com/lonewolf0622/HelixSR) `v1.2.0`
-payload. You may supply a local DLSS DLL; otherwise HelixSR obtains its pinned
-input in user-local state:
+By default, prepare the checksum-pinned [HelixSR](https://github.com/lonewolf0622/HelixSR)
+`v1.4.3` payload. For a newer upstream release, `--latest` resolves GitHub's
+latest release and verifies its published asset digest; this route is **YMMV**
+and may encounter upstream changes the toolkit has not tested. Either mode may
+use a local DLSS DLL; otherwise HelixSR downloads its pinned input in user-local
+state:
 
 ```bash
 ./bc250-toolkit.sh helixsr-prepare
+./bc250-toolkit.sh helixsr-prepare --latest   # YMMV: use GitHub's current latest
 ./bc250-toolkit.sh helixsr-prepare "/path/to/nvngx_dlss.dll"
+./bc250-toolkit.sh helixsr-prepare --latest "/path/to/nvngx_dlss.dll"
 ./bc250-toolkit.sh helixsr-payload-status
 ```
 
@@ -742,7 +747,7 @@ See these documents for component development:
 | GFX1013 Fix | [DryhoppedIPA/bc250-gfx1013-fix](https://github.com/DryhoppedIPA/bc250-gfx1013-fix) |
 | BC250 RADV R2 | [luckiskind/bc250-radv-r2](https://github.com/luckiskind/bc250-radv-r2) |
 | OptiScaler | [optiscaler/OptiScaler](https://github.com/optiscaler/OptiScaler) |
-| HelixSR v1.2.0 | [lonewolf0622/HelixSR](https://github.com/lonewolf0622/HelixSR) |
+| HelixSR v1.4.3 (pinned; latest is optional/YMMV) | [lonewolf0622/HelixSR](https://github.com/lonewolf0622/HelixSR) |
 | BC-250 FSR4 RC9 | [daniel-h-0/bc250-fsr4-fork](https://github.com/daniel-h-0/bc250-fsr4-fork) |
 | BC-250 GE-Proton and RADV | [MastaG/linux-cachyos-bc250](https://github.com/MastaG/linux-cachyos-bc250) |
 | AIC8800 | [shenmintao/aic8800d80](https://github.com/shenmintao/aic8800d80) |

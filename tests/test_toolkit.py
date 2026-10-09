@@ -95,7 +95,8 @@ class ToolkitTests(unittest.TestCase):
     def test_readme_documents_pinned_user_local_helixsr(self):
         readme = (ROOT / "README.md").read_text(encoding="utf-8")
         self.assertIn("https://github.com/lonewolf0622/HelixSR", readme)
-        self.assertIn("HelixSR v1.2.0", readme)
+        self.assertIn("HelixSR v1.4.3", readme)
+        self.assertIn("--latest", readme)
         self.assertIn("amd_fidelityfx_upscaler_dx12.dll", readme)
         self.assertIn("amd_fidelityfx_dx12.dll", readme)
         self.assertIn("generated NVIDIA-derived", readme)
@@ -185,6 +186,7 @@ class ToolkitTests(unittest.TestCase):
             {
                 "action__helixsr_status",
                 "action__helixsr_prepare",
+                "action__helixsr_prepare_latest",
                 "action__helixsr_install",
                 "action__helixsr_uninstall",
             },
@@ -895,6 +897,14 @@ class ToolkitTests(unittest.TestCase):
                     ("bc250-helixsr.sh", "prepare", str(dlss)),
                 ),
                 (
+                    ("helixsr-prepare", "--latest"),
+                    ("bc250-helixsr.sh", "prepare", "--latest"),
+                ),
+                (
+                    ("helixsr-prepare", "--latest", str(dlss)),
+                    ("bc250-helixsr.sh", "prepare", "--latest", str(dlss)),
+                ),
+                (
                     ("helixsr-payload-status",),
                     ("bc250-helixsr.sh", "payload-status"),
                 ),
@@ -930,7 +940,7 @@ class ToolkitTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             toolkit, call_log, env = self.make_action_environment(Path(directory))
             for arguments in (
-                ("helixsr-prepare", "one", "two"),
+                ("helixsr-prepare", "--latest", "one", "two"),
                 ("helixsr-payload-status", "unexpected"),
                 ("helixsr-install",),
                 ("helixsr-install", "one", "two"),
