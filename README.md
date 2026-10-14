@@ -187,18 +187,26 @@ Open the menu:
 
 | Profile | Configuration |
 |---|---|
-| Zram | Half of physical RAM, Zstandard compression, priority 100 |
-| Zswap and disk | Zstandard cache, 10% RAM pool, memory shrinker, persistent disk swap, priority 10 |
+| Zram | Half of physical RAM, Zstandard compression by default (LZ4 optional), priority 100 |
+| Zswap and disk | LZ4 cache by default (Zstandard optional), 10% RAM pool, memory shrinker, persistent disk swap, priority 10 |
 
 | Command | Result |
 |---|---|
 | `sudo ./bc250-swap.sh install zram` | Install the zram profile |
+| `sudo ./bc250-swap.sh install zram lz4` | Use LZ4 compressed RAM swap |
+| `sudo ./bc250-swap.sh install zram zstd` | Use Zstandard compressed RAM swap |
 | `sudo ./bc250-swap.sh install zswap` | Install a 16 GiB disk-swap profile |
 | `sudo ./bc250-swap.sh install zswap 32` | Install a 32 GiB disk-swap profile |
+| `sudo ./bc250-swap.sh install zswap 16 lz4` | Use LZ4 compression with a 16 GiB disk-swap profile |
+| `sudo ./bc250-swap.sh install zswap 16 zstd` | Use Zstandard compression with a 16 GiB disk-swap profile |
 | `./bc250-swap.sh status` | Show the active profile |
 | `sudo ./bc250-swap.sh uninstall` | Remove the toolkit profile |
 
 A profile transition can require one reboot and a second run of the command.
+The swap menu offers both compressors for zram and zswap. To switch an existing
+profile, rerun the install command with the desired compressor (and its current
+swapfile size for zswap), then reboot. LZ4 favors speed; Zstandard favors
+compression ratio.
 Zram is the recommended default. Zswap is an advanced disk-backed option and
 can still cause storage latency when sustained memory pressure forces writeback.
 
