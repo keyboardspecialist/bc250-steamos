@@ -13,6 +13,7 @@ STORAGE_SH="$SCRIPT_DIR/bc250-storage.sh"
 PERSISTENCE_SH="$SCRIPT_DIR/bc250-update-persistence.sh"
 CU_STATUS_SH="$SCRIPT_DIR/bc250-cu-status.sh"
 AIC_SETUP_SH="$SCRIPT_DIR/aic8800/steamdeck-setup.sh"
+WIFI_BACKEND_SH="$SCRIPT_DIR/bc250-wifi-backend.sh"
 FAN_SETUP_SH="$SCRIPT_DIR/nct6687d/steamdeck-setup.sh"
 AUDIO_FIX_SH="$SCRIPT_DIR/bc250-audio-fix/patch-driver.sh"
 AUDIO_CLEAN_SH="$SCRIPT_DIR/bc250-audio-fix/clean.sh"
@@ -877,6 +878,7 @@ show_status() {
     local cu_output="" cu_rc=0 cec_output="" cec_rc=0
     local cec_bus_output="" cec_bus_rc=0
     local fan_output="" fan_rc=0
+    local wifi_output="" wifi_rc=0 wifi_services wifi_issues
     local enabled active mode installed_count pending_count profile routed factory_gain
     local failed_components=()
     sudo -v
@@ -895,6 +897,7 @@ show_status() {
     status_script_capture cec_output cec_rc user "$CEC_SH" status
     status_script_capture cec_bus_output cec_bus_rc user "$CEC_SH" scan
     status_script_capture fan_output fan_rc user "$FAN_SETUP_SH" status
+    status_script_capture wifi_output wifi_rc user "$WIFI_BACKEND_SH" status
 
     printf '%s\n' "${CB}${CC}BC-250 system health ${CD}[${TOOLKIT_VERSION}]${C0}"
 
@@ -1198,6 +1201,47 @@ show_status() {
     fi
 
     status_heading "DEVICES & CONNECTIVITY"
+    state=$(status_value "$wifi_output" "Effective backend: " || true)
+    secondary=$(status_value "$wifi_output" "Backend lock: " || true)
+    wifi_services=$(status_value "$wifi_output" "Active Wi-Fi services: " || true)
+    if [[ $wifi_rc -ne 0 || ( "$state" != iwd && "$state" != wpa_supplicant ) ]]; then
+        status_row "Wi-Fi backend" "unavailable" bad "status probe failed (exit $wifi_rc); run wifi-backend status"
+        failed=1; failed_components+=("Wi-Fi backend")
+    elif [[ "$secondary" == unlocked\ * ]]; then
+        if [[ "$wifi_services" == none || ", $wifi_services, " == *", $state, "* ]]; then
+            status_row "Wi-Fi backend" "unlocked" dim \
+                "$state; Steam can change the backend; active services $wifi_services"
+        else
+            status_row "Wi-Fi backend" "restart needed" warn \
+                "$state configured; unlocked; active services ${wifi_services:-unknown}; run wifi-backend status"
+            failed=1; failed_components+=("Wi-Fi backend")
+        fi
+    elif [[ "$secondary" == iwd || "$secondary" == wpa_supplicant ]]; then
+        enabled=$(status_value "$wifi_output" "Lock effective: " || true)
+        active=$(status_value "$wifi_output" "Backend startup binding: " || true)
+        mode=$(status_value "$wifi_output" "SteamOS update protection: " || true)
+        wifi_issues=""
+        [[ "$enabled" == yes && "$state" == "$secondary" ]] \
+            || wifi_issues+="lock ineffective; "
+        [[ "$active" == "$secondary" ]] \
+            || wifi_issues+="startup binding missing or mismatched; "
+        [[ "$mode" == installed ]] \
+            || wifi_issues+="update protection missing; "
+        [[ "$wifi_services" == none || ", $wifi_services, " == *", $state, "* ]] \
+            || wifi_issues+="runtime backend differs or is unreported; "
+        if [[ -z "$wifi_issues" ]]; then
+            status_row "Wi-Fi backend" "locked" good \
+                "$state; startup bound; update protected; active services ${wifi_services:-unknown}"
+        else
+            status_row "Wi-Fi backend" "attention" warn \
+                "configured $state; locked to $secondary; ${wifi_issues%; }; run wifi-backend lock $secondary"
+            failed=1; failed_components+=("Wi-Fi backend")
+        fi
+    else
+        status_row "Wi-Fi backend" "unavailable" bad "lock state not reported; run wifi-backend status"
+        failed=1; failed_components+=("Wi-Fi backend")
+    fi
+
     state=$(status_value "$fan_output" "state: " || true)
     detail=$(status_value "$fan_output" "hwmon: " || true)
     secondary=$(status_value "$fan_output" "load option: " || true)
@@ -1423,6 +1467,12 @@ menu_graph_activate() {
         action__amdgpu_clean) run_menu_action amdgpu-clean ;;
         action__fan_driver) run_menu_action fan-driver ;;
         action__wifi) run_menu_action wifi ;;
+        action__wifi_backend_status) run_menu_action wifi-backend status ;;
+        action__wifi_backend_iwd) run_menu_action wifi-backend set iwd ;;
+        action__wifi_backend_wpa) run_menu_action wifi-backend set wpa_supplicant ;;
+        action__wifi_backend_lock_iwd) run_menu_action wifi-backend lock iwd ;;
+        action__wifi_backend_lock_wpa) run_menu_action wifi-backend lock wpa_supplicant ;;
+        action__wifi_backend_unlock) run_menu_action wifi-backend unlock ;;
         action__decky) run_menu_action decky ;;
         action__desktop) run_menu_action desktop ;;
         action__coolercontrol) run_menu_action coolercontrol ;;
@@ -1790,6 +1840,58 @@ menu_graph_render() {
                 items+=("AIC8800 WiFi and Bluetooth|${badge}|Install only on systems using the AIC8800 adapter.")
                 targets+=("action__wifi")
                 badges+=("$badge")
+                if ! badge=$(menu_graph_badge menu__cmd_wifi_backend_menu menu); then badge=; fi
+                if [[ "$badge" == *"|"* || "$badge" == *$'\n'* ]]; then
+                    die "Invalid generated menu badge: menu__cmd_wifi_backend_menu"
+                fi
+                items+=("Wi-Fi Backend|${badge}|Choose iwd or wpa_supplicant and optionally lock it across Game Mode and reboots.")
+                targets+=("menu__cmd_wifi_backend_menu")
+                badges+=("$badge")
+                ;;
+            menu__cmd_wifi_backend_menu)
+                title="Wi-Fi Backend"
+                if ! badge=$(menu_graph_badge action__wifi_backend_status read_only); then badge=; fi
+                if [[ "$badge" == *"|"* || "$badge" == *$'\n'* ]]; then
+                    die "Invalid generated menu badge: action__wifi_backend_status"
+                fi
+                items+=("Backend Status|${badge}|Show the effective backend, active services, lock, and update protection.")
+                targets+=("action__wifi_backend_status")
+                badges+=("$badge")
+                if ! badge=$(menu_graph_badge action__wifi_backend_iwd install); then badge=; fi
+                if [[ "$badge" == *"|"* || "$badge" == *$'\n'* ]]; then
+                    die "Invalid generated menu badge: action__wifi_backend_iwd"
+                fi
+                items+=("Use iwd|${badge}|Select iwd; retain an existing lock or allow Steam to choose when unlocked.")
+                targets+=("action__wifi_backend_iwd")
+                badges+=("$badge")
+                if ! badge=$(menu_graph_badge action__wifi_backend_wpa install); then badge=; fi
+                if [[ "$badge" == *"|"* || "$badge" == *$'\n'* ]]; then
+                    die "Invalid generated menu badge: action__wifi_backend_wpa"
+                fi
+                items+=("Use wpa_supplicant|${badge}|Select wpa_supplicant; retain an existing lock or allow Steam to choose when unlocked.")
+                targets+=("action__wifi_backend_wpa")
+                badges+=("$badge")
+                if ! badge=$(menu_graph_badge action__wifi_backend_lock_iwd install); then badge=; fi
+                if [[ "$badge" == *"|"* || "$badge" == *$'\n'* ]]; then
+                    die "Invalid generated menu badge: action__wifi_backend_lock_iwd"
+                fi
+                items+=("Lock to iwd|${badge}|Keep iwd selected even when Steam changes its saved preference.")
+                targets+=("action__wifi_backend_lock_iwd")
+                badges+=("$badge")
+                if ! badge=$(menu_graph_badge action__wifi_backend_lock_wpa install); then badge=; fi
+                if [[ "$badge" == *"|"* || "$badge" == *$'\n'* ]]; then
+                    die "Invalid generated menu badge: action__wifi_backend_lock_wpa"
+                fi
+                items+=("Lock to wpa_supplicant|${badge}|Keep wpa_supplicant selected even when Steam changes its saved preference.")
+                targets+=("action__wifi_backend_lock_wpa")
+                badges+=("$badge")
+                if ! badge=$(menu_graph_badge action__wifi_backend_unlock cleanup); then badge=; fi
+                if [[ "$badge" == *"|"* || "$badge" == *$'\n'* ]]; then
+                    die "Invalid generated menu badge: action__wifi_backend_unlock"
+                fi
+                items+=("Unlock Backend|${badge}|Keep the current choice but return backend control to Steam.")
+                targets+=("action__wifi_backend_unlock")
+                badges+=("$badge")
                 ;;
             menu__cmd_interfaces_menu)
                 title="Control Interfaces"
@@ -2067,6 +2169,7 @@ menu_graph_open() {
         video-codec) menu_graph_render menu__cmd_video_codec_menu ;;
         unlocks) menu_graph_render menu__cmd_unlocks_menu ;;
         devices) menu_graph_render menu__cmd_devices_menu ;;
+        wifi-backend) menu_graph_render menu__cmd_wifi_backend_menu ;;
         interfaces) menu_graph_render menu__cmd_interfaces_menu ;;
         maintenance) menu_graph_render menu__cmd_maintenance_menu ;;
         proton) menu_graph_render menu__cmd_proton_menu ;;
@@ -2131,6 +2234,30 @@ cmd_devices_menu() {
     menu_graph_open devices
 }
 
+cmd_wifi_backend() {
+    require_normal_user
+    if (($# == 0)); then
+        require_terminal
+        menu_graph_open wifi-backend
+        return
+    fi
+    case "$1" in
+        status) run_script "$WIFI_BACKEND_SH" "$@" ;;
+        set|lock)
+            [[ $# -eq 2 && ( "$2" == iwd || "$2" == wpa_supplicant ) ]] \
+                || die "Usage: $0 wifi-backend $1 iwd|wpa_supplicant"
+            confirm_action "${1^} Wi-Fi backend to $2? Switching backends briefly disconnects networking." \
+                run_script "$WIFI_BACKEND_SH" "$@"
+            ;;
+        unlock)
+            (($# == 1)) || die "Usage: $0 wifi-backend unlock"
+            confirm_action "Remove the Wi-Fi backend lock and allow Steam to choose again?" \
+                run_script "$WIFI_BACKEND_SH" unlock
+            ;;
+        *) die "Usage: $0 wifi-backend [status [--json]|set BACKEND|lock BACKEND|unlock]" ;;
+    esac
+}
+
 cmd_interfaces_menu() {
     require_terminal
     require_normal_user
@@ -2181,7 +2308,7 @@ cmd_storage_updates_menu() {
 
 cmd_help() {
     cat << EOF
-Usage: $0 [menu|toolkit-update|toolkit-update-check|setup|auto-base-installation|graphics-setup|status|inventory-json|action OPERATION_ID|drivers|unlocks|storage-updates|interfaces|power [ENTRY]|ram|swap|compute|cpu-unlock|cec|audio-output|hdmi-ac3-enable|hdmi-ac3-revert|storage|persistence|wifi|fan-driver|memory-temperature|amdgpu|amdgpu-clean|scheduler-policy|kfd-runlist|radv|helixsr-prepare [--latest] [DLSS_DLL]|helixsr-payload-status|helixsr-install TARGET_DLL|helixsr-uninstall TARGET_DLL|--all|video-codec|video-codec-status|video-codec-install|video-codec-remove|proton|proton-install|proton-update|proton-status|proton-uninstall|decky|desktop|coolercontrol|trainer|manage|help]
+Usage: $0 [menu|toolkit-update|toolkit-update-check|setup|auto-base-installation|graphics-setup|status|inventory-json|action OPERATION_ID|drivers|unlocks|storage-updates|interfaces|power [ENTRY]|ram|swap|compute|cpu-unlock|cec|audio-output|hdmi-ac3-enable|hdmi-ac3-revert|storage|persistence|wifi|wifi-backend|fan-driver|memory-temperature|amdgpu|amdgpu-clean|scheduler-policy|kfd-runlist|radv|helixsr-prepare [--latest] [DLSS_DLL]|helixsr-payload-status|helixsr-install TARGET_DLL|helixsr-uninstall TARGET_DLL|--all|video-codec|video-codec-status|video-codec-install|video-codec-remove|proton|proton-install|proton-update|proton-status|proton-uninstall|decky|desktop|coolercontrol|trainer|manage|help]
 
 Run without arguments in a terminal to open the unified toolkit menu.
 Run the toolkit as the logged-in Deck user, not with sudo; child tools request
@@ -2214,6 +2341,8 @@ Commands:
   storage                Open the Persistent Storage menu
   persistence            Open the SteamOS Update Persistence menu
   wifi                   Confirm and run the AIC8800 installer
+  wifi-backend [status [--json]|set BACKEND|lock BACKEND|unlock]
+                         Select iwd or wpa_supplicant; lock against Steam changes
   fan-driver             Confirm and install NCT6687 hwmon fan/PWM support
   memory-temperature     Open the experimental GDDR6 temperature tool
   amdgpu                 Confirm and build the AMDGPU kernel fixes
@@ -2339,6 +2468,7 @@ case "$command_name" in
     storage) (($# == 0)) || die "Usage: $0 storage"; run_script "$STORAGE_SH" menu ;;
     persistence) (($# == 0)) || die "Usage: $0 persistence"; run_script "$PERSISTENCE_SH" menu ;;
     wifi) (($# == 0)) || die "Usage: $0 wifi"; install_wifi ;;
+    wifi-backend) cmd_wifi_backend "$@" ;;
     fan-driver) (($# == 0)) || die "Usage: $0 fan-driver"; install_fan_driver ;;
     memory-temperature) (($# == 0)) || die "Usage: $0 memory-temperature"; cmd_memory_temperature_menu ;;
     memory-temperature-status) (($# == 0)) || die "Usage: $0 memory-temperature-status"; run_sudo_script "$MEMORY_TEMP_SH" status ;;

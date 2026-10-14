@@ -61,8 +61,8 @@ action__status -.-> menu__cmd_power_menu
 
 The ten configured targets contain:
 
-- 42 authored menus and 226 selectable nodes
-- 244 navigation links and 9 dependency links
+- 43 authored menus and 234 selectable nodes
+- 252 navigation links and 9 dependency links
 - no forward-navigation or dependency cycles
 - no sibling-category detours
 - no parallel choices to the same destination

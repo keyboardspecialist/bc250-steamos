@@ -814,7 +814,7 @@ grep -Fxq "daemon-reload" "$SYSTEMCTL_LOG"
         )
         storage = STORAGE.read_text(encoding="utf-8")
         for expected in (
-            "COMPONENTS=(compute power ram swap cec ac3 aic fan coolercontrol desktop amdgpu)",
+            "COMPONENTS=(compute power ram swap cec ac3 aic wifi fan coolercontrol desktop amdgpu)",
             "/etc/systemd/system/bc250-control.service",
             "/etc/systemd/system/bc250-desktop-control-repair.service",
             "/etc/dbus-1/system.d/io.github.keyboardspecialist.BC250Control1.conf",

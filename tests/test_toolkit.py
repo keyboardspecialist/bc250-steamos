@@ -43,6 +43,7 @@ class ToolkitTests(unittest.TestCase):
             "storage",
             "persistence",
             "wifi",
+            "wifi-backend",
             "fan-driver",
             "amdgpu",
             "amdgpu-clean",
@@ -157,6 +158,18 @@ class ToolkitTests(unittest.TestCase):
         device_ids = {node.id for node in graph.choices("menu__cmd_devices_menu")}
         self.assertIn("menu__cmd_audio_menu", device_ids)
         self.assertIn("child__cec", device_ids)
+        self.assertIn("menu__cmd_wifi_backend_menu", device_ids)
+        self.assertEqual(
+            {
+                "action__wifi_backend_status",
+                "action__wifi_backend_iwd",
+                "action__wifi_backend_wpa",
+                "action__wifi_backend_lock_iwd",
+                "action__wifi_backend_lock_wpa",
+                "action__wifi_backend_unlock",
+            },
+            {node.id for node in graph.choices("menu__cmd_wifi_backend_menu")},
+        )
         interface_ids = {node.id for node in graph.choices("menu__cmd_interfaces_menu")}
         self.assertIn("action__coolercontrol", interface_ids)
         self.assertIn("action__trainer", interface_ids)
@@ -500,6 +513,7 @@ class ToolkitTests(unittest.TestCase):
             "bc250-swap.sh",
             "bc250-cec.sh",
             "bc250-update-persistence.sh",
+            "bc250-wifi-backend.sh",
         )
         for relative in scripts:
             script = root / relative
@@ -516,6 +530,15 @@ class ToolkitTests(unittest.TestCase):
                     "  printf '%s\\n' '  governor: schedutil'\n"
                     "  printf '%s\\n' '  CPU OC boot profile: 3800 MHz @ 1150 mV; 90 C limit'\n"
                     "fi\n"
+                )
+            elif relative == "bc250-wifi-backend.sh":
+                content = (
+                    "#!/usr/bin/env bash\n"
+                    '[[ "$*" == status && ${BC250_TEST_ELEVATED:-0} != 1 ]] || exit 2\n'
+                    "printf '%s\\n' \"${WIFI_HEALTH_OUTPUT:-[bc250-wifi] Effective backend: iwd\n"
+                    "[bc250-wifi] Backend lock: unlocked (Steam may change the backend)\n"
+                    "[bc250-wifi] Active Wi-Fi services: iwd}\"\n"
+                    'exit "${WIFI_HEALTH_RC:-0}"\n'
                 )
             elif relative == "bc250-cec.sh":
                 content = (
@@ -700,6 +723,74 @@ class ToolkitTests(unittest.TestCase):
             self.assertIn("8 cores / 16 threads; EFI pre-boot method", result.stdout)
             self.assertNotIn("8 cores / 16 threads (unlocked)", result.stdout)
             self.assertIn("EFI pre-boot method", result.stdout)
+
+    def test_status_reports_wifi_backend_and_detects_broken_locks(self):
+        cases = (
+            ("iwd", None, None, None, None, "iwd", 0, "unlocked", "Steam can change the backend"),
+            ("wpa_supplicant", None, None, None, None, "none", 0, "unlocked", "active services none"),
+            ("iwd", "iwd", "yes", "iwd", "installed", "iwd", 0, "locked", "startup bound; update protected"),
+            ("wpa_supplicant", "wpa_supplicant", "yes", "wpa_supplicant", "installed", "wpa_supplicant", 0, "locked", "startup bound; update protected"),
+            ("iwd", "iwd", "yes", "iwd", "installed", "none", 0, "locked", "active services none"),
+            ("wpa_supplicant", "iwd", "NO — conflicting NetworkManager configuration", "iwd", "installed", "wpa_supplicant", 1, "attention", "lock ineffective"),
+            ("iwd", "iwd", "yes", "missing; rerun lock to repair", "installed", "iwd", 1, "attention", "startup binding missing or mismatched"),
+            ("iwd", "iwd", "yes", "wpa_supplicant", "installed", "iwd", 1, "attention", "startup binding missing or mismatched"),
+            ("iwd", "iwd", "yes", "iwd", "missing", "iwd", 1, "attention", "update protection missing"),
+            ("iwd", "iwd", "yes", "iwd", "installed", "wpa_supplicant", 1, "attention", "runtime backend differs"),
+            ("wpa_supplicant", None, None, None, None, "iwd", 1, "restart needed", "active services iwd"),
+        )
+        for backend, lock, effective, binding, protection, services, expected_rc, badge, detail in cases:
+            with self.subTest(backend=backend, lock=lock, detail=detail), tempfile.TemporaryDirectory() as directory:
+                toolkit, env = self.make_status_environment(Path(directory), "not-installed")
+                lines = [
+                    f"[bc250-wifi] Effective backend: {backend}",
+                    f"[bc250-wifi] Backend lock: {lock or 'unlocked (Steam may change the backend)'}",
+                    f"[bc250-wifi] Active Wi-Fi services: {services}",
+                ]
+                if lock:
+                    lines.extend([
+                        f"[bc250-wifi] Lock effective: {effective}",
+                        f"[bc250-wifi] Backend startup binding: {binding}",
+                        f"[bc250-wifi] SteamOS update protection: {protection}",
+                    ])
+                env["WIFI_HEALTH_OUTPUT"] = "\n".join(lines)
+                result = subprocess.run(
+                    ["bash", str(toolkit), "status"],
+                    capture_output=True, text=True, env=env,
+                )
+                self.assertEqual(result.returncode, expected_rc, result.stdout + result.stderr)
+                plain = re.sub(r"\x1b\[[0-9;]*m", "", result.stdout)
+                row = next(line for line in plain.splitlines() if line.strip().startswith("Wi-Fi backend"))
+                self.assertIn(f"[{badge}]", row)
+                self.assertIn(backend, row)
+                self.assertIn(detail, row)
+                self.assertLess(plain.index("DEVICES & CONNECTIVITY"), plain.index(row))
+                self.assertEqual("OVERALL  [attention required]" in plain, expected_rc != 0)
+                if expected_rc:
+                    if lock:
+                        self.assertIn("run wifi-backend lock iwd", row)
+                    else:
+                        self.assertIn("run wifi-backend status", row)
+                    self.assertIn("Wi-Fi backend", plain.split("OVERALL", 1)[1])
+
+    def test_status_reports_wifi_probe_failure_or_missing_data(self):
+        for output, probe_rc in (("[bc250-wifi] Unrecognized Wi-Fi lock configuration", 1), ("", 0)):
+            with self.subTest(output=output), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                toolkit, env = self.make_status_environment(root, "not-installed")
+                # Whitespace gives genuinely empty status fields without selecting
+                # the fixture shell's fallback for an empty environment variable.
+                env["WIFI_HEALTH_OUTPUT"] = output or " "
+                env["WIFI_HEALTH_RC"] = str(probe_rc)
+                result = subprocess.run(
+                    ["bash", str(toolkit), "status"],
+                    capture_output=True, text=True, env=env,
+                )
+                self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+                plain = re.sub(r"\x1b\[[0-9;]*m", "", result.stdout)
+                row = next(line for line in plain.splitlines() if line.strip().startswith("Wi-Fi backend"))
+                self.assertIn("[unavailable]", row)
+                self.assertIn("run wifi-backend status", row)
+                self.assertIn("Wi-Fi backend", plain.split("OVERALL", 1)[1])
 
     def test_cpu_overclock_status_explains_boot_apply_failure(self):
         cases = (

@@ -8,6 +8,7 @@ menu__cmd_power_menu["Power & Thermals<br/>Configure power, GPU and CPU tuning, 
 menu__cmd_graphics_menu["Graphics Stack<br/>Manage AMDGPU, Mesa and RADV, game upscalers, and GE-Proton."]:::menu
 menu__cmd_unlocks_menu["Hardware Unlocks<br/>Test CPU cores or GPU compute units with explicit recovery paths."]:::menu
 menu__cmd_devices_menu["Devices & Connectivity<br/>Configure HDMI audio, CEC, fan control, and hardware-specific wireless support."]:::menu
+menu__cmd_wifi_backend_menu["Wi-Fi Backend<br/>Choose iwd or wpa_supplicant and optionally lock it across Game Mode and reboots."]:::menu
 menu__cmd_interfaces_menu["Control Interfaces<br/>Install Gaming Mode, desktop, fan-control, or standalone interfaces."]:::menu
 menu__cmd_maintenance_menu["Maintenance & Recovery<br/>Recover updates, clean build state, or remove installed components."]:::menu
 menu__cmd_proton_menu["BC-250 GE-Proton<br/>Inspect, install, update, repair, or remove the verified compatibility tool."]:::menu
@@ -27,6 +28,12 @@ action__graphics_setup["Install or Resume Async Compute<br/>Install AMDGPU first
 action__amdgpu_clean["Clean AMDGPU Build Tree<br/>Remove generated build output while retaining downloads and dependencies."]:::cleanup
 action__fan_driver["NCT6687 Fan-Control Driver<br/>Install Linux hwmon fan-speed and PWM support."]:::install
 action__wifi["AIC8800 WiFi and Bluetooth<br/>Install only on systems using the AIC8800 adapter."]:::hardware_specific
+action__wifi_backend_status["Backend Status<br/>Show the effective backend, active services, lock, and update protection."]:::read_only
+action__wifi_backend_iwd["Use iwd<br/>Select iwd; retain an existing lock or allow Steam to choose when unlocked."]:::install
+action__wifi_backend_wpa["Use wpa_supplicant<br/>Select wpa_supplicant; retain an existing lock or allow Steam to choose when unlocked."]:::install
+action__wifi_backend_lock_iwd["Lock to iwd<br/>Keep iwd selected even when Steam changes its saved preference."]:::install
+action__wifi_backend_lock_wpa["Lock to wpa_supplicant<br/>Keep wpa_supplicant selected even when Steam changes its saved preference."]:::install
+action__wifi_backend_unlock["Unlock Backend<br/>Keep the current choice but return backend control to Steam."]:::cleanup
 action__decky["Decky Plugin<br/>Install BC-250 controls for Gaming Mode and Quick Access."]:::install
 action__desktop["Plasma Desktop Control<br/>Install the shared service and Plasma system-tray control."]:::install
 action__coolercontrol["CoolerControl<br/>Install fan profiles, curves, and monitoring for the onboard controller."]:::install
@@ -111,6 +118,14 @@ menu__cmd_devices_menu --> menu__cmd_audio_menu
 menu__cmd_devices_menu --> child__cec
 menu__cmd_devices_menu --> action__fan_driver
 menu__cmd_devices_menu --> action__wifi
+menu__cmd_devices_menu --> menu__cmd_wifi_backend_menu
+
+menu__cmd_wifi_backend_menu --> action__wifi_backend_status
+menu__cmd_wifi_backend_menu --> action__wifi_backend_iwd
+menu__cmd_wifi_backend_menu --> action__wifi_backend_wpa
+menu__cmd_wifi_backend_menu --> action__wifi_backend_lock_iwd
+menu__cmd_wifi_backend_menu --> action__wifi_backend_lock_wpa
+menu__cmd_wifi_backend_menu --> action__wifi_backend_unlock
 
 menu__cmd_interfaces_menu --> action__decky
 menu__cmd_interfaces_menu --> action__desktop

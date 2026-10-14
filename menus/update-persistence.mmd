@@ -8,6 +8,7 @@ action__protect_ram["Protect RAM split<br/>Preserve the dynamic TTM VRAM boot se
 action__protect_swap["Protect compressed swap<br/>Preserve the selected zram or zswap-backed disk profile."]:::install
 action__protect_cec["Protect CEC<br/>Preserve CEC poweroff and sleep integration."]:::install
 action__protect_aic["Protect AIC8800<br/>Preserve AIC8800 service and device configuration."]:::install
+action__protect_wifi["Protect Wi-Fi backend lock<br/>Preserve an installed backend lock across SteamOS updates."]:::install
 action__protect_fan["Protect fan driver<br/>Preserve NCT6687 fan-driver configuration and boot recovery."]:::install
 action__protect_coolercontrol["Protect CoolerControl<br/>Preserve the CoolerControl system service after updates."]:::install
 action__protect_desktop["Protect desktop control<br/>Preserve the desktop service and repair integration after updates."]:::install
@@ -24,6 +25,7 @@ menu__root --> action__protect_ram
 menu__root --> action__protect_swap
 menu__root --> action__protect_cec
 menu__root --> action__protect_aic
+menu__root --> action__protect_wifi
 menu__root --> action__protect_fan
 menu__root --> action__protect_coolercontrol
 menu__root --> action__protect_desktop

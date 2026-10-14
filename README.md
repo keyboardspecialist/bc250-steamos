@@ -577,6 +577,49 @@ sudo bash ./aic8800/steamdeck-setup.sh
 The package includes AIC and OEM USB IDs. The installer stages source,
 firmware, and kernel modules in persistent storage.
 
+### Wi-Fi backend selection and lock
+
+Open **Devices & Connectivity > Wi-Fi Backend** to select `iwd` or
+`wpa_supplicant`, inspect the current backend, lock your choice, or unlock it.
+This works independently of the AIC8800 driver installer and applies to Wi-Fi
+managed by NetworkManager.
+**System Health** also shows the backend and lock under **Devices & Connectivity**.
+An unlocked backend is informational; ineffective locks, missing startup bindings,
+missing lock update protection, runtime backend mismatches, or a failed status probe
+require attention. An inactive service alone is informational because the machine
+may have no Wi-Fi interface present.
+
+```bash
+bash ./bc250-toolkit.sh wifi-backend
+bash ./bc250-toolkit.sh wifi-backend status
+bash ./bc250-toolkit.sh wifi-backend lock iwd
+bash ./bc250-toolkit.sh wifi-backend lock wpa_supplicant
+bash ./bc250-toolkit.sh wifi-backend unlock
+```
+
+The lock uses `/etc/NetworkManager/conf.d/zz-bc250-wifi-backend.conf`, a
+toolkit-owned override that takes priority over Steam's Wi-Fi backend setting.
+It stays in effect across Game Mode, Desktop Mode, reboots, and SteamOS updates.
+The lock also adds a NetworkManager service drop-in to start the selected backend
+before NetworkManager, including when `iwd` needs to recreate the Wi-Fi interface.
+Steam may still display a different **Force WPA Supplicant** preference, but the
+toolkit's status reports the effective NetworkManager backend. Steam can still
+briefly restart networking when it tries to switch backends.
+
+Use `wifi-backend set iwd` or `wifi-backend set wpa_supplicant` for an unlocked
+selection. If a lock already exists, `set` updates that lock too. Unlocking removes
+only the toolkit override, service drop-in, and update keep list, keeps the
+selected backend, and allows Steam to change it again. Backend switches briefly disconnect
+networking; changing a lock on an already-active backend does not restart it.
+
+Neither backend is inherently better. For an AIC8800 adapter that connects in
+Desktop Mode but fails in Game Mode, check whether Steam switches a working
+`iwd` connection to `wpa_supplicant` at startup; locking to `iwd` addresses that
+specific conflict. Saved networks and passwords are left intact.
+
+Noninteractive commands are also available through the standalone helper:
+`bash ./bc250-wifi-backend.sh lock iwd`, `unlock`, and `status --json`.
+
 ### GDDR6 memory temperature
 
 This experimental tool supports the ASRock BC-250 P3.0 firmware layout. It

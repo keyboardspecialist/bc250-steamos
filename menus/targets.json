@@ -15,6 +15,7 @@
         ["video-codec", "menu__cmd_video_codec_menu"],
         ["unlocks", "menu__cmd_unlocks_menu"],
         ["devices", "menu__cmd_devices_menu"],
+        ["wifi-backend", "menu__cmd_wifi_backend_menu"],
         ["interfaces", "menu__cmd_interfaces_menu"],
         ["maintenance", "menu__cmd_maintenance_menu"],
         ["proton", "menu__cmd_proton_menu"],

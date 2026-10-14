@@ -7,7 +7,7 @@ KEEP_DIR=/etc/atomic-update.conf.d
 LEGACY_KEEP_FILE="$KEEP_DIR/bc250-steamos.conf"
 PREVIOUS_ETC=/etc/previous
 BACKUP_DIR=/var/lib/steamos-atomupd/etc_backup
-COMPONENTS=(compute power ram swap cec ac3 aic fan coolercontrol desktop amdgpu)
+COMPONENTS=(compute power ram swap cec ac3 aic wifi fan coolercontrol desktop amdgpu)
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 STORAGE_SH="$SCRIPT_DIR/bc250-storage.sh"
 STORAGE_UNIT='/etc/systemd/system/var-lib-bc250\x2dcontrol.mount'
@@ -83,7 +83,7 @@ print_storage_paths() {
 write_keep_file() {
     local component="$1" target="$KEEP_DIR/bc250-$1.conf" tmp modeswitch_id
     case "$component" in
-        compute|power|ram|swap|cec|ac3|aic|fan|coolercontrol|desktop|amdgpu) ;;
+        compute|power|ram|swap|cec|ac3|aic|wifi|fan|coolercontrol|desktop|amdgpu) ;;
         *) die "Unknown component: $component" ;;
     esac
     if [[ -e "$target" || -L "$target" ]]; then
@@ -200,6 +200,11 @@ EOF
 EOF
                 print_storage_paths
                 ;;
+            wifi)
+                printf '%s\n' /etc/NetworkManager/conf.d/zz-bc250-wifi-backend.conf \
+                    /etc/systemd/system/NetworkManager.service.d/90-bc250-wifi-backend.conf
+                print_storage_paths
+                ;;
             coolercontrol)
                 cat << EOF
 /etc/systemd/system/bc250-coolercontrold.service
@@ -248,6 +253,8 @@ component_has_state() {
         cec)     [[ -e "$ROOT_DATA_DIR/helper/bc250-cec-poweroff-standby" || -e /etc/systemd/system-sleep/bc250-cec-amp.sh ]] ;;
         ac3)     [[ -e /etc/udev/rules.d/91-bc250-hdmi-ac3.rules ]] ;;
         aic)     [[ -e "$ROOT_DATA_DIR/aic8800/source" || -e /etc/systemd/system/aic8800-modules.service ]] ;;
+        wifi)    [[ -e /etc/NetworkManager/conf.d/zz-bc250-wifi-backend.conf \
+                    || -e /etc/systemd/system/NetworkManager.service.d/90-bc250-wifi-backend.conf ]] ;;
         fan)     [[ -e "$ROOT_DATA_DIR/nct6687d/source" || -e /etc/systemd/system/nct6687-modules.service ]] ;;
         coolercontrol) [[ -e "$ROOT_DATA_DIR/coolercontrol/runtime" || -e /etc/systemd/system/bc250-coolercontrold.service ]] ;;
         desktop) [[ -e "$ROOT_DATA_DIR/desktop" || -e /etc/systemd/system/bc250-control.service ]] ;;
@@ -259,6 +266,9 @@ component_has_state() {
 install_keep_list() {
     require_root
     local requested="${1:-all}" component target
+    if [[ "$requested" == wifi ]] && ! component_has_state wifi; then
+        die "No Wi-Fi backend lock is installed; use bc250-wifi-backend.sh lock BACKEND first."
+    fi
     install_storage
     mkdir -p "$KEEP_DIR"
     if [[ -f "$LEGACY_KEEP_FILE" ]]; then
@@ -273,7 +283,7 @@ install_keep_list() {
     case "$requested" in
         all)
             for component in "${COMPONENTS[@]}"; do
-                if [[ ( "$component" == ac3 || "$component" == amdgpu ) ]] \
+                if [[ ( "$component" == ac3 || "$component" == amdgpu || "$component" == wifi ) ]] \
                     && ! component_has_state "$component"; then
                     target="$KEEP_DIR/bc250-$component.conf"
                     if [[ -e "$target" || -L "$target" ]]; then
@@ -287,7 +297,7 @@ install_keep_list() {
                 write_keep_file "$component"
             done
             ;;
-        compute|power|ram|swap|cec|ac3|aic|fan|coolercontrol|desktop|amdgpu) write_keep_file "$requested" ;;
+        compute|power|ram|swap|cec|ac3|aic|wifi|fan|coolercontrol|desktop|amdgpu) write_keep_file "$requested" ;;
         *) die "Unknown component: $requested" ;;
     esac
 }
@@ -298,7 +308,7 @@ remove_keep_list() {
     local -a selected=()
     case "$requested" in
         all) selected=("${COMPONENTS[@]}") ;;
-        compute|power|ram|swap|cec|ac3|aic|fan|coolercontrol|desktop|amdgpu) selected=("$requested") ;;
+        compute|power|ram|swap|cec|ac3|aic|wifi|fan|coolercontrol|desktop|amdgpu) selected=("$requested") ;;
         *) die "Unknown component: $requested" ;;
     esac
 
@@ -455,7 +465,8 @@ show_status() {
                 && grep -Fxq "$RECOVERY_UNIT" "$KEEP_DIR/bc250-$component.conf" \
                 && grep -Fxq "$RECOVERY_WANTS" "$KEEP_DIR/bc250-$component.conf" \
                 && keep_file_owned "$KEEP_DIR/bc250-$component.conf" \
-                && { [[ "$component" != amdgpu ]] || component_has_state amdgpu; }; then
+                && { [[ "$component" != amdgpu ]] || component_has_state amdgpu; } \
+                && { [[ "$component" != wifi ]] || component_has_state wifi; }; then
                 state=installed
             elif ! keep_file_owned "$KEEP_DIR/bc250-$component.conf"; then
                 state=foreign
@@ -538,6 +549,7 @@ keep_badge() {
     if [[ -f "$KEEP_DIR/bc250-$1.conf" ]] \
         && keep_file_owned "$KEEP_DIR/bc250-$1.conf" \
         && { [[ "$1" != amdgpu ]] || component_has_state amdgpu; } \
+        && { [[ "$1" != wifi ]] || component_has_state wifi; } \
         && grep -Fxq "$STORAGE_UNIT" "$KEEP_DIR/bc250-$1.conf" \
         && grep -Fxq "$STORAGE_WANTS" "$KEEP_DIR/bc250-$1.conf" \
         && grep -Fxq "$RECOVERY_UNIT" "$KEEP_DIR/bc250-$1.conf" \
@@ -578,6 +590,7 @@ persistence_menu_graph_badge() {
         action__protect_swap) keep_badge swap ;;
         action__protect_cec) keep_badge cec ;;
         action__protect_aic) keep_badge aic ;;
+        action__protect_wifi) keep_badge wifi ;;
         action__protect_fan) keep_badge fan ;;
         action__protect_coolercontrol) keep_badge coolercontrol ;;
         action__protect_desktop) keep_badge desktop ;;
@@ -595,6 +608,7 @@ persistence_menu_graph_activate() {
         action__protect_swap) run_menu_action install swap ;;
         action__protect_cec) run_menu_action install cec ;;
         action__protect_aic) run_menu_action install aic ;;
+        action__protect_wifi) run_menu_action install wifi ;;
         action__protect_fan) run_menu_action install fan ;;
         action__protect_coolercontrol) run_menu_action install coolercontrol ;;
         action__protect_desktop) run_menu_action install desktop ;;
@@ -660,6 +674,13 @@ persistence_menu_graph_render() {
                 fi
                 items+=("Protect AIC8800|${badge}|Preserve AIC8800 service and device configuration.")
                 targets+=("action__protect_aic")
+                badges+=("$badge")
+                if ! badge=$(persistence_menu_graph_badge action__protect_wifi install); then badge=; fi
+                if [[ "$badge" == *"|"* || "$badge" == *$'\n'* ]]; then
+                    die "Invalid generated menu badge: action__protect_wifi"
+                fi
+                items+=("Protect Wi-Fi backend lock|${badge}|Preserve an installed backend lock across SteamOS updates.")
+                targets+=("action__protect_wifi")
                 badges+=("$badge")
                 if ! badge=$(persistence_menu_graph_badge action__protect_fan install); then badge=; fi
                 if [[ "$badge" == *"|"* || "$badge" == *$'\n'* ]]; then
@@ -756,12 +777,12 @@ cmd_menu() {
 
 cmd_help() {
     cat << EOF
-Usage: $0 {install|remove} [compute|power|ram|swap|cec|ac3|aic|fan|coolercontrol|desktop|amdgpu|all]
+Usage: $0 {install|remove} [compute|power|ram|swap|cec|ac3|aic|wifi|fan|coolercontrol|desktop|amdgpu|all]
        $0 recover [compute|power|all] [--force]
        $0 {status|menu|help}
 
   remove COMPONENT     Remove only this helper's matching component keep list.
-                       COMPONENT is compute, power, ram, swap, cec, ac3, aic, fan,
+                       COMPONENT is compute, power, ram, swap, cec, ac3, aic, wifi, fan,
                        coolercontrol, desktop, amdgpu, or all.
 
 Run with no arguments in a terminal to open the interactive menu.
@@ -778,7 +799,7 @@ case "$1" in
     remove)
         shift
         [[ $# -eq 1 ]] \
-            || die "Usage: $0 remove {compute|power|ram|swap|cec|ac3|aic|fan|coolercontrol|desktop|amdgpu|all}"
+            || die "Usage: $0 remove {compute|power|ram|swap|cec|ac3|aic|wifi|fan|coolercontrol|desktop|amdgpu|all}"
         remove_keep_list "$1"
         ;;
     recover) shift; recover_settings "${1:-all}" "${2:-}" ;;
