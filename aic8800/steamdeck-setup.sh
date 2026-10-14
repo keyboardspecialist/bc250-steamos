@@ -90,7 +90,7 @@ show_status() {
     fi
     log "module runtime: $state"
 
-    if usb_device_has_id 368b 8d81; then
+    if usb_device_has_id 368b 8d81 || usb_device_has_id a69c 8d81; then
         if [ -d /sys/module/aic_zlp_quirk ]; then
             state=loaded
         else
@@ -137,6 +137,13 @@ show_status() {
         failed=1
     fi
     log "runtime firmware: $state"
+    if command -v nmcli >/dev/null 2>&1; then
+        log "Wi-Fi radio: $(nmcli -t -f WIFI radio 2>/dev/null || true)"
+        nmcli -t -f DEVICE,TYPE,STATE device status 2>/dev/null || true
+    fi
+    if command -v steamos-wifi-set-backend >/dev/null 2>&1; then
+        log "configured Wi-Fi backend: $(steamos-wifi-set-backend --check 2>/dev/null || true)"
+    fi
     if [ "$failed" = 0 ]; then
         log "state: installed"
     else
@@ -560,6 +567,9 @@ fi
 cat > /etc/udev/rules.d/40-aic8800-modeswitch.rules <<EOF
 # AIC8800 WiFi dongle: auto-switch from fake mass-storage to WiFi mode
 ACTION=="add", SUBSYSTEM=="usb", ENV{DEVTYPE}=="usb_device", ATTR{idVendor}=="$MODESWITCH_VENDOR", ATTR{idProduct}=="$MODESWITCH_PRODUCT", RUN+="/usr/lib/udev/usb_modeswitch '%b/%k'"
+# A negative delay keeps autosuspend disabled even if btusb later enables auto mode.
+ACTION=="add", SUBSYSTEM=="usb", ENV{DEVTYPE}=="usb_device", ATTR{idVendor}=="a69c", ATTR{idProduct}=="8d81", TEST=="power/autosuspend_delay_ms", ATTR{power/autosuspend_delay_ms}="-1", ATTR{power/control}="on"
+ACTION=="add", SUBSYSTEM=="usb", ENV{DEVTYPE}=="usb_device", ATTR{idVendor}=="368b", ATTR{idProduct}=="8d81", TEST=="power/autosuspend_delay_ms", ATTR{power/autosuspend_delay_ms}="-1", ATTR{power/control}="on"
 # AIC OEM adapters switch their SCSI mass-storage personality by ejecting it.
 KERNEL=="sd*", ATTRS{idVendor}=="a69c", ATTRS{idProduct}=="5721", RUN+="/usr/bin/eject /dev/%k"
 KERNEL=="sd*", ATTRS{idVendor}=="a69c", ATTRS{idProduct}=="5722", RUN+="/usr/bin/eject /dev/%k"
@@ -632,7 +642,7 @@ if msc_block=$(find_aic_msc_block_device); then
     done
     if [ -n "$wifi_id" ]; then
         echo "Dongle switched to WiFi mode as $wifi_id."
-        if [ "$wifi_id" = 368b:8d81 ]; then
+        if [ "$wifi_id" = 368b:8d81 ] || [ "$wifi_id" = a69c:8d81 ]; then
             modprobe aic_zlp_quirk
         fi
     else
@@ -657,7 +667,7 @@ elif storage_device=$(find_storage_device); then
     done
     if [ -n "$wifi_id" ]; then
         echo "Dongle switched to WiFi mode as $wifi_id."
-        if [ "$wifi_id" = 368b:8d81 ]; then
+        if [ "$wifi_id" = 368b:8d81 ] || [ "$wifi_id" = a69c:8d81 ]; then
             modprobe aic_zlp_quirk
         fi
     else
@@ -666,12 +676,26 @@ elif storage_device=$(find_storage_device); then
 elif wifi_id=$(find_wifi_device_id); then
     echo "Dongle already in WiFi mode as $wifi_id; reloading driver..."
     modprobe -r aic_zlp_quirk aic8800_fdrv aic_load_fw 2>/dev/null || true
+    modprobe aic_load_fw
     modprobe aic8800_fdrv
-    if [ "$wifi_id" = 368b:8d81 ]; then
+    if [ "$wifi_id" = 368b:8d81 ] || [ "$wifi_id" = a69c:8d81 ]; then
         modprobe aic_zlp_quirk
     fi
 else
     echo "Dongle not detected - plug it in and it will switch automatically."
 fi
+
+# Apply the device-specific power policy to an adapter already plugged in.
+for device in /sys/bus/usb/devices/*; do
+    [ -r "$device/idVendor" ] && [ -r "$device/idProduct" ] || continue
+    vendor=$(<"$device/idVendor")
+    product=$(<"$device/idProduct")
+    case "${vendor,,}:${product,,}" in
+        368b:8d81|a69c:8d81)
+            [ ! -w "$device/power/autosuspend_delay_ms" ] || printf '%s\n' -1 > "$device/power/autosuspend_delay_ms"
+            [ ! -w "$device/power/control" ] || printf 'on\n' > "$device/power/control"
+            ;;
+    esac
+done
 
 echo "Done."

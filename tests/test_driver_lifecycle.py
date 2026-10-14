@@ -1,6 +1,8 @@
 import hashlib
 import json
 import os
+import re
+import shutil
 import subprocess
 import tempfile
 import unittest
@@ -533,6 +535,106 @@ class DriverLifecycleTests(unittest.TestCase):
         self.assertNotIn("pacman -Sy", helper)
         self.assertNotIn("pacman -Sy", installer)
         self.assertIn("temporary Ethernet/USB tethering", helper)
+
+    def test_aic_zlp_boot_detection_accepts_both_vendors_only(self):
+        helper = AIC_HELPER.read_text(encoding="utf-8")
+        function = helper[helper.index("zlp_target_present() {") :
+                          helper.index("wait_for_aic_runtime() {")]
+        with tempfile.TemporaryDirectory() as directory:
+            device = Path(directory) / "6-1"
+            device.mkdir()
+            function = function.replace("/sys/bus/usb/devices", directory)
+            for vendor, product, expected in (
+                ("a69c", "8d81", 0), ("368b", "8d81", 0),
+                ("A69C", "8D81", 0), ("a69c", "8d80", 1),
+                ("368b", "8d88", 1), ("1234", "8d81", 1),
+            ):
+                with self.subTest(vendor=vendor, product=product):
+                    (device / "idVendor").write_text(vendor + "\n")
+                    (device / "idProduct").write_text(product + "\n")
+                    result = subprocess.run(["bash", "-c", function + "\nzlp_target_present"])
+                    self.assertEqual(result.returncode, expected)
+
+    @unittest.skipUnless(shutil.which("udevadm"), "udevadm unavailable")
+    def test_aic_generated_device_rules_parse(self):
+        installer = AIC_INSTALLER.read_text()
+        rules = installer.split(
+            "cat > /etc/udev/rules.d/40-aic8800-modeswitch.rules <<EOF\n", 1
+        )[1].split("\nEOF", 1)[0]
+        rules = rules.replace("$MODESWITCH_VENDOR", "1111").replace("$MODESWITCH_PRODUCT", "1111")
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "40-aic8800-modeswitch.rules"
+            path.write_text(rules + "\n")
+            subprocess.run(["udevadm", "verify", str(path)], check=True)
+
+    @unittest.skipUnless(shutil.which("cc"), "C compiler unavailable")
+    def test_aic_zlp_usb_fallback_excludes_wifi_and_other_devices(self):
+        source = (AIC_DRIVER / "aic_zlp_quirk/aic_zlp_quirk.c").read_text()
+        defines = "\n".join(re.findall(r"^#define (?:AIC_USB|USB_BT).*", source, re.M))
+        predicates = source[source.index("static bool is_aic_bulk_out") :
+                            source.index("static void enable_zlp")]
+        harness = r'''
+#include <assert.h>
+#include <stdbool.h>
+#include <stdint.h>
+#include <stddef.h>
+typedef uint16_t u16;
+#define PIPE_BULK 3
+#define USB_CLASS_WIRELESS_CONTROLLER 0xe0
+#define le16_to_cpu(v) (v)
+#define READ_ONCE(v) (v)
+struct usb_endpoint_descriptor { unsigned bEndpointAddress; };
+struct usb_host_interface {
+    struct { uint8_t bInterfaceClass, bInterfaceSubClass, bInterfaceProtocol, bNumEndpoints; } desc;
+    struct { struct usb_endpoint_descriptor desc; } endpoint[1];
+};
+struct usb_interface { struct usb_host_interface *cur_altsetting; };
+struct usb_device {
+    struct { u16 idVendor, idProduct; } descriptor;
+    struct usb_interface *intf;
+};
+struct urb { struct usb_device *dev; unsigned pipe; };
+#define usb_pipetype(p) ((p) >> 8)
+#define usb_pipeout(p) (!((p) & 0x80))
+#define usb_pipeendpoint(p) ((p) & 0xf)
+#define usb_ifnum_to_if(d, n) ((d)->intf)
+#define usb_endpoint_is_bulk_out(e) (!((e)->bEndpointAddress & 0x80))
+#define usb_endpoint_num(e) ((e)->bEndpointAddress & 0xf)
+'''
+        main = r'''
+int main(void) {
+    struct usb_host_interface alt = { .desc = {0xe0, 1, 1, 1}, .endpoint = {{{4}}} };
+    struct usb_interface intf = { &alt };
+    struct usb_device dev = { .descriptor = {0xa69c, 0x8d81}, .intf = &intf };
+    struct urb urb = { &dev, (PIPE_BULK << 8) | 4 };
+    assert(!is_bluetooth_acl_endpoint(NULL));
+    assert(is_bluetooth_acl_endpoint(&urb));
+    dev.descriptor.idVendor = 0x368b;
+    assert(is_bluetooth_acl_endpoint(&urb));
+    urb.pipe = (PIPE_BULK << 8) | 2; /* Wi-Fi OUT endpoint */
+    assert(!is_bluetooth_acl_endpoint(&urb));
+    urb.pipe = (PIPE_BULK << 8) | 0x84; /* Bluetooth IN endpoint */
+    assert(!is_bluetooth_acl_endpoint(&urb));
+    urb.pipe = (PIPE_BULK << 8) | 4;
+    alt.desc.bInterfaceClass = 0xff;
+    assert(!is_bluetooth_acl_endpoint(&urb));
+    alt.desc.bInterfaceClass = 0xe0;
+    dev.descriptor.idProduct = 0x8d88;
+    assert(!is_bluetooth_acl_endpoint(&urb));
+    dev.descriptor.idProduct = 0x8d81;
+    dev.descriptor.idVendor = 0x1234;
+    assert(!is_bluetooth_acl_endpoint(&urb));
+    return 0;
+}
+'''
+        with tempfile.TemporaryDirectory() as directory:
+            executable = Path(directory) / "zlp-test"
+            subprocess.run(
+                ["cc", "-std=c11", "-Wall", "-Wextra", "-Werror", "-x", "c", "-o", str(executable), "-"],
+                input=harness + defines + "\n" + predicates + main,
+                text=True, check=True,
+            )
+            subprocess.run([str(executable)], check=True)
 
     def test_nct6687_source_and_build_are_pinned_and_verified(self):
         fetcher = FAN_FETCHER.read_text(encoding="utf-8")

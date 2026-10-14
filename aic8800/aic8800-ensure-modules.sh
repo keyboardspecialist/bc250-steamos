@@ -101,7 +101,9 @@ zlp_target_present() {
         [ -f "$device/idVendor" ] && [ -f "$device/idProduct" ] || continue
         read -r vendor < "$device/idVendor"
         read -r product < "$device/idProduct"
-        [ "${vendor,,}:${product,,}" = 368b:8d81 ] && return 0
+        case "${vendor,,}:${product,,}" in
+            368b:8d81|a69c:8d81) return 0 ;;
+        esac
     done
     return 1
 }
@@ -136,6 +138,7 @@ aic_loader_present && loader_present=1
 if modinfo -k "$KVER" aic_load_fw >/dev/null 2>&1 \
    && modinfo -k "$KVER" aic8800_fdrv >/dev/null 2>&1 \
    && modinfo -k "$KVER" aic_zlp_quirk >/dev/null 2>&1; then
+    modprobe cfg80211
     modprobe aic_load_fw
     modprobe aic8800_fdrv
     module_source=installed
