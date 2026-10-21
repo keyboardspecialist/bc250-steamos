@@ -1058,14 +1058,30 @@ class Fsr4InventoryTests(unittest.IsolatedAsyncioTestCase):
             side_effect=CommandError("helper unavailable")
         )
 
-        inventory = await self.backend.get_fsr4_inventory()
+        for helixsr_available in (True, False):
+            with self.subTest(helixsr_available=helixsr_available):
+                # Inventory queries all three helpers, including installed copies.
+                self.backend._get_helixsr_records = AsyncMock(
+                    return_value=self.helixsr_records(),
+                    side_effect=(
+                        None if helixsr_available else CommandError("helper unavailable")
+                    ),
+                )
 
-        self.assertTrue(inventory["available"])
-        self.assertEqual(inventory["inventoryState"], "ready")
-        self.assertFalse(inventory["optiscalerAvailable"])
-        self.assertIsNone(inventory["currentOptiscalerRelease"])
-        candidate = inventory["games"][0]["optiscalerCandidates"][0]
-        self.assertEqual(candidate["state"], "unavailable")
+                inventory = await self.backend.get_fsr4_inventory()
+
+                self.assertTrue(inventory["available"])
+                self.assertEqual(inventory["inventoryState"], "ready")
+                self.assertFalse(inventory["optiscalerAvailable"])
+                self.assertIsNone(inventory["currentOptiscalerRelease"])
+                self.assertEqual(inventory["helixsrAvailable"], helixsr_available)
+                self.assertEqual(
+                    inventory["currentHelixsrRelease"],
+                    "v0.12.0" if helixsr_available else None,
+                )
+                candidate = inventory["games"][0]["optiscalerCandidates"][0]
+                self.assertEqual(candidate["state"], "unavailable")
+                self.backend._get_helixsr_records.assert_awaited_once_with()
 
     async def test_inventory_survives_unavailable_helixsr_helper(self):
         game = self.add_game()
