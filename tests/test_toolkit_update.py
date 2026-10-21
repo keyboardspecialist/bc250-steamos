@@ -2,6 +2,7 @@
 """Tests for the Trainer's main toolkit release updater."""
 
 import importlib.util
+import io
 import os
 import stat
 import tempfile
@@ -93,6 +94,58 @@ class ToolkitUpdateTests(unittest.TestCase):
             UPDATER.format_check_env(result).splitlines(),
             ["CURRENT_VERSION=v1.9.0", "LATEST_VERSION=v1.10.0", "UPDATE_AVAILABLE=1"],
         )
+
+    def test_release_notes_show_selected_release_body_and_canonical_link(self):
+        latest = release("v1.10.0")
+        latest["body"] = "## Fixes\r\n- Fix Decky installation.\n- Improve updates."
+        output = UPDATER.release_notes("v1.10.0", [release("v1.9.0"), latest])
+        self.assertIn("Patch notes for v1.10.0:", output)
+        self.assertIn("## Fixes\n- Fix Decky installation.\n- Improve updates.", output)
+        self.assertIn(
+            "https://github.com/keyboardspecialist/bc250-steamos/releases/tag/v1.10.0",
+            output,
+        )
+
+    def test_release_notes_handle_missing_or_empty_bodies(self):
+        for body in (None, "", " \n\t", "\x00\x07", 123):
+            with self.subTest(body=body):
+                latest = release("v1.10.0")
+                latest["body"] = body
+                output = UPDATER.release_notes("v1.10.0", [latest])
+                self.assertIn("No patch notes were published", output)
+
+    def test_release_notes_remove_terminal_controls_and_limit_output(self):
+        latest = release("v1.10.0")
+        latest["body"] = "Fix\x1b[2J\x00\x07\x9b\u202e\n\tDetails"
+        output = UPDATER.release_notes("v1.10.0", [latest])
+        for control in ("\x1b", "\x00", "\x07", "\x9b", "\u202e"):
+            self.assertNotIn(control, output)
+        self.assertIn("\n\tDetails", output)
+
+        latest["body"] = "x" * (UPDATER.MAX_RELEASE_NOTES_CHARS + 1)
+        output = UPDATER.release_notes("v1.10.0", [latest])
+        self.assertIn("x" * UPDATER.MAX_RELEASE_NOTES_CHARS, output)
+        self.assertNotIn("x" * (UPDATER.MAX_RELEASE_NOTES_CHARS + 1), output)
+        self.assertIn("Patch notes truncated", output)
+        self.assertTrue(output.endswith("/releases/tag/v1.10.0"))
+
+    def test_release_notes_reject_changed_release(self):
+        with self.assertRaisesRegex(UPDATER.UpdateError, "release changed"):
+            UPDATER.release_notes("v1.9.0", [release("v1.10.0")])
+
+    def test_notes_command_prints_text_without_installing(self):
+        latest = release("v1.10.0")
+        latest["body"] = "- Fix Decky installation."
+        output = io.StringIO()
+        with mock.patch.object(UPDATER.sys, "argv", [
+            str(UPDATER_PATH), "notes", "--expected-version", "v1.10.0"
+        ]), mock.patch.object(UPDATER.os, "geteuid", return_value=1000), \
+                mock.patch.object(UPDATER, "fetch_releases", return_value=[latest]), \
+                mock.patch.object(UPDATER, "install_update") as install, \
+                mock.patch.object(UPDATER.sys, "stdout", output):
+            self.assertEqual(UPDATER.main(), 0)
+        self.assertIn("- Fix Decky installation.", output.getvalue())
+        install.assert_not_called()
 
     def test_safe_extract_validates_layout_and_release_version(self):
         with tempfile.TemporaryDirectory() as temporary:

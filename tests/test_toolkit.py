@@ -835,6 +835,59 @@ class ToolkitTests(unittest.TestCase):
         self.assertEqual(plain, "[update to v9.8.7]")
         self.assertNotIn("%s", plain)
 
+    def test_update_displays_patch_notes_before_confirmation(self):
+        for notes_rc, answer in ((0, "n"), (0, "y"), (1, "n"), (1, "y")):
+            with self.subTest(notes_rc=notes_rc, answer=answer):
+                result = subprocess.run(
+                    [
+                        "bash", "-c",
+                        'script=$1; notes_rc=$2; set -- help; source "$script" >/dev/null; '
+                        'require_terminal() { :; }; require_normal_user() { :; }; '
+                        'check_toolkit_update() { TOOLKIT_UPDATE_AVAILABLE=1; '
+                        'TOOLKIT_LATEST_VERSION=v9.8.7; }; '
+                        'python3() { '
+                        '[[ "$3" == notes && "$4" == --expected-version && "$5" == v9.8.7 ]] '
+                        '|| return 99; '
+                        'if [[ $notes_rc -ne 0 ]]; then return "$notes_rc"; fi; '
+                        'printf "%s\\n" "- Test patch notes"; }; '
+                        'perform_toolkit_update() { echo INSTALL_CALLED; }; '
+                        'cmd_toolkit_update',
+                        "_", str(TOOLKIT), str(notes_rc),
+                    ],
+                    input=answer + "\n", capture_output=True, text=True,
+                )
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                prompt = result.stdout.index("Download the verified artifact")
+                if notes_rc == 0:
+                    self.assertLess(result.stdout.index("- Test patch notes"), prompt)
+                    self.assertNotIn("Could not load patch notes", result.stdout)
+                else:
+                    self.assertLess(result.stdout.index("Could not load patch notes"), prompt)
+                    self.assertLess(result.stdout.index("/releases/tag/v9.8.7"), prompt)
+                if answer == "y":
+                    self.assertLess(prompt, result.stdout.index("INSTALL_CALLED"))
+                else:
+                    self.assertIn("Cancelled.", result.stdout)
+                    self.assertNotIn("INSTALL_CALLED", result.stdout)
+
+    def test_up_to_date_does_not_fetch_notes_or_prompt(self):
+        result = subprocess.run(
+            [
+                "bash", "-c",
+                'script=$1; set -- help; source "$script" >/dev/null; '
+                'require_terminal() { :; }; require_normal_user() { :; }; '
+                'check_toolkit_update() { TOOLKIT_UPDATE_AVAILABLE=0; }; '
+                'python3() { echo UNEXPECTED_NOTES; return 99; }; '
+                'cmd_toolkit_update',
+                "_", str(TOOLKIT),
+            ],
+            capture_output=True, text=True,
+        )
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("is up to date", result.stdout)
+        self.assertNotIn("UNEXPECTED_NOTES", result.stdout)
+        self.assertNotIn("Download the verified artifact", result.stdout)
+
     def test_update_restart_reanchors_deleted_working_directory(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

@@ -64,6 +64,11 @@ Select **Toolkit Update** or run:
 ./bc250-toolkit.sh toolkit-update
 ```
 
+Before asking for confirmation, the CLI displays the target release's GitHub
+patch notes and a link to the release page. If notes cannot be loaded, it shows
+the link instead; you can still cancel or continue. No update artifacts are
+downloaded or installed until you confirm.
+
 The updater completes these tasks:
 
 1. Read the stable GitHub release metadata.

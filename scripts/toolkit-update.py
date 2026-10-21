@@ -28,6 +28,7 @@ MAX_ARCHIVE_BYTES = 768 * 1024 * 1024
 MAX_MEMBER_BYTES = 512 * 1024 * 1024
 MAX_EXTRACTED_BYTES = 2 * 1024 * 1024 * 1024
 MAX_MEMBERS = 20000
+MAX_RELEASE_NOTES_CHARS = 20000
 
 
 class UpdateError(RuntimeError):
@@ -319,6 +320,24 @@ def format_check_env(result):
     )
 
 
+def release_notes(expected_version, releases=None):
+    version_tuple(expected_version)
+    release = select_release(fetch_releases() if releases is None else releases)
+    if release["tag_name"] != expected_version:
+        raise UpdateError("The available toolkit release changed; check for updates again")
+    body = release.get("body")
+    if not isinstance(body, str):
+        body = ""
+    # Release bodies are remote text, not trusted terminal escape sequences.
+    body = "".join(character for character in body if character.isprintable() or character in "\n\t")
+    body = body.strip() or "No patch notes were published for this release."
+    if len(body) > MAX_RELEASE_NOTES_CHARS:
+        body = body[:MAX_RELEASE_NOTES_CHARS] + "\n[Patch notes truncated; see the release page below.]"
+    return "Patch notes for {}:\n\n{}\n\nhttps://github.com/{}/releases/tag/{}".format(
+        expected_version, body, REPOSITORY, expected_version
+    )
+
+
 def replace_installation(target, replacement):
     target = Path(target)
     replacement = Path(replacement)
@@ -408,12 +427,17 @@ def main():
             subparser.add_argument("--expected-version", required=True)
         else:
             subparser.add_argument("--format", choices=("json", "env"), default="json")
+    notes_parser = subparsers.add_parser("notes")
+    notes_parser.add_argument("--expected-version", required=True)
     arguments = parser.parse_args()
     try:
         if os.geteuid() == 0:
             raise UpdateError("Run the updater as the logged-in desktop user, not with sudo")
         if arguments.command == "check":
             result = check_for_update(arguments.toolkit_dir)
+        elif arguments.command == "notes":
+            print(release_notes(arguments.expected_version))
+            return 0
         else:
             result = install_update(arguments.toolkit_dir, arguments.expected_version)
         if arguments.command == "check" and arguments.format == "env":

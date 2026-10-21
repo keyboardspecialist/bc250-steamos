@@ -214,6 +214,13 @@ cmd_toolkit_update() {
         return 0
     fi
     printf '%s\n' "${CG}${CB}Toolkit update available: $TOOLKIT_VERSION -> $TOOLKIT_LATEST_VERSION${C0}"
+    echo
+    if ! python3 -I "$TOOLKIT_UPDATE_HELPER" notes \
+        --expected-version "$TOOLKIT_LATEST_VERSION"; then
+        printf '%s\n' "${CY}Could not load patch notes. Review them at:${C0}" \
+            "https://github.com/keyboardspecialist/bc250-steamos/releases/tag/$TOOLKIT_LATEST_VERSION"
+    fi
+    echo
     confirm_action \
         "Download the verified artifact, overwrite this toolkit installation, clean up, and restart?" \
         perform_toolkit_update
@@ -2315,7 +2322,7 @@ Run the toolkit as the logged-in Deck user, not with sudo; child tools request
 administrator access when needed.
 
 Commands:
-  toolkit-update         Check, confirm, install the latest toolkit, and restart
+  toolkit-update         Show patch notes, confirm, install the latest toolkit, and restart
   toolkit-update-check   Check GitHub and print machine-readable update status
   setup                  Open the status-aware guided setup checklist
   auto-base-installation Run Auto Base Toolkit Installation
