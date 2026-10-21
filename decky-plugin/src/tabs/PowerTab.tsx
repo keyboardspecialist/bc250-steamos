@@ -21,7 +21,7 @@ export function PowerTab({ snapshot }: { snapshot: Snapshot }) {
         />
         <StatusRow
           label="Peak CPU clock"
-          value={power.cpuCurrentMhz ? `${power.cpuCurrentMhz} MHz` : "Unavailable"}
+          value={power.cpuCurrentMhz === null ? "Unavailable" : `${power.cpuCurrentMhz} MHz`}
         />
         <StatusRow label="Idle states" value={`${power.cStates} states`} good={power.cStates >= 3} />
         <StatusRow

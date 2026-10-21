@@ -1,5 +1,5 @@
 import { callable } from "@decky/api";
-import type { Fsr4Inventory, MeshStatus, Snapshot, TelemetrySample } from "./types";
+import type { CliCatalog, Fsr4Inventory, MeshStatus, Snapshot, TelemetrySample } from "./types";
 
 export const getSnapshot = callable<[], Snapshot>("get_snapshot");
 export const getTelemetry = callable<[], TelemetrySample>("get_telemetry");
@@ -22,6 +22,13 @@ export const setTemperatureTarget = callable<[target: number], void>(
   "set_temperature_target",
 );
 export const setRamp = callable<[climbMs: number], void>("set_ramp");
+export const resetGpuRamp = callable<[], void>("reset_gpu_ramp");
+export const gpuVoltageAction = callable<
+  [action: string, frequency: number, voltage: number, newFrequency: number],
+  void
+>("gpu_voltage_action");
+export const getCliCatalog = callable<[], CliCatalog>("get_cli_catalog");
+export const openCliSection = callable<[sectionId: string], void>("open_cli_section");
 export const cpuOcAction = callable<
   [action: string, frequency: number, voltage: number, temperature: number],
   void

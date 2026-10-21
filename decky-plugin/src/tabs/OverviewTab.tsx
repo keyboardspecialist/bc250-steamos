@@ -1,33 +1,22 @@
 import { PanelSection } from "@decky/ui";
-import { StatusRow } from "../components/Common";
-import type { Snapshot, TelemetrySample, Temperature } from "../types";
+import { EmptyState, StatusRow } from "../components/Common";
+import type { HardwareSensor, Snapshot } from "../types";
+import { historySample, sensorInventory, sensorValue, temperatureForRole, type HistorySample } from "../parity";
 import { PowerTab } from "./PowerTab";
 
-export type HistorySample = TelemetrySample;
-
-function matchingTemperature(
-  temperatures: Temperature[],
-  pattern: RegExp,
-): number | null {
-  return temperatures.find((temperature) =>
-    pattern.test(`${temperature.device} ${temperature.label}`),
-  )?.celsius ?? null;
-}
+export type { HistorySample } from "../parity";
 
 export function snapshotSample(snapshot: Snapshot): HistorySample {
-  const temperatures = snapshot.power.temperatures;
-  const gpuTemp = matchingTemperature(
-    temperatures,
-    /amdgpu|gpu|edge|junction/i,
-  );
-  const cpuTemp = matchingTemperature(temperatures, /k10temp|cpu|tctl|package/i);
+  const temperatures = snapshot.power.temperatures ?? [];
+  const gpuTemp = temperatureForRole(temperatures, "gpu");
+  const cpuTemp = temperatureForRole(temperatures, "cpu");
 
-  return {
+  return historySample({
     cpuClock: snapshot.power.cpuCurrentMhz,
     gpuClock: snapshot.gpu.activeMhz,
     cpuTemp,
     gpuTemp,
-  };
+  });
 }
 
 function HistoryChart({
@@ -45,7 +34,7 @@ function HistoryChart({
   floor?: number;
   compact?: boolean;
 }) {
-  const present = values.filter((value): value is number => value !== null);
+  const present = values.filter((value): value is number => typeof value === "number" && Number.isFinite(value));
   const current = values[values.length - 1];
   const maximum = present.length > 0 ? Math.max(...present) : floor + 1;
   const minimum = present.length > 0 ? Math.min(...present) : floor;
@@ -66,7 +55,7 @@ function HistoryChart({
   let segmentStarted = false;
   const visibleValues = values.slice(-sampleCount);
   visibleValues.forEach((value, index) => {
-    if (value === null) {
+    if (value === null || !Number.isFinite(value)) {
       segmentStarted = false;
       return;
     }
@@ -265,6 +254,8 @@ export function OverviewSummary({
             label="GPU clock"
             value={latest.gpuClock === null ? "Unavailable" : `${latest.gpuClock} MHz`}
           />
+          <StatusRow label="CPU temperature (snapshot)" value={latest.cpuTemp === null ? "Unavailable" : `${latest.cpuTemp} °C`} />
+          <StatusRow label="GPU temperature (snapshot)" value={latest.gpuTemp === null ? "Unavailable" : `${latest.gpuTemp} °C`} />
         </PanelSection>
       )}
     </>
@@ -274,14 +265,28 @@ export function OverviewSummary({
 export function OverviewTab({
   snapshot,
   history,
+  sensors,
 }: {
   snapshot: Snapshot;
   history: HistorySample[];
+  sensors?: HardwareSensor[];
 }) {
+  // An explicit live inventory (even []) supersedes older snapshot readings.
+  const inventory = sensorInventory(sensors ?? snapshot.power.sensors,
+    sensors === undefined ? snapshot.power.temperatures ?? [] : []);
   return (
     <>
       <OverviewSummary snapshot={snapshot} history={history} />
       <PowerTab snapshot={snapshot} />
+      <PanelSection title="All Hardware Sensors">
+        <StatusRow label="Source" value={sensors !== undefined ? "Latest telemetry" : "Status snapshot (10 s refresh)"} />
+        <EmptyState>Driver-reported labels and units are shown as provided. Board, memory, and storage temperatures are not substituted for CPU or GPU temperature. Missing sensors are unavailable, not zero.</EmptyState>
+        {inventory.length === 0 && <EmptyState>No readable hwmon sensors were reported. CPU metrics installation and memory-temperature setup are available in CPU and Maintenance / CLI.</EmptyState>}
+        {inventory.map((sensor, index) => (
+          <StatusRow key={`${sensor.key}-${index}`} label={`${sensor.device} · ${sensor.label || sensor.key}`}
+            value={sensorValue(sensor)} />
+        ))}
+      </PanelSection>
     </>
   );
 }

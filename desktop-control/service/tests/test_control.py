@@ -7,6 +7,7 @@ from unittest.mock import patch
 
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+sys.path.insert(0, str(Path(__file__).resolve().parents[3] / "backend"))
 
 from bc250_control_service.control import Caller, ControlService
 from bc250_control_service.errors import AccessDenied, InvalidArguments
@@ -68,6 +69,19 @@ class FakeBackend:
 
     async def get_cpu_unlock_status(self):
         return {"schemaVersion": 1, "topologyState": "locked"}
+
+    async def get_cli_catalog(self):
+        return {"schemaVersion": 1, "available": False, "reason": "Desktop Mode required", "sections": []}
+
+    async def open_cli_section(self, *args):
+        await self._mutation("open_cli_section", *args)
+        return {"message": "Terminal requested"}
+
+    async def gpu_voltage_action(self, *args):
+        await self._mutation("gpu_voltage_action", *args)
+
+    async def reset_gpu_ramp(self):
+        await self._mutation("reset_gpu_ramp")
 
     async def _mutation(self, name, *args):
         self.calls.append((name, args))
@@ -212,6 +226,51 @@ class ControlServiceTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(
             self.backends[0].calls, [("set_cu_wgp", (0, 1, 4, True))]
         )
+
+    async def test_cli_catalog_and_fixed_handoff_are_authorized(self):
+        catalog = json.loads(await self.service.get_cli_catalog(":1.1"))
+        self.assertFalse(catalog["available"])
+        self.assertEqual(catalog["reason"], "Desktop Mode required")
+        self.assertEqual(self.authorizer.calls, [])
+        operation_id = await self.service.open_cli_section(":1.1", "status")
+        self.assertFalse(await self.service.cancel_operation(":1.1", operation_id))
+        operation = await self.wait_for_status(":1.1", operation_id, "succeeded")
+        self.assertEqual(operation["result"]["message"], "Terminal requested")
+        self.assertEqual(self.authorizer.calls[-1][-1], "handoff")
+        for value in ("/tmp/arbitrary.sh", "menu; id", "$(id)", True):
+            with self.subTest(value=value), self.assertRaises(InvalidArguments):
+                await self.service.open_cli_section(":1.1", value)
+
+    async def test_voltage_and_ramp_reset_are_noncancellable_gpu_operations(self):
+        operation_id = await self.service.gpu_voltage_action(":1.1", "offset", 0, -25, 0)
+        self.assertFalse(await self.service.cancel_operation(":1.1", operation_id))
+        await self.wait_for_status(":1.1", operation_id, "succeeded")
+        operation_id = await self.service.reset_gpu_ramp(":1.1")
+        self.assertFalse(await self.service.cancel_operation(":1.1", operation_id))
+        await self.wait_for_status(":1.1", operation_id, "succeeded")
+        self.assertEqual(self.backends[0].calls, [
+            ("gpu_voltage_action", ("offset", 0, -25, 0)), ("reset_gpu_ramp", ()),
+        ])
+        self.assertTrue(all(call[-1] == "gpu" for call in self.authorizer.calls))
+
+    async def test_new_cpu_actions_and_update_are_noncancellable(self):
+        for action in ("metrics-enable", "uninstall"):
+            operation_id = await self.service.cpu_unlock_action(":1.1", action)
+            self.assertFalse(await self.service.cancel_operation(":1.1", operation_id))
+            await self.wait_for_status(":1.1", operation_id, "succeeded")
+        operation_id = await self.service.cpu_oc_action(":1.1", "update", 0, 0, 0)
+        self.assertFalse(await self.service.cancel_operation(":1.1", operation_id))
+        await self.wait_for_status(":1.1", operation_id, "succeeded")
+
+    async def test_voltage_validation_rejects_injection_bools_and_bad_bounds_before_auth(self):
+        for args in (("show", 0, 0, 0), ("set; id", 1000, 850, 0),
+                     ("set", 349, 850, 0), ("add", 1000, 1051, 0),
+                     ("edit", 1000, 850, 2231), ("offset", 0, -351, 0),
+                     ("reset", True, 0, 0), ("reset", 0, 0, False)):
+            with self.subTest(args=args), self.assertRaises(InvalidArguments):
+                await self.service.gpu_voltage_action(":1.1", *args)
+        self.assertEqual(self.authorizer.calls, [])
+        self.assertEqual(self.backends, [])
 
     async def test_cec_mutation_uses_non_prompting_category(self):
         operation_id = await self.service.cec_action(":1.1", "tv-on")
@@ -478,7 +537,7 @@ class ControlServiceTests(unittest.IsolatedAsyncioTestCase):
         for proxy in ("", "OptiScaler.dll", "winmm", "WINMM.DLL", 1):
             with self.subTest(proxy=proxy), self.assertRaises(InvalidArguments):
                 await self.service.install_optiscaler(":1.1", "a" * 64, proxy)
-        for action in ("", "uninstall", "test; reboot", 1):
+        for action in ("", "remove-everything", "test; reboot", 1):
             with self.subTest(action=action), self.assertRaises(InvalidArguments):
                 await self.service.cpu_unlock_action(":1.1", action)
         for value in (255, 513, 2048, 12289, True):

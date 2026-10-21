@@ -34,11 +34,20 @@ export interface Temperature {
   celsius: number;
 }
 
+export interface HardwareSensor {
+  key: string;
+  device: string;
+  label: string;
+  value: number | null;
+  unit: string;
+}
+
 export interface TelemetrySample {
   cpuClock: number | null;
   gpuClock: number | null;
   cpuTemp: number | null;
   gpuTemp: number | null;
+  sensors?: HardwareSensor[];
 }
 
 export interface PowerStatus {
@@ -51,6 +60,7 @@ export interface PowerStatus {
   cpufreqService: ServiceState;
   frequencyRestore: ServiceState;
   temperatures: Temperature[];
+  sensors?: HardwareSensor[];
   protected: boolean;
 }
 
@@ -132,6 +142,9 @@ export interface CpuUnlockActionStatus {
   message?: string;
 }
 
+export type CpuUnlockAction = "test" | "enable" | "efi-enable" | "off"
+  | "metrics-enable" | "uninstall";
+
 export interface CpuCore {
   packageId: number;
   coreId: number;
@@ -183,7 +196,14 @@ export interface CpuUnlockStatus {
       queryAvailable: boolean;
     };
   };
-  actions: Record<"test" | "enable" | "efi-enable" | "off", CpuUnlockActionStatus>;
+  actions: Record<"test" | "enable" | "efi-enable" | "off", CpuUnlockActionStatus>
+    & Partial<Record<"metrics-enable" | "uninstall", CpuUnlockActionStatus>>;
+  metrics?: {
+    state: string;
+    message: string;
+    service: ServiceState;
+    revision: string | null;
+  };
   message?: string;
 }
 
@@ -374,6 +394,9 @@ export interface Snapshot {
     ramControlAvailable: boolean;
     audioAvailable: boolean;
     path: string;
+    // Installed backend API support only; not CLI checkout or hardware readiness.
+    controlApiVersion?: number;
+    controlCapabilities?: string[];
   };
   cu: CuStatus;
   power: PowerStatus;
@@ -383,4 +406,20 @@ export interface Snapshot {
   ram: RamStatus;
   cec: CecStatus;
   audio: HdmiAudioStatus;
+}
+
+export interface CliSection {
+  id: string;
+  title: string;
+  description: string;
+  risk: "read-only" | "advanced" | "maintenance";
+}
+
+export interface CliCatalog {
+  schemaVersion: 1;
+  available: boolean;
+  reason: string | null;
+  toolkitVersion?: string | null;
+  capabilitiesAvailable?: boolean;
+  sections: CliSection[];
 }

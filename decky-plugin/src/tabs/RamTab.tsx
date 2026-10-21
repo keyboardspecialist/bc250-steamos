@@ -1,19 +1,22 @@
 import { PanelSection, SliderField } from "@decky/ui";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { removeTtmOverride, setTtmPages, setUmaSize } from "../api";
 import { ActionButton, EmptyState, StatusRow } from "../components/Common";
 import type { TabProps } from "./shared";
 
 export function RamTab({ snapshot, busy, runMutation }: TabProps) {
   const { ram } = snapshot;
-  const [umaMiB, setUmaMiB] = useState(ram.umaLastRequestedMiB || 512);
-  const [ttmPages, setTtmPageCount] = useState(ram.ttmConfiguredPages || 3014656);
+  const [umaMiB, setUmaMiB] = useState(ram.umaLastRequestedMiB ?? 512);
+  const [ttmPages, setTtmPageCount] = useState(ram.ttmConfiguredPages ?? 3014656);
+  useEffect(() => { setUmaMiB(ram.umaLastRequestedMiB ?? 512); }, [ram.umaLastRequestedMiB]);
+  useEffect(() => { setTtmPageCount(ram.ttmConfiguredPages ?? 3014656); }, [ram.ttmConfiguredPages]);
   const controlsDisabled = busy || !snapshot.toolkit.privileged || !ram.available;
   const ttmDisabled = controlsDisabled || ram.ttmState === "foreign";
-  const umaValid = umaMiB >= 256 && umaMiB <= 12288 && umaMiB % 16 === 0
+  const umaValid = Number.isInteger(umaMiB) && umaMiB >= 256 && umaMiB <= 12288 && umaMiB % 16 === 0
     && umaMiB !== 2048;
+  const ttmValid = Number.isInteger(ttmPages) && ttmPages >= 65536 && ttmPages <= 3145728;
   const gibibytes = (pages: number | null) => pages === null
-    ? "Default"
+    ? "Unavailable"
     : `${(pages / 262144).toFixed(2)} GiB`;
 
   return (
@@ -27,12 +30,12 @@ export function RamTab({ snapshot, busy, runMutation }: TabProps) {
           good={ram.toolState === "verified"}
         />
         <StatusRow
-          label="CMOS minimum VRAM"
-          value={ram.umaLastRequestedMiB ? `${ram.umaLastRequestedMiB} MiB` : "Unknown"}
+          label="Last requested CMOS VRAM"
+          value={ram.umaLastRequestedMiB === null ? "Unknown" : `${ram.umaLastRequestedMiB} MiB`}
         />
         <StatusRow
           label="TTM configured"
-          value={gibibytes(ram.ttmConfiguredPages)}
+          value={ram.ttmState === "default" ? "Kernel default" : gibibytes(ram.ttmConfiguredPages)}
           good={ram.ttmState !== "foreign"}
         />
         <StatusRow label="TTM boot" value={gibibytes(ram.ttmBootPages)} />
@@ -96,7 +99,7 @@ export function RamTab({ snapshot, busy, runMutation }: TabProps) {
         />
         <ActionButton
           label="Set TTM limit"
-          disabled={ttmDisabled}
+          disabled={ttmDisabled || !ttmValid}
           onClick={() => runMutation(
             `TTM limit set to ${gibibytes(ttmPages)}; reboot required`,
             () => setTtmPages(ttmPages),

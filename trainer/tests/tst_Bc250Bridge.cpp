@@ -269,6 +269,136 @@ private slots:
         QVERIFY(bridge.busyLabel().contains(QStringLiteral("Disabling HDMI surround")));
         QVERIFY(!bridge.operationCancellable());
     }
+
+    void rejectsUnknownGameIdsAndProxies()
+    {
+        Bc250Bridge bridge(true);
+        bridge.setFsr4Dll(QString(64, QLatin1Char('f')), true);
+        QVERIFY(!bridge.busy());
+        QVERIFY(bridge.error().contains(QStringLiteral("server-discovered")));
+        bridge.installOptiscaler(QString(64, QLatin1Char('b')), QStringLiteral("../../evil.dll"));
+        QVERIFY(!bridge.busy());
+        QVERIFY(bridge.error().contains(QStringLiteral("proxy")));
+        bridge.setFsr4Dll(QStringLiteral("/tmp/game.dll"), true);
+        QVERIFY(!bridge.busy());
+    }
+
+    void mockGameInstallAndRollback()
+    {
+        Bc250Bridge bridge(true);
+        const QString id(64, QLatin1Char('a'));
+        bridge.setFsr4Dll(id, true);
+        QVERIFY(bridge.busy());
+        QVERIFY(!bridge.operationCancellable());
+        QTRY_VERIFY_WITH_TIMEOUT(!bridge.busy(), 2000);
+        auto target = [&bridge] {
+            return bridge.fsr4Inventory().value(QStringLiteral("games")).toList().first().toMap()
+                .value(QStringLiteral("targets")).toList().first().toMap();
+        };
+        QCOMPARE(target().value(QStringLiteral("state")).toString(), QStringLiteral("ready"));
+        bridge.setFsr4Dll(id, false);
+        QTRY_VERIFY_WITH_TIMEOUT(!bridge.busy(), 2000);
+        QCOMPARE(target().value(QStringLiteral("state")).toString(), QStringLiteral("available"));
+        bridge.installHelixsr(id);
+        QTRY_VERIFY_WITH_TIMEOUT(!bridge.busy(), 2000);
+        QVERIFY(target().value(QStringLiteral("helixsrManaged")).toBool());
+        bridge.uninstallHelixsr(id);
+        QTRY_VERIFY_WITH_TIMEOUT(!bridge.busy(), 2000);
+        QVERIFY(!target().value(QStringLiteral("helixsrManaged")).toBool());
+    }
+
+    void validatesWholeCurveAndResetsRamp()
+    {
+        Bc250Bridge bridge(true);
+        bridge.gpuVoltageAction(QStringLiteral("add"), 349, 800, 0);
+        QVERIFY(!bridge.busy());
+        bridge.gpuVoltageAction(QStringLiteral("set"), 1500, 1051, 0);
+        QVERIFY(!bridge.busy());
+        bridge.gpuVoltageAction(QStringLiteral("offset"), 0, -1, 0);
+        QVERIFY(!bridge.busy()); // mock 350 MHz floor is already 700 mV
+        bridge.gpuVoltageAction(QStringLiteral("remove"), 350, 0, 0);
+        QVERIFY(!bridge.busy()); // must retain at least two points
+        bridge.gpuVoltageAction(QStringLiteral("add"), 350, 800, 0);
+        QVERIFY(!bridge.busy()); // duplicate
+        bridge.gpuVoltageAction(QStringLiteral("set"), 1500, 900, 999);
+        QVERIFY(bridge.busy());
+        QTRY_VERIFY_WITH_TIMEOUT(!bridge.busy(), 2000);
+        const auto gpu = bridge.snapshot().value(QStringLiteral("gpu")).toMap();
+        QCOMPARE(gpu.value(QStringLiteral("safePoints")).toList().last().toMap()
+            .value(QStringLiteral("voltage")).toInt(), 900);
+        bridge.gpuVoltageAction(QStringLiteral("reset"), -1, -1, -1);
+        QTRY_VERIFY_WITH_TIMEOUT(!bridge.busy(), 2000);
+        QCOMPARE(bridge.snapshot().value(QStringLiteral("gpu")).toMap().value(QStringLiteral("safePoints")).toList().size(), 5);
+        bridge.setRamp(1000);
+        QTRY_VERIFY_WITH_TIMEOUT(!bridge.busy(), 2000);
+        bridge.resetGpuRamp();
+        QTRY_VERIFY_WITH_TIMEOUT(!bridge.busy(), 2000);
+        QCOMPARE(bridge.snapshot().value(QStringLiteral("gpu")).toMap().value(QStringLiteral("climbMs")).toInt(), 500);
+    }
+
+    void cecValidationAndMockState()
+    {
+        Bc250Bridge bridge(true);
+        bridge.cecAction(QStringLiteral("shell"));
+        QVERIFY(!bridge.busy());
+        bridge.setCecToggle(QStringLiteral("arbitrary"), true);
+        QVERIFY(!bridge.busy());
+        for (const QString &name : QStringList{QString(), QString(15, QLatin1Char('a')), QStringLiteral("bad\nname"), QStringLiteral("bad\\name"), QStringLiteral("bad\"name")}) {
+            bridge.setCecName(name);
+            QVERIFY(!bridge.busy());
+        }
+        bridge.setCecName(QStringLiteral("BC250 TV"));
+        QTRY_VERIFY_WITH_TIMEOUT(!bridge.busy(), 2000);
+        QCOMPARE(bridge.snapshot().value(QStringLiteral("cec")).toMap().value(QStringLiteral("osdName")).toString(), QStringLiteral("BC250 TV"));
+    }
+
+    void compatibleMetricsAreExplicitActionsNotSampling()
+    {
+        Bc250Bridge bridge(true);
+        const QVariantMap before = bridge.cpuUnlockStatus().value(QStringLiteral("metrics")).toMap();
+        bridge.setStatusPageActive(true);
+        QVERIFY(!bridge.telemetry().value(QStringLiteral("sensors")).toList().isEmpty());
+        QCOMPARE(bridge.cpuUnlockStatus().value(QStringLiteral("metrics")).toMap(), before);
+        bridge.cpuUnlockAction(QStringLiteral("metrics-enable"));
+        QVERIFY(bridge.busy());
+        QTRY_VERIFY_WITH_TIMEOUT(!bridge.busy(), 2000);
+        QCOMPARE(bridge.cpuUnlockStatus().value(QStringLiteral("metrics")).toMap().value(QStringLiteral("state")).toString(), QStringLiteral("compatible"));
+        bridge.cpuUnlockAction(QStringLiteral("uninstall"));
+        QTRY_VERIFY_WITH_TIMEOUT(!bridge.busy(), 2000);
+        QCOMPARE(bridge.cpuUnlockStatus().value(QStringLiteral("metrics")).toMap().value(QStringLiteral("state")).toString(), QStringLiteral("not-installed"));
+    }
+
+    void cliHandoffRejectsCommands()
+    {
+        Bc250Bridge bridge(true);
+        bridge.openCliSection(QStringLiteral("status; id"));
+        QVERIFY(!bridge.busy());
+        bridge.openCliSection(QStringLiteral("/bin/sh"));
+        QVERIFY(!bridge.busy());
+        QVERIFY(bridge.cliCatalog().contains(QStringLiteral("available")));
+    }
+
+    void flatpakHandoffIsUnavailableEvenInMockCatalog()
+    {
+        const bool wasSet = qEnvironmentVariableIsSet("FLATPAK_ID");
+        const QByteArray previous = qgetenv("FLATPAK_ID");
+        qputenv("FLATPAK_ID", "io.github.keyboardspecialist.bc250trainer.test");
+        QVariantMap catalog;
+        QString error;
+        bool busy = false;
+        {
+            Bc250Bridge bridge(true);
+            catalog = bridge.cliCatalog();
+            bridge.openCliSection(QStringLiteral("menu"));
+            busy = bridge.busy();
+            error = bridge.error();
+        }
+        if (wasSet) qputenv("FLATPAK_ID", previous); else qunsetenv("FLATPAK_ID");
+        QVERIFY(!catalog.value(QStringLiteral("available")).toBool());
+        QVERIFY(catalog.value(QStringLiteral("reason")).toString().contains(QStringLiteral("Flatpak")));
+        QVERIFY(!busy);
+        QVERIFY(error.contains(QStringLiteral("Flatpak")));
+    }
 };
 
 QTEST_GUILESS_MAIN(Bc250BridgeTest)

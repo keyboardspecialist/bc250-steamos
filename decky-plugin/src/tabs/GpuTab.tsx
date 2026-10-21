@@ -5,10 +5,13 @@ import {
   setGpuFrequency,
   setLoadTarget,
   setRamp,
+  resetGpuRamp,
   setTemperatureTarget,
 } from "../api";
 import { ActionButton, EmptyState, StatusRow } from "../components/Common";
 import type { GpuMode } from "../types";
+import { CONTROL_API_UPDATE_REASON, controlApiSupports, frequencyValid as validFrequency } from "../parity";
+import { GpuVoltageEditor } from "./GpuVoltageEditor";
 import type { TabProps } from "./shared";
 
 const modeOptions = [
@@ -20,11 +23,14 @@ const modeOptions = [
 
 export function GpuTab({ snapshot, busy, runMutation }: TabProps) {
   const { gpu } = snapshot;
-  const initialMax = gpu.maximum || gpu.configuredMax || 1500;
-  const [mode, setMode] = useState<GpuMode>(gpu.mode);
-  const [minimum, setMinimum] = useState(gpu.minimum || 0);
+  // Zero in saved frequency state is a sentinel, not a valid clock setting.
+  const initialMax = gpu.requestedMaximum || gpu.configuredMax || gpu.initialMaximum || gpu.maximum || 1500;
+  const savedMode = gpu.requestedMode ?? gpu.mode;
+  const savedMinimum = gpu.requestedMinimum ?? gpu.minimum ?? 0;
+  const [mode, setMode] = useState<GpuMode>(savedMode);
+  const [minimum, setMinimum] = useState(savedMinimum);
   const [maximum, setMaximum] = useState(initialMax);
-  const [rampMs, setRampMs] = useState(gpu.climbMs || 500);
+  const [rampMs, setRampMs] = useState(gpu.climbMs ?? 500);
   const [loadMinimum, setLoadMinimum] = useState(
     Math.round((gpu.loadLower ?? 0.65) * 100),
   );
@@ -34,31 +40,24 @@ export function GpuTab({ snapshot, busy, runMutation }: TabProps) {
   const [temperatureTarget, setTemperatureTargetValue] = useState(
     gpu.temperatureTarget ?? 85,
   );
-  const frequencyDisabled = busy || !gpu.controllable;
-  const frequencyMaximum = Math.min(gpu.allowedMaximum || 2230, 2230);
-  const frequencyMinimum = Math.max(gpu.allowedMinimum || 350, 350);
-  const frequencyValid =
-    mode !== "range" ||
-    ((minimum === 0 || minimum >= frequencyMinimum) && minimum <= maximum);
+  const frequencyDisabled = busy || !snapshot.toolkit.privileged || !gpu.controllable;
+  const rampResetSupported = controlApiSupports(snapshot.toolkit, "gpu-ramp-reset");
+  const rampResetDisabled = frequencyDisabled || !snapshot.toolkit.cpuControlAvailable || !rampResetSupported;
+  const frequencyMaximum = Math.min(gpu.allowedMaximum ?? 2230, 2230);
+  const frequencyMinimum = Math.max(gpu.allowedMinimum ?? 350, 350);
+  const frequencyValid = validFrequency(mode, minimum, maximum, frequencyMinimum, frequencyMaximum);
+  const loadValid = Number.isInteger(loadMinimum) && Number.isInteger(loadMaximum)
+    && loadMinimum >= 5 && loadMaximum <= 99 && loadMinimum < loadMaximum;
 
   useEffect(() => {
-    setMode(gpu.mode);
-    setMinimum(gpu.minimum || 0);
-    setMaximum(gpu.maximum || gpu.configuredMax || 1500);
-    setRampMs(gpu.climbMs || 500);
-    setLoadMinimum(Math.round((gpu.loadLower ?? 0.65) * 100));
-    setLoadMaximum(Math.round((gpu.loadUpper ?? 0.80) * 100));
-    setTemperatureTargetValue(gpu.temperatureTarget ?? 85);
-  }, [
-    gpu.mode,
-    gpu.minimum,
-    gpu.maximum,
-    gpu.configuredMax,
-    gpu.climbMs,
-    gpu.loadLower,
-    gpu.loadUpper,
-    gpu.temperatureTarget,
-  ]);
+    setMode(savedMode);
+    setMinimum(savedMinimum);
+    setMaximum(initialMax);
+  }, [savedMode, savedMinimum, initialMax]);
+  useEffect(() => { setRampMs(gpu.climbMs ?? 500); }, [gpu.climbMs]);
+  useEffect(() => { setLoadMinimum(Math.round((gpu.loadLower ?? 0.65) * 100)); }, [gpu.loadLower]);
+  useEffect(() => { setLoadMaximum(Math.round((gpu.loadUpper ?? 0.80) * 100)); }, [gpu.loadUpper]);
+  useEffect(() => { setTemperatureTargetValue(gpu.temperatureTarget ?? 85); }, [gpu.temperatureTarget]);
 
   if (!gpu.available) {
     return <EmptyState>Install the GPU governor through `bc250-power.sh governor`.</EmptyState>;
@@ -68,10 +67,10 @@ export function GpuTab({ snapshot, busy, runMutation }: TabProps) {
     runMutation(
       "GPU frequency updated",
       () => setGpuFrequency(mode, minimum, maximum),
-      mode === "pin" || mode === "max"
+      mode === "pin" || mode === "max" || (mode === "range" && (minimum > 0 || maximum > 1500))
         ? {
-            title: "Apply sustained GPU clocks?",
-            description: "Pinned or maximum clocks increase heat and power. Thermal throttling remains active.",
+            title: "Apply advanced GPU clocks?",
+            description: "Pinned, raised-floor, maximum, or overclocked ranges increase heat and power and may be unstable. Thermal throttling remains active. Confirm stability before persisting high clocks.",
           }
         : undefined,
     );
@@ -81,7 +80,7 @@ export function GpuTab({ snapshot, busy, runMutation }: TabProps) {
       <PanelSection title="Live GPU">
         <StatusRow
           label="Active clock"
-          value={gpu.activeMhz ? `${gpu.activeMhz} MHz` : "Unavailable"}
+          value={gpu.activeMhz === null ? "Unavailable" : `${gpu.activeMhz} MHz`}
         />
         <StatusRow
           label="Governor service"
@@ -124,11 +123,11 @@ export function GpuTab({ snapshot, busy, runMutation }: TabProps) {
         />
         <StatusRow
           label="Adaptive ceiling"
-          value={gpu.configuredMax ? `${gpu.configuredMax} MHz` : "Curve maximum"}
+          value={gpu.configuredMax === null ? "Curve maximum" : `${gpu.configuredMax} MHz`}
         />
         <StatusRow
           label="Loaded ceiling"
-          value={gpu.initialMaximum ? `${gpu.initialMaximum} MHz` : "Unavailable"}
+          value={gpu.initialMaximum === null ? "Unavailable" : `${gpu.initialMaximum} MHz`}
           good={
             gpu.configuredMax === null ||
             gpu.initialMaximum === gpu.configuredMax
@@ -137,6 +136,7 @@ export function GpuTab({ snapshot, busy, runMutation }: TabProps) {
       </PanelSection>
 
       <PanelSection title="Frequency">
+        <EmptyState>Mode inputs show the saved request; live mode and range are reported above. Applying a mode saves it for boot replay. 0 MHz minimum means no requested floor, not a live 0 MHz clock.</EmptyState>
         <DropdownItem
           label="Mode"
           rgOptions={modeOptions}
@@ -183,6 +183,7 @@ export function GpuTab({ snapshot, busy, runMutation }: TabProps) {
               : "Start the GPU governor before changing live frequency mode."}
           </EmptyState>
         )}
+        {!frequencyValid && <EmptyState>Use whole MHz within {frequencyMinimum}-{frequencyMaximum}. A range minimum can also be 0 and must not exceed its maximum.</EmptyState>}
         <ActionButton
           label="Apply frequency mode"
           disabled={frequencyDisabled || !frequencyValid}
@@ -219,7 +220,7 @@ export function GpuTab({ snapshot, busy, runMutation }: TabProps) {
           label="Minimum load"
           description="Clock down when GPU load falls below this threshold."
           value={loadMinimum}
-          min={1}
+          min={5}
           max={99}
           step={1}
           valueSuffix="%"
@@ -231,7 +232,7 @@ export function GpuTab({ snapshot, busy, runMutation }: TabProps) {
           label="Maximum load"
           description="Clock up when GPU load rises above this threshold."
           value={loadMaximum}
-          min={1}
+          min={5}
           max={99}
           step={1}
           valueSuffix="%"
@@ -239,13 +240,13 @@ export function GpuTab({ snapshot, busy, runMutation }: TabProps) {
           disabled={busy || !gpu.controllable}
           onChange={setLoadMaximum}
         />
-        {loadMinimum >= loadMaximum && (
-          <EmptyState>Minimum load must be lower than maximum load.</EmptyState>
+        {!loadValid && (
+          <EmptyState>Choose whole percentages from 5-99%; minimum must be lower than maximum.</EmptyState>
         )}
         <ActionButton
           label="Apply custom load target"
           disabled={
-            busy || !gpu.controllable || loadMinimum >= loadMaximum
+            frequencyDisabled || !loadValid
           }
           onClick={() =>
             runMutation(
@@ -257,6 +258,8 @@ export function GpuTab({ snapshot, busy, runMutation }: TabProps) {
       </PanelSection>
 
       <PanelSection title="Thermal Target">
+        <StatusRow label="Current throttle / recovery" value={gpu.temperatureTarget === null || gpu.temperatureRecovery === null
+          ? "Unavailable" : `${gpu.temperatureTarget} / ${gpu.temperatureRecovery} °C`} />
         <SliderField
           label="Throttle temperature"
           description={`Recovery is set to ${temperatureTarget - 10} C to prevent rapid cycling.`}
@@ -266,21 +269,26 @@ export function GpuTab({ snapshot, busy, runMutation }: TabProps) {
           step={1}
           valueSuffix=" C"
           editableValue
-          disabled={busy || !gpu.controllable}
+          disabled={frequencyDisabled}
           onChange={setTemperatureTargetValue}
         />
         <ActionButton
           label="Apply thermal target"
-          disabled={busy || !gpu.controllable}
+          disabled={frequencyDisabled || !Number.isInteger(temperatureTarget) || temperatureTarget < 50 || temperatureTarget > 100}
           onClick={() =>
             runMutation("GPU thermal target updated", () =>
               setTemperatureTarget(temperatureTarget),
             )
           }
         />
+        <ActionButton label="Reset thermal target to 85 °C" disabled={frequencyDisabled}
+          onClick={() => runMutation("GPU thermal target reset", () => setTemperatureTarget(85))} />
       </PanelSection>
 
       <PanelSection title="Ramp">
+        <StatusRow label="Current climb time" value={gpu.climbMs === null ? "Unavailable" : `${gpu.climbMs} ms`} />
+        <StatusRow label="Adjust interval" value={gpu.adjustMicros === null ? "Unavailable" : `${gpu.adjustMicros} µs`} />
+        <StatusRow label="Normal rate / down events" value={`${gpu.rampNormal ?? "Unavailable"} / ${gpu.downEvents ?? "Unavailable"}`} />
         <SliderField
           label="Idle-to-max climb"
           value={rampMs}
@@ -294,24 +302,25 @@ export function GpuTab({ snapshot, busy, runMutation }: TabProps) {
         />
         <ActionButton
           label="Apply ramp time"
-          disabled={busy}
+          description="Restarts the governor and reapplies saved frequency mode."
+          disabled={frequencyDisabled || !Number.isInteger(rampMs) || rampMs < 200 || rampMs > 5000}
           onClick={() =>
             runMutation("GPU ramp updated", () => setRamp(rampMs))
           }
         />
+        <ActionButton label="Reset ramp to toolkit defaults" description="Restores interval, normal/burst rates, and down-event defaults; restarts the governor."
+          disabled={rampResetDisabled}
+          onClick={() => {
+            if (rampResetDisabled) return;
+            runMutation("GPU ramp defaults restored", () => resetGpuRamp(), {
+              title: "Reset GPU ramp behavior?",
+              description: "The governor will restart with the toolkit default ramp timing, then restore the saved frequency mode.",
+            });
+          }} />
+        {!rampResetSupported && <EmptyState>GPU ramp reset: {CONTROL_API_UPDATE_REASON}</EmptyState>}
       </PanelSection>
 
-      {gpu.safePoints.length > 0 && (
-        <PanelSection title="Voltage Curve">
-          {gpu.safePoints.map((point, index) => (
-            <StatusRow
-              key={`${point.frequency}-${index}`}
-              label={point.frequency ? `${point.frequency} MHz` : `Point ${index + 1}`}
-              value={point.voltage ? `${point.voltage} mV` : "Unavailable"}
-            />
-          ))}
-        </PanelSection>
-      )}
+      <GpuVoltageEditor snapshot={snapshot} busy={busy} runMutation={runMutation} />
     </>
   );
 }

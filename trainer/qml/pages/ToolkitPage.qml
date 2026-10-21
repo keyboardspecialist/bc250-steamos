@@ -14,6 +14,11 @@ ColumnLayout {
         && !controller.error && !controller.refreshing && !controller.running && !backend.busy
     readonly property var toolkitSnapshot: (backend.snapshot || {}).toolkit || ({})
     readonly property var autoBaseInstallationOperation: operation("auto-base-installation") || ({})
+    property bool showCli: false
+
+    C.NeonButton { text: root.showCli ? "HIDE COMPLETE CLI CATALOG" : "COMPLETE CLI / ADVANCED MAINTENANCE"; onClicked: root.showCli = !root.showCli }
+    Loader { active: root.showCli; visible: active; Layout.fillWidth: true; sourceComponent: cliPage }
+    Component { id: cliPage; CliPage { backend: root.backend; blocked: root.controller.running || root.controller.refreshing || root.controller.updating === true } }
 
     function componentState(componentId) {
         var components = controller.inventory.components || []

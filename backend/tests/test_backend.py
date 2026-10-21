@@ -3420,6 +3420,13 @@ class DeckyRuntimeTests(unittest.TestCase):
                 self.assertTrue(staged.is_file(), relative)
                 self.assertEqual(staged.read_bytes(), source.read_bytes())
 
+            from bc250_control.backend import METRICS_PAYLOAD_FILES
+            for relative in METRICS_PAYLOAD_FILES:
+                staged = first / "privileged-helper" / relative
+                self.assertTrue(staged.is_file(), relative)
+                self.assertEqual(staged.read_bytes(), (repository / relative).read_bytes())
+            self.assertTrue((first / "py_modules/bc250_control/parity.py").is_file())
+
             helixsr = first / "privileged-helper/bc250-helixsr.sh"
             self.assertEqual(helixsr.stat().st_mode & 0o777, 0o755)
             with zipfile.ZipFile(first_archive) as archive:

@@ -11,21 +11,42 @@ QtObject {
     property bool operationCancellable: true
     property bool cancelPending: false
     property string error: ""
+    property string telemetryError: ""
     property string notice: "Mock mode: no hardware calls are made."
     property string healthState: "healthy"
-    property string healthSummary: snapshot.cu.total + "/" + snapshot.cu.maximum + " CU · " + snapshot.gpu.activeMhz + " MHz GPU · 57 °C"
+    property string healthSummary: snapshot ? snapshot.cu.total + "/" + snapshot.cu.maximum + " CU · " + snapshot.gpu.activeMhz + " MHz GPU · 57 °C" : "Mock service unavailable"
     property var cpuUnlockStatus: ({
         schemaVersion: 1, physicalCores: 8, logicalThreads: 16, topologyState: "unlocked",
         mode: "temporary", helperInstalled: true, unitInstalled: true,
         service: { enabled: "disabled", active: "inactive" },
         guard: { state: "clear", currentBoot: false },
+        metrics: { state: "compatible", message: "Supported 8-core metrics decoder is installed (mock).",
+            service: { enabled: "enabled", active: "active" }, revision: "mock-1" },
         actions: {
             test: { available: true, blockers: [], hint: "Ready for a one-time test." },
             enable: { available: true, blockers: [], hint: "Ready to enable standard boot replay." },
             "efi-enable": { available: true, blockers: [], hint: "Ready to install EFI preboot." },
-            off: { available: true, blockers: [], hint: "Disable core unlock." }
+            off: { available: true, blockers: [], hint: "Disable core unlock." },
+            "metrics-enable": { available: false, blockers: ["already-active"], hint: "Metrics are already active." },
+            uninstall: { available: true, blockers: [], hint: "Remove toolkit-owned core-unlock integration." }
         }
     })
+    property var cliCatalog: ({ schemaVersion: 1, available: true, reason: null,
+        sections: ["menu", "status", "power", "ram", "swap", "compute", "cpu-unlock",
+            "cec", "storage", "persistence", "wifi-backend", "memory-temperature", "radv",
+            "video-codec", "proton", "manage"].map(function(id) {
+                return { id: id, title: id.replace(/-/g, " "),
+                    description: "Mock terminal handoff for " + id,
+                    risk: id === "status" ? "read-only" : id === "manage" ? "maintenance" : "advanced" };
+            }) })
+    property var sensors: [
+        { key: "gpu:temp1", device: "amdgpu", label: "edge", value: 57, unit: "°C" },
+        { key: "cpu:temp1", device: "k10temp", label: "Tctl", value: 55, unit: "°C" },
+        { key: "gpu:in0", device: "amdgpu", label: "VDDGFX", value: 0.975, unit: "V" },
+        { key: "gpu:power1", device: "amdgpu", label: "PPT", value: 62.5, unit: "W" },
+        { key: "board:fan1", device: "board", label: "Fan", value: 0, unit: "RPM" },
+        { key: "board:temp2", device: "board", label: "Optional probe", value: null, unit: "°C" }
+    ]
     property var meshStatus: ({
         scriptAvailable: true, runtimeState: "ready", mesaVersion: "mesa-26.2.2",
         icdPath: "/home/deck/radeon_driconf_icd.x86_64.json", configValid: true,
@@ -102,6 +123,7 @@ QtObject {
     ]
     property var snapshot: ({
         toolkit: { available: true, privileged: true, powerAvailable: true,
+            controlApiVersion: 1, controlCapabilities: ["gpu-voltage-curve", "gpu-ramp-reset", "cpu-oc-update", "cpu-unlock-metrics", "cpu-unlock-uninstall", "cli-handoff", "hwmon-sensors"],
             cpuControlAvailable: true, cecAvailable: true, ramControlAvailable: true,
             audioAvailable: true, path: "/mock/bc250-steamos" },
         cu: {
@@ -163,9 +185,13 @@ QtObject {
         }
     })
 
-    function latestGpuTemperature() { return 57; }
+    function latestTelemetry(key) { return telemetryHistory[telemetryHistory.length - 1][key]; }
+    function latestGpuTemperature() { return latestTelemetry("gpuTemp"); }
+    function latestSensors() { return sensors; }
     function refresh() { notice = "Mock snapshot refreshed."; }
     function refreshFsr4() { notice = "Mock Steam game list refreshed."; }
+    function refreshCliCatalog() { notice = "Mock terminal workflows refreshed."; }
+    function openCliSection() { start("Opening terminal workflow (mock; no terminal launched)"); }
     function openFullControls() { notice = "Mock plasmawindowed launch requested."; }
     function finish(label) { busy = false; busyLabel = ""; operationId = ""; notice = label + " completed (mock)."; }
     function start(label) {
@@ -182,11 +208,13 @@ QtObject {
     function setTemperatureTarget() { start("Applying GPU thermal target"); }
     function setCustomLoadTarget() { start("Applying custom load target"); }
     function setRamp() { start("Applying GPU ramp time"); }
+    function resetGpuRamp() { start("Restoring default GPU ramp timing"); }
+    function gpuVoltageAction() { start("Updating GPU voltage curve"); }
     function setFsr4Dll() { start("Updating FSR4 game DLL"); }
     function prepareHelixsr() { start("Preparing experimental HelixSR payload"); }
     function installHelixsr() { start("Installing experimental HelixSR game DLL"); }
     function uninstallHelixsr() { start("Restoring pre-HelixSR game DLL"); }
-    function setNativeMeshEnabled(enabled) { start(enabled ? "Installing BC250 RADV R2" : "Removing BC250 RADV R2"); }
+    function setNativeMeshEnabled(enabled) { start(enabled ? "Installing global DirectMesh" : "Removing BC250 RADV R2"); }
     function installOptiscaler() { start("Installing OptiScaler"); }
     function uninstallOptiscaler() { start("Restoring pre-OptiScaler game files"); }
     function cpuOcAction() { start("Running CPU operation"); }

@@ -13,6 +13,7 @@ TestCase {
         id: backend
         property bool busy: false
         property var meshStatus: ({})
+        property var capabilities: ({"GpuVoltageAction": true, "ResetGpuRamp": true})
         property var snapshot: ({"gpu": {
             "controllable": true,
             "dbusReady": true,
@@ -32,6 +33,8 @@ TestCase {
         function setCustomLoadTarget(minimum, maximum) { record("customLoad", [minimum, maximum]) }
         function setTemperatureTarget(target) { record("temperature", [target]) }
         function setRamp(milliseconds) { record("ramp", [milliseconds]) }
+        function resetGpuRamp() { record("rampReset", []) }
+        function gpuVoltageAction(action, frequency, voltage, newFrequency) { record("curve", [action, frequency, voltage, newFrequency]) }
     }
 
     Pages.GpuPage {
@@ -143,5 +146,19 @@ TestCase {
         page.minimum = 349
         page.maximum = 1400
         verify(!page.frequencyValid)
+    }
+
+    function test_curveRequiresConfirmationAndZeroesUnusedArguments() {
+        page.curveAction = "offset"
+        page.curveOffset = -25
+        findChild(page, "gpuCurveApply").clicked()
+        compare(backend.calledMethod, "")
+        var dialog = findChild(page, "gpuConfirmDialog")
+        verify(dialog !== null)
+        compare(dialog.visible, true)
+        dialog.acceptedAction()
+        dialog.close()
+        compare(backend.calledMethod, "curve")
+        compare(backend.calledArguments, ["offset", 0, -25, 0])
     }
 }

@@ -1,5 +1,6 @@
 import QtQuick
 import QtQuick.Layouts
+import QtQuick.Controls as QQC2
 import org.kde.kirigami as Kirigami
 import "../components" as Components
 import "../Utils.js" as Utils
@@ -26,21 +27,21 @@ ColumnLayout {
 
         Components.MetricCard {
             title: "CPU clock"
-            value: Utils.valueOrDash(root.snapshot.power.cpuCurrentMhz, " MHz")
+            value: Utils.valueOrDash(root.backend.latestTelemetry("cpuClock"), " MHz")
             samples: root.samples("cpuClock")
             accent: "#4f9de8"
             Layout.fillWidth: true
         }
         Components.MetricCard {
             title: "GPU clock"
-            value: Utils.valueOrDash(root.snapshot.gpu.activeMhz, " MHz")
+            value: Utils.valueOrDash(root.backend.latestTelemetry("gpuClock"), " MHz")
             samples: root.samples("gpuClock")
             accent: "#9b7de5"
             Layout.fillWidth: true
         }
         Components.MetricCard {
             title: "CPU temperature"
-            value: root.samples("cpuTemp").length ? Utils.valueOrDash(root.samples("cpuTemp").slice(-1)[0], " °C") : "Collecting"
+            value: Utils.valueOrDash(root.backend.latestTelemetry("cpuTemp"), " °C")
             samples: root.samples("cpuTemp")
             floor: 20
             accent: "#3fbd86"
@@ -48,11 +49,30 @@ ColumnLayout {
         }
         Components.MetricCard {
             title: "GPU temperature"
-            value: backend.latestGpuTemperature() === null ? "Collecting" : Math.round(backend.latestGpuTemperature()) + " °C"
+            value: Utils.valueOrDash(root.backend.latestTelemetry("gpuTemp"), " °C")
             samples: root.samples("gpuTemp")
             floor: 20
             accent: "#e99145"
             Layout.fillWidth: true
+        }
+    }
+
+    Components.Section {
+        title: "All Hardware Sensors"
+        QQC2.Label {
+            Layout.fillWidth: true
+            visible: root.backend.latestSensors().length === 0
+            text: root.backend.telemetryError ? "Live sensors unavailable: " + root.backend.telemetryError
+                : "No current sensor readings. Only sensors exposed by the kernel are shown; unsupported readings are not estimated."
+            wrapMode: Text.Wrap
+        }
+        Repeater {
+            model: root.backend.latestSensors()
+            Components.StatusRow {
+                required property var modelData
+                label: String(modelData.device || "hwmon") + " · " + String(modelData.label || modelData.key)
+                value: Utils.sensorValue(modelData)
+            }
         }
     }
 

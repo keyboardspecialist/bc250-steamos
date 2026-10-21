@@ -28,6 +28,9 @@ class Bc250Bridge final : public QObject
     Q_PROPERTY(QVariantList telemetryHistory READ telemetryHistory NOTIFY telemetryChanged)
     Q_PROPERTY(QVariantMap cpuUnlockStatus READ cpuUnlockStatus NOTIFY cpuUnlockStatusChanged)
     Q_PROPERTY(QVariantMap meshStatus READ meshStatus NOTIFY meshStatusChanged)
+    Q_PROPERTY(QVariantMap fsr4Inventory READ fsr4Inventory NOTIFY fsr4InventoryChanged)
+    Q_PROPERTY(QVariantMap cliCatalog READ cliCatalog NOTIFY cliCatalogChanged)
+    Q_PROPERTY(QVariantMap capabilities READ capabilities NOTIFY capabilitiesChanged)
     Q_PROPERTY(QString error READ error NOTIFY errorChanged)
     Q_PROPERTY(QString notice READ notice NOTIFY noticeChanged)
 
@@ -50,6 +53,9 @@ public:
     QVariantList telemetryHistory() const { return m_telemetryHistory; }
     QVariantMap cpuUnlockStatus() const { return m_cpuUnlockStatus; }
     QVariantMap meshStatus() const { return m_meshStatus; }
+    QVariantMap fsr4Inventory() const { return m_fsr4Inventory; }
+    QVariantMap cliCatalog() const { return m_cliCatalog; }
+    QVariantMap capabilities() const { return m_capabilities; }
     QString error() const { return m_error; }
     QString notice() const { return m_notice; }
 
@@ -64,6 +70,19 @@ public:
     Q_INVOKABLE void setCustomLoadTarget(int minimum, int maximum);
     Q_INVOKABLE void setTemperatureTarget(int target);
     Q_INVOKABLE void setRamp(int milliseconds);
+    Q_INVOKABLE void resetGpuRamp();
+    Q_INVOKABLE void gpuVoltageAction(const QString &action, int frequency, int voltage, int newFrequency);
+    Q_INVOKABLE void refreshFsr4();
+    Q_INVOKABLE void setFsr4Dll(const QString &targetId, bool enabled);
+    Q_INVOKABLE void prepareHelixsr();
+    Q_INVOKABLE void installHelixsr(const QString &targetId);
+    Q_INVOKABLE void uninstallHelixsr(const QString &targetId);
+    Q_INVOKABLE void installOptiscaler(const QString &candidateId, const QString &proxy);
+    Q_INVOKABLE void uninstallOptiscaler(const QString &candidateId);
+    Q_INVOKABLE void cecAction(const QString &action);
+    Q_INVOKABLE void setCecToggle(const QString &key, bool enabled);
+    Q_INVOKABLE void setCecName(const QString &name);
+    Q_INVOKABLE void openCliSection(const QString &section);
     Q_INVOKABLE void cpuOcAction(const QString &action, int frequency, int voltage, int temperature);
     Q_INVOKABLE void setCpuMitigations(bool enabled);
     Q_INVOKABLE void setCpuSmtDisabled(bool disabled);
@@ -90,18 +109,22 @@ signals:
     void telemetryChanged();
     void cpuUnlockStatusChanged();
     void meshStatusChanged();
+    void fsr4InventoryChanged();
+    void cliCatalogChanged();
+    void capabilitiesChanged();
     void errorChanged();
     void noticeChanged();
     void operationFinished(bool success, const QString &message);
 
 private:
-    enum class JsonRequest { Snapshot, Telemetry, CpuUnlock, Mesh, Operation };
+    enum class JsonRequest { Snapshot, Telemetry, CpuUnlock, Mesh, Fsr4, CliCatalog, Operation };
 
     void setServiceAvailable(bool available);
     void rebuildServiceInterface();
     void updateTelemetryPolling();
     void requestJson(JsonRequest request, const QString &method, const QVariantList &arguments = {});
     void handleJsonReply(JsonRequest request, QDBusPendingCallWatcher *watcher);
+    void invalidateTelemetry(const QString &message);
     void startMutation(const QString &method, const QVariantList &arguments, const QString &label,
                        bool cancellable = true);
     void handleMutationReply(QDBusPendingCallWatcher *watcher);
@@ -117,6 +140,9 @@ private:
     void applyMockMutation();
     bool ensureReady();
     bool reject(const QString &message);
+    bool discoveredId(const QString &id, bool candidate) const;
+    void gameMutation(const QString &method, const QString &id, bool candidate = false,
+                      const QString &proxy = QString());
 
     const bool m_mockMode;
     QDBusConnection m_bus;
@@ -138,6 +164,8 @@ private:
     bool m_telemetryPending = false;
     bool m_cpuUnlockPending = false;
     bool m_meshPending = false;
+    bool m_fsr4Pending = false;
+    bool m_cliCatalogPending = false;
     bool m_operationPending = false;
     bool m_operationCancellable = false;
     bool m_preserveErrorOnRefresh = false;
@@ -153,6 +181,9 @@ private:
     QVariantList m_telemetryHistory;
     QVariantMap m_cpuUnlockStatus;
     QVariantMap m_meshStatus;
+    QVariantMap m_fsr4Inventory;
+    QVariantMap m_cliCatalog;
+    QVariantMap m_capabilities;
     QString m_error;
     QString m_notice;
 };

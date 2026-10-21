@@ -21,6 +21,13 @@ SHARED_PAYLOAD_COMMITTED=0
 SHARED_UNLOCK_LOCKED=0
 SHARED_READONLY_CHANGED=0
 SHARED_CLIENT_COUNT=0
+SHARED_METRICS_FILES=(
+    activate-8core-metrics.sh unlock.py patcher.py metrics-8core.hex
+    metrics-8core-original.hex LICENSE README.md
+    bc250_smu/__init__.py bc250_smu/api.py bc250_smu/api_q0.py
+    bc250_smu/api_q2.py bc250_smu/api_q3.py bc250_smu/errors.py
+    bc250_smu/mailbox.py bc250_smu/primitives.py bc250_smu/transport.py
+)
 
 shared_log() { echo "[bc250-service] $*"; }
 shared_die() { echo "[bc250-service] $*" >&2; exit 1; }
@@ -68,10 +75,16 @@ shared_validate_sources() {
         [[ -e "$path" && ! -L "$path" ]] \
             || shared_die "Required shared-service source is missing or unsafe: $path"
     done
+    for path in "${SHARED_METRICS_FILES[@]}"; do
+        [[ -f "$SHARED_REPO_DIR/core-unlock/smu-metrics/$path" \
+            && ! -L "$SHARED_REPO_DIR/core-unlock/smu-metrics/$path" ]] \
+            || shared_die "Required eight-core metrics source is missing or unsafe: $path"
+    done
     if find "$SHARED_SOURCE_DIR/service/bc250_control_service" \
         "$SHARED_SOURCE_DIR/vendor" "$SHARED_REPO_DIR/backend/bc250_control" \
         "$SHARED_REPO_DIR/backend/vendor" "$SHARED_SOURCE_DIR/templates" \
         "$SHARED_REPO_DIR/acpi-tables" "$SHARED_REPO_DIR/smu-oc-patches" \
+        "$SHARED_REPO_DIR/core-unlock/smu-metrics" \
         -type l -print -quit | grep -q .; then
         shared_die "Refusing to stage service trees containing symlinks."
     fi
@@ -84,6 +97,7 @@ shared_copy_tree() {
 }
 
 shared_stage_payload() {
+    local metrics_file metrics_mode
     shared_validate_sources
     install -d -o root -g root -m 0755 /var/lib/bc250-control
     [[ -d /var/lib/bc250-control && ! -L /var/lib/bc250-control ]] \
@@ -154,6 +168,15 @@ shared_stage_payload() {
         "$SHARED_STAGE/core-unlock/EFI-HEADERS-LICENSE"
     install -o root -g root -m 0644 \
         "$SHARED_REPO_DIR/core-unlock/LICENSE" "$SHARED_STAGE/core-unlock/LICENSE"
+    install -d -o root -g root -m 0755 \
+        "$SHARED_STAGE/core-unlock/smu-metrics/bc250_smu"
+    for metrics_file in "${SHARED_METRICS_FILES[@]}"; do
+        metrics_mode=0644
+        [[ "$metrics_file" != activate-8core-metrics.sh ]] || metrics_mode=0755
+        install -o root -g root -m "$metrics_mode" \
+            "$SHARED_REPO_DIR/core-unlock/smu-metrics/$metrics_file" \
+            "$SHARED_STAGE/core-unlock/smu-metrics/$metrics_file"
+    done
     find "$SHARED_STAGE" -type d -name __pycache__ -prune -exec rm -rf {} +
     find "$SHARED_STAGE" -type f \( -name '*.pyc' -o -name '*.pyo' \) -delete
     chown -R root:root "$SHARED_STAGE"

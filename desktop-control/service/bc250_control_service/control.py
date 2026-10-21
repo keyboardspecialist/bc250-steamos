@@ -4,6 +4,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable, Dict
 
+from bc250_control.parity import CLI_SECTION_IDS, voltage_arguments
+
 from .errors import InvalidArguments
 from .operations import OperationManager
 
@@ -82,6 +84,18 @@ class ControlService:
     async def get_telemetry(self, sender: str) -> str:
         caller = await self._caller(sender)
         return _compact_json(await self._backend(caller).get_telemetry())
+
+    async def get_cli_catalog(self, sender: str) -> str:
+        caller = await self._caller(sender)
+        return _compact_json(await self._backend(caller).get_cli_catalog())
+
+    async def open_cli_section(self, sender: str, section_id: str) -> str:
+        if type(section_id) is not str or section_id not in CLI_SECTION_IDS:
+            raise InvalidArguments("Unknown toolkit CLI section.")
+        return await self._submit(
+            sender, "handoff", "OpenCliSection",
+            lambda backend: backend.open_cli_section(section_id), cancellable=False,
+        )
 
     async def get_cpu_unlock_status(self, sender: str) -> str:
         caller = await self._caller(sender)
@@ -170,14 +184,33 @@ class ControlService:
             lambda backend: backend.set_load_target(preset),
         )
 
+    async def gpu_voltage_action(
+        self, sender: str, action: str, frequency: int, voltage: int, new_frequency: int
+    ) -> str:
+        try:
+            voltage_arguments(action, frequency, voltage, new_frequency)
+        except ValueError as error:
+            raise InvalidArguments(str(error)) from error
+        return await self._submit(
+            sender, "gpu", "GpuVoltageAction",
+            lambda backend: backend.gpu_voltage_action(action, frequency, voltage, new_frequency),
+            cancellable=False,
+        )
+
+    async def reset_gpu_ramp(self, sender: str) -> str:
+        return await self._submit(
+            sender, "gpu", "ResetGpuRamp", lambda backend: backend.reset_gpu_ramp(),
+            cancellable=False,
+        )
+
     async def set_custom_load_target(
         self, sender: str, minimum: int, maximum: int
     ) -> str:
         _whole(minimum, "GPU load targets must be whole percentages.")
         _whole(maximum, "GPU load targets must be whole percentages.")
-        if not 0 < minimum < maximum < 100:
+        if not 5 <= minimum < maximum <= 99:
             raise InvalidArguments(
-                "Minimum GPU load must be below maximum load and both must be 1-99%."
+                "Minimum GPU load must be below maximum load and both must be 5-99%."
             )
         return await self._submit(
             sender,
@@ -341,6 +374,7 @@ class ControlService:
             "apply",
             "enable",
             "off",
+            "update",
         ):
             raise InvalidArguments("Unknown CPU overclock action.")
         for value in (frequency, voltage, temperature):
@@ -361,6 +395,7 @@ class ControlService:
             lambda backend: backend.cpu_oc_action(
                 action, frequency, voltage, temperature
             ),
+            cancellable=action != "update",
         )
 
     async def cpu_unlock_action(self, sender: str, action: str) -> str:
@@ -369,6 +404,8 @@ class ControlService:
             "enable",
             "efi-enable",
             "off",
+            "metrics-enable",
+            "uninstall",
         ):
             raise InvalidArguments("Unknown CPU core-unlock action.")
         return await self._submit(

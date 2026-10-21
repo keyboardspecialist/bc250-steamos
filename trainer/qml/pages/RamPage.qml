@@ -25,7 +25,7 @@ ColumnLayout {
     RowLayout {
         Layout.fillWidth: true
         C.MetricTile {
-            label: "CMOS MINIMUM"
+            label: "LAST CMOS REQUEST"
             value: root.ram.umaLastRequestedMiB ? root.ram.umaLastRequestedMiB + " MiB" : "UNKNOWN"
             Layout.fillWidth: true
         }

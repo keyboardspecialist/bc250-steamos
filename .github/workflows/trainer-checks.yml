@@ -51,6 +51,7 @@ jobs:
           PYTHONPATH=desktop-control/service:desktop-control/vendor:backend:backend/vendor \
             python3 -m unittest discover -s desktop-control/service/tests
           python3 -m unittest discover -s tests -p 'test_build_dependencies.py'
+          python3 -m unittest discover -s tests -p 'test_frontend_contracts.py'
 
   linux:
     name: Native Linux build and tests
@@ -134,3 +135,4 @@ jobs:
             python3 -m unittest discover -s desktop-control/service/tests
           python3 -m unittest discover -s tests -p 'test_*.py'
           node tests/test_qml_utils.cjs
+          node tests/test_decky_parity.cjs

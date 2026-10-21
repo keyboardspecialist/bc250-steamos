@@ -18,6 +18,12 @@ ColumnLayout {
     property int loadMaximum: 80
     property int temperatureTarget: 85
     property int ramp: 500
+    readonly property var capabilities: backend.capabilities || ({})
+    property string curveAction: "set"
+    property int curveFrequency: 1500
+    property int curveVoltage: 900
+    property int curveNewFrequency: 1500
+    property int curveOffset: -25
     readonly property bool frequencyValid: root.mode !== "range"
         || ((root.minimum === 0 || root.minimum >= 350) && root.minimum <= root.maximum)
 
@@ -34,7 +40,7 @@ ColumnLayout {
     onGpuChanged: if (!backend.busy) syncFromSnapshot()
     Component.onCompleted: syncFromSnapshot()
 
-    C.ConfirmDialog { id: confirm }
+    C.ConfirmDialog { id: confirm; objectName: "gpuConfirmDialog" }
     C.SectionHeader { text: "Global DirectMesh / RADV and compute queues" }
     C.StatusRow { label: "Patched AMDGPU"; value: root.mesh.kernelReady ? "Installed and active" : "Not ready"; health: root.mesh.kernelReady ? 1 : -1 }
     C.StatusRow { label: "Scheduler policy"; value: root.mesh.schedulerActive ? "Active" : root.mesh.schedulerConfigured ? "Reboot required" : "Disabled"; health: root.mesh.schedulerActive ? 1 : root.mesh.schedulerConfigured ? 0 : -1 }
@@ -108,8 +114,8 @@ ColumnLayout {
     Text { text: "CUSTOM: down < " + root.loadMinimum + "%   up > " + root.loadMaximum + "%"; color: "#b7cbd4"; font.family: "monospace"; font.pixelSize: 9 }
     RowLayout {
         Layout.fillWidth: true
-        Slider { objectName: "gpuLoadMinimum"; from: 1; to: 98; stepSize: 1; value: root.loadMinimum; enabled: root.enabledControls; Layout.fillWidth: true; onMoved: root.loadMinimum = Math.round(value) }
-        Slider { objectName: "gpuLoadMaximum"; from: 2; to: 99; stepSize: 1; value: root.loadMaximum; enabled: root.enabledControls; Layout.fillWidth: true; onMoved: root.loadMaximum = Math.round(value) }
+        Slider { objectName: "gpuLoadMinimum"; from: 5; to: 98; stepSize: 1; value: root.loadMinimum; enabled: root.enabledControls; Layout.fillWidth: true; onMoved: root.loadMinimum = Math.round(value) }
+        Slider { objectName: "gpuLoadMaximum"; from: 6; to: 99; stepSize: 1; value: root.loadMaximum; enabled: root.enabledControls; Layout.fillWidth: true; onMoved: root.loadMaximum = Math.round(value) }
         C.NeonButton { objectName: "gpuLoadSet"; text: "SET"; enabled: root.enabledControls && root.loadMinimum < root.loadMaximum; onClicked: root.backend.setCustomLoadTarget(root.loadMinimum, root.loadMaximum) }
     }
 
@@ -127,10 +133,38 @@ ColumnLayout {
         Text { text: root.ramp + " ms"; color: "#22e7f2"; font.family: "monospace"; font.pixelSize: 10 }
         Slider { objectName: "gpuRamp"; from: 200; to: 5000; stepSize: 100; value: root.ramp; enabled: root.enabledControls; Layout.fillWidth: true; onMoved: root.ramp = Math.round(value / 100) * 100 }
         C.NeonButton { objectName: "gpuRampSet"; text: "SET RAMP"; enabled: root.enabledControls; onClicked: root.backend.setRamp(root.ramp) }
+        C.NeonButton { objectName: "gpuRampReset"; text: "RESET"; enabled: root.enabledControls && root.capabilities.ResetGpuRamp === true; onClicked: confirm.ask("Reset GPU ramp?", "Restore the toolkit default ramp and restart the governor. Saved frequency settings are reapplied by the service.", false, function() { root.backend.resetGpuRamp() }) }
     }
     Repeater {
         model: root.gpu.safePoints || []
         C.StatusRow { required property var modelData; label: "Curve point"; value: modelData.frequency + " MHz @ " + modelData.voltage + " mV" }
     }
-    Text { text: "Voltage points are read-only. The service does not expose voltage mutation."; color: "#718896"; font.family: "monospace"; font.pixelSize: 9; wrapMode: Text.Wrap; Layout.fillWidth: true }
+    Text { visible: root.capabilities.GpuVoltageAction !== true; text: "Voltage editing unavailable from the installed service. Update the host service; no CLI hardware fallback is used."; color: "#ffb06a"; font.pixelSize: 9; wrapMode: Text.Wrap; Layout.fillWidth: true }
+    C.NeonComboBox {
+        objectName: "gpuCurveAction"; model: ["set", "add", "edit", "remove", "offset", "reset"]
+        currentIndex: Math.max(0, model.indexOf(root.curveAction)); Layout.fillWidth: true
+        enabled: root.enabledControls && root.capabilities.GpuVoltageAction === true
+        onActivated: root.curveAction = currentText
+    }
+    RowLayout {
+        Layout.fillWidth: true
+        C.NeonSpinBox { objectName: "curveFrequency"; from: 350; to: 2230; value: root.curveFrequency; editable: true; Layout.fillWidth: true; enabled: root.enabledControls && ["offset", "reset"].indexOf(root.curveAction) < 0; onValueModified: root.curveFrequency = value; textFromValue: function(v) { return "POINT " + v + " MHz" } }
+        C.NeonSpinBox { objectName: "curveNewFrequency"; from: 350; to: 2230; value: root.curveNewFrequency; editable: true; Layout.fillWidth: true; enabled: root.enabledControls && root.curveAction === "edit"; onValueModified: root.curveNewFrequency = value; textFromValue: function(v) { return "NEW " + v + " MHz" } }
+    }
+    RowLayout {
+        Layout.fillWidth: true
+        C.NeonSpinBox { objectName: "curveVoltage"; from: 700; to: 1050; value: root.curveVoltage; editable: true; Layout.fillWidth: true; enabled: root.enabledControls && ["set", "add", "edit"].indexOf(root.curveAction) >= 0; onValueModified: root.curveVoltage = value; textFromValue: function(v) { return v + " mV" } }
+        C.NeonSpinBox { objectName: "curveOffset"; from: -350; to: 350; value: root.curveOffset; editable: true; Layout.fillWidth: true; enabled: root.enabledControls && root.curveAction === "offset"; onValueModified: root.curveOffset = value; textFromValue: function(v) { return "OFFSET " + v + " mV" } }
+        C.NeonButton {
+            objectName: "gpuCurveApply"; text: "APPLY CURVE"; enabled: root.enabledControls && root.capabilities.GpuVoltageAction === true
+            onClicked: {
+                var action = root.curveAction
+                var frequency = ["offset", "reset"].indexOf(action) >= 0 ? 0 : root.curveFrequency
+                var voltage = action === "offset" ? root.curveOffset : ["remove", "reset"].indexOf(action) >= 0 ? 0 : root.curveVoltage
+                var newFrequency = action === "edit" ? root.curveNewFrequency : 0
+                confirm.ask("Change GPU voltage curve (" + action + ")?", "Undervolting can crash the system or lose data; overvolting increases heat and power. Bounds: 350-2230 MHz, 700-1050 mV, at least two unique points and nondecreasing voltage. The service validates the whole curve and saved clock limits transactionally, restarts the governor, and reapplies saved clocks.", true,
+                    function() { root.backend.gpuVoltageAction(action, frequency, voltage, newFrequency) })
+            }
+        }
+    }
 }

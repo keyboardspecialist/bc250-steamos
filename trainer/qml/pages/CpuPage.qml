@@ -14,6 +14,7 @@ ColumnLayout {
     readonly property var unlock: backend.cpuUnlockStatus || ({})
     readonly property var guard: unlock.guard || ({})
     readonly property var actions: unlock.actions || ({})
+    readonly property var metrics: unlock.metrics || ({})
     readonly property var linuxReplay: unlock.linuxReplay || ({})
     readonly property var efi: unlock.efi || ({})
     readonly property var linuxService: linuxReplay.service || unlock.service || ({})
@@ -347,7 +348,36 @@ ColumnLayout {
         font.family: "monospace"; font.pixelSize: 8; wrapMode: Text.Wrap; Layout.fillWidth: true
     }
 
+    C.SectionHeader { text: "Eight-core metrics compatibility" }
+    C.StatusRow { objectName: "cpuMetricsState"; label: "Compatibility helper"; value: root.metrics.state || "Unavailable from installed service" }
+    C.StatusRow { label: "Metrics service"; value: root.serviceLabel(root.metrics.service || ({})) }
+    C.StatusRow { label: "Metrics revision"; value: root.metrics.revision || "Unknown" }
+    Text { text: root.metrics.message || "Compatible metrics status is unavailable. Six-core-only SMU readers may fail with eight cores; missing measurements are not estimated. Sampling never installs a payload."; color: "#ffb06a"; font.pixelSize: 9; wrapMode: Text.Wrap; Layout.fillWidth: true }
+    Repeater {
+        model: ["metrics-enable", "uninstall"]
+        ColumnLayout {
+            required property string modelData
+            Layout.fillWidth: true
+            C.NeonButton {
+                objectName: modelData
+                text: modelData === "metrics-enable" ? "ENABLE COMPATIBLE METRICS" : "REMOVE CORE UNLOCK + METRICS"
+                enabled: root.unlockControls && (root.actions[modelData] || {}).available === true
+                onClicked: {
+                    var action = modelData
+                    confirm.ask(action === "metrics-enable" ? "Enable eight-core metrics?" : "Remove core unlock and metrics integration?",
+                        action === "metrics-enable"
+                            ? "Install and enable the compatibility service. The matching AMDGPU decoder is a separate prerequisite; reboot as requested. Sampling never installs a payload."
+                            : "Remove the complete managed core-unlock and metrics integration, including automatic Linux/EFI unlock state. Unrecognized firmware entries remain protected. Current cores remain unlocked until a full power-off. Save work first.",
+                        true, function() { root.backend.cpuUnlockAction(action) })
+                }
+            }
+            Text { text: root.actionStatus(modelData, "Ready."); color: "#ffb06a"; font.pixelSize: 9; wrapMode: Text.Wrap; Layout.fillWidth: true }
+        }
+    }
+
     C.SectionHeader { text: "CPU overclock profile" }
+    Text { visible: root.unlock.physicalCores === 8; text: "Eight-core mode: legacy CPU OC / SMU tools may be incompatible. The service safety checks remain authoritative; do not bypass an unavailable control."; color: "#ffb06a"; font.pixelSize: 9; wrapMode: Text.Wrap; Layout.fillWidth: true }
+    C.NeonButton { objectName: "cpuOcUpdate"; text: "UPDATE CPU OC TOOL"; enabled: root.cpuControls && (backend.capabilities || {}).CpuOcAction === true && ((root.snap.toolkit || {}).controlCapabilities || []).indexOf("cpu-oc-update") >= 0; onClicked: confirm.ask("Update the CPU overclock tool?", "Update the toolkit-managed CPU OC helper. This does not run detection or automatically apply a profile.", false, function() { root.backend.cpuOcAction("update", 0, 0, 0) }) }
     C.StatusRow { label: "Detected profile"; value: ((root.cpu.staged || root.cpu.installed || {}).detected) || "None" }
     RowLayout {
         Layout.fillWidth: true

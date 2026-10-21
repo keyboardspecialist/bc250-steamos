@@ -2,6 +2,8 @@ import { PanelSection, SliderField, ToggleField } from "@decky/ui";
 import { useEffect, useState } from "react";
 import { cpuOcAction, cpuUnlockAction, setCpuMitigations, setCpuSmtDisabled } from "../api";
 import { ActionButton, EmptyState, StatusRow } from "../components/Common";
+import { CONTROL_API_UPDATE_REASON, controlApiSupports } from "../parity";
+import type { CpuUnlockAction } from "../types";
 import type { TabProps } from "./shared";
 
 export function CpuTab({ snapshot, busy, runMutation }: TabProps) {
@@ -9,13 +11,18 @@ export function CpuTab({ snapshot, busy, runMutation }: TabProps) {
   const enabled = cpu.service.enabled === "enabled";
   const detected = cpu.staged?.detected || cpu.installed?.detected || "";
   const detectedValues = detected.match(/(\d+)\s*MHz\s*@\s*(\d+)\s*mV/i);
-  const [frequency, setFrequency] = useState(Number(detectedValues?.[1]) || 4000);
+  const profile = cpu.staged ?? cpu.installed;
+  const profileFrequency = Number(detectedValues?.[1] ?? profile?.values.frequency) || 4000;
+  const profileTemperature = Number(profile?.values.max_temperature) || 90;
+  const [frequency, setFrequency] = useState(profileFrequency);
   const [voltage, setVoltage] = useState(Number(detectedValues?.[2]) || 1275);
-  const [temperature, setTemperature] = useState(90);
+  const [temperature, setTemperature] = useState(profileTemperature);
   const controlsDisabled =
     busy ||
     !snapshot.toolkit.privileged ||
     !snapshot.toolkit.cpuControlAvailable;
+  const updateApiSupported = controlApiSupports(snapshot.toolkit, "cpu-oc-update");
+  const updateDisabled = controlsDisabled || !updateApiSupported;
   const profileAvailable = Boolean(cpu.installed || cpu.staged);
   const mitigations = cpu.mitigations || {
     schemaVersion: 1 as const,
@@ -37,10 +44,14 @@ export function CpuTab({ snapshot, busy, runMutation }: TabProps) {
   const unlock = snapshot.cpuUnlock;
   const automaticRebootPending =
     unlock.guard.state === "automatic" && unlock.guard.currentBoot;
-  const unlockControlsDisabled = busy || automaticRebootPending;
+  const unlockControlsDisabled = busy || !snapshot.toolkit.privileged || automaticRebootPending;
+  const detectionValid = Number.isInteger(frequency) && frequency >= 3500 && frequency <= 4500
+    && Number.isInteger(voltage) && voltage >= 950 && voltage <= 1325
+    && Number.isInteger(temperature) && temperature >= 50 && temperature <= 100;
 
-  const unlockReason = (name: "test" | "enable" | "efi-enable" | "off") => {
+  const unlockReason = (name: CpuUnlockAction) => {
     const actionState = unlock.actions[name];
+    if (!actionState) return "This backend does not provide this action. Update/reinstall the Decky plugin or control service.";
     if (actionState.blockers.length > 0) {
       return `Blocked: ${actionState.blockers
         .map((blocker) => blocker.split("-").join(" "))
@@ -50,7 +61,7 @@ export function CpuTab({ snapshot, busy, runMutation }: TabProps) {
   };
 
   const runUnlock = (
-    name: "test" | "enable" | "efi-enable" | "off",
+    name: CpuUnlockAction,
     label: string,
     title: string,
     description: string,
@@ -61,10 +72,10 @@ export function CpuTab({ snapshot, busy, runMutation }: TabProps) {
   });
 
   useEffect(() => {
-    if (!detectedValues) return;
-    setFrequency(Number(detectedValues[1]));
-    setVoltage(Number(detectedValues[2]));
-  }, [detected]);
+    setFrequency(profileFrequency);
+    setVoltage(Number(detectedValues?.[2]) || 1275);
+    setTemperature(profileTemperature);
+  }, [detected, profileFrequency, profileTemperature]);
 
   const action = (name: string) =>
     cpuOcAction(name, frequency, voltage, temperature);
@@ -80,7 +91,7 @@ export function CpuTab({ snapshot, busy, runMutation }: TabProps) {
         <StatusRow
           label="Logical threads"
           value={unlock.logicalThreads}
-          good={unlock.logicalThreads >= 16}
+          good={unlock.logicalThreads >= unlock.physicalCores && unlock.physicalCores > 0}
         />
         <StatusRow
           label="Topology"
@@ -153,6 +164,25 @@ export function CpuTab({ snapshot, busy, runMutation }: TabProps) {
             "Disable CPU core unlock?",
             "Persistent unlock state will be removed. Fully power off to restore the factory core mask for the next boot.",
           )}
+        />
+      </PanelSection>
+
+      <PanelSection title="CPU Metrics Compatibility">
+        <StatusRow label="AMDGPU metrics decoder" value={unlock.metrics?.state ?? "Unavailable on this backend"} />
+        <StatusRow label="Metrics service" value={unlock.metrics
+          ? `${unlock.metrics.service.enabled} / ${unlock.metrics.service.active}` : "Unavailable"} />
+        <StatusRow label="Metrics revision" value={unlock.metrics?.revision ?? "Unknown / not installed"} />
+        <EmptyState>{unlock.metrics?.message
+          || "Eight-core SMU metrics need a matching AMDGPU decoder. Update the backend to inspect compatibility; do not assume missing readings are zero."}</EmptyState>
+        <ActionButton label="Enable eight-core metrics boot service" description={unlockReason("metrics-enable")}
+          disabled={unlockControlsDisabled || !unlock.actions["metrics-enable"]?.available}
+          onClick={() => runUnlock("metrics-enable", "Eight-core metrics service enabled; reboot required", "Enable eight-core SMU metrics at boot?",
+            "Requires eight active physical cores. Installs the toolkit metrics payload and enables its boot service. A matching AMDGPU metrics decoder is a separate requirement: use the toolkit AMDGPU fixes if compatibility is not confirmed. Reboot before relying on corrected telemetry. The backend rechecks action availability and the core-unlock reboot guard.")}
+        />
+        <ActionButton label="Uninstall core unlock and metrics" description={unlockReason("uninstall")}
+          disabled={unlockControlsDisabled || !unlock.actions.uninstall?.available}
+          onClick={() => runUnlock("uninstall", "Core unlock and metrics integration removed; full power-off required", "Uninstall core unlock and metrics integration?",
+            "This removes toolkit-owned Linux/EFI core-unlock integration, helper files, pending state, and the metrics boot service/payload. It does not remove AMDGPU fixes or CPU overclock profiles. Active extra cores remain until a full power-off restores the factory mask. This is not a metrics-only uninstall.")}
         />
       </PanelSection>
 
@@ -272,7 +302,7 @@ export function CpuTab({ snapshot, busy, runMutation }: TabProps) {
         <ActionButton
           label="Detect stable profile"
           description="Runs a long CPU stress test and leaves the detected profile active."
-          disabled={controlsDisabled}
+          disabled={controlsDisabled || !detectionValid}
           onClick={() =>
             runMutation(
               "CPU profile detected",
@@ -289,6 +319,16 @@ export function CpuTab({ snapshot, busy, runMutation }: TabProps) {
       </PanelSection>
 
       <PanelSection title="Profile Actions">
+        <ActionButton label="Update CPU tuning tools" description="Refreshes pinned CPU tuning sources and safety patches; does not run detection."
+          disabled={updateDisabled}
+          onClick={() => {
+            if (updateDisabled) return;
+            runMutation("CPU tuning tools updated", () => action("update"), {
+              title: "Update CPU tuning tools?",
+              description: "Downloads the toolkit-pinned CPU overclock sources and reapplies its safety patches. Existing tuning configuration is retained.",
+            });
+          }} />
+        {!updateApiSupported && <EmptyState>CPU tuning tool update: {CONTROL_API_UPDATE_REASON}</EmptyState>}
         <ActionButton
           label="Apply profile now"
           disabled={controlsDisabled || !profileAvailable}
@@ -342,6 +382,9 @@ export function CpuTab({ snapshot, busy, runMutation }: TabProps) {
       {cpu.staged && (
         <PanelSection title="Staged Detection Result">
           <StatusRow label="Result" value={cpu.staged.detected || "Detected profile"} />
+          {Object.entries(cpu.staged.values).map(([key, value]) => (
+            <StatusRow key={key} label={key.split("_").join(" ")} value={value} />
+          ))}
           <EmptyState>
             Complete stability testing before enabling this profile at boot.
           </EmptyState>

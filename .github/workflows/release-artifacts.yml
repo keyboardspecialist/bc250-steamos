@@ -95,6 +95,7 @@ jobs:
         run: |
           python3 -m unittest discover -s tests -p 'test_*.py'
           node tests/test_qml_utils.cjs
+          node tests/test_decky_parity.cjs
 
       - name: Package Decky runtime
         shell: bash
@@ -123,6 +124,7 @@ jobs:
             "$package_dir/trainer"
           printf '%s\n' "$GITHUB_REF_NAME" > "$package_dir/VERSION"
           cp README.md bc250-*.sh fetch-steamos-package.sh "$package_dir/"
+          cp FRONTEND-PARITY-AUDIT.md "$package_dir/"
           cp LICENSE.md "$package_dir/"
           cp MENU-GRAPH.md "$package_dir/"
           git archive --format=tar HEAD \

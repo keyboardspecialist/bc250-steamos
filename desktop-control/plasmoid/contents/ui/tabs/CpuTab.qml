@@ -19,8 +19,9 @@ ColumnLayout {
     readonly property var unlock: backend.cpuUnlockStatus || ({})
     readonly property var unlockActions: unlock.actions || ({})
     readonly property var unlockGuard: unlock.guard || ({})
+    readonly property var metrics: unlock.metrics || ({})
     readonly property string unlockMode: unlock.mode || "unknown"
-    readonly property bool unlockControlsEnabled: unlock.schemaVersion === 1 && !backend.busy
+    readonly property bool unlockControlsEnabled: unlock.schemaVersion === 1 && snapshot.toolkit.privileged && !backend.busy
         && !(unlockGuard.state === "automatic" && unlockGuard.currentBoot === true)
     readonly property string disabledReason: backend.busy ? backend.busyLabel
         : !snapshot.toolkit.privileged ? "The system service is not privileged."
@@ -154,6 +155,43 @@ ColumnLayout {
                 "Persistent unlock state will be removed. Cores remain visible during this boot; fully power off to restore the factory core mask.",
                 true, function() { root.backend.cpuUnlockAction("off"); })
         }
+        Components.ActionButton {
+            text: "Uninstall core unlock"
+            description: root.unlockActionReason("uninstall", "Remove toolkit-owned core-unlock integration; fully power off to restore the factory mask.")
+            enabled: root.unlockActionEnabled("uninstall")
+            disabledReason: description
+            onClicked: confirmation.ask("Uninstall CPU core unlock?",
+                "This removes verified toolkit-owned Linux/EFI unlock integration and metrics support. It cannot relock cores during this boot. Fully power off afterward to restore the factory core mask.",
+                true, function() { root.backend.cpuUnlockAction("uninstall"); })
+        }
+    }
+
+    Components.Section {
+        title: "CPU Metrics Compatibility"
+        Components.StatusRow {
+            label: "Compatibility"
+            value: root.metrics.state || "Unavailable"
+            health: root.metrics.state === "compatible" ? 1 : root.metrics.state === "invalid" || root.metrics.state === "legacy-override" ? -1 : 0
+        }
+        Components.StatusRow {
+            label: "Metrics service"
+            value: root.metrics.service ? root.metrics.service.enabled + " / " + root.metrics.service.active : "Unavailable"
+        }
+        Components.StatusRow { label: "Firmware revision"; value: root.metrics.revision === null || root.metrics.revision === undefined ? "Unknown" : String(root.metrics.revision) }
+        QQC2.Label {
+            Layout.fillWidth: true
+            text: root.metrics.message || "Metrics compatibility status is unavailable. Update the service before using these controls."
+            wrapMode: Text.Wrap
+        }
+        Components.ActionButton {
+            text: "Enable 8-core metrics support"
+            description: root.unlockActionReason("metrics-enable", "Installs the guarded metrics compatibility patch for supported firmware.")
+            enabled: root.unlockActionEnabled("metrics-enable")
+            disabledReason: description
+            onClicked: confirmation.ask("Enable 8-core CPU metrics support?",
+                "This modifies supported SMU firmware metrics handling and installs boot-time activation. Only proceed with stable unlocked cores. Unsupported firmware or unsafe state is blocked by the service.",
+                true, function() { root.backend.cpuUnlockAction("metrics-enable"); })
+        }
     }
 
     Components.Section {
@@ -180,7 +218,7 @@ ColumnLayout {
             label: "Current boot"
             value: root.mitigations.bootEnabled === null || root.mitigations.bootEnabled === undefined
                 ? "Unknown" : root.mitigations.bootEnabled ? "Enabled" : "Disabled"
-            health: root.mitigations.bootEnabled === false ? -1 : 1
+            health: root.mitigations.bootEnabled === false ? -1 : root.mitigations.bootEnabled === true ? 1 : 0
         }
         Components.StatusRow {
             label: "Boot change"
@@ -278,6 +316,16 @@ ColumnLayout {
             onClicked: confirmation.ask("Enable CPU profile at boot?",
                 "Only enable a profile after confirming it is stable. It will be applied on every boot.",
                 false, function() { root.run("enable"); })
+        }
+        Components.ActionButton {
+            text: "Update CPU tuning helper"
+            description: "Refreshes the trusted tuning tool using the toolkit CLI update workflow."
+            enabled: root.controlsEnabled && (root.snapshot.toolkit.controlCapabilities || []).indexOf("cpu-oc-update") >= 0
+            disabledReason: (root.snapshot.toolkit.controlCapabilities || []).indexOf("cpu-oc-update") < 0
+                ? "Update the frontend/service installation for CPU helper updates." : root.disabledReason
+            onClicked: confirmation.ask("Update CPU tuning helper?",
+                "This may download and replace CPU tuning components. Existing profile settings are preserved by the toolkit; review stability before applying them again.",
+                true, function() { root.run("update"); })
         }
         Components.ActionButton {
             text: "Revert to stock"

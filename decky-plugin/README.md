@@ -9,20 +9,85 @@ CEC quick controls. Select
 **Open full controls** for the fullscreen, gamepad-navigable sections:
 
 - CU routing status, saved-table fallback, and guarded live WGP controls
-- Full system, ACPI, governor, and temperature health
-- GPU frequency, load target, thermal target, and ramp behavior
-- CPU overclock detection, apply, boot replay, and stock restore controls
+- Full system, ACPI, governor, and all reported hwmon sensors (temperatures,
+  power, fans, voltages, and other driver-provided readings with their units)
+- GPU frequency, load target, thermal target, ramp behavior/reset, and guarded
+  experimental voltage-curve set/add/edit/remove/offset/reset controls
+- CPU overclock detection, apply, boot replay, tool update, and stock restore
+- CPU topology/core unlock, metrics compatibility, metrics boot-service enable,
+  combined core-unlock/metrics uninstall,
+  security mitigations, and SMT controls
+- RAM / CMOS minimum VRAM and dynamic TTM limit controls
 - HDMI-CEC controls
 - HDMI Dolby Digital 5.1 / stereo output toggle
 - Global DirectMesh / RADV status, installation, and AMDGPU prerequisite
 - Retired R2 cleanup before DirectMesh setup, plus a standalone R2 remover;
   original Proton, prefixes, and game settings are preserved. Former R2 games
   need ordinary Proton selection and old `bc250-r2` launch-option removal.
-- Installed Steam game discovery with guarded FSR4 install/restore toggles
+- Installed Steam game discovery with guarded FSR4, HelixSR, and OptiScaler
+  install/update/restore controls
+- **CLI / Tools**: discovered, allowlisted terminal handoffs for the remaining
+  expert and maintenance features; availability reasons and launch errors
 
-GPU voltage editing and saving WGP routing for boot remain in the toolkit CLI.
+Saving WGP routing for boot remains in the toolkit CLI, accessible from
+**CLI / Tools → Compute**. Terminal handoffs are functional CLI access, not
+native inline implementations or unattended jobs. Switch to **Desktop Mode**
+before opening one: terminal windows can be invisible/inaccessible in Gaming
+Mode. A successful launch means only that a terminal was requested, not that
+the chosen maintenance operation completed. Review its prompts and output.
 Global DirectMesh setup also needs sudo: if the frontend cannot authenticate,
 it stops before R2 cleanup and directs you to the interactive toolkit CLI.
+
+## Feature coverage
+
+| Toolkit area | Decky interface |
+| --- | --- |
+| Status, ACPI/C-states, service health, clocks, CPU/GPU graphs | Inline Overview; CLI status for full diagnostics |
+| All available hwmon readings | Inline Overview sensor inventory; driver labels/units preserved |
+| GPU adaptive/range/pin/max, load presets/custom, thermal target/reset, ramp/set/reset | Inline GPU |
+| GPU voltage curve set/add/edit/remove/offset/reset | Inline GPU; experimental acknowledgment plus confirmation per write |
+| CU live WGP routing | Inline CU; factory-map protection and confirmation |
+| CU save/boot replay and compute setup | CLI handoff: Compute |
+| CPU detection/apply/enable/off/tool update, mitigations, SMT | Inline CPU |
+| Core unlock test/Linux/EFI/off/uninstall, topology, metrics compatibility/boot-service enable | Inline CPU; backend availability/blockers and reboot guard |
+| CMOS minimum VRAM, TTM limit/remove | Inline Memory; persistent-write/reboot warnings |
+| CEC and HDMI stereo/AC-3 | Inline CEC/Audio (including quick controls) |
+| DirectMesh/RADV, FSR4, HelixSR, OptiScaler and rollback | Inline RADV; ownership/integrity and anti-cheat warnings retained |
+| General setup, power install/repair, RAM expert tools, swap, storage | CLI handoffs: Main menu, Power, RAM, Swap, Storage |
+| Persistence, Wi-Fi backend, memory-temperature driver | CLI handoffs: Persistence, Wi-Fi backend, Memory temperature |
+| RADV expert lifecycle, codecs/kernel builds, Proton, scheduler/KFD policies | CLI handoffs: Complete graphics stack, RADV, Video codecs, Proton, AMDGPU boot policies |
+| Toolkit source update, frontend installation, recovery, removal/purge | Distinct CLI handoffs: Toolkit update, Control interfaces, Recovery and maintenance, Component removal and purge |
+
+The backend advertises the actual section titles and availability; unavailable
+handoffs show its reason and offer refresh. Advanced and maintenance launches
+require confirmation; the CLI still enforces its own prompts and validation.
+Kernel builds, system installation, raw expert SMU operations, and toolkit
+maintenance are deliberately not duplicated in React. No arbitrary commands,
+terminal paths, or shell arguments can be entered through the catalog.
+
+New voltage-curve writes, GPU ramp reset, and CPU tuning-tool update require
+their capabilities in the installed backend's optional `controlApiVersion` /
+`controlCapabilities` manifest. A legacy service without that manifest keeps
+these actions disabled with a plugin/service update notice; older native
+controls continue to work. CPU metrics/uninstall availability still comes from
+the backend's per-action status. Backend API support is separate from CLI
+checkout version/capabilities and does not attest hardware, driver, helper, or
+authentication readiness. Updating only the CLI checkout cannot add an API to
+an already installed plugin/service; reinstall/update and restart that backend.
+
+Missing readings are displayed as **Unavailable**, never fabricated zeroes.
+A real zero (such as a stopped fan) stays zero. CPU/GPU chart roles are not
+filled with unrelated memory, board, or storage temperatures. Charts keep only
+36 samples of four scalar values; optional sensor arrays are kept only as the
+latest inventory. Older backends without sensor arrays still expose their full
+legacy temperature inventory. CPU metrics controls remain disabled if the
+backend does not advertise their availability; a visible compatibility state
+does not itself guarantee a readable sensor.
+**Uninstall core unlock and metrics** removes the combined Linux/EFI integration
+and metrics payload/service, not only telemetry. Active extra cores require a
+full power-off to relock. Enabling the eight-core metrics boot service does not
+build/install its matching AMDGPU decoder: install toolkit AMDGPU fixes if the
+reported compatibility state requires it, then reboot.
 
 ## UI Overview
 
@@ -58,7 +123,11 @@ The CU grid distinguishes locked factory WGPs from routed and disabled pairs.
 Live editing requires the explicit advanced toggle and a destructive
 confirmation for every register change. GPU controls expose live and saved
 state, frequency modes, load-response presets and thresholds, ramp timing, and
-the read-only voltage curve. Sustained clock modes also require confirmation.
+an experimental voltage editor. Voltage edits require acknowledgment and a
+confirmation, use 350–2230 MHz / 700–1050 mV bounds, and must retain at least two
+unique, ascending-frequency, nondecreasing-voltage points. Offsets must leave
+every point in bounds. Sustained/advanced clock modes also require confirmation.
+The older mockups do not show every newly added control.
 
 ### CPU Tuning and CEC
 
@@ -66,7 +135,9 @@ the read-only voltage curve. Sustained clock modes also require confirmation.
 
 CPU tuning keeps bounded clock, voltage, and temperature inputs together with
 long-running detection and clearly separated apply, boot-enable, and stock
-restore actions. The full CEC tab adds broadcast-name editing, receiver
+restore actions. Detection inputs track saved/staged profile values, including
+its temperature limit; edited input values are requests, not live measurements.
+Eight-core topology is displayed without assuming SMT must be enabled. The full CEC tab adds broadcast-name editing, receiver
 controls, power integration, and behavior toggles beyond the compact Quick
 Access actions.
 
@@ -87,6 +158,16 @@ paths, and argument allowlists. CEC operations use `runuser` with a clean user
 session environment. Live WGP changes are delegated to a root-owned CU manager;
 user-writable copies are rejected. Privileged helpers, UMR, and state use the
 root-owned `/var/lib/bc250-control/` SteamOS offload mount.
+
+CLI discovery and launch use typed `get_cli_catalog` / `open_cli_section` RPCs.
+The backend selects a fixed allowlisted toolkit route and launches a terminal
+as the logged-in user, not as root. CLI sudo prompts stay in that terminal;
+Decky neither accepts passwords nor bypasses sudo. A graphical user session,
+supported terminal, and installed toolkit are required. Session/terminal,
+authentication, filesystem ownership, kernel support, and sandbox restrictions
+can still block actions; the UI reports errors rather than claiming completion.
+Inline mutations continue to use the privileged validated/serialized backend,
+not a terminal or user-supplied shell command.
 
 The HDMI audio toggle uses a bundled, root-owned AC-3 lifecycle helper. System
 udev and update-retention phases run through the privileged backend, while
@@ -115,6 +196,7 @@ pnpm run typecheck
 pnpm run build
 cd ..
 PYTHONPATH=backend:backend/vendor python3 -m unittest discover -s backend/tests
+node --test tests/test_decky_parity.cjs
 python3 scripts/stage-decky-runtime.py
 ```
 

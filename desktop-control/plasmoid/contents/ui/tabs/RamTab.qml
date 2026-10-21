@@ -31,7 +31,7 @@ ColumnLayout {
                 : root.ram.toolState === "invalid" ? "Unsafe / partial" : "Not installed"
             health: root.ram.toolState === "verified" ? 1 : root.ram.toolState === "invalid" ? -1 : 0
         }
-        Components.StatusRow { label: "CMOS minimum VRAM"; value: root.ram.umaLastRequestedMiB ? root.ram.umaLastRequestedMiB + " MiB" : "Unknown" }
+        Components.StatusRow { label: "CMOS minimum VRAM (last requested, not read back)"; value: root.ram.umaLastRequestedMiB ? root.ram.umaLastRequestedMiB + " MiB" : "Unknown" }
         Components.StatusRow { label: "TTM configured"; value: root.gibibytes(root.ram.ttmConfiguredPages); health: root.ram.ttmState === "foreign" ? -1 : 1 }
         Components.StatusRow { label: "TTM boot"; value: root.gibibytes(root.ram.ttmBootPages) }
         Components.StatusRow { label: "TTM live"; value: root.gibibytes(root.ram.ttmLivePages) }

@@ -759,9 +759,9 @@ ColumnLayout {
                 : root.disabledReason
             onClicked: {
                 var apply = function() { root.backend.setGpuFrequency(root.mode, root.minimum, root.maximum); };
-                if (root.mode === "pin" || root.mode === "max")
+                if (root.mode === "pin" || root.mode === "max" || (root.mode === "range" && root.maximum > 1500))
                     confirmation.ask("Apply sustained GPU clocks?",
-                        "Pinned or maximum clocks increase heat and power. Thermal throttling remains active.", false, apply);
+                        "Pinned, maximum, or above-default clocks increase heat and power and may be unstable. The tuned default ceiling is 1500 MHz. Thermal throttling remains active.", true, apply);
                 else
                     apply();
             }
@@ -790,12 +790,12 @@ ColumnLayout {
         }
         QQC2.Label { text: "Clock down below " + root.loadMinimum + "% load" }
         QQC2.Slider {
-            from: 1; to: 99; stepSize: 1; value: root.loadMinimum; enabled: root.controllable
+            from: 5; to: 99; stepSize: 1; value: root.loadMinimum; enabled: root.controllable
             Layout.fillWidth: true; onMoved: root.loadMinimum = Math.round(value)
         }
         QQC2.Label { text: "Clock up above " + root.loadMaximum + "% load" }
         QQC2.Slider {
-            from: 1; to: 99; stepSize: 1; value: root.loadMaximum; enabled: root.controllable
+            from: 5; to: 99; stepSize: 1; value: root.loadMaximum; enabled: root.controllable
             Layout.fillWidth: true; onMoved: root.loadMaximum = Math.round(value)
         }
         Components.ActionButton {
@@ -831,19 +831,19 @@ ColumnLayout {
             text: "Apply ramp time"; enabled: root.controllable; disabledReason: root.disabledReason
             onClicked: root.backend.setRamp(root.rampMs)
         }
+        Components.ActionButton {
+            text: "Reset ramp defaults"
+            enabled: root.controllable && (root.snapshot.toolkit.controlCapabilities || []).indexOf("gpu-ramp-reset") >= 0
+            disabledReason: (root.snapshot.toolkit.controlCapabilities || []).indexOf("gpu-ramp-reset") < 0
+                ? "Update the frontend/service installation for ramp reset." : root.disabledReason
+            onClicked: confirmation.ask("Restore default GPU ramp timing?",
+                "This replaces custom ramp and timing settings with the CLI defaults and restarts the governor if running.",
+                false, function() { root.backend.resetGpuRamp(); })
+        }
     }
 
     Components.Section {
         title: "Voltage Curve"
-        visible: root.gpu.safePoints.length > 0
-        Repeater {
-            model: root.gpu.safePoints
-            Components.StatusRow {
-                required property var modelData
-                required property int index
-                label: modelData.frequency ? modelData.frequency + " MHz" : "Point " + (index + 1)
-                value: modelData.voltage ? modelData.voltage + " mV" : "Unavailable"
-            }
-        }
+        Components.VoltageCurveEditor { backend: root.backend; Layout.fillWidth: true }
     }
 }

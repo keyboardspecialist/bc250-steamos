@@ -8,14 +8,33 @@
 #include <QDBusServiceWatcher>
 #include <QJsonDocument>
 #include <QJsonObject>
+#include <QFile>
+#include <QMetaMethod>
 #include <QRegularExpression>
 #include <QUuid>
+#include <algorithm>
 
 namespace {
 constexpr auto Service = "io.github.keyboardspecialist.BC250Control1";
 constexpr auto ObjectPath = "/io/github/keyboardspecialist/BC250Control1";
 constexpr auto Interface = "io.github.keyboardspecialist.BC250Control1";
 constexpr int PrivilegedCallTimeoutMs = 130000;
+
+bool sandboxed()
+{
+    return QFile::exists(QStringLiteral("/.flatpak-info")) || qEnvironmentVariableIsSet("FLATPAK_ID");
+}
+
+const QStringList CliSections = {QStringLiteral("menu"), QStringLiteral("status"),
+    QStringLiteral("setup"), QStringLiteral("toolkit-update"), QStringLiteral("core"),
+    QStringLiteral("graphics"), QStringLiteral("devices"), QStringLiteral("maintenance"),
+    QStringLiteral("amdgpu-boot"), QStringLiteral("drivers"), QStringLiteral("unlocks"),
+    QStringLiteral("storage-updates"), QStringLiteral("interfaces"),
+    QStringLiteral("power"), QStringLiteral("ram"), QStringLiteral("swap"),
+    QStringLiteral("compute"), QStringLiteral("cpu-unlock"), QStringLiteral("cec"),
+    QStringLiteral("storage"), QStringLiteral("persistence"), QStringLiteral("wifi-backend"),
+    QStringLiteral("memory-temperature"), QStringLiteral("radv"), QStringLiteral("video-codec"),
+    QStringLiteral("proton"), QStringLiteral("manage")};
 
 QString replyError(const QDBusError &error)
 {
@@ -50,6 +69,11 @@ Bc250Bridge::Bc250Bridge(bool mockMode, QObject *parent)
         emit operationChanged();
         completeOperation(true, message.trimmed());
     });
+
+    if (sandboxed()) {
+        m_cliCatalog = {{QStringLiteral("schemaVersion"), 1}, {QStringLiteral("available"), false},
+            {QStringLiteral("reason"), QStringLiteral("CLI handoff is unavailable in Flatpak. Use the host toolkit terminal; no sandbox escape is provided.")}};
+    }
 
     if (m_mockMode) {
         setServiceAvailable(true);
@@ -140,6 +164,20 @@ void Bc250Bridge::refresh()
         requestJson(JsonRequest::CpuUnlock, QStringLiteral("GetCpuUnlockStatus"));
     if (!m_meshPending)
         requestJson(JsonRequest::Mesh, QStringLiteral("GetMeshStatus"));
+    if (!m_cliCatalogPending && !sandboxed())
+        requestJson(JsonRequest::CliCatalog, QStringLiteral("GetCliCatalog"));
+    if (sandboxed()) {
+        m_cliCatalog = {{QStringLiteral("schemaVersion"), 1}, {QStringLiteral("available"), false},
+            {QStringLiteral("reason"), QStringLiteral("CLI handoff is unavailable in Flatpak. Use the host toolkit terminal; no sandbox escape is provided.")}};
+        emit cliCatalogChanged();
+    }
+}
+
+void Bc250Bridge::refreshFsr4()
+{
+    if (m_mockMode) { makeMockSnapshot(); return; }
+    if (!m_busy && !m_fsr4Pending && m_serviceAvailable)
+        requestJson(JsonRequest::Fsr4, QStringLiteral("GetFsr4Inventory"));
 }
 
 void Bc250Bridge::sampleTelemetry()
@@ -152,7 +190,8 @@ void Bc250Bridge::sampleTelemetry()
             {QStringLiteral("cpuClock"), 3450 + phase * 37},
             {QStringLiteral("gpuClock"), 980 + phase * 29},
             {QStringLiteral("cpuTemp"), 51 + phase},
-            {QStringLiteral("gpuTemp"), 55 + phase / 2}
+            {QStringLiteral("gpuTemp"), 55 + phase / 2},
+            {QStringLiteral("sensors"), m_snapshot.value(QStringLiteral("power")).toMap().value(QStringLiteral("sensors"))}
         };
         m_telemetryHistory.append(m_telemetry);
         while (m_telemetryHistory.size() > 36)
@@ -162,6 +201,20 @@ void Bc250Bridge::sampleTelemetry()
     }
     if (m_serviceAvailable)
         requestJson(JsonRequest::Telemetry, QStringLiteral("GetTelemetry"));
+    else
+        invalidateTelemetry(QStringLiteral("The system service is offline."));
+}
+
+void Bc250Bridge::invalidateTelemetry(const QString &message)
+{
+    m_telemetry = {{QStringLiteral("cpuClock"), QVariant{}},
+        {QStringLiteral("gpuClock"), QVariant{}}, {QStringLiteral("cpuTemp"), QVariant{}},
+        {QStringLiteral("gpuTemp"), QVariant{}}, {QStringLiteral("sensors"), QVariantList{}},
+        {QStringLiteral("error"), message}};
+    m_telemetryHistory.append(m_telemetry);
+    while (m_telemetryHistory.size() > 36)
+        m_telemetryHistory.removeFirst();
+    emit telemetryChanged();
 }
 
 void Bc250Bridge::requestJson(JsonRequest request, const QString &method, const QVariantList &arguments)
@@ -173,6 +226,8 @@ void Bc250Bridge::requestJson(JsonRequest request, const QString &method, const 
     case JsonRequest::Telemetry: m_telemetryPending = true; break;
     case JsonRequest::CpuUnlock: m_cpuUnlockPending = true; break;
     case JsonRequest::Mesh: m_meshPending = true; break;
+    case JsonRequest::Fsr4: m_fsr4Pending = true; break;
+    case JsonRequest::CliCatalog: m_cliCatalogPending = true; break;
     case JsonRequest::Operation: m_operationPending = true; break;
     }
     auto *watcher = new QDBusPendingCallWatcher(m_interface->asyncCallWithArgumentList(method, arguments), this);
@@ -189,17 +244,32 @@ void Bc250Bridge::handleJsonReply(JsonRequest request, QDBusPendingCallWatcher *
     case JsonRequest::Telemetry: m_telemetryPending = false; break;
     case JsonRequest::CpuUnlock: m_cpuUnlockPending = false; break;
     case JsonRequest::Mesh: m_meshPending = false; break;
+    case JsonRequest::Fsr4: m_fsr4Pending = false; break;
+    case JsonRequest::CliCatalog: m_cliCatalogPending = false; break;
     case JsonRequest::Operation: m_operationPending = false; break;
     }
 
     if (reply.isError()) {
         const QString message = replyError(reply.error());
-        if (request == JsonRequest::Operation) {
+        if (request == JsonRequest::Telemetry) {
+            invalidateTelemetry(message);
+        } else if (request == JsonRequest::Operation) {
             if (++m_operationPollFailures >= 8
                 || reply.error().name().contains(QStringLiteral("UnknownObject")))
                 fail(QStringLiteral("Operation status is no longer available. Refresh before retrying."), true);
             else
                 setError(message + QStringLiteral(" Retrying operation status."));
+        } else if (request == JsonRequest::Fsr4) {
+            const QString reason = reply.error().name().contains(QStringLiteral("UnknownMethod"))
+                ? QStringLiteral("The installed service does not provide game management. Update the host service; no hardware CLI fallback is used.")
+                : QStringLiteral("Game management unavailable: ") + message;
+            m_fsr4Inventory = {{QStringLiteral("available"), false},
+                {QStringLiteral("errors"), QVariantList{reason}}};
+            emit fsr4InventoryChanged();
+        } else if (request == JsonRequest::CliCatalog) {
+            m_cliCatalog = {{QStringLiteral("available"), false},
+                {QStringLiteral("reason"), QStringLiteral("CLI handoff unavailable: ") + message}};
+            emit cliCatalogChanged();
         } else if (request == JsonRequest::CpuUnlock
                    && reply.error().name().contains(QStringLiteral("UnknownMethod"))) {
             m_cpuUnlockStatus = {
@@ -228,7 +298,9 @@ void Bc250Bridge::handleJsonReply(JsonRequest request, QDBusPendingCallWatcher *
         QString parseError;
         const QVariantMap value = parseJsonObject(reply.value().toUtf8(), &parseError);
         if (!parseError.isEmpty()) {
-            if (request == JsonRequest::Operation)
+            if (request == JsonRequest::Telemetry)
+                invalidateTelemetry(parseError);
+            else if (request == JsonRequest::Operation)
                 fail(parseError, true);
             else if (request != JsonRequest::Telemetry)
                 setError(parseError);
@@ -254,6 +326,12 @@ void Bc250Bridge::handleJsonReply(JsonRequest request, QDBusPendingCallWatcher *
         } else if (request == JsonRequest::Mesh) {
             m_meshStatus = value;
             emit meshStatusChanged();
+        } else if (request == JsonRequest::Fsr4) {
+            m_fsr4Inventory = value;
+            emit fsr4InventoryChanged();
+        } else if (request == JsonRequest::CliCatalog) {
+            m_cliCatalog = value;
+            emit cliCatalogChanged();
         } else {
             m_operationPollFailures = 0;
             setError({});
@@ -363,8 +441,8 @@ void Bc250Bridge::setLoadTarget(const QString &preset)
 
 void Bc250Bridge::setCustomLoadTarget(int minimum, int maximum)
 {
-    if (minimum < 1 || maximum > 99 || minimum >= maximum) {
-        reject(QStringLiteral("Minimum GPU load must be below maximum load and both must be 1-99%.")); return;
+    if (minimum < 5 || maximum > 99 || minimum >= maximum) {
+        reject(QStringLiteral("Minimum GPU load must be below maximum load and both must be 5-99%.")); return;
     }
     if (!ensureReady()) return;
     startMutation(QStringLiteral("SetCustomLoadTarget"),
@@ -392,10 +470,184 @@ void Bc250Bridge::setRamp(int milliseconds)
                   QStringLiteral("Applying GPU ramp time"));
 }
 
+void Bc250Bridge::resetGpuRamp()
+{
+    if (!ensureReady()) return;
+    startMutation(QStringLiteral("ResetGpuRamp"), {}, QStringLiteral("Resetting GPU ramp"));
+}
+
+void Bc250Bridge::gpuVoltageAction(const QString &action, int frequency, int voltage, int newFrequency)
+{
+    if (!QStringList{QStringLiteral("set"), QStringLiteral("add"), QStringLiteral("edit"),
+                     QStringLiteral("remove"), QStringLiteral("offset"), QStringLiteral("reset")}.contains(action)) {
+        reject(QStringLiteral("Unknown GPU voltage action.")); return;
+    }
+    const bool point = action == QStringLiteral("set") || action == QStringLiteral("add")
+        || action == QStringLiteral("edit");
+    if ((point || action == QStringLiteral("remove")) && (frequency < 350 || frequency > 2230)) {
+        reject(QStringLiteral("Curve frequency must be 350-2230 MHz.")); return;
+    }
+    if (point && (voltage < 700 || voltage > 1050)) {
+        reject(QStringLiteral("Curve voltage must be 700-1050 mV.")); return;
+    }
+    if (action == QStringLiteral("edit") && (newFrequency < 350 || newFrequency > 2230)) {
+        reject(QStringLiteral("New curve frequency must be 350-2230 MHz.")); return;
+    }
+    if (action == QStringLiteral("offset") && (voltage < -350 || voltage > 350)) {
+        reject(QStringLiteral("Curve offset must be -350 to 350 mV, keeping every point within 700-1050 mV.")); return;
+    }
+    // Only the offset voltage is signed. Every unused wire argument is zero.
+    if (action == QStringLiteral("reset")) { frequency = 0; voltage = 0; }
+    if (action == QStringLiteral("offset")) frequency = 0;
+    if (action == QStringLiteral("remove")) voltage = 0;
+    if (action != QStringLiteral("edit")) newFrequency = 0;
+    const QVariantList saved = m_snapshot.value(QStringLiteral("gpu")).toMap().value(QStringLiteral("safePoints")).toList();
+    if (!saved.isEmpty() && action != QStringLiteral("reset")) {
+        QList<QPair<int, qint64>> points;
+        bool found = false;
+        for (const QVariant &entry : saved) {
+            const QVariantMap pointValue = entry.toMap();
+            int pointFrequency = pointValue.value(QStringLiteral("frequency")).toInt();
+            qint64 pointVoltage = pointValue.value(QStringLiteral("voltage")).toLongLong();
+            if (pointFrequency == frequency) {
+                found = true;
+                if (action == QStringLiteral("remove")) continue;
+                if (point) pointVoltage = voltage;
+                if (action == QStringLiteral("edit")) pointFrequency = newFrequency;
+            }
+            if (action == QStringLiteral("offset")) pointVoltage += voltage;
+            points.append({pointFrequency, pointVoltage});
+        }
+        if ((action == QStringLiteral("add") && found)
+            || ((point || action == QStringLiteral("remove")) && action != QStringLiteral("add") && !found)) {
+            reject(QStringLiteral("Curve point does not exist, or the new frequency already exists.")); return;
+        }
+        if (action == QStringLiteral("add")) points.append({frequency, voltage});
+        std::sort(points.begin(), points.end());
+        bool valid = points.size() >= 2;
+        for (qsizetype i = 0; i < points.size(); ++i) {
+            const auto &entry = points.at(i);
+            valid = valid && entry.first >= 350 && entry.first <= 2230 && entry.second >= 700 && entry.second <= 1050;
+            if (i > 0) valid = valid && points.at(i - 1).first < entry.first && points.at(i - 1).second <= entry.second;
+        }
+        if (!valid) {
+            reject(QStringLiteral("Curve needs at least two unique points, 350-2230 MHz and nondecreasing 700-1050 mV.")); return;
+        }
+    }
+    if (!ensureReady()) return;
+    startMutation(QStringLiteral("GpuVoltageAction"), {action, frequency, voltage, newFrequency},
+                  QStringLiteral("Updating GPU curve: ") + action);
+}
+
+bool Bc250Bridge::discoveredId(const QString &id, bool candidate) const
+{
+    static const QRegularExpression pattern(QStringLiteral("^[0-9a-f]{64}$"));
+    if (!pattern.match(id).hasMatch()) return false;
+    const QString key = candidate ? QStringLiteral("candidateId") : QStringLiteral("targetId");
+    const auto contains = [&id, &key](const QVariantList &entries) {
+        for (const QVariant &entry : entries)
+            if (entry.toMap().value(key).toString() == id) return true;
+        return false;
+    };
+    for (const QVariant &entry : m_fsr4Inventory.value(QStringLiteral("games")).toList()) {
+        const QVariantMap game = entry.toMap();
+        if (contains(game.value(candidate ? QStringLiteral("optiscalerCandidates") : QStringLiteral("targets")).toList()))
+            return true;
+    }
+    return candidate ? contains(m_fsr4Inventory.value(QStringLiteral("orphanedOptiscaler")).toList())
+        : contains(m_fsr4Inventory.value(QStringLiteral("orphanedTargets")).toList())
+            || contains(m_fsr4Inventory.value(QStringLiteral("orphanedHelixsr")).toList());
+}
+
+void Bc250Bridge::gameMutation(const QString &method, const QString &id, bool candidate, const QString &proxy)
+{
+    if (!discoveredId(id, candidate)) {
+        reject(QStringLiteral("Unknown game target. Refresh the server-discovered inventory.")); return;
+    }
+    if (!ensureReady()) return;
+    QVariantList arguments{id};
+    if (!proxy.isEmpty()) arguments.append(proxy);
+    startMutation(method, arguments, method, false);
+}
+
+void Bc250Bridge::setFsr4Dll(const QString &targetId, bool enabled)
+{
+    gameMutation(enabled ? QStringLiteral("InstallFsr4Dll") : QStringLiteral("UninstallFsr4Dll"), targetId);
+}
+
+void Bc250Bridge::prepareHelixsr()
+{
+    if (!ensureReady()) return;
+    startMutation(QStringLiteral("PrepareHelixsr"), {}, QStringLiteral("Preparing experimental HelixSR"), false);
+}
+
+void Bc250Bridge::installHelixsr(const QString &targetId)
+{ gameMutation(QStringLiteral("InstallHelixsr"), targetId); }
+void Bc250Bridge::uninstallHelixsr(const QString &targetId)
+{ gameMutation(QStringLiteral("UninstallHelixsr"), targetId); }
+void Bc250Bridge::installOptiscaler(const QString &candidateId, const QString &proxy)
+{
+    if (!QStringList{QStringLiteral("winmm.dll"), QStringLiteral("version.dll"),
+                     QStringLiteral("dbghelp.dll"), QStringLiteral("dxgi.dll"),
+                     QStringLiteral("d3d12.dll"), QStringLiteral("wininet.dll"),
+                     QStringLiteral("winhttp.dll")}.contains(proxy)) {
+        reject(QStringLiteral("Unknown OptiScaler proxy.")); return;
+    }
+    gameMutation(QStringLiteral("InstallOptiscaler"), candidateId, true, proxy);
+}
+void Bc250Bridge::uninstallOptiscaler(const QString &candidateId)
+{ gameMutation(QStringLiteral("UninstallOptiscaler"), candidateId, true); }
+
+void Bc250Bridge::cecAction(const QString &action)
+{
+    if (!QStringList{QStringLiteral("tv-on"), QStringLiteral("tv-off"), QStringLiteral("amp-on"),
+        QStringLiteral("amp-off"), QStringLiteral("switch"), QStringLiteral("release"),
+        QStringLiteral("vol-up"), QStringLiteral("vol-down"), QStringLiteral("mute")}.contains(action)) {
+        reject(QStringLiteral("Unknown CEC action.")); return;
+    }
+    if (!ensureReady()) return;
+    startMutation(QStringLiteral("CecAction"), {action}, QStringLiteral("CEC: ") + action);
+}
+
+void Bc250Bridge::setCecToggle(const QString &key, bool enabled)
+{
+    if (!QStringList{QStringLiteral("wake-tv"), QStringLiteral("suspend-tv"),
+                     QStringLiteral("allow-standby"), QStringLiteral("uinput")}.contains(key)) {
+        reject(QStringLiteral("Unknown CEC toggle.")); return;
+    }
+    if (!ensureReady()) return;
+    startMutation(QStringLiteral("SetCecToggle"), {key, enabled}, QStringLiteral("Updating CEC integration"));
+}
+
+void Bc250Bridge::setCecName(const QString &name)
+{
+    if (name.trimmed().isEmpty() || name.toUtf8().size() > 14
+        || name.contains(QLatin1Char('"')) || name.contains(QLatin1Char('\\'))
+        || name.contains(QRegularExpression(QStringLiteral("\\p{C}|(?! )\\p{Z}")))) {
+        reject(QStringLiteral("CEC name must be printable, 1-14 UTF-8 bytes, without quotes or backslashes.")); return;
+    }
+    if (!ensureReady()) return;
+    startMutation(QStringLiteral("SetCecName"), {name}, QStringLiteral("Updating CEC broadcast name"));
+}
+
+void Bc250Bridge::openCliSection(const QString &section)
+{
+    if (sandboxed()) { reject(QStringLiteral("CLI handoff is unavailable in Flatpak.")); return; }
+    if (!CliSections.contains(section) || !m_cliCatalog.value(QStringLiteral("available")).toBool()) {
+        reject(QStringLiteral("CLI section unavailable. Refresh the native CLI catalog.")); return;
+    }
+    bool discovered = false;
+    for (const QVariant &entry : m_cliCatalog.value(QStringLiteral("sections")).toList())
+        if (entry.toMap().value(QStringLiteral("id")).toString() == section) discovered = true;
+    if (!discovered) { reject(QStringLiteral("Unknown CLI catalog section.")); return; }
+    if (!ensureReady()) return;
+    startMutation(QStringLiteral("OpenCliSection"), {section}, QStringLiteral("Opening host-user CLI: ") + section, false);
+}
+
 void Bc250Bridge::cpuOcAction(const QString &action, int frequency, int voltage, int temperature)
 {
     if (!QStringList{QStringLiteral("detect"), QStringLiteral("apply"), QStringLiteral("enable"),
-                     QStringLiteral("off")}.contains(action)) {
+                     QStringLiteral("off"), QStringLiteral("update")}.contains(action)) {
         reject(QStringLiteral("Unknown CPU overclock action.")); return;
     }
     if (action == QStringLiteral("detect") && (frequency < 3500 || frequency > 4500
@@ -405,13 +657,15 @@ void Bc250Bridge::cpuOcAction(const QString &action, int frequency, int voltage,
     if (!ensureReady()) return;
     startMutation(QStringLiteral("CpuOcAction"),
         {action, QVariant::fromValue<uint>(frequency), QVariant::fromValue<uint>(voltage),
-         QVariant::fromValue<uint>(temperature)}, QStringLiteral("Running CPU ") + action);
+         QVariant::fromValue<uint>(temperature)}, QStringLiteral("Running CPU ") + action,
+         action != QStringLiteral("update"));
 }
 
 void Bc250Bridge::cpuUnlockAction(const QString &action)
 {
     if (!QStringList{QStringLiteral("test"), QStringLiteral("enable"), QStringLiteral("efi-enable"),
-                     QStringLiteral("off")}.contains(action)) {
+                     QStringLiteral("off"), QStringLiteral("metrics-enable"),
+                     QStringLiteral("uninstall")}.contains(action)) {
         reject(QStringLiteral("Unknown CPU core-unlock action.")); return;
     }
     if (!ensureReady()) return;
@@ -475,6 +729,11 @@ void Bc250Bridge::setHdmiSurround(bool enabled)
 void Bc250Bridge::startMutation(const QString &method, const QVariantList &arguments,
                                 const QString &label, bool cancellable)
 {
+    if (!m_mockMode && !m_capabilities.value(method).toBool()) {
+        reject(QStringLiteral("The installed service does not provide ") + method
+            + QStringLiteral(". Update the host service; no hardware CLI fallback is used."));
+        return;
+    }
     m_preserveErrorOnRefresh = false;
     setError({});
     setNotice({});
@@ -574,6 +833,8 @@ void Bc250Bridge::completeOperation(bool success, const QString &message)
     }
     emit operationFinished(success, sanitizeError(message));
     refresh();
+    if (!m_fsr4Inventory.isEmpty())
+        refreshFsr4();
 }
 
 void Bc250Bridge::fail(const QString &message, bool finishOperation)
@@ -604,6 +865,16 @@ void Bc250Bridge::setServiceAvailable(bool available)
     if (m_serviceAvailable == available)
         return;
     m_serviceAvailable = available;
+    if (!available) {
+        m_capabilities.clear();
+        m_fsr4Inventory.clear();
+        m_cliCatalog = {{QStringLiteral("available"), false},
+            {QStringLiteral("reason"), sandboxed() ? QStringLiteral("CLI handoff is unavailable in Flatpak.")
+                : QStringLiteral("The system service is unavailable.")}};
+        emit capabilitiesChanged();
+        emit fsr4InventoryChanged();
+        emit cliCatalogChanged();
+    }
     emit serviceAvailableChanged();
 }
 
@@ -621,6 +892,13 @@ void Bc250Bridge::rebuildServiceInterface()
                                      QString::fromLatin1(ObjectPath),
                                      QString::fromLatin1(Interface), m_bus, this);
     setServiceAvailable(m_interface->isValid());
+    m_capabilities.clear();
+    if (m_serviceAvailable) {
+        const QMetaObject *meta = m_interface->metaObject();
+        for (int i = meta->methodOffset(); i < meta->methodCount(); ++i)
+            m_capabilities.insert(QString::fromLatin1(meta->method(i).name()), true);
+    }
+    emit capabilitiesChanged();
 }
 
 void Bc250Bridge::updateTelemetryPolling()
@@ -715,12 +993,46 @@ void Bc250Bridge::makeMockSnapshot()
     if (!m_mockSnapshotInitialized) {
         QString parseError;
         m_snapshot = parseJsonObject(json, &parseError);
+        QVariantMap toolkit = m_snapshot.value(QStringLiteral("toolkit")).toMap();
+        toolkit.insert(QStringLiteral("cecAvailable"), true);
+        toolkit.insert(QStringLiteral("controlApiVersion"), 1);
+        toolkit.insert(QStringLiteral("controlCapabilities"), QStringList{
+            QStringLiteral("gpu-voltage-curve"), QStringLiteral("gpu-ramp-reset"),
+            QStringLiteral("cpu-oc-update"), QStringLiteral("cpu-unlock-metrics"),
+            QStringLiteral("cpu-unlock-uninstall"), QStringLiteral("cli-handoff"), QStringLiteral("hwmon-sensors")});
+        m_snapshot.insert(QStringLiteral("toolkit"), toolkit);
+        m_snapshot.insert(QStringLiteral("cec"), parseJsonObject(R"json({"devicePresent":true,"service":{"enabled":"enabled","active":"active"},"active":true,"poweroffIntegration":true,"sleepIntegration":true,"osdName":"BC250","wakeTv":true,"suspendTv":false,"allowStandby":false,"uinput":true})json"));
+        QVariantMap power = m_snapshot.value(QStringLiteral("power")).toMap();
+        power.insert(QStringLiteral("sensors"), QVariantList{
+            QVariantMap{{QStringLiteral("key"), QStringLiteral("amdgpu:temp1_input")}, {QStringLiteral("device"), QStringLiteral("amdgpu")}, {QStringLiteral("label"), QStringLiteral("edge")}, {QStringLiteral("value"), 57}, {QStringLiteral("unit"), QStringLiteral("C")}},
+            QVariantMap{{QStringLiteral("key"), QStringLiteral("nct6687:fan1_input")}, {QStringLiteral("device"), QStringLiteral("nct6687")}, {QStringLiteral("label"), QStringLiteral("CPU fan")}, {QStringLiteral("value"), 1200}, {QStringLiteral("unit"), QStringLiteral("RPM")}},
+            QVariantMap{{QStringLiteral("key"), QStringLiteral("nct6687:in0_input")}, {QStringLiteral("device"), QStringLiteral("nct6687")}, {QStringLiteral("label"), QStringLiteral("Vcore")}, {QStringLiteral("value"), 1.05}, {QStringLiteral("unit"), QStringLiteral("V")}}});
+        m_snapshot.insert(QStringLiteral("power"), power);
+        for (const QString &method : QStringList{QStringLiteral("GpuVoltageAction"), QStringLiteral("ResetGpuRamp"), QStringLiteral("CpuOcAction"), QStringLiteral("CpuUnlockAction"), QStringLiteral("CecAction"), QStringLiteral("SetCecName"), QStringLiteral("SetCecToggle")})
+            m_capabilities.insert(method, true);
+        m_cliCatalog = {{QStringLiteral("schemaVersion"), 1}, {QStringLiteral("available"), !sandboxed()},
+            {QStringLiteral("toolkitVersion"), QStringLiteral("mock source")},
+            {QStringLiteral("reason"), sandboxed() ? QVariant(QStringLiteral("CLI handoff is unavailable in Flatpak.")) : QVariant{}}};
+        QVariantList sections;
+        for (const QString &id : CliSections)
+            sections.append(QVariantMap{{QStringLiteral("id"), id}, {QStringLiteral("title"), id},
+                {QStringLiteral("description"), QStringLiteral("Open fixed toolkit section in the host user's terminal.")},
+                {QStringLiteral("risk"), id == QStringLiteral("status") ? QStringLiteral("read-only") : QStringLiteral("maintenance")}});
+        m_cliCatalog.insert(QStringLiteral("sections"), sections);
         m_mockSnapshotInitialized = true;
     }
+    if (m_fsr4Inventory.isEmpty())
+        m_fsr4Inventory = parseJsonObject(R"json({"schemaVersion":1,"available":true,"currentRelease":"mock-fsr4","helixsrAvailable":true,"helixsrPayloadState":"ready","currentHelixsrRelease":"mock-helixsr","optiscalerAvailable":true,"currentOptiscalerRelease":"mock-optiscaler","errors":[],"orphanedTargets":[],"orphanedHelixsr":[],"orphanedOptiscaler":[],"games":[{"appId":"0","name":"Offline mock game","fullyInstalled":true,"installPresent":true,"scanState":"complete","targets":[{"targetId":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","relativePath":"amd_fidelityfx_upscaler_dx12.dll","state":"available","discovered":true,"helixsrState":"not-installed","helixsrManaged":false,"optiscalerManaged":false}],"optiscalerCandidates":[{"candidateId":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","relativePath":"bin","executables":["mock.exe"],"state":"not-installed","discovered":true,"fsr4Managed":false,"helixsrManaged":false}]}]})json");
+    int mockDllCount = 0;
+    for (const QVariant &game : m_fsr4Inventory.value(QStringLiteral("games")).toList())
+        for (const QVariant &target : game.toMap().value(QStringLiteral("targets")).toList())
+            if (QStringList{QStringLiteral("ready"), QStringLiteral("upgrade-required"), QStringLiteral("missing")}
+                .contains(target.toMap().value(QStringLiteral("state")).toString())) ++mockDllCount;
     m_meshStatus = {
         {QStringLiteral("scriptAvailable"), true},
         {QStringLiteral("runtimeState"), QStringLiteral("ready")},
         {QStringLiteral("mesaVersion"), QStringLiteral("mesa-26.2.2")},
+        {QStringLiteral("directMeshVersion"), QStringLiteral("mock-directmesh")},
         {QStringLiteral("kernelReady"), true},
         {QStringLiteral("schedulerConfigured"), true},
         {QStringLiteral("schedulerActive"), true},
@@ -729,10 +1041,10 @@ void Bc250Bridge::makeMockSnapshot()
         {QStringLiteral("fsr4State"), QStringLiteral("ready")},
         {QStringLiteral("fsr4RunnerPath"), QStringLiteral("/home/deck/.local/share/bc250-mesh-shader/fsr4/bc250-fsr4-run")},
         {QStringLiteral("fsr4DllState"), QStringLiteral("ready")},
-        {QStringLiteral("fsr4DllInstallCount"), 1},
-        {QStringLiteral("nativeMeshState"), QStringLiteral("ready")},
-        {QStringLiteral("nativeMeshIcdPath"), QStringLiteral("/home/deck/.local/share/bc250-mesh-shader/native-mesh/icd.json")},
-        {QStringLiteral("nativeMeshRunnerPath"), QStringLiteral("/home/deck/.local/share/bc250-mesh-shader/native-mesh/bc250-r2")}
+        {QStringLiteral("fsr4DllInstallCount"), mockDllCount},
+        {QStringLiteral("nativeMeshState"), QStringLiteral("not-installed")},
+        {QStringLiteral("nativeMeshIcdPath"), QVariant{}},
+        {QStringLiteral("nativeMeshRunnerPath"), QVariant{}}
     };
     const auto mockCore = [](int core, int ccx) {
         return QVariantMap{{QStringLiteral("packageId"), 0}, {QStringLiteral("coreId"), core},
@@ -747,6 +1059,7 @@ void Bc250Bridge::makeMockSnapshot()
         cores.append(entry);
         (core < 4 ? firstCcx : secondCcx).append(entry);
     }
+    if (m_cpuUnlockStatus.isEmpty()) {
     m_cpuUnlockStatus = {
         {QStringLiteral("schemaVersion"), 1}, {QStringLiteral("devicePresent"), true},
         {QStringLiteral("mode"), QStringLiteral("linux-replay")},
@@ -807,9 +1120,18 @@ void Bc250Bridge::makeMockSnapshot()
             {QStringLiteral("efi-enable"), QVariantMap{{QStringLiteral("available"), false}, {QStringLiteral("blockers"), QVariantList{QStringLiteral("persistent-replay-enabled")}}}},
             {QStringLiteral("off"), QVariantMap{{QStringLiteral("available"), true}, {QStringLiteral("blockers"), QVariantList{}}}}}}
     };
+    m_cpuUnlockStatus.insert(QStringLiteral("metrics"), parseJsonObject(R"json({"state":"not-installed","message":"Eight-core topology requires the compatible metrics helper; legacy SMU consumers may be unavailable.","service":{"enabled":"disabled","active":"inactive"},"revision":null})json"));
+    QVariantMap actions = m_cpuUnlockStatus.value(QStringLiteral("actions")).toMap();
+    for (const QString &action : QStringList{QStringLiteral("metrics-enable"), QStringLiteral("uninstall")})
+        actions.insert(action, QVariantMap{{QStringLiteral("available"), true}, {QStringLiteral("blockers"), QVariantList{}}});
+    m_cpuUnlockStatus.insert(QStringLiteral("actions"), actions);
+    }
     emit snapshotChanged();
     emit cpuUnlockStatusChanged();
     emit meshStatusChanged();
+    emit fsr4InventoryChanged();
+    emit cliCatalogChanged();
+    emit capabilitiesChanged();
 }
 
 void Bc250Bridge::startMockMutation(const QString &method, const QVariantList &arguments,
@@ -831,6 +1153,42 @@ void Bc250Bridge::startMockMutation(const QString &method, const QVariantList &a
 
 void Bc250Bridge::applyMockMutation()
 {
+    if (QStringList{QStringLiteral("InstallFsr4Dll"), QStringLiteral("UninstallFsr4Dll"),
+        QStringLiteral("InstallHelixsr"), QStringLiteral("UninstallHelixsr"),
+        QStringLiteral("InstallOptiscaler"), QStringLiteral("UninstallOptiscaler")}.contains(m_mockMethod)) {
+        const bool candidate = m_mockMethod.contains(QStringLiteral("Optiscaler"));
+        const bool helix = m_mockMethod.contains(QStringLiteral("Helixsr"));
+        const bool install = m_mockMethod.startsWith(QStringLiteral("Install"));
+        const QString idKey = candidate ? QStringLiteral("candidateId") : QStringLiteral("targetId");
+        const QString listKey = candidate ? QStringLiteral("optiscalerCandidates") : QStringLiteral("targets");
+        QVariantList games;
+        for (const QVariant &entry : m_fsr4Inventory.value(QStringLiteral("games")).toList()) {
+            QVariantMap game = entry.toMap();
+            QVariantList targets;
+            for (const QVariant &item : game.value(listKey).toList()) {
+                QVariantMap target = item.toMap();
+                if (target.value(idKey).toString() == m_mockArguments.first().toString()) {
+                    target.insert(helix ? QStringLiteral("helixsrState") : QStringLiteral("state"),
+                        install ? QStringLiteral("ready") : candidate ? QStringLiteral("not-installed") : helix ? QStringLiteral("not-installed") : QStringLiteral("available"));
+                    if (helix) target.insert(QStringLiteral("helixsrManaged"), install);
+                    if (candidate) {
+                        target.insert(QStringLiteral("proxy"), install ? m_mockArguments.at(1) : QVariant{});
+                        target.insert(QStringLiteral("currentRelease"), install);
+                        target.insert(QStringLiteral("launchOption"), install ? QStringLiteral("MOCK: apply the service-provided launch option manually") : QString());
+                    }
+                }
+                targets.append(target);
+            }
+            game.insert(listKey, targets);
+            games.append(game);
+        }
+        m_fsr4Inventory.insert(QStringLiteral("games"), games);
+        return;
+    }
+    if (m_mockMethod == QStringLiteral("PrepareHelixsr")) {
+        m_fsr4Inventory.insert(QStringLiteral("helixsrPayloadState"), QStringLiteral("ready"));
+        return;
+    }
     QVariantMap gpu = m_snapshot.value(QStringLiteral("gpu")).toMap();
     if (m_mockMethod == QStringLiteral("SetGpuFrequency") && m_mockArguments.size() == 3) {
         const QString mode = m_mockArguments.at(0).toString();
@@ -885,6 +1243,56 @@ void Bc250Bridge::applyMockMutation()
         gpu.insert(QStringLiteral("temperatureRecovery"), target - 10);
     } else if (m_mockMethod == QStringLiteral("SetRamp") && !m_mockArguments.isEmpty()) {
         gpu.insert(QStringLiteral("climbMs"), m_mockArguments.constFirst().toInt());
+    } else if (m_mockMethod == QStringLiteral("ResetGpuRamp")) {
+        gpu.insert(QStringLiteral("climbMs"), 500);
+    } else if (m_mockMethod == QStringLiteral("GpuVoltageAction")) {
+        const QString action = m_mockArguments.at(0).toString();
+        const int frequency = m_mockArguments.at(1).toInt();
+        const int voltage = m_mockArguments.at(2).toInt();
+        QVariantList points;
+        for (const QVariant &entry : gpu.value(QStringLiteral("safePoints")).toList()) {
+            QVariantMap point = entry.toMap();
+            const bool match = point.value(QStringLiteral("frequency")).toInt() == frequency;
+            if (match && action == QStringLiteral("remove")) continue;
+            if ((match && (action == QStringLiteral("set") || action == QStringLiteral("edit"))) || action == QStringLiteral("offset"))
+                point.insert(QStringLiteral("voltage"), action == QStringLiteral("offset") ? point.value(QStringLiteral("voltage")).toInt() + voltage : voltage);
+            if (match && action == QStringLiteral("edit")) point.insert(QStringLiteral("frequency"), m_mockArguments.at(3));
+            points.append(point);
+        }
+        if (action == QStringLiteral("add")) points.append(QVariantMap{{QStringLiteral("frequency"), frequency}, {QStringLiteral("voltage"), voltage}});
+        if (action == QStringLiteral("reset")) {
+            points.clear();
+            for (const auto &point : QList<QPair<int, int>>{{350,700},{1000,800},{1500,900},{2000,1000},{2230,1000}})
+                points.append(QVariantMap{{QStringLiteral("frequency"), point.first}, {QStringLiteral("voltage"), point.second}});
+        }
+        std::sort(points.begin(), points.end(), [](const QVariant &left, const QVariant &right) {
+            return left.toMap().value(QStringLiteral("frequency")).toInt() < right.toMap().value(QStringLiteral("frequency")).toInt();
+        });
+        gpu.insert(QStringLiteral("safePoints"), points);
+    } else if (m_mockMethod == QStringLiteral("CpuUnlockAction") && (m_mockArguments.first().toString() == QStringLiteral("metrics-enable") || m_mockArguments.first().toString() == QStringLiteral("uninstall"))) {
+        const bool enabled = m_mockArguments.first().toString() == QStringLiteral("metrics-enable");
+        if (!enabled) {
+            m_cpuUnlockStatus.insert(QStringLiteral("mode"), QStringLiteral("none"));
+            m_cpuUnlockStatus.insert(QStringLiteral("helperInstalled"), false);
+            m_cpuUnlockStatus.insert(QStringLiteral("unitInstalled"), false);
+            m_cpuUnlockStatus.insert(QStringLiteral("service"), QVariantMap{{QStringLiteral("enabled"), QStringLiteral("disabled")}, {QStringLiteral("active"), QStringLiteral("inactive")}});
+        }
+        m_cpuUnlockStatus.insert(QStringLiteral("metrics"), QVariantMap{{QStringLiteral("state"), enabled ? QStringLiteral("compatible") : QStringLiteral("not-installed")},
+            {QStringLiteral("message"), QStringLiteral("Simulated compatibility helper state; no SMU payload is sent by sampling.")},
+            {QStringLiteral("revision"), enabled ? QVariant(QStringLiteral("mock")) : QVariant{}},
+            {QStringLiteral("service"), QVariantMap{{QStringLiteral("enabled"), enabled ? QStringLiteral("enabled") : QStringLiteral("disabled")}, {QStringLiteral("active"), enabled ? QStringLiteral("active") : QStringLiteral("inactive")}}}});
+        return;
+    } else if (m_mockMethod == QStringLiteral("SetCecToggle") || m_mockMethod == QStringLiteral("SetCecName") || m_mockMethod == QStringLiteral("CecAction")) {
+        QVariantMap cec = m_snapshot.value(QStringLiteral("cec")).toMap();
+        if (m_mockMethod == QStringLiteral("SetCecName")) cec.insert(QStringLiteral("osdName"), m_mockArguments.first());
+        if (m_mockMethod == QStringLiteral("SetCecToggle")) {
+            const QMap<QString, QString> keys{{QStringLiteral("wake-tv"), QStringLiteral("wakeTv")}, {QStringLiteral("suspend-tv"), QStringLiteral("suspendTv")}, {QStringLiteral("allow-standby"), QStringLiteral("allowStandby")}, {QStringLiteral("uinput"), QStringLiteral("uinput")}};
+            cec.insert(keys.value(m_mockArguments.first().toString()), m_mockArguments.at(1));
+        }
+        if (m_mockMethod == QStringLiteral("CecAction") && QStringList{QStringLiteral("switch"), QStringLiteral("release")}.contains(m_mockArguments.first().toString()))
+            cec.insert(QStringLiteral("active"), m_mockArguments.first().toString() == QStringLiteral("switch"));
+        m_snapshot.insert(QStringLiteral("cec"), cec);
+        return;
     } else {
         return;
     }

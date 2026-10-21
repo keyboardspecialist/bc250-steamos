@@ -18,6 +18,7 @@ import {
   FaMicrochip,
   FaProjectDiagram,
   FaSyncAlt,
+  FaTerminal,
   FaTv,
   FaVolumeUp,
 } from "react-icons/fa";
@@ -31,6 +32,7 @@ import { CpuTab } from "./tabs/CpuTab";
 import { CuTab } from "./tabs/CuTab";
 import { GpuTab } from "./tabs/GpuTab";
 import { MeshTab } from "./tabs/MeshTab";
+import { MaintenanceTab } from "./tabs/MaintenanceTab";
 import { RamTab } from "./tabs/RamTab";
 import {
   OverviewTab,
@@ -42,7 +44,8 @@ import type {
   MutationOptions,
   MutationRunner,
 } from "./tabs/shared";
-import type { Snapshot } from "./types";
+import type { HardwareSensor, Snapshot } from "./types";
+import { historySample } from "./parity";
 
 function errorMessage(error: unknown): string {
   if (error instanceof Error) return error.message;
@@ -111,8 +114,9 @@ function BackendBanner({
   );
 }
 
-function useTelemetryHistory(): HistorySample[] {
+function useTelemetryHistory(): { history: HistorySample[]; sensors: HardwareSensor[] | undefined } {
   const [history, setHistory] = useState<HistorySample[]>([]);
+  const [sensors, setSensors] = useState<HardwareSensor[] | undefined>();
   const telemetryRunning = useRef(false);
 
   useEffect(() => {
@@ -122,9 +126,16 @@ function useTelemetryHistory(): HistorySample[] {
       telemetryRunning.current = true;
       try {
         const sample = await getTelemetry();
-        if (active) setHistory((current) => [...current, sample].slice(-36));
+        if (active) {
+          setHistory((current) => [...current, historySample(sample)].slice(-36));
+          setSensors(sample.sensors);
+        }
       } catch {
-        // Full status refreshes report backend errors; chart gaps stay quiet.
+        // Preserve chart gaps and discard stale sensor inventories on failures.
+        if (active) {
+          setHistory((current) => [...current, historySample({})].slice(-36));
+          setSensors(undefined);
+        }
       } finally {
         telemetryRunning.current = false;
       }
@@ -137,13 +148,13 @@ function useTelemetryHistory(): HistorySample[] {
     };
   }, []);
 
-  return history;
+  return { history, sensors };
 }
 
 function FullControl() {
   const [snapshot, setSnapshot] = useState<Snapshot | null>(null);
   const [activeTab, setActiveTab] = useState("overview");
-  const history = useTelemetryHistory();
+  const { history, sensors } = useTelemetryHistory();
   const [loading, setLoading] = useState(true);
   const [busyLabel, setBusyLabel] = useState("");
   const [error, setError] = useState("");
@@ -275,7 +286,7 @@ function FullControl() {
         snapshot.toolkit.privileged &&
         snapshot.cu.available &&
         snapshot.gpu.dbusReady,
-      content: <OverviewTab snapshot={snapshot} history={history} />,
+      content: <OverviewTab snapshot={snapshot} history={history} sensors={sensors} />,
     },
     {
       id: "cu",
@@ -329,6 +340,12 @@ function FullControl() {
       icon: <FaProjectDiagram />,
       content: <MeshTab busy={busy} runMutation={runMutation} />,
     },
+    {
+      id: "maintenance",
+      label: "CLI / Tools",
+      icon: <FaTerminal />,
+      content: <MaintenanceTab busy={busy} runMutation={runMutation} />,
+    },
   ];
 
   return (
@@ -381,7 +398,7 @@ function FullControl() {
 function QuickPanel() {
   const [snapshot, setSnapshot] = useState<Snapshot | null>(null);
   const [activeTab, setActiveTab] = useState("summary");
-  const history = useTelemetryHistory();
+  const { history } = useTelemetryHistory();
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(true);
   const [busyLabel, setBusyLabel] = useState("");

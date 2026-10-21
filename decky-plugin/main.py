@@ -27,6 +27,20 @@ class Plugin:
     async def get_telemetry(self):
         return await self.backend.get_telemetry()
 
+    async def get_cli_catalog(self):
+        return await self.backend.get_cli_catalog()
+
+    async def open_cli_section(self, section_id: str):
+        return await self.backend.open_cli_section(section_id)
+
+    async def gpu_voltage_action(
+        self, action: str, frequency: int, voltage: int, new_frequency: int
+    ):
+        return await self.backend.gpu_voltage_action(action, frequency, voltage, new_frequency)
+
+    async def reset_gpu_ramp(self):
+        return await self.backend.reset_gpu_ramp()
+
     async def get_mesh_status(self):
         return await self.backend.get_mesh_status()
 

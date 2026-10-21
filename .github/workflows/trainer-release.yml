@@ -130,6 +130,7 @@ jobs:
             python3 -m unittest discover -s desktop-control/service/tests
           python3 -m unittest discover -s tests -p 'test_*.py'
           node tests/test_qml_utils.cjs
+          node tests/test_decky_parity.cjs
 
       - name: Package BC250 Trainer
         run: |

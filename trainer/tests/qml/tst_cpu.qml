@@ -57,7 +57,8 @@ TestCase {
     QtObject {
         id: backend
         property bool busy: false
-        property var snapshot: ({"toolkit": {"cpuControlAvailable": true}, "cpu": {
+        property var capabilities: ({"CpuOcAction": true})
+        property var snapshot: ({"toolkit": {"cpuControlAvailable": true, "controlCapabilities": ["cpu-oc-update"]}, "cpu": {
             "mitigations": {"available": true, "state": "enabled", "configuredEnabled": true,
                 "bootEnabled": true, "rebootRequired": false, "protected": true},
             "smt": {"available": true, "state": "enabled", "configuredDisabled": false,
@@ -66,8 +67,9 @@ TestCase {
         property string lastUnlockAction: ""
         property var lastMitigationsEnabled: null
         property var lastSmtDisabled: null
+        property string lastOcAction: ""
         function cpuUnlockAction(action) { lastUnlockAction = action }
-        function cpuOcAction(action, frequency, voltage, temperature) {}
+        function cpuOcAction(action, frequency, voltage, temperature) { lastOcAction = action }
         function setCpuMitigations(enabled) { lastMitigationsEnabled = enabled }
         function setCpuSmtDisabled(disabled) { lastSmtDisabled = disabled }
     }
@@ -80,6 +82,7 @@ TestCase {
 
     function init() {
         backend.busy = false
+        backend.lastOcAction = ""
         backend.lastUnlockAction = ""
         backend.lastMitigationsEnabled = null
         backend.cpuUnlockStatus = status({
@@ -116,6 +119,17 @@ TestCase {
         compare(offButton.enabled, true)
         compare(page.unlockMode, "linux-replay")
         compare(page.actionStatus("efi-enable", ""), "Blocked: standard Linux boot method already enabled")
+    }
+
+    function test_updateRequiresInstalledBackendCapability() {
+        var button = findChild(page, "cpuOcUpdate")
+        verify(button !== null)
+        verify(button.enabled)
+        var original = backend.snapshot
+        backend.snapshot = {toolkit:{cpuControlAvailable:true}, cpu:original.cpu}
+        verify(!button.enabled)
+        backend.snapshot = original
+        verify(button.enabled)
     }
 
     function test_modeLabelsAndRecoveryStates() {

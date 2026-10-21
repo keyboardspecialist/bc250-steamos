@@ -13,6 +13,7 @@ TestCase {
         id: backend
         property bool busy: false
         property bool serviceAvailable: true
+        property var cliCatalog: ({"schemaVersion": 1, "available": false, "reason": "Test unavailable", "sections": []})
         property var snapshot: ({"toolkit": {"available": true}})
         property int refreshCalls: 0
         function refresh() { refreshCalls += 1 }

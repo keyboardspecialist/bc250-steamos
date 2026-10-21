@@ -687,6 +687,26 @@ for the guarded legacy-restore and migration procedure.
 
 ## Control interfaces
 
+The frontends share typed hardware controls and telemetry. Native controls cover
+GPU clocks, voltage-curve transactions, load/thermal/ramp settings, CPU tuning
+and security, core unlock and metrics readiness, WGP routing, memory allocation,
+CEC/audio, and discovered game-upscaler targets. Hardware sensor inventories keep
+their original device/channel labels and units; configured voltage and package
+PPT are not relabeled as measured CPU voltage or GPU-only power.
+
+Expert installation, recovery, networking, swap, firmware-payload, and removal
+workflows use explicit **CLI handoffs**, not simulated native controls. They need
+a full toolkit checkout and desktop terminal, run as the logged-in user, and
+retain the CLI's own prompts and safeguards. Opening a terminal does not mean
+the operation has completed. Trainer Flatpak deliberately does not expose host
+CLI handoffs or gain host-command/filesystem permissions.
+
+Use `./bc250-toolkit.sh frontend-capabilities-json` to inspect the checkout's
+source version and supported routes. This is not attestation of installed
+drivers, a running service, or a compiled frontend. See
+[`FRONTEND-PARITY-AUDIT.md`](FRONTEND-PARITY-AUDIT.md) for the native/handoff
+matrix, remaining limits, sensor provenance, and validation results.
+
 ### Decky plugin
 
 [`decky-plugin/`](decky-plugin/) provides Gaming Mode controls for system
@@ -714,8 +734,8 @@ repair commands.
 ### BC250 Trainer
 
 [`trainer/`](trainer/) provides a native Qt 6 control application. It includes
-system status, toolkit tasks, GPU tuning, CPU controls, compute-unit routing,
-and media playback.
+system status, toolkit tasks, GPU/CPU controls, compute-unit routing, CEC,
+game-upscaler management, and media playback.
 
 Install the latest Trainer release:
 
@@ -724,7 +744,10 @@ Install the latest Trainer release:
 ```
 
 The Trainer checks for toolkit updates and uses the same verified updater as
-the command-line toolkit.
+the command-line toolkit. That updates the toolkit checkout, not the compiled
+Trainer executable. Trainer applications have separate `trainer-v*` releases;
+new UI features require rebuilding/installing Trainer or a new Trainer release,
+and installed shared-service changes require refreshing the frontend installation.
 
 See [`trainer/README.md`](trainer/README.md) for native and Flatpak packages.
 

@@ -571,9 +571,13 @@ show_auto_base_installation_plan() {
 }
 
 show_graphics_setup_plan() {
-    printf '%s\n' "${CB}${CC}Async-compute graphics installation${C0}"
-    printf '%s\n' "  Installs or repairs AMDGPU kernel fixes, Mesa / RADV async compute,"
+    printf '%s\n' "${CB}${CC}Global DirectMesh + FSR4 graphics installation${C0}"
+    printf '%s\n' "  Installs or repairs AMDGPU kernel fixes, global DirectMesh / RADV,"
     printf '%s\n' "  its scheduler policy, and required signed SteamOS packages."
+    printf '%s\n' "  Close games first. RADV setup removes recognized retired R2 files and"
+    printf '%s\n' "  its entire private Proton copy; preserve personal additions there first."
+    printf '%s\n' "  Original Proton, prefixes, saves, and game settings are preserved."
+    printf '%s\n' "  Former R2 games need ordinary Proton and removal of old bc250-r2 launch options."
     printf '%s\n' "  Re-run this same option after each requested reboot to resume."
 }
 
@@ -1662,7 +1666,7 @@ menu_graph_render() {
                 if [[ "$badge" == *"|"* || "$badge" == *$'\n'* ]]; then
                     die "Invalid generated menu badge: action__graphics_setup"
                 fi
-                items+=("Install or Resume Async Compute|${badge}|Install AMDGPU first when needed, then resume Mesa and RADV.")
+                items+=("Install or Resume Global DirectMesh|${badge}|Install AMDGPU first when needed, then resume global DirectMesh and FSR4 RADV with retired R2 cleanup.")
                 targets+=("action__graphics_setup")
                 badges+=("$badge")
                 ;;
@@ -1769,7 +1773,7 @@ menu_graph_render() {
                 if [[ "$badge" == *"|"* || "$badge" == *$'\n'* ]]; then
                     die "Invalid generated menu badge: action__graphics_setup"
                 fi
-                items+=("Install or Resume Async Compute|${badge}|Install AMDGPU first when needed, then resume Mesa and RADV.")
+                items+=("Install or Resume Global DirectMesh|${badge}|Install AMDGPU first when needed, then resume global DirectMesh and FSR4 RADV with retired R2 cleanup.")
                 targets+=("action__graphics_setup")
                 badges+=("$badge")
                 if ! badge=$(menu_graph_badge child__radv menu); then badge=; fi
@@ -2117,7 +2121,7 @@ menu_graph_render() {
                 if [[ "$badge" == *"|"* || "$badge" == *$'\n'* ]]; then
                     die "Invalid generated menu badge: action__graphics_setup"
                 fi
-                items+=("Install or Resume Async Compute|${badge}|Install AMDGPU first when needed, then resume Mesa and RADV.")
+                items+=("Install or Resume Global DirectMesh|${badge}|Install AMDGPU first when needed, then resume global DirectMesh and FSR4 RADV with retired R2 cleanup.")
                 targets+=("action__graphics_setup")
                 badges+=("$badge")
                 if ! badge=$(menu_graph_badge action__fan_driver install); then badge=; fi
@@ -2314,6 +2318,33 @@ cmd_storage_updates_menu() {
     menu_graph_open storage-updates
 }
 
+cmd_frontend_capabilities_json() {
+    # Source capabilities, not attestation of installed drivers or a UI binary.
+    # This probe must never prompt, perform setup, access firmware, or use sudo.
+    command -v python3 >/dev/null 2>&1 || die "python3 is required for capability JSON."
+    python3 -I - "$TOOLKIT_VERSION" <<'PY'
+import json
+import sys
+
+print(json.dumps({
+    "schemaVersion": 1,
+    "toolkitVersion": None if sys.argv[1] == "development" else sys.argv[1],
+    "menuSections": [
+        "menu", "status", "setup", "toolkit-update", "core", "graphics",
+        "devices", "maintenance", "amdgpu-boot", "drivers", "unlocks",
+        "storage-updates", "interfaces", "power", "ram", "swap", "compute",
+        "cpu-unlock", "cec", "storage", "persistence", "wifi-backend",
+        "memory-temperature", "radv", "video-codec", "proton", "manage",
+    ],
+    "features": [
+        "global-directmesh", "retired-r2-removal", "gpu-voltage-curve",
+        "gpu-ramp-reset", "cpu-unlock-metrics", "cpu-smt", "cpu-mitigations",
+        "cec", "portable-upscalers", "guarded-memory-temperature",
+    ],
+}, separators=(",", ":")))
+PY
+}
+
 cmd_help() {
     cat << EOF
 Usage: $0 [menu|toolkit-update|toolkit-update-check|setup|auto-base-installation|graphics-setup|status|inventory-json|action OPERATION_ID|drivers|unlocks|storage-updates|interfaces|power [ENTRY]|ram|swap|compute|cpu-unlock|cec|audio-output|hdmi-ac3-enable|hdmi-ac3-revert|storage|persistence|wifi|wifi-backend|fan-driver|memory-temperature|amdgpu|amdgpu-clean|scheduler-policy|kfd-runlist|radv|helixsr-prepare [--latest] [DLSS_DLL]|helixsr-payload-status|helixsr-install TARGET_DLL|helixsr-uninstall TARGET_DLL|--all|video-codec|video-codec-status|video-codec-install|video-codec-remove|proton|proton-install|proton-update|proton-status|proton-uninstall|decky|desktop|coolercontrol|trainer|manage|help]
@@ -2328,11 +2359,18 @@ Commands:
   setup                  Open the status-aware guided setup checklist
   auto-base-installation Run Auto Base Toolkit Installation
   graphics-setup [--replace-unmanaged]
-                         Install or resume AMDGPU and Mesa / RADV in order
+                         Install or resume AMDGPU and global DirectMesh / RADV
   status                 Show read-only system health
   inventory-json         Emit versioned JSON component inventory for automation
+  frontend-capabilities-json
+                         Report source version and supported frontend CLI routes
   action OPERATION_ID    Run one fixed, noninteractive dashboard operation
   drivers                Open AMDGPU, Mesa / RADV, and wireless drivers
+  core                   Open storage, memory, swap, and update protection
+  graphics               Open the complete kernel, RADV, Proton, and codec stack
+  devices                Open audio, CEC, fan, and wireless integrations
+  maintenance            Open update protection, recovery, cleanup, and removal
+  amdgpu-boot            Open mutually exclusive scheduler/KFD boot policies
   unlocks                Open GPU compute-unit and CPU core unlocks
   storage-updates        Open persistent storage and update protection
   interfaces             Open Decky, Plasma, CoolerControl, and Trainer installers
@@ -2442,14 +2480,23 @@ case "$command_name" in
             confirm_action "Replace any unverified regular async-compute runtime files?" \
                 run_graphics_setup --replace-unmanaged
         else
-            confirm_action "Install or resume the async-compute graphics stack?" \
+            confirm_action "Install or resume global DirectMesh + FSR4 and remove retired R2?" \
                 run_graphics_setup
         fi
         ;;
     status) (($# == 0)) || die "Usage: $0 status"; show_status ;;
     inventory-json) (($# == 0)) || die "Usage: $0 inventory-json"; show_inventory_json ;;
+    frontend-capabilities-json)
+        (($# == 0)) || die "Usage: $0 frontend-capabilities-json"
+        cmd_frontend_capabilities_json
+        ;;
     action) run_machine_action "$@" ;;
     drivers) (($# == 0)) || die "Usage: $0 drivers"; cmd_drivers_menu ;;
+    core) (($# == 0)) || die "Usage: $0 core"; cmd_core_system_menu ;;
+    graphics) (($# == 0)) || die "Usage: $0 graphics"; cmd_graphics_menu ;;
+    devices) (($# == 0)) || die "Usage: $0 devices"; cmd_devices_menu ;;
+    maintenance) (($# == 0)) || die "Usage: $0 maintenance"; cmd_maintenance_menu ;;
+    amdgpu-boot) (($# == 0)) || die "Usage: $0 amdgpu-boot"; cmd_amdgpu_boot_menu ;;
     unlocks) (($# == 0)) || die "Usage: $0 unlocks"; cmd_unlocks_menu ;;
     storage-updates) (($# == 0)) || die "Usage: $0 storage-updates"; cmd_storage_updates_menu ;;
     interfaces) (($# == 0)) || die "Usage: $0 interfaces"; cmd_interfaces_menu ;;

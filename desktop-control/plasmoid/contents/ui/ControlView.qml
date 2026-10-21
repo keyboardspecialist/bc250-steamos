@@ -18,7 +18,8 @@ Item {
         { label: "CPU", icon: "speedometer" },
         { label: "Memory", icon: "memory" },
         { label: "Audio", icon: "audio-card" },
-        { label: "CEC", icon: "video-television" }
+        { label: "CEC", icon: "video-television" },
+        { label: "CLI workflows", icon: "utilities-terminal" }
     ]
 
     implicitWidth: 600
@@ -205,13 +206,14 @@ Item {
 
                         Loader {
                             Layout.fillWidth: true
-                            active: Boolean(root.backend.snapshot)
+                            active: Boolean(root.backend.snapshot) || root.currentTab === 7
                             sourceComponent: root.currentTab === 0 ? overviewComponent
                                 : root.currentTab === 1 ? gpuComponent
                                 : root.currentTab === 2 ? cuComponent
                                 : root.currentTab === 3 ? cpuComponent
                                 : root.currentTab === 4 ? ramComponent
-                                : root.currentTab === 5 ? audioComponent : cecComponent
+                                : root.currentTab === 5 ? audioComponent
+                                : root.currentTab === 6 ? cecComponent : cliComponent
                         }
 
                         QQC2.Button {
@@ -234,4 +236,5 @@ Item {
     Component { id: ramComponent; Tabs.RamTab { backend: root.backend } }
     Component { id: audioComponent; Tabs.AudioTab { backend: root.backend } }
     Component { id: cecComponent; Tabs.CecTab { backend: root.backend } }
+    Component { id: cliComponent; Tabs.CliTab { backend: root.backend } }
 }

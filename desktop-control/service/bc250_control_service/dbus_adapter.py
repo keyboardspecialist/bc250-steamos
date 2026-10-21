@@ -25,6 +25,10 @@ INTROSPECTION_XML = """<node>
   <interface name="io.github.keyboardspecialist.BC250Control1">
     <method name="GetSnapshot"><arg name="json" type="s" direction="out"/></method>
     <method name="GetTelemetry"><arg name="json" type="s" direction="out"/></method>
+    <method name="GetCliCatalog"><arg name="json" type="s" direction="out"/></method>
+    <method name="OpenCliSection"><arg name="section_id" type="s" direction="in"/><arg name="operation_id" type="s" direction="out"/></method>
+    <method name="GpuVoltageAction"><arg name="action" type="s" direction="in"/><arg name="frequency" type="i" direction="in"/><arg name="voltage" type="i" direction="in"/><arg name="new_frequency" type="i" direction="in"/><arg name="operation_id" type="s" direction="out"/></method>
+    <method name="ResetGpuRamp"><arg name="operation_id" type="s" direction="out"/></method>
     <method name="GetCpuUnlockStatus"><arg name="json" type="s" direction="out"/></method>
     <method name="GetMeshStatus"><arg name="json" type="s" direction="out"/></method>
     <method name="GetFsr4Inventory"><arg name="json" type="s" direction="out"/></method>
@@ -168,6 +172,10 @@ class DbusAdapter:
     _METHODS: Dict[str, Tuple[str, str, str]] = {
         "GetSnapshot": ("", "s", "get_snapshot"),
         "GetTelemetry": ("", "s", "get_telemetry"),
+        "GetCliCatalog": ("", "s", "get_cli_catalog"),
+        "OpenCliSection": ("s", "s", "open_cli_section"),
+        "GpuVoltageAction": ("siii", "s", "gpu_voltage_action"),
+        "ResetGpuRamp": ("", "s", "reset_gpu_ramp"),
         "GetCpuUnlockStatus": ("", "s", "get_cpu_unlock_status"),
         "GetMeshStatus": ("", "s", "get_mesh_status"),
         "GetFsr4Inventory": ("", "s", "get_fsr4_inventory"),

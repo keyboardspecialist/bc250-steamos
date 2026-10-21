@@ -6,11 +6,36 @@ Plasma 6 system-tray and windowed hardware controls for the BC-250 SteamOS toolk
 
 | Area | Controls and status |
 | --- | --- |
-| Overview | CPU and GPU clocks, temperature history, CU availability, service health, and boot persistence |
-| GPU | Adaptive frequency ranges, pinned clocks, load targets, thermal target, voltage curves, ramp timing, guarded per-game FSR4 toggles, global DirectMesh installation, and retired R2 cleanup |
+| Overview | One-second CPU/GPU clock and temperature labels/history, every available hwmon sensor (including voltage, power and fan RPM), CU availability, freshness-aware service health, and boot persistence |
+| GPU | Adaptive frequency ranges, pinned clocks, load targets, thermal target, validated voltage-curve set/add/edit/remove/offset/reset, ramp timing/reset, guarded per-game FSR4/HelixSR/OptiScaler management, global DirectMesh installation, and retired R2 cleanup |
 | Compute units | Shader-row and WGP routing, factory-route indicators, live application, and saved masks |
-| CPU | Active profile, bounded stability detection, immediate application, boot enablement, and stock settings |
+| CPU | Profile detection/application/persistence/update/stock, core unlock and uninstall, metrics decoder compatibility and guarded activation, security mitigations, and SMT boot policy |
+| Memory / Audio | Guarded CMOS minimum VRAM and dynamic TTM boot limits; managed HDMI surround status/toggle |
 | CEC | TV and receiver power, active source, volume, behavior toggles, and broadcast name |
+| CLI workflows | Functional terminal handoff to every toolkit menu section, with availability reasons and confirmation before advanced/maintenance menus |
+
+### CLI coverage and limitations
+
+The **CLI workflows** tab opens the actual toolkit as the logged-in desktop user
+in a supported terminal. It covers the main menu, status, power, RAM, swap,
+compute, CPU unlock, CEC, storage, persistence, Wi-Fi backend, memory temperature,
+RADV, video codec, Proton, and toolkit management. This makes expert setup,
+repair, driver/package work, fan-tool setup, and lifecycle workflows accessible
+without pretending they are native inline Plasma controls. Administrator prompts
+remain in the terminal. A successful handoff means only that a terminal was
+requested, not that its work succeeded; refresh Plasma afterward.
+
+The service chooses only fixed allowlisted routes and executables; the UI does
+not accept a command, script path, or arbitrary arguments. Missing toolkit,
+terminal, or desktop-session prerequisites are reported in the tab. Advanced and
+maintenance menus require confirmation before opening, and retain their own CLI
+prompts. Toolkit removal can intentionally disconnect this frontend.
+
+Sensor coverage depends on kernel/hardware exposure: unsupported values are
+**Unavailable**, not estimated, and zero readings are displayed as zero. New
+sensor arrays are additive to the existing four telemetry scalar fields; older
+services can still supply clocks/temperatures. Failed/stale live reads are not
+silently replaced with old snapshot values or reported as healthy.
 
 Global DirectMesh setup needs sudo. If noninteractive authorization is unavailable,
 the service stops before R2 cleanup; run `./bc250-mesh-shader.sh setup --directmesh`

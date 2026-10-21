@@ -9,6 +9,7 @@ from unittest.mock import patch
 DESKTOP_CONTROL = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(DESKTOP_CONTROL / "vendor"))
 sys.path.insert(0, str(DESKTOP_CONTROL / "service"))
+sys.path.insert(0, str(DESKTOP_CONTROL.parent / "backend"))
 
 from dbus_next import Message, MessageType
 from dbus_next.message_bus import BaseMessageBus
@@ -58,6 +59,22 @@ class FakeControl:
     async def get_telemetry(self, sender):
         self.senders.append(sender)
         return "{}"
+
+    async def get_cli_catalog(self, sender):
+        self.senders.append(sender)
+        return '{"schemaVersion":1}'
+
+    async def open_cli_section(self, sender, section_id):
+        self.senders.append((sender, section_id))
+        return "operation"
+
+    async def gpu_voltage_action(self, sender, action, frequency, voltage, new_frequency):
+        self.senders.append((sender, action, frequency, voltage, new_frequency))
+        return "operation"
+
+    async def reset_gpu_ramp(self, sender):
+        self.senders.append(sender)
+        return "operation"
 
     async def get_cpu_unlock_status(self, sender):
         self.senders.append(sender)
@@ -130,6 +147,24 @@ class IdentityResolverTests(unittest.IsolatedAsyncioTestCase):
 
 
 class AdapterHandlerTests(unittest.IsolatedAsyncioTestCase):
+    def test_parity_dbus_signatures_match_xml_including_signed_offset(self):
+        import xml.etree.ElementTree as ET
+        expected = {
+            "GetCliCatalog": ("", "s", "get_cli_catalog"),
+            "OpenCliSection": ("s", "s", "open_cli_section"),
+            "GpuVoltageAction": ("siii", "s", "gpu_voltage_action"),
+            "ResetGpuRamp": ("", "s", "reset_gpu_ramp"),
+        }
+        methods = {method.attrib["name"]: method for method in
+                   ET.fromstring(INTROSPECTION_XML).findall("interface/method")}
+        for name, contract in expected.items():
+            self.assertEqual(DbusAdapter._METHODS[name], contract)
+            inputs = "".join(arg.attrib["type"] for arg in methods[name]
+                             if arg.attrib["direction"] == "in")
+            outputs = "".join(arg.attrib["type"] for arg in methods[name]
+                              if arg.attrib["direction"] == "out")
+            self.assertEqual((inputs, outputs), contract[:2])
+
     def test_cpu_unlock_dbus_signatures_are_declared(self):
         self.assertEqual(
             DbusAdapter._METHODS["GetCpuUnlockStatus"],

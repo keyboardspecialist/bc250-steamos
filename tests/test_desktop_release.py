@@ -97,6 +97,7 @@ class DesktopReleaseTests(unittest.TestCase):
                 prefix = "bc250-desktop-control/"
                 for expected in (
                     "backend/bc250_control/backend.py",
+                    "backend/bc250_control/parity.py",
                     "bc250-fsr4.sh",
                     "bc250-helixsr.sh",
                     "bc250-optiscaler.sh",
@@ -117,6 +118,11 @@ class DesktopReleaseTests(unittest.TestCase):
                     "core-unlock/smu-metrics/metrics-8core.hex",
                     "core-unlock/smu-metrics/metrics-8core-original.hex",
                     "core-unlock/smu-metrics/bc250_smu/api.py",
+                    "core-unlock/smu-metrics/bc250_smu/api_q3.py",
+                    "core-unlock/smu-metrics/bc250_smu/transport.py",
+                    "core-unlock/smu-metrics/LICENSE",
+                    "desktop-control/plasmoid/contents/ui/tabs/CliTab.qml",
+                    "desktop-control/plasmoid/contents/ui/components/VoltageCurveEditor.qml",
                     "desktop-control/install.sh",
                     "desktop-control/shared-service-install.sh",
                     "desktop-control/plasmoid/contents/icons/bc250-control.svg",

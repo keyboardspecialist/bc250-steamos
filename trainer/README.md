@@ -60,25 +60,28 @@ does not bundle or update the complete toolkit source tree.
 
 ## Features
 
-- Status dashboard with one-second telemetry while the page is active
+- Status dashboard with one-second telemetry while the page is active, all available hwmon sensors, and explicit eight-core metrics compatibility status
 - Native Toolkit task dashboard for component inventory, setup, driver builds, repairs, and per-component removal
 - Automatic main-toolkit release checks with a checksum-verified, atomic in-app update and Trainer restart, backed by the same updater as the primary CLI
-- Separate fixed install/remove actions for the private experimental native-mesh
-  profile; the Trainer never enables it globally or edits Steam launch options
+- Global DirectMesh setup and verified retired R2 cleanup; ordinary Proton replaces the retired private runner
+- Native fixed CLI catalog for complete toolkit maintenance coverage (swap, storage, persistence, wireless backend, memory temperature, RADV, video codec, Proton, and more); the service opens the host user's terminal, never a root shell
+- Service-discovered Steam game manager for FSR4, experimental HelixSR, and OptiScaler, including update/repair and verified rollback workflows; launch options remain manual
+- HDMI CEC device status, television/receiver/source/volume controls, broadcast name, and automatic integration settings
 - Live bounded console output with secure `sudo` prompting and protected process cancellation
 - Adaptive, ranged, pinned, and maximum GPU clock modes
-- GPU load target, thermal target, and ramp controls with service-equivalent client bounds
+- GPU load target, thermal target, ramp/reset, and inline voltage-curve set/add/edit/remove/offset/reset with explicit risk confirmation
 - RAM/VRAM split controls for CMOS UMA minimums and dynamic TTM limits
 - Live WGP routing with an advanced interlock and per-write confirmation
 - Mutually exclusive CPU core-unlock controls for the standard Linux boot method and the experimental EFI pre-boot alternative
-- CPU overclock detection, apply, boot replay, and stock actions
+- CPU overclock detection, apply, boot replay, stock, and helper update actions
+- Explicit eight-core compatible metrics helper enable/uninstall actions, using service-reported blockers; telemetry sampling never installs or injects an SMU payload
 - Asynchronous QtDBus operation tracking, protected-operation cancellation state, and service lifetime monitoring
 - Collapsible music library with transport, natural track ordering, and folder watching
 - Synchronized whole-track waveform and dedicated beat-energy visualizer
 - Persisted music directory, current track, and volume via `QSettings`; mute is session-only
 - `--mock` development mode that never contacts hardware
 
-The installed service must include `GetCpuUnlockStatus()` and `CpuUnlockAction(string)` for core-unlock controls. The action allowlist is `test`, `enable`, `efi-enable`, and `off`; action availability is always taken from the status response. Older services remain usable for status, GPU, CU, and CPU-overclock features; schema-v1 `linuxReplay` status remains supported, and the UI reports a missing extension rather than using toolkit execution as a hardware-control fallback.
+The installed service must include `GetCpuUnlockStatus()` and `CpuUnlockAction(string)` for core-unlock controls. The action allowlist is `test`, `enable`, `efi-enable`, `off`, `metrics-enable`, and `uninstall`; action availability and blockers come from the status response. Uninstall removes the entire managed core-unlock/metrics integration, not only the metrics service. Older services remain usable for their existing features; schema-v1 `linuxReplay` status remains supported. Missing extensions are shown as unavailable, never replaced with CLI hardware-control fallbacks or estimated metrics.
 
 ## Build
 
@@ -126,7 +129,7 @@ cmake --build build --target smoke
 
 ### Flatpak
 
-Build and install a local GUI-only Flatpak with the KDE 6.10 SDK and runtime from
+Build and install a local GUI-only Flatpak with the KDE 6.11 SDK and runtime from
 Flathub:
 
 ```sh
@@ -141,7 +144,7 @@ flatpak run io.github.keyboardspecialist.bc250trainer
 The sandbox can open Wayland or X11 windows, use GPU acceleration and audio,
 and talk only to the BC-250 system D-Bus service. It has no general host
 filesystem or host-command access. Folder selection is handled through the
-desktop portal. Toolkit dashboard actions are therefore native-only.
+desktop portal. Toolkit dashboard actions and CLI terminal handoff are therefore native-only. The bridge explicitly refuses handoff in Flatpak even if the host service advertises it; no `flatpak-spawn` or host-filesystem permission is added. D-Bus-backed game and CEC workflows remain available when supported by the host service.
 
 Release users should use the complete `*-flatpak-installer.zip` artifact instead
 of installing the raw bundle. After extracting it:
@@ -173,6 +176,8 @@ Controls are `F1` Toolkit, `F2` Status, `F3` GPU, `F4` Compute Units, `F5` CPU,
 `F6` Memory, `M` mute, `P` play/pause, `R` refresh, and `Escape` close. Drag the
 noninteractive upper-left artwork to request a compositor-managed system move
 under Wayland.
+
+STATUS has Metrics/Audio and HDMI CEC subpages. GPU has Tuning and FSR4/HelixSR/OptiScaler subpages. The complete native CLI catalog is expandable from TOOLKIT. Artwork, six top-level tabs, and shortcuts are unchanged.
 
 The media deck defaults to the bundled `tracks/` directory and scans only the
 selected folder. It accepts OGA, OGG, Opus, MP3, FLAC, WAV, M4A, and AAC files.
@@ -212,6 +217,17 @@ building or publishing a release.
 - Active operation: approximately every 750 milliseconds
 
 Normal polling pauses during mutations. Snapshot and telemetry calls are coalesced, and a full refresh follows every operation completion.
+
+Optional extensions:
+
+- `GetTelemetry()` adds `sensors: [{key,device,label,value,unit}]`; the four legacy scalar fields remain supported. Additional sensors fall back to `snapshot.power.sensors`. Missing values are shown as unavailable, not zero.
+- `GetCpuUnlockStatus().metrics` supplies `state`, `message`, `service: {enabled,active}`, and nullable `revision`. `actions` supplies metrics action blockers.
+- `GpuVoltageAction(siii)` takes `(action, frequency, voltage, new_frequency)`. Actions: `set`, `add`, `edit`, `remove`, `offset`, `reset`. Only the offset voltage may be signed (−350 to +350 mV); all unused numbers are zero. Frequency bounds are 350–2230 MHz, voltage bounds 700–1050 mV after any offset. The service validates whole-curve ordering, minimum point count, and saved clock limits. `ResetGpuRamp()` has no arguments.
+- `GetFsr4Inventory()` drives `InstallFsr4Dll(s)`, `UninstallFsr4Dll(s)`, `PrepareHelixsr()`, `InstallHelixsr(s)`, `UninstallHelixsr(s)`, `InstallOptiscaler(ss)`, and `UninstallOptiscaler(s)`. IDs must be 64 lowercase hex characters and present in the current service-discovered inventory. No arbitrary game paths are accepted.
+- `CecAction(s)`, `SetCecToggle(sb)`, and `SetCecName(s)` use fixed action/key allowlists and a printable 1–14-byte UTF-8 broadcast name.
+- Native-only `GetCliCatalog()` returns schema version 1, `available`, nullable `reason`, and fixed `sections: [{id,title,description,risk}]`. `OpenCliSection(s)` returns a tracked operation ID. Client and service both restrict section IDs; no commands or arguments are exposed. Operation completion means the terminal handoff completed, not that the external CLI task finished.
+
+Game inventory is requested on opening the game subpage, on explicit refresh, and after mutations once loaded. Missing optional read methods produce local unavailable states. Mutations unsupported by service introspection are rejected before dispatch.
 
 ## Safety
 

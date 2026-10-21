@@ -553,8 +553,32 @@ ApplicationWindow {
     Shortcut { sequence: "Escape"; enabled: !toolkitController.updating; onActivated: root.close() }
 
     Component { id: toolkitComponent; Pages.ToolkitPage { backend: bridge; controller: toolkitController } }
-    Component { id: statusComponent; Pages.StatusPage { backend: bridge } }
-    Component { id: gpuComponent; Pages.GpuPage { backend: bridge } }
+    Component {
+        id: statusComponent
+        ColumnLayout {
+            property bool cecActive: false
+            RowLayout {
+                C.NeonButton { text: "METRICS / AUDIO"; accent: !cecActive ? "#ef48bb" : "#22e7f2"; checked: !cecActive; onClicked: cecActive = false }
+                C.NeonButton { text: "HDMI CEC"; accent: cecActive ? "#ef48bb" : "#22e7f2"; checked: cecActive; onClicked: cecActive = true }
+            }
+            Loader { Layout.fillWidth: true; sourceComponent: cecActive ? cecPage : statusPage }
+            Component { id: cecPage; Pages.CecPage { backend: bridge } }
+            Component { id: statusPage; Pages.StatusPage { backend: bridge } }
+        }
+    }
+    Component {
+        id: gpuComponent
+        ColumnLayout {
+            property bool gamesActive: false
+            RowLayout {
+                C.NeonButton { text: "GPU TUNING"; accent: !gamesActive ? "#ef48bb" : "#22e7f2"; checked: !gamesActive; onClicked: gamesActive = false }
+                C.NeonButton { text: "FSR4 / HELIXSR / OPTISCALER"; accent: gamesActive ? "#ef48bb" : "#22e7f2"; checked: gamesActive; onClicked: gamesActive = true }
+            }
+            Loader { Layout.fillWidth: true; sourceComponent: gamesActive ? gamesPage : gpuPage }
+            Component { id: gamesPage; Pages.GamesPage { backend: bridge } }
+            Component { id: gpuPage; Pages.GpuPage { backend: bridge } }
+        }
+    }
     Component { id: cuComponent; Pages.CuPage { backend: bridge } }
     Component { id: cpuComponent; Pages.CpuPage { backend: bridge } }
     Component { id: ramComponent; Pages.RamPage { backend: bridge } }

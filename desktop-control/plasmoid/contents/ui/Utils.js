@@ -105,3 +105,82 @@ function readableError(data) {
 function valueOrDash(value, suffix) {
     return value === null || value === undefined ? "Unavailable" : String(Math.round(value)) + (suffix || "");
 }
+
+function cliSection(value) {
+    return allowed(value, ["menu", "status", "power", "ram", "swap", "compute",
+        "setup", "toolkit-update", "core", "graphics", "devices", "maintenance",
+        "amdgpu-boot", "drivers", "unlocks", "storage-updates", "interfaces",
+        "cpu-unlock", "cec", "storage", "persistence", "wifi-backend",
+        "memory-temperature", "radv", "video-codec", "proton", "manage"]);
+}
+
+function wholeNumber(value, minimum, maximum) {
+    if (value === null || value === undefined || typeof value === "boolean" || String(value).trim() === "")
+        throw new Error("Enter a whole number.");
+    var number = Number(value);
+    if (!isFinite(number) || Math.floor(number) !== number || number < minimum || number > maximum)
+        throw new Error("Enter a whole number from " + minimum + " to " + maximum + ".");
+    return number;
+}
+
+// Preview exactly one CLI curve transaction. The service revalidates against
+// current state; frontend validation is not an authorization boundary.
+function voltageChange(points, action, frequency, voltage, newFrequency, gpu) {
+    action = allowed(action, ["set", "add", "edit", "remove", "offset", "reset"]);
+    var f = 0, v = 0, n = 0;
+    if (["set", "add", "edit", "remove"].indexOf(action) >= 0)
+        f = wholeNumber(frequency, 350, 2230);
+    if (["set", "add", "edit"].indexOf(action) >= 0)
+        v = wholeNumber(voltage, 700, 1050);
+    if (action === "edit") n = wholeNumber(newFrequency, 350, 2230);
+    if (action === "offset") v = wholeNumber(voltage, -350, 350);
+    var candidate = (points || []).map(function(point) {
+        return { frequency: point.frequency, voltage: point.voltage };
+    });
+    var found = candidate.some(function(point) { return point.frequency === f; });
+    if (["set", "edit", "remove"].indexOf(action) >= 0 && !found)
+        throw new Error("Select an existing curve frequency.");
+    if (action === "add" && found)
+        throw new Error("A point already exists at that frequency.");
+    if (action === "reset") {
+        candidate = [{frequency:350,voltage:700}, {frequency:1000,voltage:800},
+            {frequency:1500,voltage:900}, {frequency:2000,voltage:1000}, {frequency:2230,voltage:1000}];
+    } else if (action === "add") {
+        candidate.push({ frequency: f, voltage: v });
+    } else if (action === "remove") {
+        candidate = candidate.filter(function(point) { return point.frequency !== f; });
+    } else {
+        candidate = candidate.map(function(point) {
+            if (action === "offset") point.voltage += v;
+            else if (point.frequency === f) {
+                point.voltage = v;
+                if (action === "edit") point.frequency = n;
+            }
+            return point;
+        });
+    }
+    candidate.sort(function(a, b) { return a.frequency - b.frequency; });
+    if (candidate.length < 2) throw new Error("Keep at least two curve points.");
+    for (var index = 0; index < candidate.length; ++index) {
+        wholeNumber(candidate[index].frequency, 350, 2230);
+        wholeNumber(candidate[index].voltage, 700, 1050);
+        if (index && candidate[index].frequency <= candidate[index - 1].frequency)
+            throw new Error("Curve frequencies must be unique.");
+        if (index && candidate[index].voltage < candidate[index - 1].voltage)
+            throw new Error("Voltage must not decrease as frequency increases.");
+    }
+    var low = candidate[0].frequency, high = candidate[candidate.length - 1].frequency;
+    gpu = gpu || {};
+    if ((gpu.requestedMode === "pin" || gpu.requestedMode === "range")
+            && (gpu.requestedMaximum < low || gpu.requestedMaximum > high
+                || (gpu.requestedMode === "range" && gpu.requestedMinimum !== 0
+                    && (gpu.requestedMinimum < low || gpu.requestedMinimum > high))))
+        throw new Error("The curve must cover the saved frequency mode. Change the mode first.");
+    return { args: [action, String(f), String(v), String(n)], points: candidate };
+}
+
+function sensorValue(sensor) {
+    if (!sensor || sensor.value === null || sensor.value === undefined || !isFinite(Number(sensor.value)))
+        return "Unavailable";
+    return String(Math.round(Number(sensor.value) * 1000) / 1000) + (sensor.unit ? " " + sensor.unit : "");
+}

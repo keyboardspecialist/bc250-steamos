@@ -17,6 +17,8 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any, AsyncIterator, Optional, Union
 
+from .parity import CLI_SECTIONS, CLI_SECTION_IDS, CONTROL_CAPABILITIES, voltage_arguments
+
 try:
     import tomllib
 except ModuleNotFoundError:  # pragma: no cover - used by older SteamOS Python
@@ -32,6 +34,20 @@ LSBLK = "/usr/bin/lsblk"
 RUNUSER = "/usr/bin/runuser"
 PYTHON3 = "/usr/bin/python3"
 SYSTEMCTL = "/usr/bin/systemctl"
+SYSTEMD_RUN = "/usr/bin/systemd-run"
+MODINFO = "/usr/bin/modinfo"
+HWMON_PATH = Path("/sys/class/hwmon")
+AMDGPU_MODULES_ROOT = Path("/usr/lib/modules")
+METRICS_REVISION = "smu-8core-metrics-r1"
+METRICS_PAYLOAD_FILES = tuple(
+    Path("core-unlock/smu-metrics") / name for name in (
+        "activate-8core-metrics.sh", "unlock.py", "patcher.py",
+        "metrics-8core.hex", "metrics-8core-original.hex", "LICENSE",
+        "bc250_smu/__init__.py", "bc250_smu/api.py", "bc250_smu/api_q0.py",
+        "bc250_smu/api_q2.py", "bc250_smu/api_q3.py", "bc250_smu/errors.py",
+        "bc250_smu/mailbox.py", "bc250_smu/primitives.py", "bc250_smu/transport.py",
+    )
+)
 GPU_CONFIG_PATH = Path("/etc/cyan-skillfish-governor-smu/config.toml")
 GPU_STATE_PATH = Path("/var/lib/bc250-control/governor/freq-state")
 GPU_FREQUENCY_MIN = 350
@@ -434,6 +450,87 @@ class ToolkitBackend:
         argv = [BASH, str(self._user_script(name)), *args]
         _, out, _ = await self._user_exec(argv, timeout=timeout)
         return out
+
+    async def _cli_handoff_context(self) -> tuple[Optional[Path], Optional[str], Optional[str]]:
+        script = self.toolkit / "bc250-toolkit.sh"
+        if self.user_uid == 0:
+            return None, None, "CLI handoff requires a logged-in non-root user."
+        if not script.is_absolute() or not self._toolkit_file(script):
+            return None, None, "The user toolkit checkout is missing or unsafe; install or repair bc250-toolkit.sh."
+        terminal = next((path for path in ("/usr/bin/konsole", "/usr/bin/xterm")
+                         if self._trusted_root_file(Path(path)) and os.access(path, os.X_OK)), None)
+        if terminal is None:
+            return None, None, "No supported terminal is installed (/usr/bin/konsole or /usr/bin/xterm)."
+        if not self._trusted_root_file(Path(SYSTEMD_RUN)) or not os.access(SYSTEMD_RUN, os.X_OK):
+            return None, None, "The user-session terminal launcher /usr/bin/systemd-run is unavailable."
+        try:
+            rc, environment, _ = await self._user_exec(
+                [SYSTEMCTL, "--user", "show-environment"], check=False, timeout=5
+            )
+        except (CommandError, OSError):
+            rc, environment = 1, ""
+        if rc != 0 or not re.search(r"^(?:DISPLAY|WAYLAND_DISPLAY)=.+$", environment, re.M):
+            return None, None, "No graphical user session is available. Switch to Desktop Mode to open a CLI terminal."
+        return script, terminal, None
+
+    async def _cli_source_capabilities(self, script: Path) -> Optional[dict[str, Any]]:
+        try:
+            code, output, _ = await self._user_exec(
+                [BASH, str(script), "frontend-capabilities-json"], check=False, timeout=5
+            )
+            if code or len(output) > 32768:
+                return None
+            value = json.loads(output)
+        except (CommandError, OSError, ValueError):
+            return None
+        if not isinstance(value, dict) or type(value.get("schemaVersion")) is not int or value["schemaVersion"] != 1:
+            return None
+        sections = value.get("menuSections")
+        version = value.get("toolkitVersion")
+        if (not isinstance(sections, list) or len(sections) > 64
+                or any(type(section) is not str or re.fullmatch(r"[a-z][a-z-]{0,49}", section) is None for section in sections)
+                or len(sections) != len(set(sections))
+                or (version is not None and (not isinstance(version, str)
+                    or re.fullmatch(r"v[0-9]+\.[0-9]+\.[0-9]+", version) is None))):
+            return None
+        return {"sections": frozenset(sections) & CLI_SECTION_IDS, "toolkitVersion": version}
+
+    async def get_cli_catalog(self) -> dict[str, Any]:
+        script, _, reason = await self._cli_handoff_context()
+        capabilities = await self._cli_source_capabilities(script) if script is not None else None
+        supported = capabilities["sections"] if capabilities is not None else {"menu", "status"}
+        sections = []
+        for key, title, description, risk in CLI_SECTIONS:
+            if reason is None and key not in supported:
+                continue
+            if capabilities is None and key in {"menu", "status"}:
+                description += ". Compatibility mode: capability probe unavailable; update the checkout for direct domain routes."
+            sections.append({"id": key, "title": title, "description": description, "risk": risk})
+        return {
+            "schemaVersion": 1, "available": reason is None, "reason": reason,
+            "toolkitVersion": capabilities["toolkitVersion"] if capabilities is not None else None,
+            "capabilitiesAvailable": capabilities is not None,
+            "sections": sections,
+        }
+
+    async def open_cli_section(self, section_id: str) -> dict[str, str]:
+        if type(section_id) is not str or section_id not in CLI_SECTION_IDS:
+            raise CommandError("Unknown toolkit CLI section.")
+        script, terminal, reason = await self._cli_handoff_context()
+        if reason is not None:
+            raise CommandError(reason)
+        capabilities = await self._cli_source_capabilities(script)
+        supported = capabilities["sections"] if capabilities is not None else {"menu", "status"}
+        if section_id not in supported:
+            raise CommandError("This CLI checkout does not advertise that section. Update the toolkit or open its root menu.")
+        # A transient USER service supplies the graphical login environment and
+        # survives this short RPC. The checkout is never executed as root.
+        await self._user_exec([
+            SYSTEMD_RUN, "--user", "--collect", "--no-block", "--",
+            terminal, "--hold" if terminal == "/usr/bin/konsole" else "-hold",
+            "-e", BASH, str(script), section_id,
+        ], timeout=15)
+        return {"message": "CLI terminal requested in your desktop session. In Gaming Mode, switch to Desktop Mode to see it. The toolkit asks for administrator access itself when needed."}
 
     def _optiscaler_helper_path(self) -> Optional[Path]:
         if self._trusted_root_file(OPTISCALER_DESKTOP_HELPER_PATH):
@@ -1066,6 +1163,22 @@ class ToolkitBackend:
     def _cpu_unlock_off_payload_available(self) -> bool:
         return self._cpu_unlock_payload_path(off_only=True) is not None
 
+    def _cpu_unlock_metrics_payload_path(self) -> Optional[Path]:
+        for payload in (CPU_UNLOCK_PAYLOAD_PATH, CPU_HELPER_PATH.parent):
+            if (self._trusted_root_directory(payload)
+                    and all(self._trusted_root_file(payload / name)
+                            for name in (*CPU_UNLOCK_PAYLOAD_FILES, *METRICS_PAYLOAD_FILES))):
+                return payload
+        return None
+
+    def _cpu_unlock_cleanup_payload_path(self) -> Optional[Path]:
+        for payload in (CPU_UNLOCK_PAYLOAD_PATH, CPU_HELPER_PATH.parent):
+            if (self._trusted_root_directory(payload)
+                    and all(self._trusted_root_file(payload / name) for name in
+                            ("bc250-power.sh", "bc250-storage.sh", "bc250-update-persistence.sh"))):
+                return payload
+        return None
+
     def _cpu_unlock_persistent(self) -> bool:
         if not self._trusted_root_file(CPU_UNLOCK_PERSISTENCE_PATH):
             return False
@@ -1594,7 +1707,7 @@ class ToolkitBackend:
         efi_recoverable: bool = False,
     ) -> dict[str, Any]:
         blockers = []
-        if action == "off":
+        if action in {"off", "uninstall"}:
             if not payload_available:
                 blockers.append("helper-bundle-unavailable")
             if guard["state"] == "automatic" and guard["currentBoot"]:
@@ -1621,7 +1734,7 @@ class ToolkitBackend:
                 blockers.append("efi-unlock-enabled")
             if mode == "partial":
                 blockers.append("efi-installation-partial")
-        if action == "enable" and topology_state != "unlocked":
+        if action in {"enable", "metrics-enable"} and topology_state != "unlocked":
             blockers.append("eight-cores-required")
         if action == "enable" and service_enabled:
             blockers.append("persistent-replay-enabled")
@@ -1639,14 +1752,54 @@ class ToolkitBackend:
             blockers.append("efi-installation-partial")
         return {"available": not blockers, "blockers": blockers}
 
+    async def _cpu_unlock_metrics_status(self) -> dict[str, Any]:
+        """Mirror core_unlock_metrics_state without calling an activation helper."""
+        service = await self._service("bc250-8core-metrics.service")
+        release = os.uname().release
+        updates = AMDGPU_MODULES_ROOT / release / "updates"
+        module = updates / "amdgpu.ko.zst"
+        marker = updates / ".bc250-metrics-fix"
+        module_present = module.is_file() and not module.is_symlink()
+        marker_present = marker.is_file() and not marker.is_symlink()
+        state = "legacy-override" if module_present else "not-installed"
+        revision = None
+        if module_present and marker_present:
+            state = "invalid"
+            content = self._read_bounded(marker, 512) or ""
+            fields = content.splitlines()[0].split() if content.splitlines() else []
+            if len(fields) == 2 and re.fullmatch(r"[0-9a-f]{64}", fields[0]):
+                revision = fields[1] if re.fullmatch(r"[A-Za-z0-9_.-]{1,80}", fields[1]) else None
+                actual = await asyncio.get_running_loop().run_in_executor(
+                    None, self._file_sha256, module
+                )
+                try:
+                    rc, resolved, _ = await self._exec(
+                        [MODINFO, "-k", release, "-F", "filename", "amdgpu"],
+                        check=False, timeout=5,
+                    )
+                except (CommandError, OSError):
+                    rc, resolved = 1, ""
+                if (actual == fields[0] and revision == METRICS_REVISION and rc == 0
+                        and re.fullmatch(r".*/updates/amdgpu\.ko[^\n]*", resolved)):
+                    state = "compatible"
+        messages = {
+            "compatible": "Matching eight-core AMDGPU metrics decoder is installed for this kernel.",
+            "invalid": "Eight-core metrics marker, module checksum or selected AMDGPU decoder does not match; repair AMDGPU fixes and reboot.",
+            "legacy-override": "An older AMDGPU override lacks the eight-core metrics marker; update AMDGPU fixes and reboot.",
+            "not-installed": "Eight-core AMDGPU metrics decoder is not installed for this kernel; install AMDGPU fixes and reboot.",
+        }
+        return {"state": state, "message": messages[state], "service": service,
+                "revision": revision}
+
     async def get_cpu_unlock_status(self) -> dict[str, Any]:
         service_task = asyncio.create_task(
             self._service("bc250-core-unlock.service")
         )
         efi_task = asyncio.create_task(self._cpu_unlock_efi_status())
+        metrics_task = asyncio.create_task(self._cpu_unlock_metrics_status())
         topology = self._cpu_topology()
         guard = self._cpu_unlock_guard()
-        service, efi = await asyncio.gather(service_task, efi_task)
+        service, efi, metrics = await asyncio.gather(service_task, efi_task, metrics_task)
         service_enabled = service["enabled"] == "enabled"
         device_present = self._bc250_present_secure()
         payload_available = self._cpu_unlock_payload_available()
@@ -1673,21 +1826,35 @@ class ToolkitBackend:
             mode = "temporary"
         else:
             mode = "none"
+        action_payloads = {
+            "off": off_payload_available,
+            "uninstall": self._cpu_unlock_cleanup_payload_path() is not None,
+            "metrics-enable": self._cpu_unlock_metrics_payload_path() is not None,
+        }
         actions = {
             action: self._cpu_unlock_action_status(
                 action,
                 device_present=device_present,
                 topology_state=topology["topologyState"],
-                payload_available=(
-                    off_payload_available if action == "off" else payload_available
-                ),
+                payload_available=action_payloads.get(action, payload_available),
                 service_enabled=service_enabled,
                 mode=mode,
                 guard=guard,
                 efi_recoverable=efi.get("recoverable", False),
             )
-            for action in ("test", "enable", "efi-enable", "off")
+            for action in ("test", "enable", "efi-enable", "off", "metrics-enable", "uninstall")
         }
+        if metrics["service"]["enabled"] == "enabled":
+            actions["metrics-enable"]["blockers"].append("metrics-service-enabled")
+            actions["metrics-enable"]["available"] = False
+        if not (helper_installed or license_installed or unit_installed or service_enabled or
+                metrics["service"]["enabled"] == "enabled" or
+                efi["installed"] or efi["partial"] or
+                self._path_represented(CPU_UNLOCK_STATE_PATH) or
+                self._path_represented(Path("/var/lib/bc250-control/smu-8core-metrics")) or
+                self._path_represented(Path("/etc/systemd/system/bc250-8core-metrics.service"))):
+            actions["uninstall"]["blockers"].append("not-installed")
+            actions["uninstall"]["available"] = False
         return {
             "schemaVersion": 1,
             "devicePresent": device_present,
@@ -1702,6 +1869,7 @@ class ToolkitBackend:
             "mode": mode,
             "linuxReplay": linux_replay,
             "efi": efi,
+            "metrics": metrics,
             "actions": actions,
             "semantics": {
                 "test": "A six-core test requires a warm reboot before Linux can enumerate eight cores.",
@@ -1884,26 +2052,53 @@ class ToolkitBackend:
         }
 
     def _temperatures(self) -> list[dict[str, Any]]:
-        temperatures = []
-        for hwmon in glob.glob("/sys/class/hwmon/hwmon*"):
-            name = self._read(Path(hwmon) / "name", Path(hwmon).name)
-            for source in glob.glob(f"{hwmon}/temp*_input"):
-                match = re.search(r"temp(\d+)_input$", source)
-                if not match:
+        return [
+            {"device": sensor["device"].split("@", 1)[0], "label": sensor["label"],
+             "celsius": sensor["value"]}
+            for sensor in self._hwmon_sensors() if sensor["unit"] == "°C"
+        ]
+
+    def _hwmon_sensors(self) -> list[dict[str, Any]]:
+        """Sample existing sysfs files only; never activate SMU metrics here."""
+        sensors = []
+        units = {
+            "temp": (1000, "°C", -40, 150),
+            "in": (1, "mV", 0, 100000),
+            "power": (1000000, "W", 0, 5000),
+            "fan": (1, "RPM", 0, 100000),
+            "curr": (1000, "A", 0, 1000),
+        }
+        for hwmon in sorted(HWMON_PATH.glob("hwmon*")):
+            name = self._read(hwmon / "name", hwmon.name)
+            try:
+                identity = (hwmon / "device").resolve(strict=True)
+            except OSError:
+                identity = hwmon.resolve().parent.parent
+            device = f"{name}@{identity.name}"
+            # power*_average is frequently the only power reading exported.
+            sources = sorted(set(hwmon.glob("*_input")) | set(hwmon.glob("power*_average")))
+            for source in sources:
+                match = re.fullmatch(r"(temp|in|power|fan|curr)([0-9]+)_(input|average)", source.name)
+                if match is None:
                     continue
-                index = match.group(1)
-                raw = self._read(source)
+                kind, index, reading = match.groups()
+                scale, unit, low, high = units[kind]
                 try:
-                    value = round(int(raw) / 1000, 1)
-                except ValueError:
+                    value = int(self._read(source)) / scale
+                except (ValueError, OverflowError):
                     continue
-                label = self._read(
-                    Path(hwmon) / f"temp{index}_label", f"temp{index}"
-                )
-                temperatures.append(
-                    {"device": name, "label": label, "celsius": value}
-                )
-        return temperatures
+                if not math.isfinite(value) or not low <= value <= high:
+                    continue
+                channel = f"{kind}{index}"
+                label = self._read(hwmon / f"{channel}_label", channel)
+                if reading == "average":
+                    label += " (average)"
+                sensors.append({
+                    "key": f"{identity}/{name}/{source.name}",
+                    "device": device, "label": label,
+                    "value": round(value, 3), "unit": unit,
+                })
+        return sensors
 
     def _cpu_current_mhz(self) -> Optional[int]:
         effective = [
@@ -1914,6 +2109,7 @@ class ToolkitBackend:
                 re.MULTILINE,
             )
         ]
+        effective = [value for value in effective if math.isfinite(value) and 0 < value <= 10000]
         if effective:
             return round(max(effective))
 
@@ -1930,7 +2126,7 @@ class ToolkitBackend:
         current_values = []
         for path in candidates:
             current = self._read(path)
-            if current.isdigit():
+            if current.isdigit() and 0 < int(current) <= 10000000:
                 current_values.append(int(current))
         return round(max(current_values) / 1000) if current_values else None
 
@@ -1949,12 +2145,46 @@ class ToolkitBackend:
         return ""
 
     def _active_gpu_mhz(self) -> Optional[int]:
-        for path in glob.glob("/sys/class/drm/card*/device/pp_dpm_sclk"):
+        paths = sorted(glob.glob("/sys/class/drm/card*/device/pp_dpm_sclk"))
+        bc250 = sorted(
+            (path for path in paths if self._is_bc250_device(Path(path).parent)),
+            key=lambda path: str(Path(path).parent.resolve()),
+        )
+        selected = bc250[:1] if bc250 else (paths if len(paths) == 1 else [])
+        for path in selected:
             levels = self._read(path)
             match = re.search(r"(\d+)Mhz\s+\*", levels, re.IGNORECASE)
-            if match:
+            if match and 0 < int(match.group(1)) <= 10000:
                 return int(match.group(1))
         return None
+
+    def _is_bc250_device(self, device: Path) -> bool:
+        return (self._read(device / "vendor").lower() == "0x1002"
+                and self._read(device / "device").lower() == "0x13fe")
+
+    def _primary_temperatures(self, sensors: list[dict[str, Any]]) -> tuple[Any, Any]:
+        temperatures = [sensor for sensor in sensors
+                        if sensor["unit"] == "°C" and sensor["value"] > 0]
+        cpu = [sensor for sensor in temperatures
+               if re.search(r"k10temp|coretemp|cpu", sensor["device"], re.I)]
+        cpu.sort(key=lambda sensor: (
+            0 if re.search(r"tctl|package", sensor["label"], re.I) else
+            1 if re.search(r"tdie", sensor["label"], re.I) else 2,
+            sensor["key"],
+        ))
+        gpu = [sensor for sensor in temperatures
+               if sensor["device"].startswith("amdgpu@")]
+        # The key's device directory identifies the PCI function, not cardN.
+        bc250 = [sensor for sensor in gpu
+                 if self._is_bc250_device(Path(sensor["key"]).parent.parent)]
+        devices = sorted({sensor["device"] for sensor in gpu})
+        selected = min((sensor["device"] for sensor in bc250), default=None)
+        if selected is None and len(devices) == 1:
+            selected = devices[0]
+        gpu = [sensor for sensor in gpu if sensor["device"] == selected
+               and (sensor["label"].lower() in {"edge", "gpu", "temp1"})]
+        gpu.sort(key=lambda sensor: (sensor["label"].lower() != "edge", sensor["key"]))
+        return (cpu[0]["value"] if cpu else None, gpu[0]["value"] if gpu else None)
 
     @staticmethod
     def _matching_temperature(
@@ -1966,17 +2196,16 @@ class ToolkitBackend:
                 return temperature["celsius"]
         return None
 
-    async def get_telemetry(self) -> dict[str, Optional[Union[int, float]]]:
-        temperatures = self._temperatures()
+    async def get_telemetry(self) -> dict[str, Any]:
+        sensors = self._hwmon_sensors()
+        cpu_temp, gpu_temp = self._primary_temperatures(sensors)
+        cpu_clock = self._cpu_current_mhz()
         return {
-            "cpuClock": self._cpu_current_mhz(),
+            "cpuClock": cpu_clock if cpu_clock is not None and 0 < cpu_clock <= 10000 else None,
             "gpuClock": self._active_gpu_mhz(),
-            "cpuTemp": self._matching_temperature(
-                temperatures, r"k10temp|cpu|tctl|package"
-            ),
-            "gpuTemp": self._matching_temperature(
-                temperatures, r"amdgpu|gpu|edge|junction"
-            ),
+            "cpuTemp": cpu_temp,
+            "gpuTemp": gpu_temp,
+            "sensors": sensors,
         }
 
     async def get_power_status(self) -> dict[str, Any]:
@@ -2009,6 +2238,7 @@ class ToolkitBackend:
             "cpufreqService": cpufreq,
             "frequencyRestore": restore,
             "temperatures": self._temperatures(),
+            "sensors": self._hwmon_sensors(),
             "protected": Path(
                 "/etc/atomic-update.conf.d/bc250-power.conf"
             ).is_file(),
@@ -2816,6 +3046,8 @@ class ToolkitBackend:
         )
         return {
             "toolkit": {
+                "controlApiVersion": 1,
+                "controlCapabilities": list(CONTROL_CAPABILITIES),
                 "available": toolkit_available,
                 "privileged": os.geteuid() == 0,
                 "powerAvailable": power_available,
@@ -4150,6 +4382,49 @@ class ToolkitBackend:
             async with self._process_lock():
                 return await callback()
 
+    async def _cli_gpu_mutation(self, callback: Any) -> Any:
+        # The CLI owns this same inter-process flock and its rollback. Holding
+        # _process_lock here would deadlock the child; never bypass the CLI lock.
+        async def transaction() -> Any:
+            async with self._mutation_lock:
+                return await callback()
+        return await self._complete_transaction(transaction())
+
+    @staticmethod
+    async def _complete_transaction(coroutine: Any) -> Any:
+        task = asyncio.ensure_future(coroutine)
+        cancelled = False
+        while True:
+            try:
+                result = await asyncio.shield(task)
+                break
+            except asyncio.CancelledError:
+                if task.cancelled():
+                    raise
+                cancelled = True
+        if cancelled:
+            raise asyncio.CancelledError
+        return result
+
+    async def gpu_voltage_action(
+        self, action: str, frequency: int, voltage: int, new_frequency: int
+    ) -> dict[str, str]:
+        try:
+            args = voltage_arguments(action, frequency, voltage, new_frequency)
+        except ValueError as error:
+            raise CommandError(str(error)) from error
+
+        async def apply() -> dict[str, str]:
+            await self._cpu_tool("gpu-volt", *args, timeout=180)
+            return {"message": "GPU voltage curve updated. Stress-test changed voltages before relying on them."}
+        return await self._cli_gpu_mutation(apply)
+
+    async def reset_gpu_ramp(self) -> dict[str, str]:
+        async def apply() -> dict[str, str]:
+            await self._cpu_tool("ramp", "reset", timeout=180)
+            return {"message": "GPU ramp restored to CLI install defaults."}
+        return await self._cli_gpu_mutation(apply)
+
     async def install_native_mesh(self) -> dict[str, str]:
         raise CommandError(
             "R2 installation is retired. Update the frontend and explicitly install "
@@ -4752,9 +5027,9 @@ class ToolkitBackend:
     async def set_custom_load_target(self, minimum: int, maximum: int) -> None:
         if type(minimum) is not int or type(maximum) is not int:
             raise CommandError("GPU load targets must be whole percentages.")
-        if not 0 < minimum < maximum < 100:
+        if not 5 <= minimum < maximum <= 99:
             raise CommandError(
-                "Minimum GPU load must be below maximum load and both must be 1-99%."
+                "Minimum GPU load must be below maximum load and both must be 5-99%."
             )
 
         async def action() -> None:
@@ -4884,8 +5159,12 @@ class ToolkitBackend:
             "apply",
             "enable",
             "off",
+            "update",
         }:
             raise CommandError("Unknown CPU overclock action.")
+        if any(type(value) is not int and value is not None
+               for value in (frequency, voltage, temperature)):
+            raise CommandError("CPU tuning values must be whole numbers.")
         if action_name == "detect":
             if any(
                 type(value) is not int
@@ -4907,9 +5186,11 @@ class ToolkitBackend:
                 args.extend((str(frequency), str(voltage), str(temperature)))
             await self._cpu_tool(
                 *args,
-                timeout=1800 if action_name == "detect" else 180,
+                timeout=1800 if action_name in {"detect", "update"} else 180,
             )
 
+        if action_name == "update":
+            return await self._complete_transaction(self._mutate(action))
         return await self._mutate(action)
 
     async def set_cpu_mitigations(self, enabled: bool) -> None:
@@ -4997,16 +5278,28 @@ class ToolkitBackend:
             "enable",
             "efi-enable",
             "off",
+            "metrics-enable",
+            "uninstall",
         }:
             raise CommandError("Unknown CPU core-unlock action.")
 
         async def action() -> dict[str, Any]:
-            payload = self._cpu_unlock_payload_path(off_only=action_name == "off")
+            if action_name == "metrics-enable":
+                payload = self._cpu_unlock_metrics_payload_path()
+            elif action_name == "uninstall":
+                payload = self._cpu_unlock_cleanup_payload_path()
+            else:
+                payload = self._cpu_unlock_payload_path(off_only=action_name == "off")
             if payload is None:
                 raise CommandError(
                     "CPU core-unlock helper bundle is missing or unsafe; reinstall the service."
                 )
-            if action_name == "off":
+            if action_name in {"metrics-enable", "uninstall"}:
+                status = await self.get_cpu_unlock_status()
+                availability = status["actions"][action_name]
+                if not availability["available"]:
+                    raise CommandError("CPU core-unlock action unavailable: " + ", ".join(availability["blockers"]))
+            if action_name in {"off", "uninstall"}:
                 try:
                     physical_cores = self._cpu_topology()["physicalCores"]
                 except Exception:
@@ -5030,15 +5323,15 @@ class ToolkitBackend:
                 timeout=1800 if action_name == "efi-enable" else 180,
                 env=env,
             )
-            if action_name == "test" and physical_cores == 6:
+            if action_name == "metrics-enable" or (action_name == "test" and physical_cores == 6):
                 next_step = "warm-reboot"
-            elif action_name == "off" and physical_cores == 8:
+            elif action_name in {"off", "uninstall"} and physical_cores == 8:
                 next_step = "full-power-off"
             else:
                 next_step = "none"
             return {"action": action_name, "nextStep": next_step}
 
-        return await self._mutate(action)
+        return await self._complete_transaction(self._mutate(action))
 
     async def cec_action(self, action_name: str) -> None:
         if type(action_name) is not str or action_name not in {
