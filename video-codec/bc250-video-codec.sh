@@ -3,10 +3,10 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-RELEASE=v0.5.1
-SOURCE_COMMIT=180aab87fa84b68f8d4a9d6bf8d4c1fb0cac940e
+RELEASE=v0.5.4
+SOURCE_COMMIT=bc1191850fa521ceb3345986c59c1a882ed757fc
 SOURCE_ARCHIVE_NAME="bc250-encoding-decoding-fix-$SOURCE_COMMIT.tar.gz"
-SOURCE_ARCHIVE_SHA256=c735c3c566882b1e8594eff7e163feb0d62e2ad52d83c104c5178a34f5a2784a
+SOURCE_ARCHIVE_SHA256=6659bc48c4a8914385e869b4824f04257936e9d8e03574242409c05f2f819720
 SOURCE_ARCHIVE_URL="https://codeload.github.com/simpmix/bc250-encoding-decoding-fix/tar.gz/$SOURCE_COMMIT"
 SOURCE_ROOT_NAME="bc250-encoding-decoding-fix-$SOURCE_COMMIT"
 SHADER_NAMES=(
@@ -14,6 +14,11 @@ SHADER_NAMES=(
     dct_transform.comp.spv
     deblock_filter.comp.spv
     entropy_encode.comp.spv
+    hevc_motion_estimation.comp.spv
+    hevc_pred.comp.spv
+    hevc_quant.comp.spv
+    hevc_reconstruct_sao.comp.spv
+    hevc_transform.comp.spv
     intra_wavefront.comp.spv
     motion_estimation.comp.spv
     quantize.comp.spv
@@ -21,6 +26,7 @@ SHADER_NAMES=(
     residual_predict.comp.spv
     video_proc.comp.spv
     video_proc10.comp.spv
+    video_proc_tonemap.comp.spv
 )
 
 DATA_DIR="${BC250_VIDEO_DATA_DIR:-/var/lib/bc250-control/video-codec}"
@@ -77,6 +83,8 @@ $ENV_MARKER
 LIBVA_DRIVER_NAME=bc250
 LIBVA_DRIVERS_PATH=$driver_path
 BC250_SHADER_DIR=$COMPAT_DIR/shaders
+BC250_H264_BACKEND=compute
+BC250_HEVC_BACKEND=compute
 BC250_FAST_MODE=1
 BC250_SLICES_PER_FRAME=4
 BC250_HEVC_SLICES=4
@@ -95,6 +103,8 @@ $PROFILE_MARKER
 export LIBVA_DRIVER_NAME=bc250
 export LIBVA_DRIVERS_PATH=$driver_path
 export BC250_SHADER_DIR=$COMPAT_DIR/shaders
+export BC250_H264_BACKEND=compute
+export BC250_HEVC_BACKEND=compute
 export BC250_FAST_MODE=1
 export BC250_SLICES_PER_FRAME=4
 export BC250_HEVC_SLICES=4
@@ -212,7 +222,8 @@ manifest_layout_valid() {
     expected32=$(manifest_paths 1)
     actual=$(sed -nE 's/^[0-9a-f]{64}  //p' "$manifest")
     [[ "$actual" == "$expected64" || "$actual" == "$expected32" ]] \
-        && [[ $(wc -l < "$manifest") -eq 14 || $(wc -l < "$manifest") -eq 15 ]] \
+        && [[ $(wc -l < "$manifest") -eq $((${#SHADER_NAMES[@]} + 3)) \
+            || $(wc -l < "$manifest") -eq $((${#SHADER_NAMES[@]} + 4)) ]] \
         && ! grep -Evq '^[0-9a-f]{64}  (dri/bc250_drv_video\.so|dri32/bc250_drv_video\.so|shaders/[a-z0-9_]+\.comp\.spv|LICENSE\.upstream|README\.upstream\.md)$' "$manifest"
 }
 
@@ -232,7 +243,8 @@ runtime_dependencies_valid() {
     output=$(ldd -r "$1" 2>&1) || return 1
     [[ "$output" != *"not found"* \
         && "$output" != *"undefined symbol"* \
-        && "$output" != *"libx264"* ]]
+        && "$output" != *"libx264"* \
+        && "$output" != *"libx265"* ]]
 }
 
 environment_valid() {
@@ -249,7 +261,9 @@ shell_environment_active() {
     driver_path=$(configured_driver_path)
     [[ "${LIBVA_DRIVER_NAME:-}" == bc250 \
         && "${LIBVA_DRIVERS_PATH:-}" == "$driver_path" \
-        && "${BC250_SHADER_DIR:-}" == "$COMPAT_DIR/shaders" ]]
+        && "${BC250_SHADER_DIR:-}" == "$COMPAT_DIR/shaders" \
+        && "${BC250_H264_BACKEND:-}" == compute \
+        && "${BC250_HEVC_BACKEND:-}" == compute ]]
 }
 
 manager_environment_active() {
@@ -259,7 +273,9 @@ manager_environment_active() {
     environment=$(systemctl --user show-environment 2>/dev/null) || return 1
     grep -qxF "LIBVA_DRIVER_NAME=bc250" <<< "$environment" \
         && grep -qxF "LIBVA_DRIVERS_PATH=$driver_path" <<< "$environment" \
-        && grep -qxF "BC250_SHADER_DIR=$COMPAT_DIR/shaders" <<< "$environment"
+        && grep -qxF "BC250_SHADER_DIR=$COMPAT_DIR/shaders" <<< "$environment" \
+        && grep -qxF "BC250_H264_BACKEND=compute" <<< "$environment" \
+        && grep -qxF "BC250_HEVC_BACKEND=compute" <<< "$environment"
 }
 
 session_environment_conflicted() {
@@ -318,7 +334,7 @@ show_status() {
         else
             echo "driver32: not-installed"
         fi
-        echo "shaders: 11 verified"
+        echo "shaders: ${#SHADER_NAMES[@]} verified"
         echo "SteamOS path: $COMPAT_DIR"
         echo "configuration: installed"
         if shell_environment_active; then
@@ -398,6 +414,8 @@ verify_ffmpeg_pipeline() {
         LIBVA_DRIVER_NAME=bc250 \
         LIBVA_DRIVERS_PATH="$runtime/dri" \
         BC250_SHADER_DIR="$runtime/shaders" \
+        BC250_H264_BACKEND=compute \
+        BC250_HEVC_BACKEND=compute \
         BC250_FAST_MODE=1 \
         BC250_SLICES_PER_FRAME=4 \
         BC250_HEVC_SLICES=4 \
@@ -425,6 +443,8 @@ verify_ffmpeg_pipeline() {
         LIBVA_DRIVER_NAME=bc250 \
         LIBVA_DRIVERS_PATH="$runtime/dri" \
         BC250_SHADER_DIR="$runtime/shaders" \
+        BC250_H264_BACKEND=compute \
+        BC250_HEVC_BACKEND=compute \
         BC250_FAST_MODE=1 \
         BC250_SLICES_PER_FRAME=4 \
         BC250_HEVC_SLICES=4 \
@@ -786,12 +806,27 @@ ensure_32bit_build_prerequisites() {
     fi
 }
 
+source_shader_inventory_valid() {
+    local source="$1" expected actual
+    expected=$(printf '%s\n' "${SHADER_NAMES[@]}" | LC_ALL=C sort)
+    actual=$(find "$source/approach1-compute-encoder/shaders" -maxdepth 1 \
+        -type f -name '*.comp' -printf '%f.spv\n' | LC_ALL=C sort) || return 1
+    [[ "$actual" == "$expected" ]]
+}
+
 build_runtime() {
     local source="$1" build="$2" build32="$3" runtime="$4" include_32bit="$5" shader
+    source_shader_inventory_valid "$source" \
+        || die "The source shader inventory does not match the reviewed release."
+    # v0.5.4 uses dlopen, not DT_NEEDED, for optional CPU backends. Keep
+    # both adapters: HEVC calls its x265 stubs even without x265 headers.
+    # Managed environments and activation probes retain compute selection.
     cmake -S "$source/approach1-compute-encoder" -B "$build" \
         -DCMAKE_BUILD_TYPE=Release \
         -DBUILD_TESTS=OFF \
-        -DBC250_WITH_X264=OFF
+        -DBUILD_BC250_STATS=OFF \
+        -DBC250_WITH_X264=ON \
+        -DBC250_WITH_X265=ON
     cmake --build "$build" --parallel "$(getconf _NPROCESSORS_ONLN 2>/dev/null || echo 1)"
 
     install -d -m 0755 "$runtime/dri" "$runtime/shaders"
@@ -801,7 +836,9 @@ build_runtime() {
             -DCMAKE_BUILD_TYPE=Release \
             -DBUILD_TESTS=OFF \
             -DBUILD_32BIT=ON \
-            -DBC250_WITH_X264=OFF
+            -DBUILD_BC250_STATS=OFF \
+            -DBC250_WITH_X264=ON \
+            -DBC250_WITH_X265=ON
         cmake --build "$build32" --parallel "$(getconf _NPROCESSORS_ONLN 2>/dev/null || echo 1)" \
             --target bc250_drv_video
         install -d -m 0755 "$runtime/dri32"
@@ -973,7 +1010,7 @@ install_codec() {
 
     mkdir "$source" "$STAGE/runtime"
     extract_source "$archive" "$source"
-    log "Building the driver against this SteamOS image (libx264-independent)..."
+    log "Building against this SteamOS image (runtime-probed optional CPU backends)..."
     build_runtime "$source" "$build" "$build32" "$STAGE/runtime" "$include_32bit"
     runtime_marker > "$STAGE/runtime/.bc250-toolkit-managed"
     chmod 0644 "$STAGE/runtime/.bc250-toolkit-managed"
@@ -985,7 +1022,8 @@ install_codec() {
     if ! dependency_status=$(ldd -r "$STAGE/runtime/dri/bc250_drv_video.so" 2>&1) \
         || [[ "$dependency_status" == *"not found"* \
             || "$dependency_status" == *"undefined symbol"* \
-            || "$dependency_status" == *"libx264"* ]]; then
+            || "$dependency_status" == *"libx264"* \
+            || "$dependency_status" == *"libx265"* ]]; then
         printf '%s\n' "$dependency_status" >&2
         die "The local source build has unavailable runtime dependencies. No driver was activated."
     fi
@@ -994,7 +1032,8 @@ install_codec() {
         if ! dependency_status=$(ldd -r "$STAGE/runtime/dri32/bc250_drv_video.so" 2>&1) \
             || [[ "$dependency_status" == *"not found"* \
                 || "$dependency_status" == *"undefined symbol"* \
-                || "$dependency_status" == *"libx264"* ]]; then
+                || "$dependency_status" == *"libx264"* \
+                || "$dependency_status" == *"libx265"* ]]; then
             printf '%s\n' "$dependency_status" >&2
             die "The 32-bit source build has unavailable runtime dependencies. No driver was activated."
         fi

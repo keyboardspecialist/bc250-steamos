@@ -2,6 +2,16 @@ EXTRA_CFLAGS += $(USER_EXTRA_CFLAGS)
 EXTRA_CFLAGS += -Wno-implicit-fallthrough
 #EXTRA_CFLAGS += -Wno-unused-variable
 
+# OpenWrt may build a newer cfg80211 backport on an older kernel.
+# Set this to the wireless stack's version, e.g. CFG80211_VERSION=6.18.26.
+ifneq ($(strip $(CFG80211_VERSION)),)
+aicwf_cfg80211_version := $(subst ., ,$(CFG80211_VERSION))
+ifneq ($(words $(aicwf_cfg80211_version)),3)
+$(error CFG80211_VERSION must have the form major.minor.patch)
+endif
+ccflags-y += '-DAICWF_CFG80211_VERSION_CODE=KERNEL_VERSION($(word 1,$(aicwf_cfg80211_version)),$(word 2,$(aicwf_cfg80211_version)),$(word 3,$(aicwf_cfg80211_version)))'
+endif
+
 RWNX_VERS_NUM := 6.4.3.0
 
 CONFIG_AIC8800_WLAN_SUPPORT = m
@@ -74,7 +84,11 @@ CONFIG_VHT_FOR_OLD_KERNEL = n
 CONFIG_COEX = y
 CONFIG_ALIGN_8BYTES = y
 CONFIG_TXRX_THREAD_PRIO = y
+ifdef CONFIG_ARCH_SUN60IW2P1
+CONFIG_USB_ALIGN_DATA = n
+else
 CONFIG_USB_ALIGN_DATA = y
+endif
 CONFIG_RX_TASKLET = n
 CONFIG_TX_TASKLET = n
 CONFIG_RX_NETIF_RECV_SKB = y
@@ -88,7 +102,11 @@ CONFIG_WOWLAN ?= n
 CONFIG_USB_RX_AGGR = n
 CONFIG_USB_TX_AGGR = n
 
+ifdef CONFIG_ARCH_SUN60IW2P1
+CONFIG_USB_NO_TRANS_DMA_MAP = y
+else
 CONFIG_USB_NO_TRANS_DMA_MAP = n
+endif
 CONFIG_GPIO_WAKEUP = n
 CONFIG_CREATE_TRACE_POINTS = n
 CONFIG_SUPPORT_REALTIME_CHANGE_MAC = y

@@ -131,7 +131,7 @@ ColumnLayout {
         }
         Components.StatusRow { label: "RADV runtime"; value: root.mesh.runtimeState || "Unavailable"; health: root.mesh.runtimeState === "ready" ? 1 : -1 }
         Components.StatusRow { label: "Global activation"; value: root.mesh.globalEnabled ? "Enabled" : "Disabled"; health: root.mesh.globalEnabled ? 1 : 0 }
-        Components.StatusRow { label: "FSR4 RC9 game DLLs"; value: (root.mesh.fsr4DllState || "Unavailable") + " (" + (root.mesh.fsr4DllInstallCount || 0) + ")"; health: root.mesh.fsr4DllState === "ready" ? 1 : root.mesh.fsr4DllState === "invalid" ? -1 : 0 }
+        Components.StatusRow { label: "FSR4 game DLLs"; value: (root.mesh.fsr4DllState || "Unavailable") + " (" + (root.mesh.fsr4DllInstallCount || 0) + ")"; health: root.mesh.fsr4DllState === "ready" ? 1 : root.mesh.fsr4DllState === "invalid" ? -1 : 0 }
         Components.StatusRow { label: "Legacy FSR4 V3 profile"; value: root.mesh.fsr4State || "Unavailable"; health: root.mesh.fsr4State === "ready" ? 1 : root.mesh.fsr4State === "invalid" ? -1 : 0 }
         Components.StatusRow { label: "Legacy FSR4 runner"; value: root.mesh.fsr4RunnerPath || "Unavailable" }
         Kirigami.InlineMessage {
@@ -143,33 +143,29 @@ ColumnLayout {
     }
 
     Components.Section {
-        title: "BC250 RADV R2"
+        title: "Global DirectMesh / Retired R2 Cleanup"
+        Components.StatusRow { label: "DirectMesh"; value: root.mesh.directMeshVersion || "Not installed / update required"; health: root.mesh.directMeshVersion ? 1 : 0 }
         Components.StatusRow {
-            label: "R2 profile"
-            value: root.mesh.nativeMeshState || "Unavailable"
-            health: root.mesh.nativeMeshState === "ready" ? 1 : root.mesh.nativeMeshState === "invalid" ? -1 : 0
+            label: "Retired R2 files"
+            value: root.mesh.nativeMeshState === "ready" ? "Cleanup required" : (root.mesh.nativeMeshState || "Unavailable")
+            health: root.mesh.nativeMeshState === "not-installed" ? 1 : -1
         }
-        Components.StatusRow { label: "R2 ICD"; value: root.mesh.nativeMeshIcdPath || "Unavailable" }
-        Components.StatusRow { label: "R2 runner"; value: root.mesh.nativeMeshRunnerPath || "Unavailable" }
         Components.ActionButton {
-            visible: root.mesh.nativeMeshState === "not-installed"
-            text: "Install BC250 RADV R2"
-            enabled: !root.backend.busy && root.mesh.kernelReady && root.mesh.schedulerActive
+            text: "Install / update global DirectMesh"
+            enabled: !root.backend.busy && root.mesh.kernelReady
             disabledReason: root.backend.busy ? root.backend.busyLabel
-                : !root.mesh.kernelReady ? "Install and activate the patched AMDGPU module first."
-                : !root.mesh.schedulerActive ? "Reboot with amdgpu.sched_policy=2 active first." : ""
+                : !root.mesh.kernelReady ? "Install and activate the patched AMDGPU module first." : ""
             onClicked: confirmation.ask(
-                "Install experimental BC250 RADV R2?",
-                "Install the verified R2 RADV and vkd3d pair in a private Proton 11.0-2c copy. It is not enabled globally and game settings are not changed.",
-                false,
+                "Install DirectMesh globally and remove retired R2?",
+                "Close games first. Setup removes recorded R2 files and its entire recognized private Proton copy; preserve personal additions in that copy first. It then installs the global DirectMesh/FSR4 driver. For former R2 games, select ordinary Proton and remove old bc250-r2 launch options. Game settings are not edited automatically.",
+                true,
                 function() { root.backend.setNativeMeshEnabled(true); })
         }
         Components.ActionButton {
             visible: root.mesh.nativeMeshState && root.mesh.nativeMeshState !== "not-installed"
-            text: "Remove BC250 RADV R2"
-            enabled: !root.backend.busy && root.mesh.nativeMeshState === "ready"
-            disabledReason: root.backend.busy ? root.backend.busyLabel
-                : "Invalid profile state must be repaired from the toolkit CLI."
+            text: "Remove retired BC250 R2"
+            enabled: !root.backend.busy
+            disabledReason: root.backend.busy ? root.backend.busyLabel : ""
             onClicked: confirmation.ask(
                 "Remove BC250 RADV R2?",
                 "Remove R2 and its private Proton copy. Global RADV, prefixes, saves, and the original Proton are unchanged.",
@@ -180,7 +176,7 @@ ColumnLayout {
             Layout.fillWidth: true
             visible: true
             type: Kirigami.MessageType.Information
-            text: "R2 is never enabled globally. Select BC250 R2 (experimental) in Steam and add the displayed runner to the game's launch options."
+            text: "DirectMesh is on by default on BC-250 with the global driver. Use RADV_DIRECTMESH=0 %command% to opt out per game. Modified recorded profiles or unrecognized tools block setup. Preserve personal additions in the private R2 Proton copy before cleanup removes it."
         }
     }
 
@@ -476,7 +472,7 @@ ColumnLayout {
                         QQC2.Switch {
                             id: targetSwitch
                             Layout.fillWidth: true
-                            text: "FSR4 RC9"
+                            text: "FSR4"
                             checked: targetDelegate.managed
                             enabled: !root.backend.busy && targetDelegate.supportsFsr4 && targetDelegate.gameReady
                                 && !targetDelegate.integrityBlocked && targetDelegate.modelData.state !== "missing"
@@ -486,7 +482,7 @@ ColumnLayout {
                                 var nextEnabled = checked;
                                 var targetId = String(targetDelegate.modelData.targetId);
                                 checked = Qt.binding(function() { return targetDelegate.managed; });
-                                confirmation.ask(nextEnabled ? "Install FSR4 RC9 for this game?" : "Restore the original game DLL?",
+                                confirmation.ask(nextEnabled ? "Install FSR4 for this game?" : "Restore the original game DLL?",
                                     "Close the game first. The toolkit validates the target again and preserves exact rollback bytes.",
                                     true, function() { root.backend.setFsr4Dll(targetId, nextEnabled); });
                             }
@@ -513,7 +509,7 @@ ColumnLayout {
                                 : !targetDelegate.modelData.discovered ? "The target was not found during the latest scan." : ""
                             onClicked: {
                                 var targetId = String(targetDelegate.modelData.targetId);
-                                confirmation.ask("Update FSR4 RC9 for this game?",
+                                confirmation.ask("Update FSR4 for this game?",
                                     "Close the game first. The previous managed DLL will be restored before the new pinned release is installed.",
                                     true, function() { root.backend.setFsr4Dll(targetId, true); });
                             }

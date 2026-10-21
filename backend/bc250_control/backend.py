@@ -3982,6 +3982,7 @@ class ToolkitBackend:
                 "scriptAvailable": False,
                 "runtimeState": "not-installed",
                 "mesaVersion": None,
+                "directMeshVersion": None,
                 "icdPath": str(
                     self.user_home / "radeon_driconf_icd.x86_64.json"
                 ),
@@ -4044,6 +4045,7 @@ class ToolkitBackend:
             normalized_games.append({"executable": executable, "name": name})
 
         mesa_version = status.get("mesaVersion")
+        directmesh_version = status.get("directMeshVersion")
         icd_path = status.get("icdPath")
         config_valid = status.get("configValid")
         kernel_ready = status.get("kernelReady", False)
@@ -4073,6 +4075,12 @@ class ToolkitBackend:
         status_error = status.get("error")
         if mesa_version is not None and not isinstance(mesa_version, str):
             raise CommandError("Mesa / RADV status returned an invalid Mesa version.")
+        if directmesh_version is not None and (
+            not isinstance(directmesh_version, str)
+            or re.fullmatch(r"directmesh-v[0-9]+\.[0-9]+\.[0-9]+", directmesh_version) is None
+            or runtime_state != "ready"
+        ):
+            raise CommandError("Mesa / RADV status returned an invalid DirectMesh version.")
         if (
             not isinstance(icd_path, str)
             or not icd_path.startswith("/")
@@ -4117,6 +4125,7 @@ class ToolkitBackend:
             "scriptAvailable": True,
             "runtimeState": runtime_state,
             "mesaVersion": mesa_version,
+            "directMeshVersion": directmesh_version,
             "icdPath": icd_path,
             "configValid": config_valid,
             "kernelReady": kernel_ready,
@@ -4142,12 +4151,30 @@ class ToolkitBackend:
                 return await callback()
 
     async def install_native_mesh(self) -> dict[str, str]:
+        raise CommandError(
+            "R2 installation is retired. Update the frontend and explicitly install "
+            "DirectMesh; it replaces R2 and activates the RADV driver globally."
+        )
+
+    async def install_directmesh(self) -> dict[str, str]:
         async def action() -> dict[str, str]:
+            # This user-scoped builder needs sudo for system files/packages.
+            # A service cannot answer terminal password prompts. Check before
+            # setup removes R2, rather than failing halfway through migration.
+            code, _, _ = await self._user_exec(
+                ["/usr/bin/sudo", "-n", "-v"], timeout=15, check=False
+            )
+            if code:
+                raise CommandError(
+                    "DirectMesh needs sudo authorization unavailable to this frontend. "
+                    "Run './bc250-mesh-shader.sh setup --directmesh' in a terminal "
+                    "as the logged-in user. No R2 cleanup was started."
+                )
             await self._user_tool(
-                "bc250-mesh-shader.sh", "setup", "--native-mesh", timeout=3600
+                "bc250-mesh-shader.sh", "setup", "--directmesh", timeout=3600
             )
             return {
-                "message": "BC250 RADV R2 was installed. Steam launch options were not changed; restart Steam, select BC250 R2 (experimental), and add the reported runner manually."
+                "message": "DirectMesh was installed globally after retired R2 cleanup. Reboot or sign out as reported. For former R2 games, select ordinary Proton and remove the old bc250-r2 runner. RADV_DIRECTMESH=0 disables DirectMesh per game."
             }
 
         return await self._mutate(action)
@@ -4381,7 +4408,7 @@ class ToolkitBackend:
                     "This DLL name is not supported by the FSR4 helper."
                 )
             await self._fsr4_tool("install", target["targetPath"], timeout=300)
-            return {"message": "FSR4 RC9 installed for the selected game."}
+            return {"message": "FSR4 installed for the selected game."}
 
         return await self._mutate(action)
 

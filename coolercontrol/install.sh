@@ -2,9 +2,11 @@
 # Install the pinned CoolerControl daemon AppImage and local Web UI launcher.
 set -euo pipefail
 
-VERSION=5.0.0
+VERSION=5.1.1
 APPIMAGE_NAME=CoolerControlD-x86_64.AppImage
-APPIMAGE_SHA256=15c17f7a3990c21f2cc8cbbda5cde8ea6c8ecb63a79f982aa9fbedc308d3440b
+APPIMAGE_SHA256=89d35570b098c885673afda56d3f38f830286b42f61051e0194e864d21495130
+LEGACY_VERSION=5.0.0
+LEGACY_APPIMAGE_SHA256=15c17f7a3990c21f2cc8cbbda5cde8ea6c8ecb63a79f982aa9fbedc308d3440b
 APPIMAGE_URL=${COOLERCONTROL_DOWNLOAD_URL:-https://gitlab.com/coolercontrol/coolercontrol/-/releases/$VERSION/downloads/packages/$APPIMAGE_NAME}
 SOURCE_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 REPO_DIR=$(cd "$SOURCE_DIR/.." && pwd)
@@ -48,9 +50,12 @@ protected_root_directory() {
 
 payload_owned() {
     protected_root_file "$APPIMAGE" && protected_root_file "$MARKER" \
-        && grep -Fqx "$MANAGED_MARKER" "$MARKER" \
-        && grep -Fqx "version=$VERSION" "$MARKER" \
-        && grep -Fqx "sha256=$APPIMAGE_SHA256" "$MARKER"
+        && payload_marker_matches "$VERSION" "$APPIMAGE_SHA256"
+}
+
+payload_marker_matches() {
+    diff -q <(printf '%s\nversion=%s\nsha256=%s\n' \
+        "$MANAGED_MARKER" "$1" "$2") "$MARKER" >/dev/null 2>&1
 }
 
 payload_integrity_valid() {
@@ -58,6 +63,21 @@ payload_integrity_valid() {
     payload_owned || return 1
     actual=$(sha256sum "$APPIMAGE" | cut -d' ' -f1)
     [[ "$actual" == "$APPIMAGE_SHA256" ]]
+}
+
+known_payload_integrity_valid() {
+    local expected actual
+    protected_root_file "$APPIMAGE" && protected_root_file "$MARKER" \
+        && grep -Fqx "$MANAGED_MARKER" "$MARKER" || return 1
+    if payload_marker_matches "$VERSION" "$APPIMAGE_SHA256"; then
+        expected=$APPIMAGE_SHA256
+    elif payload_marker_matches "$LEGACY_VERSION" "$LEGACY_APPIMAGE_SHA256"; then
+        expected=$LEGACY_APPIMAGE_SHA256
+    else
+        return 1
+    fi
+    actual=$(sha256sum "$APPIMAGE" | cut -d' ' -f1)
+    [[ "$actual" == "$expected" ]]
 }
 
 service_owned() {
@@ -116,12 +136,19 @@ show_status() {
             || log "saved configuration: preserved ($ROOT_DIR)"
         return 1
     fi
-    if payload_integrity_valid; then state="installed ($VERSION)"; else state=incomplete; failed=1; fi
+    if payload_integrity_valid; then
+        state="installed ($VERSION)"
+    elif known_payload_integrity_valid; then
+        state="upgrade-required ($LEGACY_VERSION -> $VERSION)"; failed=1
+    else
+        state=incomplete; failed=1
+    fi
     log "daemon payload: $state"
     if service_owned && systemctl is-enabled --quiet "$SERVICE_NAME"; then state=enabled; else state=incomplete; failed=1; fi
     log "system service: $state"
     if systemctl is-active --quiet "$SERVICE_NAME"; then state=active; else state=inactive; failed=1; fi
     log "daemon runtime: $state"
+    log "Web UI / authenticated REST and gRPC: http://localhost:11987 (11988 removed)"
     if [[ -f "$KEEP_FILE" && ! -L "$KEEP_FILE" ]]; then state=protected; else state=missing; failed=1; fi
     log "SteamOS update persistence: $state"
     if desktop_owned; then state=installed; else state=missing; failed=1; fi
@@ -151,7 +178,7 @@ download_appimage() {
         || die "Refusing unsafe cache destination: $destination"
     command -v curl >/dev/null 2>&1 || die "curl is required."
     tmp=$(mktemp "$cache_dir/.coolercontrol.XXXXXX")
-    if ! curl --retry 2 --connect-timeout 10 -fL "$APPIMAGE_URL" -o "$tmp"; then
+    if ! curl --proto '=https' --tlsv1.2 --retry 2 --connect-timeout 10 -fL "$APPIMAGE_URL" -o "$tmp"; then
         rm -f "$tmp"
         die "Could not download CoolerControl $VERSION."
     fi
@@ -201,9 +228,31 @@ atomic_install_root() {
     mv -f "$tmp" "$target"
 }
 
+backup_configuration_before_upgrade() {
+    local backups=$ROOT_DIR/backups snapshot path
+    if [[ -e "$backups" || -L "$backups" ]]; then
+        protected_root_directory "$backups" \
+            || die "Refusing unsafe configuration backup directory: $backups"
+    fi
+    install -d -o root -g root -m 0700 "$backups"
+    snapshot=$(mktemp -d "$backups/pre-$VERSION.XXXXXX")
+    for path in "$ROOT_DIR/config" "$ROOT_DIR/data"; do
+        if [[ -e "$path" || -L "$path" ]]; then
+            protected_root_directory "$path" \
+                || die "Refusing unsafe configuration directory: $path"
+            # Preserve custom settings, modes, UI labels and plugin data verbatim.
+            # The daemon, not this installer, owns schema/UID migrations.
+            cp -a -- "$path" "$snapshot/" \
+                || die "Configuration backup failed at $snapshot; old payload was not replaced."
+        fi
+    done
+    printf '%s\n' "before=$VERSION" > "$snapshot/.complete"
+    log "Pre-upgrade configuration backup: $snapshot"
+}
+
 install_root() {
     require_root
-    local source=$1 actual marker_tmp app_tmp version
+    local source=$1 actual marker_tmp app_tmp version backup_needed=0
     [[ -f "$source" && ! -L "$source" ]] || die "Downloaded AppImage is missing or unsafe."
     actual=$(sha256sum "$source" | cut -d' ' -f1)
     [[ "$actual" == "$APPIMAGE_SHA256" ]] || die "AppImage changed before root installation."
@@ -219,8 +268,12 @@ install_root() {
         service_owned || die "Refusing to replace unrecognized service: $SERVICE_UNIT"
     fi
     if [[ -e "$APPIMAGE" || -L "$APPIMAGE" || -e "$MARKER" || -L "$MARKER" ]]; then
-        payload_integrity_valid \
+        known_payload_integrity_valid \
             || die "Refusing to replace an unrecognized or damaged daemon payload."
+    fi
+    if ! payload_integrity_valid \
+        && [[ -d "$ROOT_DIR/config" || -d "$ROOT_DIR/data" ]]; then
+        backup_needed=1
     fi
     if systemctl is-active --quiet coolercontrold.service 2>/dev/null; then
         die "The distribution coolercontrold.service is active; uninstall it before using the BC-250 managed service."
@@ -236,6 +289,14 @@ install_root() {
     if [[ "$actual" != "$APPIMAGE_SHA256" || "$version" != "coolercontrold $VERSION" ]]; then
         rm -f "$app_tmp"
         die "Root-staged AppImage failed integrity or version verification."
+    fi
+    if [[ $backup_needed -eq 1 ]]; then
+        # Stop before copying settings: the old daemon must not race the snapshot.
+        if [[ -f "$SERVICE_UNIT" ]] || systemctl is-active --quiet "$SERVICE_NAME"; then
+            systemctl stop "$SERVICE_NAME" \
+                || die "Could not stop CoolerControl before configuration migration."
+        fi
+        backup_configuration_before_upgrade
     fi
     mv -f "$app_tmp" "$APPIMAGE"
     marker_tmp=$(mktemp)
@@ -264,7 +325,7 @@ uninstall_root() {
         service_owned || die "Refusing to remove unrecognized service: $SERVICE_UNIT"
     fi
     if [[ -e "$APPIMAGE" || -L "$APPIMAGE" || -e "$MARKER" || -L "$MARKER" ]]; then
-        payload_integrity_valid \
+        known_payload_integrity_valid \
             || die "Refusing to remove an unrecognized or damaged daemon payload."
     fi
     if [[ -e "$SERVICE_WANTS" && ! -L "$SERVICE_WANTS" ]]; then
@@ -310,6 +371,8 @@ install_all() {
     sudo bash "$SELF" _install-root "$DOWNLOAD_PATH"
     install_desktop_launcher
     log "CoolerControl $VERSION installed. Open it from the application menu or http://localhost:11987"
+    log "gRPC clients must use port 11987 with REST authentication; port 11988 was removed."
+    log "Custom settings migrate on daemon startup; review saved profiles and sensor assignments in the Web UI."
 }
 
 uninstall_all() {

@@ -167,5 +167,21 @@ hardware validation.
 
 The USB driver uses
 [`shenmintao/aic8800d80`](https://github.com/shenmintao/aic8800d80)
-commit `e93a7d2b6b9634acefc2aae2891e787fb48fdb01`.
+commit `5327c777d00a94ee3bea09525b3acc8e1b031993` (rebased from
+`e93a7d2b6b9634acefc2aae2891e787fb48fdb01`, 23 upstream commits).
 The integrated source includes SteamOS build, firmware-path, teardown, and Wi-Fi Direct adaptations.
+
+The rebase merges the 17 changed driver files, not upstream installers or
+distribution packaging. It adds cfg80211 7.3 cookie handling, the 7.1+ TDLS
+discovery-response length correction, header-type monitor callback selection
+(including stable-kernel backports), bounded firmware-path concatenation, and
+USB-down disconnect-wait suppression. `CFG80211_VERSION=major.minor.patch`
+can describe an explicitly backported wireless stack without changing timer or
+USB API checks. SteamOS header preparation, persistent firmware paths, deferred
+RX teardown, Wi-Fi Direct OFDM/control-port changes, OEM Bluetooth ZLP support,
+and adapter-specific autosuspend policy remain local. Firmware is unchanged.
+
+This is a source review with offline regression/ABI-harness coverage, not a
+hardware qualification. Full module builds against each target SteamOS kernel,
+cold boot, USB unplug/replug, suspend/resume, WPA3, Wi-Fi Direct, and Bluetooth
+controller latency/coexistence still require testing on the actual adapter.

@@ -121,11 +121,26 @@ core_unlock_metrics_enable
 
     def test_release_build_check_uses_pinned_headers_and_efi_subsystem(self):
         source = EFI_BUILD_CHECK.read_text(encoding="utf-8")
-        self.assertIn("761b114e3b186adb82516d5fa8e7a4c559f56ba5", source)
+        self.assertIn("d438479f1e2b3a9c99623a5127d9e65bbeb813e7", source)
         self.assertIn("-subsystem:efi_application", source)
         self.assertIn("PE32+", source)
         self.assertIn("x86-64", source)
         self.assertIn('"efi (application)"', source)
+
+    def test_review_does_not_replace_guarded_core_or_efi_write_primitives(self):
+        helper = load_helper()
+        self.assertEqual(helper.MASK_REG, 0x0115A870)
+        self.assertEqual(helper.MSG_WRITE_FF, 0x98)
+        source = EFI_SOURCE.read_text(encoding="utf-8")
+        self.assertNotIn("apply_smu_patches", source)
+        self.assertNotIn("unlock_smu", source)
+        self.assertIn("EFI_ERROR_STATUS(EFI_ABORTED)", source)
+        notes = (ROOT / "core-unlock/README.md").read_text(encoding="utf-8")
+        self.assertIn("569785a36bd19008f8d83eb91c0b3ee80596c430", notes)
+        self.assertIn("671936bd2655542326496518afdd2d8c9510b7d5", notes)
+        pin = "d438479f1e2b3a9c99623a5127d9e65bbeb813e7"
+        self.assertIn(f'CORE_UNLOCK_EFI_PIN="{pin}"', POWER.read_text())
+        self.assertIn(f'PIN="{pin}"', EFI_BUILD_CHECK.read_text())
 
     def run_power_shell(self, body, directory):
         return subprocess.run(
@@ -241,6 +256,27 @@ core_unlock_status
         smu.send.assert_called_once_with(helper.MSG_WRITE_FF, helper.MASK_REG)
         smu.close.assert_called_once_with()
 
+    def test_full_word_mask_verification_is_not_replaced_by_low_byte_semantics(self):
+        helper = load_helper()
+        smu = mock.Mock()
+        smu.read.side_effect = (0x000001FF, 0x000001FF)
+        smu.send.return_value = 0x01
+        with mock.patch.object(helper, "Smu", return_value=smu), mock.patch.object(helper.time, "sleep"):
+            with self.assertRaisesRegex(RuntimeError, "did not change to 0xff"):
+                helper.read_or_apply_mask()
+        smu.send.assert_called_once_with(0x98, 0x0115A870)
+        smu.close.assert_called_once_with()
+
+    def test_initial_busy_mailbox_aborts_without_any_write(self):
+        helper = load_helper()
+        smu = helper.Smu.__new__(helper.Smu)
+        smu.read = mock.Mock(return_value=0)
+        smu.write = mock.Mock()
+        with mock.patch.object(helper.time, "monotonic", return_value=0):
+            with self.assertRaisesRegex(RuntimeError, "aborting without a write"):
+                smu.send(0x98, helper.MASK_REG, budget=0)
+        smu.write.assert_not_called()
+
     def test_boot_refuses_non_bc250_hardware_before_smu_access(self):
         helper = load_helper()
         with tempfile.TemporaryDirectory() as directory:
@@ -353,7 +389,7 @@ core_unlock_status
         for expected in (
             "3e45131678b111c50e5c285834869ecd3c487a2e",
             "Liam McLoughlin",
-            "761b114e3b186adb82516d5fa8e7a4c559f56ba5",
+            "d438479f1e2b3a9c99623a5127d9e65bbeb813e7",
             "Warren Mann",
         ):
             self.assertIn(expected, notes)

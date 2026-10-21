@@ -335,6 +335,8 @@ struct apm_probe_sta {
        u8 sta_mac_addr[6];
        u8 vif_idx;
        u64 probe_id;
+       /* cfg80211's pre-assigned probe cookie on 7.3+. */
+       u64 cookie;
        struct work_struct apmprobestaWork;
        struct workqueue_struct *apmprobesta_wq;
 };
@@ -675,6 +677,8 @@ struct rwnx_roc_elem {
     bool mgmt_roc;
     /* Indicate if we have switch on the RoC channel */
     bool on_chan;
+    /* Snapshot shared by the RoC request, ready and expiry notifications. */
+    u64 cookie;
 };
 
 /* Structure containing channel survey information received from MAC */

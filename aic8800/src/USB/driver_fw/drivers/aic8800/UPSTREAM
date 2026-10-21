@@ -1,2 +1,8 @@
 Repository: https://github.com/shenmintao/aic8800d80.git
-Commit: e93a7d2b6b9634acefc2aae2891e787fb48fdb01
+Commit: 5327c777d00a94ee3bea09525b3acc8e1b031993
+Previous baseline: e93a7d2b6b9634acefc2aae2891e787fb48fdb01
+Mapping: upstream drivers/ -> local aic8800/src/USB/driver_fw/drivers/
+Rebase: source-level merge of the 17 changed driver files; no firmware refresh.
+Local adaptations: SteamOS Kbuild/header preparation and firmware paths,
+deferred RX reorder teardown, Wi-Fi Direct OFDM/control-port fixes,
+monitor TX disabled by default, OEM Bluetooth ZLP and targeted autosuspend.

@@ -33,6 +33,9 @@ class Plugin:
     async def install_native_mesh(self):
         return await self.backend.install_native_mesh()
 
+    async def install_directmesh(self):
+        return await self.backend.install_directmesh()
+
     async def uninstall_native_mesh(self):
         return await self.backend.uninstall_native_mesh()
 

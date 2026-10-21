@@ -5,7 +5,8 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 HELPER_SOURCE="$SCRIPT_DIR/memory-temperature/bc250-memory-temperature.py"
 UPSTREAM_REPO="https://github.com/pan-Rijovich/bc250-memory-temperature"
-UPSTREAM_COMMIT="b7e6bffcb5d592fc03edde375b7598ddc79aa846"
+UPSTREAM_COMMIT="4a2221d1da387fa2e738bb9368b39594e242ba4b"
+LEGACY_COMMIT="b7e6bffcb5d592fc03edde375b7598ddc79aa846"
 RAW_BASE="https://raw.githubusercontent.com/pan-Rijovich/bc250-memory-temperature/$UPSTREAM_COMMIT"
 STATE_DIR="${BC250_MEMORY_TEMP_STATE_DIR:-/var/lib/bc250-memory-temperature}"
 SOURCE_DIR="$STATE_DIR/upstream-$UPSTREAM_COMMIT"
@@ -34,9 +35,10 @@ files() {
     cat <<'EOF'
 README.md 88b0c2ead95c7e2d4e73eb4de086e0a16f8644783f9d60bf6d5322a8b47f350e
 LICENSE 2c077d99237afe7b5a57ad02c515d2eee309e1149f5f0af7d346b793d43bd753
-SMUPayload.bin b31908460e932a615d9eafb6b3112e6448994f9f6fa656d1d80a8616ac1df4df
-main.c 15584afc9e41c02b114155e89af0e5a251cc192c1116ddd9857d57b06c7f2880
-Makefile bbce1244796f0e4fd1b4e3c56a10c1530d5b031752500af28cd3c02ba304df62
+SMUPayload.bin 32ab902bb07a5a00cdb54f8686b8944fed8cb30abf394c395d5e8d421f756529
+SMUPayload.symbols 16c3baadae4a6790c315c71107e7ca9343dedd0d624d5bdaa507dc00ffe655a1
+main.c 3cb3185d31124f5464161e6b6aca8598e2a93daba43d5cbc6cfc74012e7fb8b2
+Makefile 7d1f601451c398506f596cb21e9e023579d54f19bef6eaba297f996294aa7790
 smu3.ld 35910b8fa1cdfb231dd70abaea3105345438d5cddfa91bf4897f15e7ea78d3fd
 unlock.py 86bc1aaa3265c7a62d28570953e6a47047a6aaa95661c6c649a5822a4165e3b4
 bc250_smu/__init__.py ad87f03cc35aaa0da4e75d6e45bd56bc5baa7c1e680a25b528c3c6fce480884a
@@ -54,6 +56,21 @@ bc250_smu/transport.py 8030084a9aae7c20e8ea787fca72f2a2bc75d9c2305d62047d6f0a5b2
 EOF
 }
 
+legacy_files() {
+    # Restore-only compatibility for already-staged, independently pinned input.
+    # The transport/unlock files are byte-identical between these two commits.
+    local relative expected
+    while read -r relative expected; do
+        case "$relative" in
+            SMUPayload.symbols) continue ;;
+            SMUPayload.bin) expected=b31908460e932a615d9eafb6b3112e6448994f9f6fa656d1d80a8616ac1df4df ;;
+            main.c) expected=15584afc9e41c02b114155e89af0e5a251cc192c1116ddd9857d57b06c7f2880 ;;
+            Makefile) expected=bbce1244796f0e4fd1b4e3c56a10c1530d5b031752500af28cd3c02ba304df62 ;;
+        esac
+        printf '%s %s\n' "$relative" "$expected"
+    done < <(files)
+}
+
 ensure_state() {
     [[ ! -L "$STATE_DIR" ]] || die "Refusing symlinked state directory: $STATE_DIR"
     mkdir -p "$STATE_DIR" "${LOCK_FILE%/*}"
@@ -69,18 +86,23 @@ ensure_state() {
     fi
 }
 
-verify_stage() {
-    local relative expected
-    [[ -d "$SOURCE_DIR" && ! -L "$SOURCE_DIR" \
-        && -f "$HELPER" && ! -L "$HELPER" && -f "$MANIFEST" && ! -L "$MANIFEST" ]] \
-        || return 1
+verify_source() {
+    local source_dir="$1" listing="$2" relative expected
+    [[ -d "$source_dir" && ! -L "$source_dir" ]] || return 1
     while read -r relative expected; do
-        [[ -f "$SOURCE_DIR/$relative" && ! -L "$SOURCE_DIR/$relative" \
-            && "$(sha256_file "$SOURCE_DIR/$relative")" == "$expected" ]] || return 1
-    done < <(files)
+        [[ -f "$source_dir/$relative" && ! -L "$source_dir/$relative" \
+            && "$(sha256_file "$source_dir/$relative")" == "$expected" ]] || return 1
+    done < <("$listing")
+}
+
+verify_stage() {
+    local source_dir="${1:-$SOURCE_DIR}"
+    local expected_commit="${2:-$UPSTREAM_COMMIT}" listing="${3:-files}"
+    [[ -f "$HELPER" && ! -L "$HELPER" && -f "$MANIFEST" && ! -L "$MANIFEST" ]] || return 1
+    verify_source "$source_dir" "$listing" || return 1
     local commit helper_sha extra
     read -r commit helper_sha extra < "$MANIFEST" || return 1
-    [[ -z "$extra" && "$commit" == "$UPSTREAM_COMMIT" \
+    [[ -z "$extra" && "$commit" == "$expected_commit" \
         && "$helper_sha" =~ ^[0-9a-f]{64}$ \
         && "$(sha256_file "$HELPER")" == "$helper_sha" ]]
 }
@@ -108,7 +130,7 @@ cmd_prepare() (
     ensure_state
     exec 9> "$LOCK_FILE"
     flock 9
-    if verify_stage; then
+    if verify_stage && cmp -s "$HELPER_SOURCE" "$HELPER"; then
         log "Pinned upstream source is already staged and verified."
         return 0
     fi
@@ -140,7 +162,19 @@ run_smu_action() (
     ensure_state
     exec 9> "$LOCK_FILE"
     flock 9
-    verify_stage || die "Verified source is not staged; run '$0 prepare' first."
+    local source_dir="$SOURCE_DIR" helper="$HELPER"
+    if ! verify_stage; then
+        if [[ "$action" == restore ]] \
+            && verify_source "$STATE_DIR/upstream-$LEGACY_COMMIT" legacy_files; then
+            [[ -f "$HELPER_SOURCE" && ! -L "$HELPER_SOURCE" ]] \
+                || die "Toolkit helper is missing or unsafe: $HELPER_SOURCE"
+            source_dir="$STATE_DIR/upstream-$LEGACY_COMMIT"
+            helper="$HELPER_SOURCE"
+            log "Using verified legacy transport for restore only; no download or migration required."
+        else
+            die "Verified source is not staged; run '$0 prepare' first."
+        fi
+    fi
     local governor_stopped=0
     resume_governor() {
         local rc=$?
@@ -159,7 +193,7 @@ run_smu_action() (
         systemctl stop "$GOVERNOR_SERVICE" \
             || die "Could not stop the GPU governor; refusing concurrent SMU access."
     fi
-    python3 "$HELPER" "$action" --source-dir "$SOURCE_DIR" --state-dir "$STATE_DIR" "$@"
+    python3 "$helper" "$action" --source-dir "$source_dir" --state-dir "$STATE_DIR" "$@"
 )
 
 cmd_status() {
@@ -167,6 +201,8 @@ cmd_status() {
     echo "  upstream: $UPSTREAM_REPO @ ${UPSTREAM_COMMIT:0:7}"
     if verify_stage; then
         echo "  source:   prepared and verified"
+    elif verify_source "$STATE_DIR/upstream-$LEGACY_COMMIT" legacy_files; then
+        echo "  source:   verified legacy stage (restore only; prepare to update)"
     elif [[ -e "$STATE_DIR" || -L "$STATE_DIR" ]]; then
         echo "  source:   incomplete or modified"
         return 2
@@ -200,15 +236,15 @@ Usage: $0 {prepare|patch --acknowledge-smu-risk|read [--json]|
 
   prepare  Download and checksum-verify the pinned upstream source and payload.
   patch    Unlock live SMU access, back up overwritten bytes, install the
-           runtime payload, and redirect Queue 3 / Message 5.
+           runtime payload, and redirect Queue 3 / Messages 5, 6, and 7.
   read     Attest the live payload and read all eight GDDR6 MR3 temperatures.
   restore  Restore the recorded handler and overwritten runtime bytes.
   status   Report staged-source and backup state without touching the SMU.
   purge    Remove staged files only after no runtime backup remains.
 
 The patch is only for the ASRock BC-250 P3.0 firmware layout. It is not a boot
-service and does not survive a cold power cycle. The upstream payload contains
-unbounded firmware polling loops. A wrong or wedged payload can cause memory or
+service and does not survive a cold power cycle. The upstream payload bounds its
+UMC polling loops, but a wrong or wedged payload can still cause memory or
 filesystem corruption, crashes, an unbootable system, or require a cold power
 cycle. The explicit acknowledgement flag is required for live writes.
 

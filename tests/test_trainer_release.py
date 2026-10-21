@@ -274,7 +274,7 @@ class TrainerReleaseTests(unittest.TestCase):
         bridge = (ROOT / "trainer/src/Bc250Bridge.cpp").read_text(encoding="utf-8")
         for expected in (
             "runtime: org.kde.Platform",
-            "runtime-version: '6.10'",
+            "runtime-version: '6.11'",
             "--socket=wayland",
             "--socket=pulseaudio",
             "--system-talk-name=io.github.keyboardspecialist.BC250Control1",

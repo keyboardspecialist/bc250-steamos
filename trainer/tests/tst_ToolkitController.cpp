@@ -38,7 +38,7 @@ private slots:
             QStringLiteral("proton-install"), QStringLiteral("proton-update"),
             QStringLiteral("proton-remove"), QStringLiteral("graphics-setup"),
             QStringLiteral("mesh-remove"),
-            QStringLiteral("native-mesh-install"), QStringLiteral("native-mesh-remove"),
+            QStringLiteral("directmesh-install"), QStringLiteral("native-mesh-remove"),
             QStringLiteral("decky-install"), QStringLiteral("decky-remove"),
             QStringLiteral("desktop-install"), QStringLiteral("desktop-remove"),
             QStringLiteral("coolercontrol-install"),
@@ -50,7 +50,8 @@ private slots:
                                       QStringLiteral("cec-remove"),
                                       QStringLiteral("persistence-install"),
                                       QStringLiteral("persistence-remove"),
-                                      QStringLiteral("mesh-setup")})
+                                      QStringLiteral("mesh-setup"),
+                                      QStringLiteral("native-mesh-install")})
             QVERIFY(ToolkitController::operationMetadata(removed).isEmpty());
 
         const QVariantMap autoBase =
@@ -85,9 +86,9 @@ private slots:
         QCOMPARE(ToolkitController::operationMetadata(QStringLiteral("graphics-setup"))
                      .value(QStringLiteral("component")).toString(),
                   QStringLiteral("mesh"));
-        QCOMPARE(ToolkitController::operationMetadata(QStringLiteral("native-mesh-install"))
+        QCOMPARE(ToolkitController::operationMetadata(QStringLiteral("directmesh-install"))
                      .value(QStringLiteral("component")).toString(),
-                 QStringLiteral("native-mesh"));
+                 QStringLiteral("mesh"));
         QVERIFY(ToolkitController::operationMetadata(QStringLiteral("native-mesh-remove"))
                     .value(QStringLiteral("destructive")).toBool());
         QCOMPARE(ToolkitController::operationMetadata(QStringLiteral("ac3-install"))

@@ -5,7 +5,7 @@ import {
   getMeshStatus,
   installHelixsr,
   installFsr4Dll,
-  installNativeMesh,
+  installDirectMesh,
   installOptiscaler,
   prepareHelixsr,
   uninstallHelixsr,
@@ -309,7 +309,7 @@ export function MeshTab({ busy, runMutation }: { busy: boolean; runMutation: Mut
   const toggleTarget = (target: Fsr4Target, enabled: boolean) => {
     const action = enabled ? installFsr4Dll : uninstallFsr4Dll;
     runMutation(
-      enabled ? "FSR4 RC9 installed" : "Original game DLL restored",
+      enabled ? "FSR4 installed" : "Original game DLL restored",
       async () => {
         try {
           await action(target.targetId);
@@ -318,7 +318,7 @@ export function MeshTab({ busy, runMutation }: { busy: boolean; runMutation: Mut
         }
       },
       {
-        title: enabled ? "Install FSR4 RC9 for this game?" : "Restore the original game DLL?",
+        title: enabled ? "Install FSR4 for this game?" : "Restore the original game DLL?",
         description: enabled
           ? `Close the game first. The toolkit will replace ${target.relativePath || target.targetPath || "the selected DLL"} and retain an exact rollback copy.`
           : `Close the game first. The toolkit will restore the exact original bytes for ${target.relativePath || target.targetPath || "this target"} and remove its rollback record.`,
@@ -371,20 +371,20 @@ export function MeshTab({ busy, runMutation }: { busy: boolean; runMutation: Mut
   );
 
   const toggleNativeMesh = (enabled: boolean) => runMutation(
-    enabled ? "Private native-mesh profile installed" : "Private native-mesh profile removed",
+    enabled ? "Global DirectMesh runtime installed" : "Retired R2 profile removed",
     async () => {
       try {
-        await (enabled ? installNativeMesh() : uninstallNativeMesh());
+        await (enabled ? installDirectMesh() : uninstallNativeMesh());
       } finally {
         await refresh();
       }
     },
     {
-      title: enabled ? "Install the private native-mesh profile?" : "Remove the private native-mesh profile?",
+      title: enabled ? "Install DirectMesh globally and remove retired R2?" : "Remove the retired R2 profile?",
       description: enabled
-        ? "Build the experimental combined async-compute, FSR4, and physical-GFX10 native-mesh ICD. It stays private: Steam launch options and global activation are not changed."
-        : "Remove only the private native-mesh profile. The global RADV runtime and Steam configuration are unchanged.",
-      destructive: !enabled,
+        ? "Close games first. Setup removes recorded R2 files and its entire private Proton copy; preserve any personal additions in that copy first. It then builds the global DirectMesh/FSR4 driver. Select ordinary Proton and remove old bc250-r2 launch options for former R2 games. Game settings are not edited automatically."
+        : "Remove recorded R2 files and its entire recognized private Proton copy; preserve personal additions in that copy first. Global DirectMesh, original Proton, prefixes, saves, and game settings are unchanged.",
+      destructive: true,
     },
     { refresh: false },
   );
@@ -495,7 +495,7 @@ export function MeshTab({ busy, runMutation }: { busy: boolean; runMutation: Mut
         )}
         <EmptyState>Experimental. Do not use HelixSR in anti-cheat or online games.</EmptyState>
       </PanelSection>
-      <PanelSection title="FSR4 RC9 Game Manager">
+      <PanelSection title="Portable FSR4 Game Manager">
         <TextField
           label="Installed Steam games"
           description={inventory ? `${inventory.games.length} installed games | FSR4 ${inventory.currentRelease ?? "helper unavailable"} | OptiScaler ${inventory.currentOptiscalerRelease ?? "helper unavailable"}` : "Loading Steam inventory"}
@@ -636,39 +636,36 @@ export function MeshTab({ busy, runMutation }: { busy: boolean; runMutation: Mut
 
   return (
     <>
-      <PanelSection title="Mesa / RADV Async Compute">
+      <PanelSection title="Global DirectMesh / RADV">
         <StatusRow label="Patched AMDGPU" value={status.kernelReady ? "Installed and active" : "Not ready"} good={status.kernelReady} />
         <StatusRow label="Scheduler policy" value={status.schedulerActive ? "Active" : status.schedulerConfigured ? "Reboot required" : "Disabled"} good={status.schedulerActive} />
         <StatusRow label="RADV runtime" value={status.runtimeState} good={status.runtimeState === "ready"} />
         <StatusRow label="Global activation" value={status.globalEnabled ? "Enabled" : "Disabled"} good={status.globalEnabled} />
         <StatusRow label="Mesa" value={status.mesaVersion ?? "Not installed"} />
+        <StatusRow label="DirectMesh" value={status.directMeshVersion ?? "Not installed / update required"} good={Boolean(status.directMeshVersion)} />
         <StatusRow label="Alternate ICD" value={status.icdPath || "Unavailable"} good={status.runtimeState === "ready"} />
-        <StatusRow label="FSR4 RC9 game DLLs" value={`${status.fsr4DllState} (${status.fsr4DllInstallCount})`} good={status.fsr4DllState === "ready"} />
+        <StatusRow label="FSR4 game DLLs" value={`${status.fsr4DllState} (${status.fsr4DllInstallCount})`} good={status.fsr4DllState === "ready"} />
         <StatusRow label="Legacy FSR4 V3 profile" value={status.fsr4State} good={status.fsr4State === "ready"} />
         <StatusRow label="Legacy FSR4 runner" value={status.fsr4RunnerPath} good={status.fsr4State === "ready"} />
       </PanelSection>
 
-      <PanelSection title="Private Native Mesh">
-        <StatusRow label="Native-mesh profile" value={status.nativeMeshState} good={status.nativeMeshState === "ready"} />
-        <StatusRow label="Private ICD" value={status.nativeMeshIcdPath} good={status.nativeMeshState === "ready"} />
-        <StatusRow label="Private runner" value={status.nativeMeshRunnerPath} good={status.nativeMeshState === "ready"} />
-        {status.nativeMeshState === "not-installed" && (
-          <ActionButton label="Install private native mesh" disabled={busy || !status.kernelReady || !status.schedulerActive} onClick={() => toggleNativeMesh(true)} />
-        )}
+      <PanelSection title="DirectMesh Installation / R2 Cleanup">
+        <ActionButton label="Install / update global DirectMesh" disabled={busy || !status.scriptAvailable || !status.kernelReady} onClick={() => toggleNativeMesh(true)} />
+        <EmptyState>DirectMesh is enabled by default on BC-250 with this global driver. Per-game opt-out: RADV_DIRECTMESH=0 %command%. R2 installation is retired.</EmptyState>
+        <StatusRow label="Retired R2 files" value={status.nativeMeshState === "ready" ? "Cleanup required" : status.nativeMeshState} />
         {status.nativeMeshState !== "not-installed" && (
-          <ActionButton label="Remove private native mesh" disabled={busy || status.nativeMeshState === "invalid"} onClick={() => toggleNativeMesh(false)} />
+          <ActionButton label="Remove retired R2" disabled={busy} onClick={() => toggleNativeMesh(false)} />
         )}
-        <EmptyState>This experimental profile is never enabled globally. Add the displayed runner to a game's Steam launch options manually when required.</EmptyState>
       </PanelSection>
 
       {error && <EmptyState>{error}</EmptyState>}
       {!status.scriptAvailable && <EmptyState>The Mesa / RADV toolkit script is unavailable.</EmptyState>}
       {!status.kernelReady && <EmptyState>Install the AMDGPU kernel fixes and reboot before installing the Mesa / RADV async-compute patch.</EmptyState>}
-      {status.runtimeState === "not-installed" && <EmptyState>The Mesa / RADV patch enables GFX1013 async compute. Install it from Drivers after the patched AMDGPU module is active; the build usually takes 3-5 minutes.</EmptyState>}
+      {status.runtimeState === "not-installed" && <EmptyState>DirectMesh includes GFX1013 async compute and FSR4 support. Activate the patched AMDGPU module first; setup then builds the global runtime.</EmptyState>}
       {status.runtimeState === "invalid" && <EmptyState>The alternate runtime failed validation or requires migration. Run setup again from the toolkit menu.</EmptyState>}
       {status.fsr4DllState === "invalid" && <EmptyState>A game-local FSR4 DLL failed integrity validation. Restore it with the toolkit before making further changes.</EmptyState>}
       {status.fsr4State === "invalid" && <EmptyState>The legacy private FSR4 runtime failed integrity validation. Reinstall or remove it from the toolkit.</EmptyState>}
-      {status.nativeMeshState === "invalid" && <EmptyState>The private native-mesh profile failed integrity validation. Repair or remove it from the toolkit CLI.</EmptyState>}
+      {status.nativeMeshState === "invalid" && <EmptyState>Retired R2 files need cleanup. Verified orphaned files can be removed; modified recorded profiles or unrecognized tools require manual review and block DirectMesh installation.</EmptyState>}
       {status.globalEnabled && <EmptyState>The patched RADV ICD is active across this user session.</EmptyState>}
       {status.restartRequired && !status.schedulerActive && <EmptyState>Reboot to activate amdgpu.sched_policy=2 and patched RADV together.</EmptyState>}
       {status.restartRequired && status.schedulerActive && <EmptyState>The global driver is configured but this graphical session has not inherited it. Sign out and back in.</EmptyState>}

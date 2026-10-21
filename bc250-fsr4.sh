@@ -2,13 +2,17 @@
 # Install the pinned BC-250 FSR4 DLL into one compatible game or OptiScaler tree.
 set -euo pipefail
 
-RELEASE="${BC250_FSR4_RELEASE:-v4.0.0-rc9}"
+RELEASE="${BC250_FSR4_RELEASE:-v4.0.0-rc11}"
 [[ "$RELEASE" =~ ^v[0-9][0-9A-Za-z._-]*$ ]] \
     || { printf '[bc250-fsr4] Invalid release identifier.\n' >&2; exit 1; }
-ARCHIVE_NAME="${BC250_FSR4_ARCHIVE_NAME:-bc250-fsr4-dll-${RELEASE#v}-docs2.tar.xz}"
+ARCHIVE_NAME="${BC250_FSR4_ARCHIVE_NAME:-bc250-fsr4-dll-${RELEASE#v}.zip}"
+[[ "$ARCHIVE_NAME" =~ ^[0-9A-Za-z][0-9A-Za-z._-]*$ ]] \
+    || { printf '[bc250-fsr4] Invalid archive name.\n' >&2; exit 1; }
 ARCHIVE_URL="https://github.com/daniel-h-0/bc250-fsr4-fork/releases/download/$RELEASE/$ARCHIVE_NAME"
-ARCHIVE_SHA256="${BC250_FSR4_ARCHIVE_SHA256:-063e23e0a56605b63deef2c03100432eb75d991c68eb04c6eb9b4a8444fd4f06}"
-DLL_SHA256="${BC250_FSR4_DLL_SHA256:-eefcac03ab17b04a29a5bb16e3f3e9c3181ba9ea46b05a61cb49a5003e1516ef}"
+ARCHIVE_SHA256="${BC250_FSR4_ARCHIVE_SHA256:-95ef0c6ea887e0506a3a92f7e4648e7ab7e1100e99f5eff2f70dd33b8dff2a72}"
+DLL_SHA256="${BC250_FSR4_DLL_SHA256:-8192ea97620f8e6407bff346bf905f0d555ff73d89fe14616eb1fa5e41ab3175}"
+[[ "$ARCHIVE_SHA256" =~ ^[0-9a-f]{64}$ && "$DLL_SHA256" =~ ^[0-9a-f]{64}$ ]] \
+    || { printf '[bc250-fsr4] Invalid checksum pin.\n' >&2; exit 1; }
 DLL_NAME=amd_fidelityfx_upscaler_dx12.dll
 MESH_STATE="${BC250_MESH_STATE_DIR:-$HOME/.local/share/bc250-mesh-shader}"
 STATE_DIR="${BC250_FSR4_STATE_DIR:-$MESH_STATE/fsr4-dll}"
@@ -148,12 +152,138 @@ copy_atomic() {
 }
 
 verify_release_payload() {
-    [[ -d "$RELEASE_DIR" && ! -L "$RELEASE_DIR" \
-        && -f "$RELEASE_DIR/$DLL_NAME" && ! -L "$RELEASE_DIR/$DLL_NAME" \
-        && "$(sha256_file "$RELEASE_DIR/$DLL_NAME")" == "$DLL_SHA256" \
-        && -f "$RELEASE_DIR/README.md" && ! -L "$RELEASE_DIR/README.md" \
-        && -f "$RELEASE_DIR/notices/PROVENANCE.md" \
-        && ! -L "$RELEASE_DIR/notices/PROVENANCE.md" ]]
+    local payload=${1:-$RELEASE_DIR}
+    [[ -d "$payload" && ! -L "$payload" \
+        && -f "$payload/$DLL_NAME" && ! -L "$payload/$DLL_NAME" \
+        && "$(sha256_file "$payload/$DLL_NAME")" == "$DLL_SHA256" \
+        && -f "$payload/README.md" && ! -L "$payload/README.md" \
+        && -d "$payload/notices" && ! -L "$payload/notices" \
+        && -f "$payload/notices/PROVENANCE.md" \
+        && ! -L "$payload/notices/PROVENANCE.md" ]]
+}
+
+extract_release() {
+    # Never use extractall: validate every member before writing any payload.
+    # Legacy, explicitly pinned tar.xz archives remain usable for recovery/tests.
+    python3 - "$ARCHIVE" "$1" <<'PY'
+import os
+from pathlib import Path
+import stat
+import struct
+import sys
+import tarfile
+import zipfile
+
+archive, destination = sys.argv[1:]
+MAX_MEMBERS = 128
+MAX_FILE = 128 * 1024 * 1024
+MAX_TOTAL = 256 * 1024 * 1024
+MAX_RATIO = 200
+
+def fail(message):
+    raise ValueError(message)
+
+def validate_name(name, directory):
+    if directory and name.endswith("/"):
+        name = name[:-1]
+    parts = name.split("/")
+    if not name or len(name) > 512 or len(parts) > 16 \
+            or any(part in ("", ".", "..") for part in parts) \
+            or any(ord(char) < 32 or ord(char) == 127 for char in name) \
+            or "\\" in name or ":" in name:
+        fail("Unsafe archive member path")
+    return name
+
+try:
+    if os.path.getsize(archive) > MAX_TOTAL:
+        fail("Archive exceeds size limit")
+    with open(archive, "rb") as stream:
+        signature = stream.read(4)
+    zipped = signature in (b"PK\x03\x04", b"PK\x05\x06") or zipfile.is_zipfile(archive)
+    if zipped:
+        # Bound the central directory before ZipFile allocates its member list.
+        # This asset needs neither ZIP64 nor split/multi-disk ZIP support.
+        with open(archive, "rb") as stream:
+            stream.seek(max(0, os.path.getsize(archive) - 65557))
+            tail = stream.read()
+        end = tail.rfind(b"PK\x05\x06")
+        if end < 0 or len(tail) - end < 22:
+            fail("Missing ZIP end record")
+        _, disk, central_disk, disk_count, count, central_size, offset, comment = \
+            struct.unpack("<4s4H2LH", tail[end:end + 22])
+        if disk or central_disk or disk_count != count or count > MAX_MEMBERS \
+                or central_size > MAX_MEMBERS * 4096 or offset == 0xffffffff \
+                or tail[max(0, end - 20):end - 16] == b"PK\x06\x07" \
+                or len(tail) - end != 22 + comment:
+            fail("ZIP directory limit exceeded or unsupported layout")
+    with (zipfile.ZipFile(archive) if zipped else tarfile.open(archive, "r:xz")) as source:
+        entries = []
+        seen = {}
+        total = 0
+        # Iterate tar members so a member-count bomb is rejected without loading it all.
+        for member in (source.infolist() if zipped else source):
+            if len(entries) >= MAX_MEMBERS:
+                fail("Archive member limit exceeded")
+            if zipped:
+                directory = member.is_dir()
+                mode = stat.S_IFMT(member.external_attr >> 16)
+                if mode not in (0, stat.S_IFDIR if directory else stat.S_IFREG) \
+                        or (not directory and member.external_attr & 0x10):
+                    fail("Archive contains a link or non-regular member")
+                if member.flag_bits & 1 or member.compress_type not in (
+                        zipfile.ZIP_STORED, zipfile.ZIP_DEFLATED):
+                    fail("Unsupported ZIP member encoding")
+                if member.orig_filename != member.filename:
+                    fail("Unsafe archive member path")
+                size = member.file_size
+                if size > max(1, member.compress_size) * MAX_RATIO:
+                    fail("ZIP compression ratio limit exceeded")
+                name = member.filename
+            else:
+                directory = member.isdir()
+                if (not directory and not member.isreg()) or member.issparse():
+                    fail("Archive contains a link or non-regular member")
+                name, size = member.name, member.size
+            name = validate_name(name, directory)
+            # Case-fold too: the destination DLL is used by Windows applications.
+            key = name.casefold()
+            if key in seen:
+                fail("Duplicate archive member")
+            seen[key] = directory
+            if size < 0 or size > MAX_FILE or directory and size:
+                fail("Archive member size limit exceeded")
+            total += size
+            if total > MAX_TOTAL:
+                fail("Archive expanded size limit exceeded")
+            entries.append((member, name, directory, size))
+        for _, name, _, _ in entries:
+            parts = name.casefold().split("/")
+            for index in range(1, len(parts)):
+                if seen.get("/".join(parts[:index])) is False:
+                    fail("Archive file/directory path collision")
+        if total > max(1, os.path.getsize(archive)) * MAX_RATIO:
+            fail("Archive compression ratio limit exceeded")
+        for member, name, directory, size in entries:
+            target = Path(destination) / name
+            if directory:
+                target.mkdir(mode=0o700, parents=True, exist_ok=True)
+                continue
+            target.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+            with (source.open(member) if zipped else source.extractfile(member)) as reader, \
+                    target.open("xb") as writer:
+                remaining = size
+                while remaining:
+                    block = reader.read(min(1024 * 1024, remaining))
+                    if not block:
+                        fail("Truncated archive member")
+                    writer.write(block)
+                    remaining -= len(block)
+                if reader.read(1):
+                    fail("Archive member exceeds declared size")
+            target.chmod(0o600)
+except (OSError, ValueError, EOFError, RuntimeError, tarfile.TarError, zipfile.BadZipFile) as error:
+    raise SystemExit(f"[bc250-fsr4] Unsafe or invalid FSR4 archive: {error}")
+PY
 }
 
 stage_release() {
@@ -182,13 +312,11 @@ stage_release() {
     [[ "$(sha256_file "$ARCHIVE")" == "$ARCHIVE_SHA256" ]] \
         || die "Cached FSR4 archive checksum mismatch."
     stage=$(mktemp -d "$CACHE_DIR/.release.XXXXXX")
-    if ! tar -xJf "$ARCHIVE" --no-same-owner --no-same-permissions -C "$stage"; then
+    if ! extract_release "$stage"; then
         rm -rf "$stage"
         die "Could not extract the verified FSR4 archive."
     fi
-    [[ -f "$stage/$DLL_NAME" && ! -L "$stage/$DLL_NAME" \
-        && "$(sha256_file "$stage/$DLL_NAME")" == "$DLL_SHA256" \
-        && -f "$stage/README.md" && -d "$stage/notices" ]] \
+    verify_release_payload "$stage" \
         || { rm -rf "$stage"; die "Extracted FSR4 payload failed validation."; }
     chmod -R go-w "$stage"
     mv "$stage" "$RELEASE_DIR"
@@ -487,6 +615,7 @@ Usage: $0 install TARGET_DLL
 
 Installs checksum-pinned BC-250 FSR4 $RELEASE into one compatible game or
 OptiScaler DLL path. The exact original is retained for verified rollback.
+This portable prerelease DLL remains experimental; it does not install OptiClient.
 Close the game before install or uninstall. See the cached README and notices
 under $RELEASE_DIR after installation.
 EOF

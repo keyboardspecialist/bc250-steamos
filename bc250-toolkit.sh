@@ -805,7 +805,8 @@ run_machine_action() {
         video-codec-install) run_sudo_script "$VIDEO_CODEC_SH" install --without-32bit ;;
         audio-build) run_script "$AUDIO_FIX_SH" ;;
         mesh-setup) run_script "$MESH_SHADER_SH" setup ;;
-        native-mesh-install) run_script "$MESH_SHADER_SH" setup --native-mesh ;;
+        directmesh-install) run_script "$MESH_SHADER_SH" setup --directmesh ;;
+        native-mesh-install) die "R2 installation is retired. Use directmesh-install for the global driver, or native-mesh-remove to clean up old R2 files." ;;
         native-mesh-remove) run_script "$MESH_SHADER_SH" uninstall --native-mesh ;;
         decky-install) run_script "$DECKY_INSTALL_SH" install ;;
         desktop-install) run_script "$DESKTOP_INSTALL_SH" install ;;
@@ -1109,10 +1110,10 @@ show_status() {
     state=$(json_field "$radv_output" nativeMeshState || true)
     detail=$(json_field "$radv_output" nativeMeshRunnerPath || true)
     case "$state" in
-        ready) status_row "BC250 RADV R2" "installed" good "private Proton + per-game runner: $detail" ;;
-        not-installed) status_row "BC250 RADV R2" "not installed" dim "optional experimental per-game RADV/vkd3d pair" ;;
+        ready) status_row "Retired BC250 RADV R2" "cleanup required" warn "remove old R2 files before installing global DirectMesh" ;;
+        not-installed) status_row "Retired BC250 RADV R2" "not installed" dim "DirectMesh replaces the old private driver/Proton pair" ;;
         invalid)
-            status_row "BC250 RADV R2" "incomplete" bad "repair or remove R2 and its private Proton copy"
+            status_row "Retired BC250 RADV R2" "incomplete" bad "review or remove old R2 files and its private Proton copy"
             failed=1; failed_components+=("BC250 RADV R2") ;;
         *)
             status_row "BC250 RADV R2" "unavailable" bad "Mesa / RADV status probe failed"
@@ -1775,7 +1776,7 @@ menu_graph_render() {
                 if [[ "$badge" == *"|"* || "$badge" == *$'\n'* ]]; then
                     die "Invalid generated menu badge: child__radv"
                 fi
-                items+=("GPU Driver and Game Upscalers|${badge}|Manage Mesa and RADV, portable FSR4 DLLs, experimental HelixSR and BC250 RADV R2, or cleanup.")
+                items+=("GPU Driver and Game Upscalers|${badge}|Manage global DirectMesh and FSR4 RADV, portable game DLLs, experimental HelixSR, and retired R2 cleanup.")
                 targets+=("child__radv")
                 badges+=("$badge")
                 if ! badge=$(menu_graph_badge menu__cmd_video_codec_menu menu); then badge=; fi
@@ -2358,7 +2359,7 @@ Commands:
   kfd-runlist            Experimental: toggle the KFD HWS TLB-flush workaround
   radv                   Open the global Mesa / RADV async-compute patch
   helixsr-prepare [--latest] [DLSS_DLL]
-                         Prepare pinned HelixSR v1.4.3 by default; --latest opts into
+                         Prepare pinned HelixSR v2.0.0 (upscaler only); --latest opts into
                          GitHub's current release (YMMV). Either mode accepts a local DLSS DLL.
   helixsr-payload-status Show HelixSR payload readiness
   helixsr-install TARGET_DLL
@@ -2394,7 +2395,7 @@ Action operation IDs:
   cec-setup              persistence-install
   aic-install            fan-install             audio-build
   video-codec-install
-  mesh-setup             native-mesh-install
+  mesh-setup             directmesh-install
   decky-install          desktop-install         coolercontrol-install
   storage-repair         cec-repair
   storage-remove         power-remove           ram-remove

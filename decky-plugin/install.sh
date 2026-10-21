@@ -2,18 +2,18 @@
 # install.sh — manage the BC-250 Control Decky plugin.
 #
 # Everything lands in update-proof locations: pnpm + node go to
-# ~/.local/share/pnpm (SteamOS updates wipe /usr, not /home), and the
-# built plugin is copied to Decky's ~/homebrew/plugins directory.
+# ~/.local/share/bc250-control/toolchain (SteamOS updates wipe /usr, not /home).
+# The built plugin is copied to Decky's ~/homebrew/plugins directory.
 #
 # Run as the deck user, NOT root. Install/uninstall use sudo for Decky's
 # root-owned plugin directory and the plugin_loader restart.
 #
 # Steps:
 #   1. Install Decky Loader if missing
-#   2. Install standalone pnpm if missing (and node LTS via pnpm)
-#   3. Ensure PNPM_HOME is on PATH in ~/.bashrc and ~/.zshrc
-#   4. pnpm install + typecheck + build + backend unit tests + runtime staging
-#   5. Copy the runtime files into ~/homebrew/plugins/"BC-250 Control"
+#   2. Prepare the pinned, private pnpm/Node build toolchain
+#      (without replacing the user's pnpm or editing shell startup files)
+#   3. pnpm install + typecheck + build + backend unit tests + runtime staging
+#   4. Copy the runtime files into ~/homebrew/plugins/"BC-250 Control"
 #      and restart plugin_loader
 
 set -euo pipefail
@@ -31,6 +31,12 @@ CU_MANAGER_SOURCE=""
 UMR_SOURCE=""
 UMR_DATABASE_SOURCE=""
 UMR_STAGE=""
+PNPM_DOWNLOAD=""
+PNPM_VERSION="9.15.9"
+NODE_MAJOR="24"
+NODE_MIN_MINOR="12"
+# SHA-256 of the upstream v9.15.9 pnpm-linux-x64 release asset.
+PNPM_SHA256="38949c3009bd674780ca7d652baa9e2310f5cda07ab9160b0e2a9c4934ab0def"
 SMU_PATCH_SOURCES=(
     "$SRC_DIR/../smu-oc-patches/0001-transaction-level-flock.patch"
     "$SRC_DIR/../smu-oc-patches/0002-steamos-stress-fallback.patch"
@@ -43,12 +49,14 @@ SMU_PATCH_SOURCES=(
     "$SRC_DIR/../smu-oc-patches/mailbox.py"
     "$SRC_DIR/../smu-oc-patches/api.py"
 )
-export PNPM_HOME="${PNPM_HOME:-$HOME/.local/share/pnpm}"
-export PATH="$PNPM_HOME/bin:$PATH"
+# Keep the compatible pnpm 9 layout/settings isolated from newer user installs.
+export PNPM_HOME="$HOME/.local/share/bc250-control/toolchain"
+export PATH="$PNPM_HOME:$PNPM_HOME/bin:$PATH"
 
 log() { printf '\n==> %s\n' "$*"; }
 die() { printf 'error: %s\n' "$*" >&2; exit 1; }
 cleanup() {
+    [[ -z "$PNPM_DOWNLOAD" ]] || rm -f -- "$PNPM_DOWNLOAD"
     [[ -z "$UMR_STAGE" ]] || sudo rm -rf "$UMR_STAGE"
 }
 umr_database_complete() {
@@ -61,6 +69,48 @@ trap cleanup EXIT
 
 require_normal_user() {
     [[ $EUID -ne 0 ]] || die "run as the deck user, not root (sudo is used where needed)"
+}
+
+ensure_build_toolchain() {
+    local pnpm_bin="$PNPM_HOME/pnpm"
+    if [[ ! -x "$pnpm_bin" ]] \
+        || [[ "$("$pnpm_bin" --version 2>/dev/null)" != "$PNPM_VERSION" ]]; then
+        [[ "$(uname -s)" == Linux && "$(uname -m)" == x86_64 ]] \
+            || die "the BC-250 build toolchain requires Linux x86_64"
+        log "Installing private pnpm $PNPM_VERSION to $PNPM_HOME"
+        mkdir -p "$PNPM_HOME"
+        PNPM_DOWNLOAD=$(mktemp "$PNPM_HOME/.pnpm-download.XXXXXX")
+        curl -fL --retry 3 --output "$PNPM_DOWNLOAD" \
+            "https://github.com/pnpm/pnpm/releases/download/v$PNPM_VERSION/pnpm-linux-x64"
+        printf '%s  %s\n' "$PNPM_SHA256" "$PNPM_DOWNLOAD" | sha256sum -c - \
+            || die "pnpm download checksum mismatch"
+        install -m 0755 "$PNPM_DOWNLOAD" "$pnpm_bin"
+        rm -f -- "$PNPM_DOWNLOAD"
+        PNPM_DOWNLOAD=""
+    fi
+    [[ "$("$pnpm_bin" --version)" == "$PNPM_VERSION" ]] \
+        || die "could not prepare pnpm $PNPM_VERSION"
+    if ! node_compatible; then
+        log "Installing Node.js $NODE_MAJOR via private pnpm"
+        "$pnpm_bin" env use --global "$NODE_MAJOR"
+        hash -r
+    fi
+    node_compatible \
+        || die "Node.js $NODE_MAJOR.$NODE_MIN_MINOR or newer within $NODE_MAJOR.x is required"
+}
+
+node_compatible() {
+    # Rollup's optional Linux native compression helper needs Node >=24.12.
+    command -v node >/dev/null 2>&1 && node -e '
+        const [major, minor] = process.versions.node.split(".").map(Number);
+        process.exit(major === Number(process.argv[1]) && minor >= Number(process.argv[2]) ? 0 : 1);
+    ' "$NODE_MAJOR" "$NODE_MIN_MINOR"
+}
+
+pnpm_build() {
+    # This is one package, not a workspace. In particular, leave any user's
+    # untracked pnpm-workspace.yaml intact; pnpm 9 reads our package.json rules.
+    "$PNPM_HOME/pnpm" --ignore-workspace "$@"
 }
 
 decky_loader_installed() {
@@ -151,44 +201,17 @@ ensure_decky_loader
 
 # --- 2. dependencies --------------------------------------------------------
 
-if ! command -v pnpm >/dev/null 2>&1; then
-    log "Installing standalone pnpm to $PNPM_HOME"
-    curl -fsSL https://get.pnpm.io/install.sh | sh -
-fi
+ensure_build_toolchain
 
-if ! command -v node >/dev/null 2>&1; then
-    log "Installing Node.js LTS via pnpm"
-    pnpm env use --global lts
-fi
-
-# --- 3. shell PATH setup ----------------------------------------------------
-# The pnpm installer only edits the shell rc it detects; cover bash and zsh.
-
-for rc in "$HOME/.bashrc" "$HOME/.zshrc"; do
-    [[ -f "$rc" ]] || continue
-    grep -q 'PNPM_HOME' "$rc" && continue
-    log "Adding pnpm to PATH in $rc"
-    cat >>"$rc" <<'EOF'
-
-# pnpm
-export PNPM_HOME="$HOME/.local/share/pnpm"
-case ":$PATH:" in
-  *":$PNPM_HOME/bin:"*) ;;
-  *) export PATH="$PNPM_HOME/bin:$PATH" ;;
-esac
-# pnpm end
-EOF
-done
-
-# --- 4. build ---------------------------------------------------------------
+# --- 3. build ---------------------------------------------------------------
 
 cd "$SRC_DIR"
 log "Installing plugin dependencies"
-pnpm install
+pnpm_build install --frozen-lockfile
 log "Typechecking"
-pnpm run typecheck
+pnpm_build run typecheck
 log "Building bundle"
-pnpm run build
+pnpm_build run build
 log "Running backend tests"
 PYTHONPATH="$SRC_DIR/../backend:$SRC_DIR/../backend/vendor" \
     python3 -m unittest discover -s "$SRC_DIR/../backend/tests"
@@ -197,7 +220,7 @@ python3 "$SRC_DIR/../scripts/stage-decky-runtime.py"
 
 [[ -f out/dist/index.js ]] || die "staging produced no out/dist/index.js"
 
-# --- 5. install root helper and Decky plugin -------------------------------
+# --- 4. install root helper and Decky plugin -------------------------------
 # Only the runtime files ship; node_modules/src/tests stay in the checkout.
 
 log "Installing root-owned CPU tuning helper (sudo)"

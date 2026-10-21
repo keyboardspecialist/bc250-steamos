@@ -115,8 +115,8 @@ rwnx_prep_tdls_direct(struct rwnx_hw *rwnx_hw, struct rwnx_vif *rwnx_vif,
 
     switch (action_code) {
     case WLAN_PUB_ACTION_TDLS_DISCOVER_RES:
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(7, 1, 0)
-        skb_put(skb, 1 + sizeof(mgmt->u.action.tdls_discover_resp));
+#if AICWF_CFG80211_VERSION_CODE >= KERNEL_VERSION(7, 1, 0)
+        skb_put(skb, 2 + sizeof(mgmt->u.action.tdls_discover_resp));
         mgmt->u.action.category = WLAN_CATEGORY_PUBLIC;
         mgmt->u.action.action_code = WLAN_PUB_ACTION_TDLS_DISCOVER_RES;
         mgmt->u.action.tdls_discover_resp.dialog_token = dialog_token;
@@ -775,9 +775,9 @@ rwnx_tdls_send_mgmt_packet_data(struct rwnx_hw *rwnx_hw, struct rwnx_vif *rwnx_v
 
         params.len = skb->len;
         params.buf = skb->data;
-        ret = rwnx_start_mgmt_xmit(rwnx_vif, NULL, &params, false, &cookie);
+        ret = rwnx_start_mgmt_xmit(rwnx_vif, NULL, &params, false, &cookie, false);
         #else
-        ret = rwnx_start_mgmt_xmit(rwnx_vif, NULL, NULL, false, 0, skb->data, skb->len, false, false, &cookie);
+        ret = rwnx_start_mgmt_xmit(rwnx_vif, NULL, NULL, false, 0, skb->data, skb->len, false, false, &cookie, false);
         #endif /* LINUX_VERSION_CODE >= KERNEL_VERSION(3, 14, 0) */
 
         return ret;

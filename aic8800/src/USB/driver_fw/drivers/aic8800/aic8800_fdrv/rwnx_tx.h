@@ -130,6 +130,8 @@ struct rwnx_sw_txhdr {
 #endif
 	u32 need_cfm;
     struct sk_buff *skb;
+    /* Assigned cfg80211 cookie, or the skb-derived cookie for internal TX. */
+    u64 cookie;
 
     size_t map_len;
     dma_addr_t dma_addr;
@@ -158,7 +160,7 @@ netdev_tx_t rwnx_start_xmit(struct sk_buff *skb, struct net_device *dev);
 #if (LINUX_VERSION_CODE >= KERNEL_VERSION(3, 14, 0))
 int rwnx_start_mgmt_xmit(struct rwnx_vif *vif, struct rwnx_sta *sta,
                          struct cfg80211_mgmt_tx_params *params, bool offchan,
-                         u64 *cookie);
+                         u64 *cookie, bool use_given_cookie);
 #else
 int rwnx_start_mgmt_xmit(struct rwnx_vif *vif, struct rwnx_sta *sta,
                          struct ieee80211_channel *channel, bool offchan,
@@ -169,7 +171,7 @@ int rwnx_start_mgmt_xmit(struct rwnx_vif *vif, struct rwnx_sta *sta,
                     #if (LINUX_VERSION_CODE >= KERNEL_VERSION(3, 3, 0))
                          bool dont_wait_for_ack,
                     #endif
-                         u64 *cookie);
+                         u64 *cookie, bool use_given_cookie);
 #endif /* LINUX_VERSION_CODE >= KERNEL_VERSION(3, 14, 0) */
 #ifdef CONFIG_RWNX_MON_XMIT
 netdev_tx_t rwnx_start_monitor_if_xmit(struct sk_buff *skb,

@@ -1,43 +1,115 @@
-# BC-250 Mesa and FSR4 integration
+# BC-250 DirectMesh, Mesa, and FSR4 integration
 
-The toolkit supports two distinct FSR4 routes.
+The toolkit provides a global DirectMesh + FSR4 RADV runtime and a separate
+portable, game-local FSR4 DLL route. The former R2 private profile is retired;
+its recorded provenance is retained only for safe recognition and removal.
 
-## Portable RC9 DLL
+## Portable RC11 DLL
 
 The game-local route downloads `daniel-h-0/bc250-fsr4-fork` release
-`v4.0.0-rc9`:
+`v4.0.0-rc11`:
 
-- Archive: `bc250-fsr4-dll-4.0.0-rc9-docs2.tar.xz`
-- Archive SHA-256: `063e23e0a56605b63deef2c03100432eb75d991c68eb04c6eb9b4a8444fd4f06`
-- DLL SHA-256: `eefcac03ab17b04a29a5bb16e3f3e9c3181ba9ea46b05a61cb49a5003e1516ef`
+- Archive: `bc250-fsr4-dll-4.0.0-rc11.zip`
+- Archive SHA-256: `95ef0c6ea887e0506a3a92f7e4648e7ab7e1100e99f5eff2f70dd33b8dff2a72`
+- DLL SHA-256: `8192ea97620f8e6407bff346bf905f0d555ff73d89fe14616eb1fa5e41ab3175`
 
 This route does not replace Mesa or require the alternate RADV runtime or a
 custom Proton build. The toolkit retains the release notices and the original
 target DLL for verified rollback.
+`bc250-fsr4.sh` validates the ZIP layout before extraction and also retains
+legacy tar.xz support for recorded older payloads. RC11 remains a prerelease;
+packaging/rollback checks are not a claim of gameplay stability or higher FPS.
 
-## FSR4 RADV Profile
+## Global DirectMesh + FSR4 RADV runtime
 
-The integrated GE-Proton route builds Mesa `mesa-26.2.2` at commit
-`3281a69a8bfd9f997e91c15ed0e6290cae12dd32`. The FSR4 patch series is
+The global route builds Mesa `mesa-26.2.5` at commit
+`ddaf85e353442d9d7f192fdcf1823e652e3f2ee3`. Its patch series is
 downloaded from `MastaG/linux-cachyos-bc250` at immutable commit
-`db49878af40551b481f511053201fcf1e1bd5d90`:
+`f05991ace64a42eda3d2dc583e96b8d35ce393e3`:
 
 1. `0001-gfx1013-compute-queue-fix.patch`
-2. `0005-bc250-fsr4-v3.patch`
-3. `0006-bc250-fsr4-combined-unroll.patch`
-4. `0007-bc250-fsr4-imageprep-texture.patch`
-5. `0008-bc250-fsr4-resolution-variants.patch`
-6. `0009-bc250-fsr4-production-defaults.patch`
+2. `0002-bc250-directmesh.patch` (DirectMesh 1.3.1, locally rebased as below)
+3. `0003-bc250-fsr4-v3.patch`
+4. `0004-bc250-fsr4-combined-unroll.patch`
+5. `0005-bc250-fsr4-imageprep-texture.patch`
+6. `0006-bc250-fsr4-resolution-variants.patch`
+7. `0007-bc250-fsr4-production-defaults.patch`
 
 Every file has a fixed SHA-256 in `bc250-mesh-shader.sh`. Setup requires
 `--fuzz=0`, validates source markers after patching, and checks FSR4
-markers in the final ELF driver. Patches `0002` through `0004` are deliberately
-omitted because the mesh/task path is unsafe on this hardware and the broad
-GFX10.3 override is not required by the FSR4 profile.
+markers in the final ELF driver. All seven patches applied with zero fuzz to
+the pinned source, and a full RADV build with `ninja -j2` **passed**. Installation,
+GPU gameplay, and conformance were not qualified by that build.
 
-## BC250 RADV R2 Native-Mesh Profile
+`rebase-directmesh.py` accepts only the checksum-pinned upstream DirectMesh
+patch and refuses missing or ambiguous contexts. It preserves Mesa 26.2.5's
+`force_exact_glsl_fma` flag and padded-VA unmapping fix, and expands DirectMesh's
+compiler-key arrays and static assertions from 24 to **28 bytes**, retaining the
+complete key in pipeline-plan and shader-object caches. It does not import the
+older unsafe mesh/task patch series or a broad GFX10.3 override.
 
-The optional private profile consumes
+The source-build libdrm fallback is `2.4.134`, archive SHA-256
+`ac5e74d157830eb8bee44c6a6bf3ad49774ef0dd2a72bdad74a8f20308b52a95`.
+This fallback is separate from the host's system libdrm.
+
+Install as the logged-in user:
+
+```bash
+./bc250-mesh-shader.sh setup --directmesh
+```
+
+Plain `setup` is equivalent. The patched 64-bit RADV ICD is exported globally;
+SteamOS still supplies the 32-bit RADV path. DirectMesh is enabled by default
+on BC-250. To opt out for one game, set its Steam launch option to:
+
+```text
+RADV_DIRECTMESH=0 %command%
+```
+
+The GFX1013 async-compute kernel lifecycle remains based on
+`DryhoppedIPA/bc250-gfx1013-fix` commit
+`d3e6dc062c34d2523db0abe5741d1f5b0dea00d9`. Its matching AMDGPU repair and
+`amdgpu.sched_policy=2` gate must be active before the alternate RADV driver is
+exported to the user session. Follow the requested reboot checkpoints.
+
+## Retired R2 cleanup and removal-only provenance
+
+Close games before migration. Global setup **first** verifies both the old
+toolkit-owned native-mesh profile and private `BC250-R2` compatibility tool,
+then removes recognized files before proceeding with DirectMesh. Modified
+recorded profile files, unrecognized tools, symlinks, and unsafe ancestors fail
+closed; setup does not
+delete them or continue over an unverifiable profile. Restore the recorded
+files or inspect and remove the unrecognized state manually before retrying.
+
+The old private Proton copy was identified by its managed marker, version,
+compatibility-tool identity, and pinned vkd3d core, not a full-tree manifest.
+Cleanup removes that entire private copy; arbitrary personal additions or changes
+elsewhere inside it cannot be detected. Preserve those manually before migration.
+
+Cleanup checks current-user process command lines and mappings before recovery
+or deletion. Protected mappings trigger a read-only sudo retry; if they still
+cannot be inspected, cleanup stops instead of assuming R2 is idle.
+
+Decky and Plasma cannot answer terminal sudo password prompts. Their global
+installer checks noninteractive sudo authorization before starting R2 cleanup;
+if unavailable, use `./bc250-mesh-shader.sh setup --directmesh` in a terminal.
+Trainer's native maintenance runner provides its existing authentication flow.
+
+Cleanup does not alter original Proton, prefixes, saves, or per-game Steam
+settings. For former R2 games, **manually select ordinary Proton and remove the
+old `bc250-r2` launch option in Steam**, then restart Steam. No private Proton
+copy or patched R2 vkd3d core is installed for DirectMesh.
+
+To remove recognized legacy files without installing the new global runtime:
+
+```bash
+./bc250-mesh-shader.sh uninstall --native-mesh
+```
+
+`setup --native-mesh` is retired and refuses installation. The following values
+are historical attestation data for removal, **not installation instructions**.
+The old private profile came from
 [`luckiskind/bc250-radv-r2`](https://github.com/luckiskind/bc250-radv-r2)
 prerelease `r2-20260921` at commit
 `3367cd5eed23ab38fddfc0fb52dbc4e17adf6e11`. The release archive SHA-256 is
@@ -46,35 +118,14 @@ Its RADV driver SHA-256 is
 `ee8b43e646036e6fde20040dbd18afb40da63f12b79d5c0826fcbdd9c0fae58e`,
 and its patched vkd3d core SHA-256 is
 `1dd2de3737fa70b2131368304c36d8fae0797fb7f3bfe1357b207c59739686c5`.
-Both values must also match the release manifest.
+Recorded payload values are checked against the installed manifest for cleanup.
 
 The corresponding `mesa-r2-source.tar.gz` asset is pinned at SHA-256
 `752eb8c0941c0aeb46be991cdf7f8fc2fc1ed2f0c940a62759e47770e33a0f94`.
-If the prebuilt RADV fails dynamic-link validation on the active SteamOS image,
-the toolkit safely extracts that exact source snapshot and builds only the AMD
-Vulkan driver locally. The release's verified vkd3d core remains unchanged.
-The private profile manifest records the resulting driver hash and source asset
-provenance; arbitrary local or mutable upstream source is not accepted.
-
-R2 substantially extends the earlier LoneWolf baseline. Native mesh-only draws
-use direct dispatch where eligible, while application TASK shaders use a
-compute-emulated producer/native-mesh-consumer path. The patched vkd3d core
-contains the matching compute-to-graphics queue workaround, so the toolkit
-installs both payloads and creates a private copy of exactly Proton 11.0-2c.
-Using the RADV payload alone is not the supported D3D12 configuration.
-
-The current patched compute kernel and active `amdgpu.sched_policy=2` remain
-required. R2 is x86-64, never exported globally, and requires native Steam,
-explicit compatibility-tool selection, plus its per-game runner. Flatpak Steam
-and 32-bit games are not qualified. Compact vertices and native TASK remain
-disabled. The old LoneWolf manifest constants remain only to recognize,
-replace, or safely remove toolkit-owned legacy profiles.
-
-The GFX1013 async-compute kernel lifecycle remains based on
-`DryhoppedIPA/bc250-gfx1013-fix` commit
-`d3e6dc062c34d2523db0abe5741d1f5b0dea00d9`. Its matching AMDGPU repair and
-`amdgpu.sched_policy=2` gate must be active before the alternate RADV driver is
-exported to the user session.
+Older source-built R2 manifests also record the locally built driver hash and
+this exact source asset's provenance. Recognition retains the historical Proton
+`11.0-2c`/vkd3d identities; it does not download or rebuild them for new installs.
+The earlier LoneWolf manifest constants likewise remain only for safe removal.
 
 ## GE-Proton Package
 
@@ -100,6 +151,6 @@ All FSR4 paths remain experimental BC-250 software. They can regress
 performance, corrupt frames, hang, or reset the GPU. Qualify one game at a time,
 retain the portable rollback route while evaluating integrated GE-Proton, and
 do not use DLL injection or FSR4 upgrade with anti-cheat games.
-BC250 RADV R2 is an experimental prerelease, not a claim of Vulkan or D3D
-conformance. Its installed `VALIDATION.md` documents known hangs, memory
-failures, and unqualified paths.
+DirectMesh's successful source build is not a claim of Vulkan or D3D
+conformance, GPU stability, or game compatibility. Keep the per-game opt-out and
+portable rollback routes available during evaluation.

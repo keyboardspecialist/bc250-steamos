@@ -1,4 +1,5 @@
 import os
+import re
 import subprocess
 import tarfile
 import tempfile
@@ -8,7 +9,14 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 SCRIPT = ROOT / "video-codec/bc250-video-codec.sh"
-SOURCE_ROOT = "bc250-encoding-decoding-fix-180aab87fa84b68f8d4a9d6bf8d4c1fb0cac940e"
+SOURCE_ROOT = "bc250-encoding-decoding-fix-bc1191850fa521ceb3345986c59c1a882ed757fc"
+SHADERS = (
+    "color_convert", "dct_transform", "deblock_filter", "entropy_encode",
+    "hevc_motion_estimation", "hevc_pred", "hevc_quant", "hevc_reconstruct_sao",
+    "hevc_transform", "intra_wavefront", "motion_estimation", "quantize",
+    "reconstruct", "residual_predict", "video_proc", "video_proc10",
+    "video_proc_tonemap",
+)
 
 
 class VideoCodecTests(unittest.TestCase):
@@ -47,7 +55,7 @@ class VideoCodecTests(unittest.TestCase):
             )
             self.assertEqual(absent.returncode, 1)
             self.assertIn("state: not-installed", absent.stdout)
-            self.assertIn("release: v0.5.1", absent.stdout)
+            self.assertIn("release: v0.5.4", absent.stdout)
 
             environment.parent.mkdir()
             environment.write_text(
@@ -63,21 +71,193 @@ class VideoCodecTests(unittest.TestCase):
 
     def test_source_commit_and_archive_digest_are_pinned(self):
         source = SCRIPT.read_text(encoding="utf-8")
-        self.assertIn("RELEASE=v0.5.1", source)
+        self.assertIn("RELEASE=v0.5.4", source)
         self.assertIn(
-            "SOURCE_COMMIT=180aab87fa84b68f8d4a9d6bf8d4c1fb0cac940e",
+            "SOURCE_COMMIT=bc1191850fa521ceb3345986c59c1a882ed757fc",
             source,
         )
         self.assertIn(
-            "SOURCE_ARCHIVE_SHA256=c735c3c566882b1e8594eff7e163feb0d62e2ad52d83c104c5178a34f5a2784a",
+            "SOURCE_ARCHIVE_SHA256=6659bc48c4a8914385e869b4824f04257936e9d8e03574242409c05f2f819720",
             source,
         )
         self.assertIn("codeload.github.com/simpmix/bc250-encoding-decoding-fix/tar.gz/$SOURCE_COMMIT", source)
-        self.assertIn("-DBC250_WITH_X264=OFF", source)
+        self.assertEqual(source.count("-DBC250_WITH_X264=ON"), 2)
+        self.assertEqual(source.count("-DBC250_WITH_X265=ON"), 2)
+        self.assertNotIn("-DBC250_WITH_X265=OFF", source)
         self.assertIn('"$output" != *"libx264"*', source)
+        self.assertIn('"$output" != *"libx265"*', source)
         self.assertIn("build=local-source", source)
         self.assertIn("write_runtime_manifest", source)
-        self.assertEqual(source.count(".comp.spv\n"), 11)
+        self.assertEqual(
+            re.findall(r"^    ([a-z0-9_]+)\.comp\.spv$", source, re.MULTILINE),
+            list(SHADERS),
+        )
+
+    def test_shader_inventory_rejects_missing_and_unreviewed_sources(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            shaders = root / "approach1-compute-encoder/shaders"
+            shaders.mkdir(parents=True)
+            for shader in SHADERS:
+                (shaders / f"{shader}.comp").write_text("shader\n")
+            command = (
+                'helper=$1; source_dir=$2; set -- help; source "$helper" >/dev/null; '
+                'source_shader_inventory_valid "$source_dir"'
+            )
+            def valid():
+                return subprocess.run(
+                    ["bash", "-c", command, "_", str(SCRIPT), str(root)],
+                    capture_output=True,
+                ).returncode == 0
+            self.assertTrue(valid())
+            extra = shaders / "unreviewed.comp"
+            extra.write_text("shader\n")
+            self.assertFalse(valid())
+            extra.unlink()
+            (shaders / "video_proc_tonemap.comp").unlink()
+            self.assertFalse(valid())
+
+    def test_manifests_cover_all_shaders_for_both_architectures(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            for dual in (False, True):
+                runtime = root / ("dual" if dual else "native")
+                paths = ["dri/bc250_drv_video.so"]
+                if dual:
+                    paths.append("dri32/bc250_drv_video.so")
+                paths += [f"shaders/{shader}.comp.spv" for shader in SHADERS]
+                paths += ["LICENSE.upstream", "README.upstream.md"]
+                for relative in paths:
+                    target = runtime / relative
+                    target.parent.mkdir(parents=True, exist_ok=True)
+                    target.write_bytes(b"fixture\n")
+                result = subprocess.run(
+                    ["bash", "-c",
+                     'helper=$1; runtime=$2; set -- help; source "$helper" >/dev/null; '
+                     'write_runtime_manifest "$runtime"; '
+                     'manifest_layout_valid "$runtime/manifest.sha256"; '
+                     '(cd "$runtime" && sha256sum -c --quiet manifest.sha256)',
+                     "_", str(SCRIPT), str(runtime)],
+                    capture_output=True, text=True,
+                )
+                self.assertEqual(result.returncode, 0, result.stderr)
+                manifest = runtime / "manifest.sha256"
+                self.assertEqual(
+                    [line.split("  ")[1] for line in manifest.read_text().splitlines()],
+                    paths,
+                )
+                manifest.write_text(manifest.read_text().replace(
+                    "shaders/hevc_pred.comp.spv", "shaders/unreviewed.comp.spv"
+                ))
+                invalid = subprocess.run(
+                    ["bash", "-c",
+                     'helper=$1; manifest=$2; set -- help; source "$helper" >/dev/null; '
+                     'manifest_layout_valid "$manifest"',
+                     "_", str(SCRIPT), str(manifest)], capture_output=True,
+                )
+                self.assertNotEqual(invalid.returncode, 0)
+
+    def test_runtime_dependency_check_rejects_hard_codec_links(self):
+        for output, expected in (
+            ("libva.so => /usr/lib/libva.so", 0),
+            ("libx264.so.164 => /usr/lib/libx264.so.164", 1),
+            ("libx265.so.215 => /usr/lib/libx265.so.215", 1),
+            ("libvulkan.so => not found", 1),
+            ("undefined symbol: hevc_x265_create", 1),
+        ):
+            with self.subTest(output=output):
+                result = subprocess.run(
+                    ["bash", "-c",
+                     'helper=$1; fixture_output=$2; set -- help; source "$helper" >/dev/null; '
+                     'ldd() { printf "%s\\n" "$fixture_output"; }; '
+                     'runtime_dependencies_valid fixture.so',
+                     "_", str(SCRIPT), output], capture_output=True,
+                )
+                self.assertEqual(result.returncode, expected)
+
+    def test_dual_build_uses_separate_architectures_and_runtime_adapters(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = root / "source"
+            shaders = source / "approach1-compute-encoder/shaders"
+            shaders.mkdir(parents=True)
+            for shader in SHADERS:
+                (shaders / f"{shader}.comp").write_text("shader\n")
+            (source / "LICENSE").write_text("license\n")
+            (source / "README.md").write_text("readme\n")
+            result = subprocess.run(
+                ["bash", "-c",
+                 'helper=$1; root=$2; set -- help; source "$helper" >/dev/null; '
+                 'cmake() { printf "%s\\n" "$*" >> "$root/cmake.log"; '
+                 'if [[ "$1" == -S ]]; then local build=$4 arch=64 shader; '
+                 '[[ " $* " != *" -DBUILD_32BIT=ON "* ]] || arch=32; '
+                 'mkdir -p "$build"; printf "ELF%s fixture" "$arch" > "$build/bc250_drv_video.so"; '
+                 'for shader in "${SHADER_NAMES[@]}"; do printf shader > "$build/$shader"; done; fi; }; '
+                 'build_runtime "$root/source" "$root/build" "$root/build32" "$root/runtime" 1; '
+                 'manifest_layout_valid "$root/runtime/manifest.sha256"',
+                 "_", str(SCRIPT), str(root)],
+                capture_output=True, text=True,
+            )
+            self.assertEqual(result.returncode, 0, result.stderr)
+            runtime = root / "runtime"
+            self.assertEqual((runtime / "dri/bc250_drv_video.so").read_bytes(), b"ELF64 fixture")
+            self.assertEqual((runtime / "dri32/bc250_drv_video.so").read_bytes(), b"ELF32 fixture")
+            commands = (root / "cmake.log").read_text().splitlines()
+            configure = [line for line in commands if line.startswith("-S ")]
+            self.assertEqual(len(configure), 2)
+            self.assertNotIn("-DBUILD_32BIT=ON", configure[0])
+            self.assertIn("-DBUILD_32BIT=ON", configure[1])
+            for line in configure:
+                self.assertIn("-DBC250_WITH_X264=ON", line)
+                self.assertIn("-DBC250_WITH_X265=ON", line)
+                self.assertIn("-DBUILD_TESTS=OFF", line)
+            self.assertEqual(len(list((runtime / "shaders").iterdir())), 17)
+
+    def test_new_environment_keeps_compute_backends_and_needs_session_reload(self):
+        result = subprocess.run(
+            ["bash", "-c",
+             'helper=$1; set -- help; source "$helper" >/dev/null; '
+             'LIBVA_DRIVER_NAME=bc250; LIBVA_DRIVERS_PATH=$(configured_driver_path); '
+             'BC250_SHADER_DIR=$COMPAT_DIR/shaders; '
+             'unset BC250_H264_BACKEND BC250_HEVC_BACKEND; '
+             'if shell_environment_active; then exit 3; fi; '
+             'BC250_H264_BACKEND=compute; BC250_HEVC_BACKEND=compute; '
+             'shell_environment_active; environment_config; profile_config',
+             "_", str(SCRIPT)], capture_output=True, text=True,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        for variable in ("BC250_H264_BACKEND=compute", "BC250_HEVC_BACKEND=compute"):
+            self.assertIn(f"\n{variable}\n", result.stdout)
+            self.assertIn(f"\nexport {variable}\n", result.stdout)
+
+    def test_legacy_runtime_removal_does_not_require_current_release(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            data = root / "data"
+            runtime = data / "runtime"
+            runtime.mkdir(parents=True)
+            (runtime / ".bc250-toolkit-managed").write_text(
+                "bc250-toolkit-video-codec-v1\nrelease=v0.5.1\n"
+            )
+            (runtime / "old-shader.comp.spv").write_bytes(b"legacy")
+            (root / "bc250").symlink_to(runtime)
+            environment = root / "environment.d/90-bc250-video-codec.conf"
+            environment.parent.mkdir()
+            environment.write_text("# BC-250 toolkit managed VA-API video codec\n")
+            result = subprocess.run(
+                ["bash", "-c",
+                 'helper=$1; root=$2; set -- help; source "$helper" >/dev/null; '
+                 'DATA_DIR=$root/data; RUNTIME_DIR=$DATA_DIR/runtime; '
+                 'COMPAT_DIR=$root/bc250; ENV_FILE=$root/environment.d/90-bc250-video-codec.conf; '
+                 'PROFILE_FILE=$root/profile; LEGACY_PROFILE_FILE=$root/legacy-profile; '
+                 'KEEP_FILE=$root/keep; LOCK_FILE=$root/lock; '
+                 'require_root() { :; }; uninstall_codec',
+                 "_", str(SCRIPT), str(root)], capture_output=True, text=True,
+            )
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertFalse(runtime.exists())
+            self.assertFalse((root / "bc250").is_symlink())
+            self.assertFalse(environment.exists())
 
     def test_installer_uses_safe_verified_persistent_layout(self):
         source = SCRIPT.read_text(encoding="utf-8")

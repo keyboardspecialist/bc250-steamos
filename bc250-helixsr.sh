@@ -3,7 +3,7 @@
 set -euo pipefail
 umask 077
 
-RELEASE="${BC250_HELIXSR_RELEASE:-v1.4.3}"
+RELEASE="${BC250_HELIXSR_RELEASE:-v2.0.0}"
 [[ "$RELEASE" =~ ^v[0-9][0-9A-Za-z._-]*$ ]] \
     || { printf '[bc250-helixsr] Invalid release identifier.\n' >&2; exit 1; }
 ARCHIVE_NAME="${BC250_HELIXSR_ARCHIVE_NAME:-HelixSR-${RELEASE#v}.zip}"
@@ -11,8 +11,8 @@ ARCHIVE_NAME="${BC250_HELIXSR_ARCHIVE_NAME:-HelixSR-${RELEASE#v}.zip}"
     && "$ARCHIVE_NAME" != *$'\r'* ]] \
     || { printf '[bc250-helixsr] Invalid archive name.\n' >&2; exit 1; }
 ARCHIVE_URL="https://github.com/lonewolf0622/HelixSR/releases/download/$RELEASE/$ARCHIVE_NAME"
-ARCHIVE_SHA256="${BC250_HELIXSR_ARCHIVE_SHA256:-d79e849444e0ea8928c0b8df22ec21368ac08ec038417c087a3d2df7a6722119}"
-DLL_SHA256="${BC250_HELIXSR_DLL_SHA256:-3fe8d532516b6441bd8893d986c494a19795375ebd2a6dffb1a9742e3db7dcfd}"
+ARCHIVE_SHA256="${BC250_HELIXSR_ARCHIVE_SHA256:-0d60686eddbb0abd680b27d12a088344b212464ebf0a2dc18d10387e1c817f52}"
+DLL_SHA256="${BC250_HELIXSR_DLL_SHA256:-82b612a73759117d4203f0ca76f18b325e1c6f3c61c64481c94750abce392a09}"
 WEIGHTS_SHA256="${BC250_HELIXSR_WEIGHTS_SHA256:-762adfde720035f7ac43910846e0ce6826c239bcd41f863196f77c547ae57153}"
 DLSS_SHA256="${BC250_HELIXSR_DLSS_SHA256:-be6e434a94ca32499515eb62ca0e6c274526055d568d0426e4c652dcdfb6ee6e}"
 for checksum in "$ARCHIVE_SHA256" "$DLL_SHA256" "$WEIGHTS_SHA256" "$DLSS_SHA256"; do
@@ -20,6 +20,7 @@ for checksum in "$ARCHIVE_SHA256" "$DLL_SHA256" "$WEIGHTS_SHA256" "$DLSS_SHA256"
         || { printf '[bc250-helixsr] Invalid pinned checksum.\n' >&2; exit 1; }
 done
 STABLE_RELEASE="$RELEASE"
+STABLE_ARCHIVE_SHA256="$ARCHIVE_SHA256"
 STABLE_DLL_SHA256="$DLL_SHA256"
 STABLE_WEIGHTS_SHA256="$WEIGHTS_SHA256"
 
@@ -155,6 +156,24 @@ PINNED_ARCHIVE_EXTRA_FILES = (
     "LICENSE-APACHE-2.0", "helixsr-install.bat", "helixsr-install.sh",
     "setup/helixsr_install.py", "setup/lib/splitk_hlsl.py",
 )
+# Only the build-only upscaler dependencies are extracted. In particular, never
+# run v2's interactive shell wrapper: it installs packages and then scans games.
+V2_ARCHIVE_FILES = tuple(name for name in ARCHIVE_FILES if name not in {
+    "amd_fidelityfx_dx12.dll", "helixsr.ini", "helixsr-setup.sh",
+    "helixsr-setup.bat", "helixsr-setup.ps1",
+}) + (
+    "HelixSR-fsrfg/amd_fidelityfx_dx12.dll", "HelixSR-fsrfg/helixsr.ini",
+    "setup/lib/k5_xform.py", "setup/lib/setup_shader_jobs.py",
+    "setup/lib/splitk_hlsl.py",
+    "setup/lib/model/runtime-licenses/Zig-MIT.txt",
+    "setup/lib/model/runtime-licenses/libcxx-LICENSE.txt",
+    "setup/lib/model/runtime-licenses/libcxxabi-LICENSE.txt",
+    "setup/lib/model/runtime-licenses/libunwind-LICENSE.txt",
+    "setup/lib/model/runtime-licenses/musl-COPYRIGHT.txt",
+)
+# Exact v2.0.0 ZIP path inventory (sorted, relative to its versioned root,
+# newline-separated without a trailing newline). Covers also unextracted files.
+V2_LAYOUT_SHA256 = "779f383db3dd5c36a154ced20bf02d6a4802302b08be2352d22b6d2321967997"
 
 
 class Refusal(Exception):
@@ -208,8 +227,10 @@ def verify_expected_id(target, expected_id):
         raise Refusal("Expected HelixSR target ID does not match the canonical target path.")
 
 
-def validate_archive(archive, destination, root_name, allow_extra=False):
-    required = {f"{root_name}/{name}" for name in ARCHIVE_FILES}
+def validate_archive(archive, destination, root_name):
+    v2 = root_name != "HelixSR-1.4.3"
+    required_files = V2_ARCHIVE_FILES if v2 else ARCHIVE_FILES
+    required = {f"{root_name}/{name}" for name in required_files}
     pinned = required | {f"{root_name}/{name}" for name in PINNED_ARCHIVE_EXTRA_FILES}
     try:
         source = zipfile.ZipFile(archive)
@@ -218,11 +239,11 @@ def validate_archive(archive, destination, root_name, allow_extra=False):
     with source:
         entries = source.infolist()
         names = [entry.filename for entry in entries]
-        expected = required if allow_extra else pinned
+        expected = required if v2 else pinned
         if len(names) != len(set(names)) or not required.issubset(names) \
-                or (not allow_extra and (len(names) != len(expected) or set(names) != expected)):
+                or (not v2 and (len(names) != len(expected) or set(names) != expected)):
             raise Refusal("HelixSR archive has an unexpected payload layout.")
-        if sum(entry.file_size for entry in entries) > 128 * 1024 * 1024:
+        if len(entries) > 512 or sum(entry.file_size for entry in entries) > 256 * 1024 * 1024:
             raise Refusal("HelixSR archive is unexpectedly large.")
         for entry in entries:
             name = entry.filename
@@ -237,6 +258,10 @@ def validate_archive(archive, destination, root_name, allow_extra=False):
                 or kind not in (0, stat.S_IFREG)
             ):
                 raise Refusal(f"Unsafe HelixSR archive entry: {name}")
+        if v2:
+            inventory = "\n".join(sorted(name[len(root_name) + 1:] for name in names))
+            if digest_bytes(inventory.encode("utf-8")) != V2_LAYOUT_SHA256:
+                raise Refusal("HelixSR archive has an unqualified v2 payload layout; refusing setup.")
         os.mkdir(destination, 0o700)
         for entry in entries:
             if entry.filename not in expected:
@@ -260,7 +285,7 @@ def validate_archive(archive, destination, root_name, allow_extra=False):
                 if not regular(path):
                     raise Refusal(f"Unsafe extracted HelixSR file: {relative}")
                 actual.add(relative)
-    wanted_files = set(ARCHIVE_FILES) if allow_extra else set(ARCHIVE_FILES) | set(PINNED_ARCHIVE_EXTRA_FILES)
+    wanted_files = set(required_files) if v2 else set(required_files) | set(PINNED_ARCHIVE_EXTRA_FILES)
     if actual != wanted_files:
         raise Refusal("Extracted HelixSR payload failed validation.")
 
@@ -307,7 +332,7 @@ def payload_identity(root):
             or any(not isinstance(value[key], str) or not SHA_RE.fullmatch(value[key]) for key in (
                 "dllSha256", "weightsSha256", "kernelsSha256", "iniSha256",
                 "setupSha256", "sourceSha256",
-            )) or type(value["shaderCount"]) is not int or value["shaderCount"] not in (30, 60):
+            )) or type(value["shaderCount"]) is not int or value["shaderCount"] not in (30, 60, 200):
         raise Refusal("Prepared HelixSR identity manifest is invalid.")
     print(f"{value['release']}\t{value['dllSha256']}\t{value['weightsSha256']}")
 
@@ -329,7 +354,8 @@ def kernel_pack_count(path):
     if len(data) < 16 or data[:8] != b"HXSRKPAK":
         return None
     version, count = struct.unpack_from("<II", data, 8)
-    valid_counts = {1: {30}, 2: {30, 60}}
+    # v2 default: (32 native + 34 FP32 + 34 FP32h) * 2 wave sizes.
+    valid_counts = {1: {30}, 2: {30, 60, 200}}
     if version not in valid_counts or count not in valid_counts[version] \
             or len(data) < 16 + count * 40:
         return None
@@ -343,7 +369,7 @@ def kernel_pack_count(path):
         names.add(name)
         previous_end = offset + size
     return count if previous_end == len(data) else None
-def setup_metadata(path, weights_sha, source_sha=None, shader_count=None):
+def setup_metadata(path, weights_sha, source_sha=None, shader_count=None, release=None):
     if not regular(path):
         return None
     try:
@@ -352,17 +378,23 @@ def setup_metadata(path, weights_sha, source_sha=None, shader_count=None):
     except (OSError, ValueError):
         return None
     required = {"source_sha256", "ptx_target", "shaders", "weights_sha256"}
-    if not isinstance(value, dict) or set(value) not in (required, required | {"wave64"}):
+    if not isinstance(value, dict) or set(value) not in (
+        required, required | {"wave64"}, required | {"wave64", "fp32", "fp32h"},
+    ):
+        return None
+    v2 = "fp32" in value
+    if release is not None and v2 != (release != "v1.4.3"):
         return None
     if (
         not isinstance(value["source_sha256"], str)
         or not SHA_RE.fullmatch(value["source_sha256"])
         or value["ptx_target"] not in ("sm_80", "sm_89")
         or type(value["shaders"]) is not int
-        or value["shaders"] not in (30, 60)
+        or value["shaders"] not in ((200,) if v2 else (30, 60))
         or value["weights_sha256"] != weights_sha
         or ("wave64" in value and type(value["wave64"]) is not bool)
-        or ("wave64" in value and value["shaders"] != (60 if value["wave64"] else 30))
+        or (v2 and any(value[key] is not True for key in ("wave64", "fp32", "fp32h")))
+        or (not v2 and "wave64" in value and value["shaders"] != (60 if value["wave64"] else 30))
         or ("wave64" not in value and value["shaders"] != 30)
         or (shader_count is not None and value["shaders"] != shader_count)
         or (source_sha is not None and value["source_sha256"] != source_sha)
@@ -389,7 +421,7 @@ def payload_values(root, release, dll_sha, weights_sha):
     shader_count = kernel_pack_count(kernel)
     if shader_count is None or not regular(ini):
         return None
-    metadata = setup_metadata(setup, weights_sha, shader_count=shader_count)
+    metadata = setup_metadata(setup, weights_sha, shader_count=shader_count, release=release)
     if metadata is None or not regular(manifest_path):
         return None
     values = {
@@ -457,7 +489,7 @@ def write_manifest(root, release, dll_sha, weights_sha, source_sha):
     shader_count = kernel_pack_count(kernel)
     if shader_count is None or not regular(ini):
         raise Refusal("Generated HelixSR kernel pack or configuration failed validation.")
-    metadata = setup_metadata(setup, weights_sha, source_sha, shader_count)
+    metadata = setup_metadata(setup, weights_sha, source_sha, shader_count, release)
     if metadata is None:
         raise Refusal("Generated HelixSR setup metadata failed validation.")
     manifest = {
@@ -591,6 +623,20 @@ def desired_ini(payload, target_name):
     if not changed:
         raise Refusal("Pinned helixsr.ini lacks the forwarding setting.")
     return "".join(lines).encode("utf-8")
+
+
+def configure_v2(path):
+    # v2 no longer ships [Forwarding], but the DLL still accepts this setting.
+    # Disable the unqualified DLSS-G path; preserve the game's FSR FG forwarding.
+    text = open(path, encoding="utf-8").read()
+    text, count = re.subn(
+        r"(?im)(^\[DlssFrameGeneration\]\s*\n(?:[^\[]*?\n)*?Enabled\s*=\s*)true\s*$",
+        r"\g<1>false", text,
+    )
+    if count != 1 or re.search(r"(?im)^\[Forwarding\]", text):
+        raise Refusal("v2 helixsr.ini has an unexpected configuration layout.")
+    with open(path, "w", encoding="utf-8") as stream:
+        stream.write(text.rstrip() + "\n\n[Forwarding]\nDll =\nUpscalerDll =\n")
 
 
 def expected_names(target_name):
@@ -1138,13 +1184,15 @@ def records_data(installs, release, dll_sha, payload_state):
 def main():
     action = sys.argv[1]
     if action == "extract":
-        validate_archive(*sys.argv[2:5], allow_extra=sys.argv[5] == "allow-extra")
+        validate_archive(*sys.argv[2:])
     elif action == "latest-metadata":
         latest_metadata(sys.argv[2])
     elif action == "payload-identity":
         payload_identity(sys.argv[2])
     elif action == "setup-source-sha":
         setup_source_sha(sys.argv[2], sys.argv[3])
+    elif action == "configure-v2":
+        configure_v2(sys.argv[2])
     elif action == "manifest":
         write_manifest(*sys.argv[2:])
     elif action == "validate-payload":
@@ -1193,11 +1241,16 @@ resolve_latest_release() {
         && "$ARCHIVE_NAME" == "HelixSR-${RELEASE#v}.zip" \
         && "$ARCHIVE_SHA256" =~ ^[0-9a-f]{64}$ ]] \
         || die "Latest HelixSR release metadata failed validation."
+    if [[ "$RELEASE" == "$STABLE_RELEASE" && "$ARCHIVE_SHA256" != "$STABLE_ARCHIVE_SHA256" ]]; then
+        die "Latest HelixSR archive checksum mismatch for the pinned release."
+    fi
     ARCHIVE_URL="https://github.com/lonewolf0622/HelixSR/releases/download/$RELEASE/$ARCHIVE_NAME"
     ARCHIVE="$CACHE_DIR/$ARCHIVE_NAME"
-    DLL_SHA256=""
-    WEIGHTS_SHA256=""
-    log "Latest HelixSR release resolved to $RELEASE (YMMV; the stable pinned release remains v1.4.3)."
+    if [[ "$RELEASE" != "$STABLE_RELEASE" ]]; then
+        DLL_SHA256=""
+        WEIGHTS_SHA256=""
+    fi
+    log "Latest HelixSR release resolved to $RELEASE (layout validation required; pinned default: $STABLE_RELEASE)."
 }
 
 use_payload_identity() {
@@ -1208,6 +1261,8 @@ use_payload_identity() {
     [[ "$active_release" =~ ^v[0-9][0-9A-Za-z._-]*$ \
         && "$active_dll" =~ ^[0-9a-f]{64}$ \
         && "$active_weights" =~ ^[0-9a-f]{64}$ ]] || return 1
+    # Do not silently keep installing the obsolete prepared cache after an update.
+    [[ "$active_release" != v1.4.3 || "$STABLE_RELEASE" == v1.4.3 ]] || return 1
     # Keep the known stable pins authoritative; use the local manifest only for
     # payloads whose versions are outside the stable pin.
     if [[ "$active_release" == "$STABLE_RELEASE" ]]; then
@@ -1248,10 +1303,10 @@ payload_state() {
 
 prepare_payload() {
     local dlss=${1:-} latest=${2:-0} source_archive=${BC250_HELIXSR_ARCHIVE:-}
-    local temporary extract output old expected_source_sha active_identity
+    local temporary extract output old expected_source_sha active_identity dxc
     local active_release active_dll active_weights requested_release=$RELEASE
     expected_source_sha=$DLSS_SHA256
-    if [[ "$latest" == 1 ]]; then
+    if [[ "$latest" == 1 && "$RELEASE" != "$STABLE_RELEASE" ]]; then
         if [[ -d "$PAYLOAD_DIR" && ! -L "$PAYLOAD_DIR" ]] \
             && active_identity=$(python_core payload-identity "$PAYLOAD_DIR" 2>/dev/null); then
             IFS=$'\t' read -r active_release active_dll active_weights <<< "$active_identity"
@@ -1313,25 +1368,43 @@ prepare_payload() {
     output=$(mktemp -d "$STATE_DIR/.payload.XXXXXX")
     trap 'rm -rf -- "$extract" "$output"' RETURN
     rmdir "$extract"
-    if [[ "$latest" == 1 ]]; then
-        python_core extract "$ARCHIVE" "$extract" "HelixSR-${RELEASE#v}" allow-extra
-        DLL_SHA256=$(sha256_file "$extract/amd_fidelityfx_dx12.dll")
-    else
-        python_core extract "$ARCHIVE" "$extract" "HelixSR-${RELEASE#v}" strict
-    fi
-    chmod 0755 "$extract/helixsr-setup.sh" "$extract/setup" "$extract/setup/lib" \
+    python_core extract "$ARCHIVE" "$extract" "HelixSR-${RELEASE#v}"
+    chmod 0755 "$extract/setup" "$extract/setup/lib" \
         "$extract/setup/lib/model" "$extract/setup/lib/model/launch_synth"
-    install -m 0600 "$extract/amd_fidelityfx_dx12.dll" "$output/amd_fidelityfx_dx12.dll"
-    install -m 0600 "$extract/helixsr.ini" "$output/helixsr.ini"
     mkdir -p "$SETUP_DATA"
     chmod 0700 "$SETUP_DATA"
-    if [[ -n "$dlss" ]]; then
-        XDG_DATA_HOME="$SETUP_DATA" "$extract/helixsr-setup.sh" "$output" --dlss "$dlss"
+    if [[ "$RELEASE" == v1.4.3 ]]; then
+        chmod 0755 "$extract/helixsr-setup.sh"
+        install -m 0600 "$extract/amd_fidelityfx_dx12.dll" "$output/amd_fidelityfx_dx12.dll"
+        install -m 0600 "$extract/helixsr.ini" "$output/helixsr.ini"
+        if [[ -n "$dlss" ]]; then
+            XDG_DATA_HOME="$SETUP_DATA" "$extract/helixsr-setup.sh" "$output" --dlss "$dlss"
+        else
+            XDG_DATA_HOME="$SETUP_DATA" "$extract/helixsr-setup.sh" "$output" --yes
+        fi
     else
-        XDG_DATA_HOME="$SETUP_DATA" "$extract/helixsr-setup.sh" "$output" --yes
+        dxc=$(command -v "${BC250_HELIXSR_DXC:-dxc}") \
+            || die "v2 upscaler preparation requires an existing DXC executable (or BC250_HELIXSR_DXC Wine wrapper). No packages will be installed."
+        python3 -c 'import numpy' >/dev/null 2>&1 \
+            || die "v2 upscaler preparation requires numpy for the Python 3 on PATH (a user-managed virtual environment is supported). No packages will be installed."
+        [[ -n "$DLL_SHA256" ]] || DLL_SHA256=$(sha256_file "$extract/HelixSR-fsrfg/amd_fidelityfx_dx12.dll")
+        [[ "$(sha256_file "$extract/HelixSR-fsrfg/amd_fidelityfx_dx12.dll")" == "$DLL_SHA256" ]] \
+            || die "HelixSR DLL checksum mismatch."
+        mkdir -m 0700 "$output/HelixSR-fsrfg"
+        install -m 0600 "$extract/HelixSR-fsrfg/amd_fidelityfx_dx12.dll" "$output/HelixSR-fsrfg/amd_fidelityfx_dx12.dll"
+        install -m 0600 "$extract/HelixSR-fsrfg/helixsr.ini" "$output/HelixSR-fsrfg/helixsr.ini"
+        log "Building the FSR 3.1 upscaler only; DLSS frame generation and HelixSR Scaler are NOT installed."
+        log "Requires Python 3 with numpy and DXC. Generated NVIDIA-derived files are for this PC only; do not redistribute."
+        local -a setup_args=("$output" --dxc "$dxc" --no-fg --separate-files)
+        if [[ -n "$dlss" ]]; then setup_args+=(--dlss "$dlss"); else setup_args+=(--yes); fi
+        XDG_DATA_HOME="$SETUP_DATA" python3 "$extract/setup/helixsr_setup.py" "${setup_args[@]}"
+        mv -- "$output/HelixSR-fsrfg/amd_fidelityfx_dx12.dll" "$output/HelixSR-fsrfg/helixsr.ini" \
+            "$output/HelixSR-fsrfg/helixsr_weights.bin" "$output/HelixSR-fsrfg/helixsr_kernels.pak" "$output/"
+        rmdir "$output/HelixSR-fsrfg"
+        python_core configure-v2 "$output/helixsr.ini"
     fi
     chmod -R go-rwx "$SETUP_DATA"
-    if [[ "$latest" == 1 ]]; then
+    if [[ "$latest" == 1 && "$RELEASE" != "$STABLE_RELEASE" ]]; then
         WEIGHTS_SHA256=$(sha256_file "$output/helixsr_weights.bin")
         if [[ -z "$dlss" ]]; then
             expected_source_sha=$(python_core setup-source-sha \
@@ -1413,9 +1486,16 @@ Usage: $0 prepare [--latest] [DLSS_DLL]
 
 By default, prepares checksum-pinned HelixSR $RELEASE. --latest opts into the
 current GitHub latest release (YMMV) and verifies its published asset digest.
+Unknown v2 archive layouts fail closed. v2 prepares the FSR 3.1 upscaler only,
+using upstream's separate-file runtime; no HelixSR Scaler or DLSS frame
+generation is installed. Python 3 with numpy and an existing DXC executable
+(BC250_HELIXSR_DXC may name a Wine wrapper) are required; no system packages
+are installed. Generated NVIDIA-derived files must not be redistributed.
 Both modes install over either
 amd_fidelityfx_upscaler_dx12.dll or amd_fidelityfx_dx12.dll. The target and
 all sidecar collisions are retained for exact, verified rollback.
+Use only in offline/single-player games: DLL replacement can trigger anti-cheat
+or bans. Close the game first. No anti-cheat compatibility is claimed.
 EOF
 }
 

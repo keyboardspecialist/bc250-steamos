@@ -588,9 +588,13 @@ fi
 if [[ -e "$ROOT_SOURCE" || -L "$ROOT_SOURCE" ]]; then
     [[ -d "$ROOT_SOURCE" && ! -L "$ROOT_SOURCE" \
         && -f "$ROOT_SOURCE/.bc250-source" && ! -L "$ROOT_SOURCE/.bc250-source" \
-        && "$(<"$ROOT_SOURCE/.bc250-source")" == a49a8abdfb6221772ecc836b3109e0cc338203cf \
         && -f "$ROOT_SOURCE/source.sha256" && ! -L "$ROOT_SOURCE/source.sha256" ]] \
         || die "Refusing to replace unrecognized persistent source: $ROOT_SOURCE"
+    # Permit an integrity-checked upgrade from the previous toolkit pin only.
+    case "$(<"$ROOT_SOURCE/.bc250-source")" in
+        ec1030ba7acc32b36723af0c7c9c9aead5e57b54|a49a8abdfb6221772ecc836b3109e0cc338203cf) ;;
+        *) die "Refusing to replace unrecognized persistent source revision: $ROOT_SOURCE" ;;
+    esac
     (cd "$ROOT_SOURCE" && sha256sum -c --quiet source.sha256) \
         || die "Existing persistent source integrity check failed."
 fi

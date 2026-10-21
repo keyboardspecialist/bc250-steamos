@@ -282,6 +282,10 @@ Install the NCT6687 driver:
 
 Supported controllers include NCT6683, NCT6686D, and NCT6687-family devices.
 The driver provides fan tachometers and `pwmN` controls.
+The reviewed source pin is `ec1030b`; upstream removes software historical
+minimum/maximum attributes to follow the hwmon ABI. Source/offline tests passed,
+but full module builds and fan/sensor hardware qualification remain open. See
+[`nct6687d/README.md`](nct6687d/README.md) before upgrading monitoring profiles.
 
 Set `pwmN_enable` to `2` to select firmware automatic control.
 
@@ -295,6 +299,11 @@ Install CoolerControl after the NCT6687 driver:
 ```
 
 Open the local interface at <http://localhost:11987>.
+
+CoolerControl is pinned to **5.1.1**. Upgrades snapshot existing configuration
+and data before replacement; check migrated fan profiles and sensors afterward.
+REST and authenticated gRPC now share port 11987; the old unauthenticated 11988
+listener is gone. See [`coolercontrol/README.md`](coolercontrol/README.md).
 
 ## Hardware unlocks
 
@@ -367,7 +376,7 @@ The installer matches the running kernel. It verifies the module ABI and
 See [`bc250-audio-fix/README.md`](bc250-audio-fix/README.md) for kernel support,
 build controls, and rollback.
 
-### Mesa and RADV async compute
+### Mesa, RADV async compute, and DirectMesh
 
 Install the complete graphics stack:
 
@@ -379,7 +388,8 @@ The workflow uses these checkpoints:
 
 1. Install the AMDGPU kernel fixes.
 2. Reboot.
-3. Build and install the GFX1013 Mesa and RADV runtime.
+3. Remove verified retired R2 files, then build and install the GFX1013 Mesa,
+   DirectMesh, and FSR4 RADV runtime.
 4. Configure `amdgpu.sched_policy=2`.
 5. Reboot.
 6. Verify the active ICD and kernel module.
@@ -392,12 +402,39 @@ Open the expert menu:
 
 | Command | Result |
 |---|---|
-| `./bc250-mesh-shader.sh setup` | Install the global async-compute runtime |
+| `./bc250-mesh-shader.sh setup --directmesh` | Install the global DirectMesh + FSR4 async-compute runtime (`setup` is equivalent) |
 | `./bc250-mesh-shader.sh status` | Verify the global runtime |
 | `./bc250-mesh-shader.sh uninstall` | Remove the global runtime |
 
 The global runtime uses the patched 64-bit RADV ICD. SteamOS supplies the
-32-bit RADV path.
+32-bit RADV path. It builds Mesa **26.2.5** with the pinned MastaG patch series
+including **DirectMesh 1.3.1**. DirectMesh is enabled by default on BC-250;
+disable it for an individual game with this Steam launch option:
+
+```text
+RADV_DIRECTMESH=0 %command%
+```
+
+Setup first verifies and removes recognized toolkit-owned R2 compatibility-tool
+and native-mesh profile files. Modified recorded profile files, unrecognized
+tools, or symlinked state stop setup. The historical private Proton copy has no
+full-tree manifest: preserve any personal additions there before cleanup, which
+removes that entire copy. Close games before migration. Cleanup leaves
+the original Proton installation, prefixes, saves, and per-game Steam settings
+unchanged. For former R2 games, manually select ordinary Proton in Steam and
+remove the old `bc250-r2` launch option; restart Steam after cleanup.
+
+R2 installation is retired. To remove its recognized files without installing
+DirectMesh, use:
+
+```bash
+./bc250-mesh-shader.sh uninstall --native-mesh
+```
+
+All seven patches apply with zero fuzz, and a full RADV build with `ninja -j2`
+passed. This is build validation, not installation or GPU/gameplay qualification.
+See [`bc250-mesa-patches/README.md`](bc250-mesa-patches/README.md) for source
+provenance, rebase details, and retained removal-only legacy metadata.
 
 ### VA-API video codec
 
@@ -408,13 +445,16 @@ Install the pinned H.264 and HEVC codec release:
 ```
 
 The toolkit downloads the pinned `simpmix/bc250-encoding-decoding-fix`
-`v0.5.1` source, verifies it, and builds it against the active SteamOS image.
+`v0.5.4` source, verifies it, and builds it against the active SteamOS image.
 It then offers an optional, separately verified 32-bit companion for Steam and
 Remote Play. The 32-bit selection installs signed SteamOS multilib packages;
 declining retains a 64-bit-only installation.
 The runtime provides Vulkan-compute encoding and CPU-backed decoding through
-VA-API. The build disables the optional libx264 backend to avoid coupling the
-driver to another distribution's libx264 ABI.
+VA-API. Optional libx264/libx265 adapters use runtime library probing, not
+hard-linked codec SONAMEs; their full implementations require matching headers
+already present at build time. The managed defaults retain compute encoding.
+The native build passed with all 17 reviewed compute shaders; 32-bit loading and
+hardware streaming still need qualification.
 
 Check or remove the runtime:
 
@@ -434,39 +474,7 @@ Sunshine boot redirect.
 See [`video-codec/README.md`](video-codec/README.md) for paths, scope, and
 license information.
 
-### BC250 RADV R2
-
-The R2 profile combines its RADV driver, patched vkd3d core, and a private copy
-of Proton 11.0-2c. The toolkit uses the verified prebuilt RADV when its runtime
-dependencies are compatible. Otherwise, it verifies and builds the release's
-exact pinned Mesa source against the active SteamOS runtime while retaining the
-verified release vkd3d binary. Missing build prerequisites are installed from
-signed SteamOS packages, and the installed manifest records whether RADV came
-from the prebuilt payload or the pinned source archive.
-
-Install Proton 11.0-2c through Steam. Then run:
-
-```bash
-./bc250-mesh-shader.sh setup --native-mesh
-```
-
-Restart Steam. Select **BC250 R2 (experimental)** for the game. Add this launch
-option:
-
-```text
-~/.local/share/bc250-mesh-shader/native-mesh/bc250-r2 %command%
-```
-
-Remove the profile:
-
-```bash
-./bc250-mesh-shader.sh uninstall --native-mesh
-```
-
-**WARNING:** R2 is an experimental profile. Qualify each game before regular
-use. A queue-sensitive failure can cause GPU context loss or a system hang.
-
-### Portable FSR4 RC9
+### Portable FSR4 RC11
 
 Use the portable FSR4 path with a compatible game or OptiScaler target:
 
@@ -490,11 +498,14 @@ PROTON_FSR4_UPGRADE=0 PROTON_USE_OPTISCALER=0 WINEDLLOVERRIDES="winmm=n,b;amdxcf
 
 Close the game before each file operation. Use FSR4 injection with offline
 games. Anti-cheat software can take action against injected DLLs.
+The helper verifies the pinned RC11 ZIP and DLL, retains release notices, and
+keeps the original target for verified rollback. This portable route does not
+require the global DirectMesh driver or a custom Proton build.
 
-### HelixSR v1.4.3
+### HelixSR v2.0.0 (upscaling only)
 
 By default, prepare the checksum-pinned [HelixSR](https://github.com/lonewolf0622/HelixSR)
-`v1.4.3` payload. For a newer upstream release, `--latest` resolves GitHub's
+`v2.0.0` payload. For a newer upstream release, `--latest` resolves GitHub's
 latest release and verifies its published asset digest; this route is **YMMV**
 and may encounter upstream changes the toolkit has not tested. Either mode may
 use a local DLSS DLL; otherwise HelixSR downloads its pinned input in user-local
@@ -507,6 +518,12 @@ state:
 ./bc250-toolkit.sh helixsr-prepare --latest "/path/to/nvngx_dlss.dll"
 ./bc250-toolkit.sh helixsr-payload-status
 ```
+
+The reviewed 2.0 ZIP has an exact 149-entry inventory; the helper extracts only
+52 upscaler preparation files. It invokes the preparer with
+`--no-fg --separate-files` and requires a 200-shader payload. Scaler and frame generation
+are **not** integrated. Archive/inventory and argument checks passed, but no
+actual HelixSR shader build or GPU test was performed for this update.
 
 Install only over an existing file named exactly
 `amd_fidelityfx_upscaler_dx12.dll` or `amd_fidelityfx_dx12.dll` (lowercase):
@@ -593,6 +610,10 @@ sudo bash ./aic8800/steamdeck-setup.sh
 
 The package includes AIC and OEM USB IDs. The installer stages source,
 firmware, and kernel modules in persistent storage.
+The source is rebased to `5327c77`, preserving the toolkit's SteamOS adaptations;
+firmware is unchanged. Offline review/tests do not replace full target-kernel
+module builds or Wi-Fi/Bluetooth hardware qualification. See
+[`aic8800/README.md`](aic8800/README.md).
 
 ### Wi-Fi backend selection and lock
 
@@ -656,6 +677,13 @@ restores the firmware SMU state.
 **DANGER:** An incompatible SMU payload can cause memory corruption, file
 system damage, a crash, or startup failure. Confirm the P3.0 firmware layout
 before each live write.
+
+The reviewed `4a2221d` payload adds bounded polling and packed reads, with
+binary/symbol attestation, a firmware-version gate, and full-runtime backups.
+Restore old state before preparing a new live payload; no force-overwrite mode
+is adopted. No live firmware writes or hardware qualification were performed
+for this update. See [`memory-temperature/README.md`](memory-temperature/README.md)
+for the guarded legacy-restore and migration procedure.
 
 ## Control interfaces
 
@@ -789,6 +817,17 @@ See these documents for component development:
 - [`decky-plugin/README.md`](decky-plugin/README.md)
 - [`desktop-control/README.md`](desktop-control/README.md)
 - [`trainer/README.md`](trainer/README.md)
+- [`DEPENDENCY-AUDIT.md`](DEPENDENCY-AUDIT.md) — implemented updates, retained
+  baselines, historical findings, and qualification gaps
+
+The Decky build uses UI 4.16.0, Rollup 4.64.12, React typings 19.3.0, and
+TypeScript 5.9.3 (retained because TypeScript 7 is incompatible with the current
+build integration). Use pnpm **9.15.9** and Node **24.12 or newer within 24.x**.
+The installer provides a private home-directory toolchain with a checksum-verified
+pnpm download instead of replacing user-wide tooling. CI uses Node 24 and updated
+Actions; Trainer's Flatpak runtime targets KDE 6.11. One unfixed build-only
+`braces` advisory remains; the production dependency audit is clean, not a
+security certification.
 
 ## Upstream projects
 
@@ -803,16 +842,17 @@ See these documents for component development:
 | BC-250 CPU Core Unlock | [rw-r-r-0644/bc250-core-unlock](https://github.com/rw-r-r-0644/bc250-core-unlock) |
 | EFI Core Unlock | [Hexxeh/bc250-efi-core-unlock](https://github.com/Hexxeh/bc250-efi-core-unlock) |
 | BC-250 Memory Config | [fanoush/bc250_memcfg](https://github.com/fanoush/bc250_memcfg) |
-| BC-250 GDDR6 Memory Temperature | [pan-Rijovich/bc250-memory-temperature](https://github.com/pan-Rijovich/bc250-memory-temperature) · [integrated commit `b7e6bff`](https://github.com/pan-Rijovich/bc250-memory-temperature/commit/b7e6bffcb5d592fc03edde375b7598ddc79aa846) |
+| BC-250 GDDR6 Memory Temperature | [pan-Rijovich/bc250-memory-temperature](https://github.com/pan-Rijovich/bc250-memory-temperature) · [integrated commit `4a2221d`](https://github.com/pan-Rijovich/bc250-memory-temperature/commit/4a2221d1da387fa2e738bb9368b39594e242ba4b) |
 | GFX1013 Fix | [DryhoppedIPA/bc250-gfx1013-fix](https://github.com/DryhoppedIPA/bc250-gfx1013-fix) |
-| BC250 RADV R2 | [luckiskind/bc250-radv-r2](https://github.com/luckiskind/bc250-radv-r2) |
+| DirectMesh 1.3.1 | [lonewolf0622/bc250meshtaskwork](https://github.com/lonewolf0622/bc250meshtaskwork) |
+| Retired BC250 RADV R2 (removal provenance only) | [luckiskind/bc250-radv-r2](https://github.com/luckiskind/bc250-radv-r2) |
 | OptiScaler | [optiscaler/OptiScaler](https://github.com/optiscaler/OptiScaler) |
-| HelixSR v1.4.3 (pinned; latest is optional/YMMV) | [lonewolf0622/HelixSR](https://github.com/lonewolf0622/HelixSR) |
-| BC-250 FSR4 RC9 | [daniel-h-0/bc250-fsr4-fork](https://github.com/daniel-h-0/bc250-fsr4-fork) |
+| HelixSR v2.0.0 (upscaling only; latest is optional/YMMV) | [lonewolf0622/HelixSR](https://github.com/lonewolf0622/HelixSR) |
+| BC-250 FSR4 RC11 | [daniel-h-0/bc250-fsr4-fork](https://github.com/daniel-h-0/bc250-fsr4-fork) |
 | BC-250 GE-Proton and RADV | [MastaG/linux-cachyos-bc250](https://github.com/MastaG/linux-cachyos-bc250) |
 | AIC8800 | [shenmintao/aic8800d80](https://github.com/shenmintao/aic8800d80) |
 | NCT6687D | [Fred78290/nct6687d](https://github.com/Fred78290/nct6687d) |
-| BC-250 VA-API video codec | [simpmix/bc250-encoding-decoding-fix](https://github.com/simpmix/bc250-encoding-decoding-fix) · [integrated release `v0.5.1`](https://github.com/simpmix/bc250-encoding-decoding-fix/releases/tag/v0.5.1) |
+| BC-250 VA-API video codec | [simpmix/bc250-encoding-decoding-fix](https://github.com/simpmix/bc250-encoding-decoding-fix) · [integrated release `v0.5.4`](https://github.com/simpmix/bc250-encoding-decoding-fix/releases/tag/v0.5.4) |
 
 See [`LICENSE.md`](LICENSE.md) and the component license files for license
 terms and attribution.

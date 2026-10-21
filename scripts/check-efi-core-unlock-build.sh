@@ -3,7 +3,7 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 SOURCE="$ROOT_DIR/core-unlock/bc250-unlock-cores-efi.c"
-PIN="761b114e3b186adb82516d5fa8e7a4c559f56ba5"
+PIN="d438479f1e2b3a9c99623a5127d9e65bbeb813e7"
 REPOSITORY="https://github.com/yoppeh/efi.git"
 WORK=$(mktemp -d)
 trap 'rm -rf "$WORK"' EXIT

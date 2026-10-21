@@ -83,6 +83,10 @@ class FakeControl:
         self.senders.append((sender, target_id))
         return "operation"
 
+    async def install_directmesh(self, sender):
+        self.senders.append(sender)
+        return "operation"
+
 
 class IdentityResolverTests(unittest.IsolatedAsyncioTestCase):
     async def test_resolves_pid_and_validated_audit_session(self):
@@ -162,7 +166,14 @@ class AdapterHandlerTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn('<method name="InstallFsr4Dll">', INTROSPECTION_XML)
         self.assertIn('<method name="UninstallFsr4Dll">', INTROSPECTION_XML)
 
-    def test_native_mesh_dbus_signatures_are_declared(self):
+    def test_directmesh_install_dbus_signature_is_declared(self):
+        self.assertEqual(
+            DbusAdapter._METHODS["InstallDirectMesh"],
+            ("", "s", "install_directmesh"),
+        )
+        self.assertIn('<method name="InstallDirectMesh">', INTROSPECTION_XML)
+
+    def test_legacy_native_mesh_dbus_signatures_remain_compatible(self):
         self.assertEqual(
             DbusAdapter._METHODS["InstallNativeMesh"],
             ("", "s", "install_native_mesh"),
@@ -324,6 +335,27 @@ class AdapterHandlerTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(
             control.senders, [(":1.22", candidate_id, "winmm.dll")]
         )
+        self.assertEqual(bus.sent[0].body, ["operation"])
+
+    async def test_directmesh_install_propagates_sender_without_arguments(self):
+        bus = HandlerBus()
+        control = FakeControl()
+        adapter = DbusAdapter(bus, control)
+        call = Message(
+            path=OBJECT_PATH,
+            interface=INTERFACE,
+            member="InstallDirectMesh",
+            sender=":1.24",
+            serial=46,
+        )
+
+        self.assertTrue(adapter.handle(call))
+        await asyncio.sleep(0)
+        await asyncio.sleep(0)
+
+        self.assertEqual(control.senders, [":1.24"])
+        self.assertEqual(bus.sent[0].message_type, MessageType.METHOD_RETURN)
+        self.assertEqual(bus.sent[0].signature, "s")
         self.assertEqual(bus.sent[0].body, ["operation"])
 
     async def test_helixsr_install_propagates_sender_and_opaque_id(self):

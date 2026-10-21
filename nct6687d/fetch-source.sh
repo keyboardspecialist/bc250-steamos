@@ -2,7 +2,7 @@
 # Fetch the exact audited nct6687d source without trusting a moving branch.
 set -euo pipefail
 
-COMMIT=a49a8abdfb6221772ecc836b3109e0cc338203cf
+COMMIT=ec1030ba7acc32b36723af0c7c9c9aead5e57b54
 BASE_URL="https://raw.githubusercontent.com/Fred78290/nct6687d/$COMMIT"
 DEST=${1:-}
 
@@ -16,10 +16,10 @@ command -v sha256sum >/dev/null 2>&1 || die "sha256sum is required."
 manifest() {
     cat << 'EOF'
 ab83ace080e46646a9c807e31177a460902b11661bbbde31ed883261eccf3b45  Kbuild
-9bd825e95b6804328efbd6a4b587babdcc7acd289407dac3f353109d16f42def  Makefile
-895b5df0011ffa11bdf8bcfef2f002992aa4949d2703cd4281cecdb44917820a  nct6687.c
+ed093eb8f14598a0030382d649c8f5917af303b3cf6a6f88a295c686f34c88e2  Makefile
+23449e0ecb0af2145c4253c6f1b1a126eaf2c04e96b3c5757f3f31399b91940e  nct6687.c
 8177f97513213526df2cf6184d8ff986c675afb514d4e68a404010521b880643  LICENSE
-eb37bf64b71c1e91ec53e655f4cfdecf6f6fd1c77f4708834bd8bd3d09faa416  README.md
+9cc499871c1bff5ee55942bf7addfc07ae2aad9410728ca5b22c08c0c90c981e  README.md
 EOF
 }
 

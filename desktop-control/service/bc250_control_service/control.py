@@ -230,6 +230,15 @@ class ControlService:
             cancellable=False,
         )
 
+    async def install_directmesh(self, sender: str) -> str:
+        return await self._submit(
+            sender,
+            "gpu",
+            "InstallDirectMesh",
+            lambda backend: backend.install_directmesh(),
+            cancellable=False,
+        )
+
     async def uninstall_native_mesh(self, sender: str) -> str:
         return await self._submit(
             sender,

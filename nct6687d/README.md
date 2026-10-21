@@ -6,10 +6,43 @@ tachometers and writable `pwmN` / `pwmN_enable` controls on supported NCT6683,
 NCT6686D, and NCT6687-family Super-I/O controllers.
 
 The source is pinned to commit
-`a49a8abdfb6221772ecc836b3109e0cc338203cf`. The installer downloads only the
+`ec1030ba7acc32b36723af0c7c9c9aead5e57b54`. The installer downloads only the
 required upstream files, verifies fixed SHA-256 hashes, and retains the GPL-2.0
 source and license in root-owned persistent storage before installing the
 module.
+
+This advances the previous `a49a8abdfb6221772ecc836b3109e0cc338203cf` pin by
+19 upstream commits. Reviewed changes include explicitly signed temperatures,
+reservation of the actual EC port-1 window (base + 4, with register offsets
+rebased to zero), device-managed fan-state restoration after hwmon sysfs removal,
+and DMI-scoped MSI board mappings. The redundant inner EC mutex is removed;
+runtime sensor/PWM/watchdog/PM transactions still use `update_lock`, while probe
+initialization precedes sysfs publication. No BC-250-specific MSI mapping is
+enabled. The SteamOS installer still builds directly through the prepared kernel's
+Kbuild directory as the logged-in user, not upstream install/package targets.
+
+**ABI change:** upstream removes software running-minimum/maximum readings from
+`tempN_min/max`, `inN_min/max`, and `fanN_min/max`; those names denote hardware
+limits in the hwmon ABI. Current inputs, labels, and PWM controls remain. Monitoring
+software needing historical extrema must calculate them itself.
+
+The installer permits the previous recognized, integrity-checked persistent
+source revision to be upgraded; unknown revisions or failed checksums still stop
+installation. Boot recovery requires the new pin after a successful reinstall.
+Source/hash and mocked lifecycle tests do not qualify fan hardware: verify sensor
+values, PWM readback, automatic-mode restoration, watchdog, suspend/resume, and
+removal on the actual controller with independent temperature safeguards before
+depending on fan curves. No hardware probing or register writes are part of the
+dependency review.
+
+Offline source-audit tests can also inspect a separately fetched tree without
+probing hardware:
+
+```bash
+bash nct6687d/fetch-source.sh /tmp/opencode/nct6687d-review
+BC250_TEST_NCT_SOURCE=/tmp/opencode/nct6687d-review \
+  python -m unittest discover -s tests -p test_hardware_dependency_updates.py
+```
 
 ```bash
 sudo bash ./nct6687d/steamdeck-setup.sh install

@@ -123,13 +123,13 @@ static inline int rwnx_rx_chan_switch_ind(struct rwnx_hw *rwnx_hw,
             if (!roc_elem->mgmt_roc) {
                 /* Inform the host that we have switch on the indicated off-channel */
                 #if LINUX_VERSION_CODE < KERNEL_VERSION(3, 6, 0)
-                cfg80211_ready_on_channel(roc_elem->wdev->netdev, (u64)(rwnx_hw->roc_cookie_cnt),
+                cfg80211_ready_on_channel(roc_elem->wdev->netdev, roc_elem->cookie,
                                         roc_elem->chan, NL80211_CHAN_HT20, roc_elem->duration, GFP_ATOMIC);
                 #elif LINUX_VERSION_CODE < KERNEL_VERSION(3, 8, 0)
-                cfg80211_ready_on_channel(roc_elem->wdev, (u64)(rwnx_hw->roc_cookie_cnt),
+                cfg80211_ready_on_channel(roc_elem->wdev, roc_elem->cookie,
                                         roc_elem->chan, NL80211_CHAN_HT20, roc_elem->duration, GFP_ATOMIC);
                 #else
-                cfg80211_ready_on_channel(roc_elem->wdev, (u64)(rwnx_hw->roc_cookie_cnt),
+                cfg80211_ready_on_channel(roc_elem->wdev, roc_elem->cookie,
                                         roc_elem->chan, roc_elem->duration, GFP_ATOMIC);
                 #endif
             }
@@ -245,13 +245,13 @@ static inline int rwnx_rx_remain_on_channel_exp_ind(struct rwnx_hw *rwnx_hw,
         /* Inform the host that off-channel period has expired */
 
 #if LINUX_VERSION_CODE < KERNEL_VERSION(3, 6, 0)
-	cfg80211_remain_on_channel_expired(roc_elem->wdev->netdev, (u64)(rwnx_hw->roc_cookie_cnt),
+	cfg80211_remain_on_channel_expired(roc_elem->wdev->netdev, roc_elem->cookie,
                                            roc_elem->chan, NL80211_CHAN_HT20, GFP_ATOMIC);
 #elif LINUX_VERSION_CODE < KERNEL_VERSION(3, 8, 0)
-	cfg80211_remain_on_channel_expired(roc_elem->wdev, (u64)(rwnx_hw->roc_cookie_cnt),
+	cfg80211_remain_on_channel_expired(roc_elem->wdev, roc_elem->cookie,
                                            roc_elem->chan, NL80211_CHAN_HT20, GFP_ATOMIC);
 #else
-        cfg80211_remain_on_channel_expired(roc_elem->wdev, (u64)(rwnx_hw->roc_cookie_cnt),
+        cfg80211_remain_on_channel_expired(roc_elem->wdev, roc_elem->cookie,
                                            roc_elem->chan, GFP_ATOMIC);
 #endif
     }
@@ -825,7 +825,9 @@ static inline int rwnx_rx_scanu_result_ind(struct rwnx_hw *rwnx_hw,
 #endif
 
     }
+#ifdef CONFIG_USE_WIRELESS_EXT
 putbss:
+#endif
     if (bss != NULL)
 #if LINUX_VERSION_CODE < KERNEL_VERSION(3, 9, 0)
 	cfg80211_put_bss(bss);
@@ -1783,4 +1785,3 @@ void rwnx_rx_handle_print(struct rwnx_hw *rwnx_hw, u8 *msg, u32 len)
     spin_unlock_bh(&rwnx_hw->debugfs.fw_log.lock);
 #endif
 }
-

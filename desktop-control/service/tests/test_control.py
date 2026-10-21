@@ -3,6 +3,7 @@ import json
 import sys
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -53,6 +54,11 @@ class FakeBackend:
 
     async def install_native_mesh(self):
         await self._mutation("install_native_mesh")
+        raise RuntimeError("R2 installation is retired; use global DirectMesh instead.")
+
+    async def install_directmesh(self):
+        await self._mutation("install_directmesh")
+        return {"message": "DirectMesh was installed globally after retired R2 cleanup."}
 
     async def uninstall_native_mesh(self):
         await self._mutation("uninstall_native_mesh")
@@ -331,19 +337,48 @@ class ControlServiceTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.authorizer.calls, [(":1.1", 1000, "audit:1000", "gpu")])
         self.assertEqual(self.backends[0].calls, [("install_fsr4_dll", (target_id,))])
 
-    async def test_native_mesh_mutations_are_fixed_and_non_cancellable(self):
-        operation_id = await self.service.install_native_mesh(":1.1")
+    async def test_directmesh_install_is_gpu_authorized_and_non_cancellable(self):
+        operation_id = await self.service.install_directmesh(":1.1")
+        self.backends[0].release = asyncio.Event()
+        operation = await self.wait_for_status(":1.1", operation_id, "running")
+        self.assertFalse(operation["cancellable"])
+        self.assertFalse(await self.service.cancel_operation(":1.1", operation_id))
+        self.assertEqual(operation["method"], "InstallDirectMesh")
+        self.assertEqual(self.authorizer.calls, [(":1.1", 1000, "audit:1000", "gpu")])
+        self.assertEqual(self.backends[0].calls, [("install_directmesh", ())])
+        self.backends[0].release.set()
         operation = await self.wait_for_status(":1.1", operation_id, "succeeded")
+        self.assertEqual(
+            operation["result"],
+            {"message": "DirectMesh was installed globally after retired R2 cleanup."},
+        )
+
+    async def test_directmesh_install_denial_never_reaches_backend(self):
+        with patch.object(
+            self.authorizer, "authorize", side_effect=AccessDenied("Denied")
+        ) as authorize:
+            with self.assertRaises(AccessDenied):
+                await self.service.install_directmesh(":1.1")
+        authorize.assert_awaited_once_with(":1.1", 1000, "audit:1000", "gpu")
+        self.assertEqual(self.backends, [])
+
+    async def test_legacy_native_mesh_install_routes_backend_refusal(self):
+        # The compatibility endpoint remains mapped, not a usable R2 installer.
+        operation_id = await self.service.install_native_mesh(":1.1")
+        operation = await self.wait_for_status(":1.1", operation_id, "failed")
         self.assertFalse(operation["cancellable"])
         self.assertEqual(operation["method"], "InstallNativeMesh")
+        self.assertIn("R2 installation is retired", operation["error"])
         self.assertEqual(self.authorizer.calls, [(":1.1", 1000, "audit:1000", "gpu")])
         self.assertEqual(self.backends[0].calls, [("install_native_mesh", ())])
 
+    async def test_retired_r2_removal_is_gpu_authorized_and_non_cancellable(self):
         operation_id = await self.service.uninstall_native_mesh(":1.1")
         operation = await self.wait_for_status(":1.1", operation_id, "succeeded")
         self.assertFalse(operation["cancellable"])
         self.assertEqual(operation["method"], "UninstallNativeMesh")
-        self.assertEqual(self.backends[0].calls[-1], ("uninstall_native_mesh", ()))
+        self.assertEqual(self.authorizer.calls, [(":1.1", 1000, "audit:1000", "gpu")])
+        self.assertEqual(self.backends[0].calls, [("uninstall_native_mesh", ())])
 
     async def test_optiscaler_mutations_are_gpu_authorized_and_non_cancellable(self):
         candidate_id = "b" * 64

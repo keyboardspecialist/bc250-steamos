@@ -251,6 +251,7 @@ export interface MeshStatus {
   fsr4DllState: "ready" | "not-installed" | "invalid";
   fsr4DllInstallCount: number;
   nativeMeshState: "ready" | "not-installed" | "invalid";
+  directMeshVersion?: string | null;
   nativeMeshIcdPath: string;
   nativeMeshRunnerPath: string;
   error: string | null;

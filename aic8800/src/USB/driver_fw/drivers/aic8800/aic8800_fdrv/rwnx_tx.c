@@ -1336,6 +1336,7 @@ int intf_tx(struct rwnx_hw *priv,struct msg_buf *msg)
 	sw_txhdr->rwnx_sta	= sta;
 	sw_txhdr->rwnx_vif	= rwnx_vif;
 	sw_txhdr->skb		= skb;
+	sw_txhdr->cookie	= (unsigned long)skb;
 	sw_txhdr->headroom	= headroom;
 	sw_txhdr->map_len	= skb->len - offsetof(struct rwnx_txhdr, hw_hdr);
 
@@ -1552,6 +1553,7 @@ netdev_tx_t rwnx_start_xmit(struct sk_buff *skb, struct net_device *dev)
     sw_txhdr->rwnx_sta  = sta;
     sw_txhdr->rwnx_vif  = rwnx_vif;
     sw_txhdr->skb       = skb;
+    sw_txhdr->cookie    = (unsigned long)skb;
     sw_txhdr->headroom  = headroom;
     sw_txhdr->map_len   = skb->len - offsetof(struct rwnx_txhdr, hw_hdr);
 
@@ -1641,7 +1643,8 @@ free:
  * @params: Mgmt frame parameters
  * @offchan: Indicate whether the frame must be send via the offchan TXQ.
  *           (is is redundant with params->offchan ?)
- * @cookie: updated with a unique value to identify the frame with upper layer
+ * @cookie: cfg80211-assigned cookie when use_given_cookie, otherwise generated here
+ * @use_given_cookie: honour the input cookie on the direct cfg80211 7.3+ path
  *
  */
 
@@ -1649,7 +1652,7 @@ free:
 #if (LINUX_VERSION_CODE >= KERNEL_VERSION(3, 14, 0))
 int rwnx_start_mgmt_xmit(struct rwnx_vif *vif, struct rwnx_sta *sta,
                          struct cfg80211_mgmt_tx_params *params, bool offchan,
-                         u64 *cookie)
+                         u64 *cookie, bool use_given_cookie)
 #else
 int rwnx_start_mgmt_xmit(struct rwnx_vif *vif, struct rwnx_sta *sta,
                          struct ieee80211_channel *channel, bool offchan,
@@ -1660,7 +1663,7 @@ int rwnx_start_mgmt_xmit(struct rwnx_vif *vif, struct rwnx_sta *sta,
                     #if (LINUX_VERSION_CODE >= KERNEL_VERSION(3, 3, 0))
                          bool dont_wait_for_ack,
                     #endif
-                         u64 *cookie)
+                         u64 *cookie, bool use_given_cookie)
 #endif /* LINUX_VERSION_CODE >= KERNEL_VERSION(3, 14, 0) */
 {
     struct rwnx_hw *rwnx_hw = vif->rwnx_hw;
@@ -1714,7 +1717,9 @@ int rwnx_start_mgmt_xmit(struct rwnx_vif *vif, struct rwnx_sta *sta,
         return -ENOMEM;
     }
 
-    *cookie = (unsigned long)skb;
+    /* Internal TDLS callers still use an skb-derived cookie on every kernel. */
+    if (!use_given_cookie)
+        *cookie = (unsigned long)skb;
 
     /*
      * Move skb->data pointer in order to reserve room for rwnx_txhdr
@@ -1784,6 +1789,7 @@ int rwnx_start_mgmt_xmit(struct rwnx_vif *vif, struct rwnx_sta *sta,
     sw_txhdr->rwnx_sta = sta;
     sw_txhdr->rwnx_vif = vif;
     sw_txhdr->skb = skb;
+    sw_txhdr->cookie = *cookie;
     sw_txhdr->headroom = headroom;
     sw_txhdr->map_len = skb->len - offsetof(struct rwnx_txhdr, hw_hdr);
 #ifdef CONFIG_RWNX_AMSDUS_TX
@@ -1935,6 +1941,7 @@ void rwnx_probersp_work(struct work_struct *work)
 	sw_txhdr->rwnx_sta = sta;
 	sw_txhdr->rwnx_vif = rwnx_vif;
 	sw_txhdr->skb = skb;
+	sw_txhdr->cookie = (unsigned long)skb;
 	sw_txhdr->headroom = headroom;
 	sw_txhdr->map_len = skb->len - offsetof(struct rwnx_txhdr, hw_hdr);
 #ifdef CONFIG_RWNX_AMSDUS_TX
@@ -2289,6 +2296,8 @@ netdev_tx_t rwnx_start_monitor_if_xmit(struct sk_buff *skb, struct net_device *d
     sw_txhdr->rwnx_sta = sta;
     sw_txhdr->rwnx_vif = vif;
     sw_txhdr->skb = skb_mgmt;
+    /* Monitor injection has no cfg80211-assigned cookie. */
+    sw_txhdr->cookie = (unsigned long)skb_mgmt;
     sw_txhdr->headroom = headroom;
     sw_txhdr->map_len = skb_mgmt->len - offsetof(struct rwnx_txhdr, hw_hdr);
     sw_txhdr->raw_frame = 1;
@@ -2400,7 +2409,7 @@ int rwnx_txdatacfm(void *pthis, void *host_id)
 #endif
         /* Confirm transmission to CFG80211 */
         cfg80211_mgmt_tx_status(&sw_txhdr->rwnx_vif->wdev,
-                                (unsigned long)skb,
+                                sw_txhdr->cookie,
                                 (skb->data + sw_txhdr->headroom),
                                 sw_txhdr->frame_len,
                                 rwnx_txst.acknowledged,

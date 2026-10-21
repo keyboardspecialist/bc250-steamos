@@ -13,6 +13,7 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  # Node 24 actions require runner >=2.327.1 (provided by GitHub-hosted Ubuntu).
   build:
     name: Build artifacts
     runs-on: ubuntu-latest
@@ -23,7 +24,7 @@ jobs:
 
     steps:
       - name: Check out tag
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7.0.1
         with:
           fetch-depth: 0
 
@@ -47,7 +48,7 @@ jobs:
         run: echo "SOURCE_DATE_EPOCH=$(git log -1 --format=%ct)" >> "$GITHUB_ENV"
 
       - name: Set up Decky Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v7.0.0
         with:
           python-version: "3.8"
 
@@ -61,28 +62,28 @@ jobs:
         run: bash scripts/check-efi-core-unlock-build.sh
 
       - name: Set up pnpm
-        uses: pnpm/action-setup@v4
+        uses: pnpm/action-setup@v6.1.0
         with:
-          version: 9
+          package_json_file: decky-plugin/package.json
 
       - name: Set up Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v7.1.0
         with:
-          node-version: 20
+          node-version: 24
           cache: pnpm
           cache-dependency-path: decky-plugin/pnpm-lock.yaml
 
       - name: Install dependencies
         working-directory: decky-plugin
-        run: pnpm install --frozen-lockfile
+        run: pnpm --ignore-workspace install --frozen-lockfile
 
       - name: Typecheck
         working-directory: decky-plugin
-        run: pnpm run typecheck
+        run: pnpm --ignore-workspace run typecheck
 
       - name: Build frontend
         working-directory: decky-plugin
-        run: pnpm run build
+        run: pnpm --ignore-workspace run build
 
       - name: Run backend tests
         run: PYTHONPATH=backend:backend/vendor python3 -m unittest discover -s backend/tests
@@ -151,7 +152,7 @@ jobs:
           sha256sum "${TOOLKIT_ARTIFACT_BASENAME}.zip" > "${TOOLKIT_ARTIFACT_BASENAME}.zip.sha256"
 
       - name: Upload Decky plugin artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7.0.2
         with:
           name: ${{ env.DECKY_ARTIFACT_BASENAME }}
           path: |
@@ -161,7 +162,7 @@ jobs:
           retention-days: 90
 
       - name: Upload toolkit artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7.0.2
         with:
           name: ${{ env.TOOLKIT_ARTIFACT_BASENAME }}
           path: |
@@ -171,7 +172,7 @@ jobs:
           retention-days: 90
 
       - name: Upload Plasma desktop artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7.0.2
         with:
           name: ${{ env.DESKTOP_ARTIFACT_BASENAME }}
           path: |
@@ -193,7 +194,7 @@ jobs:
       TOOLKIT_ARTIFACT_BASENAME: bc250-steamos-toolkit-${{ github.ref_name }}
     steps:
       - name: Check out tag metadata
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7.0.1
         with:
           fetch-depth: 0
 

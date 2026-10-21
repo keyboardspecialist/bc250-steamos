@@ -14,13 +14,15 @@ CEC quick controls. Select
 - CPU overclock detection, apply, boot replay, and stock restore controls
 - HDMI-CEC controls
 - HDMI Dolby Digital 5.1 / stereo output toggle
-- Global Mesa / RADV async-compute status and AMDGPU prerequisite
-- Explicit install/remove controls and runner status for experimental BC250
-  RADV R2; it uses a private Proton copy, is never globally enabled, and game
-  settings are never edited automatically
-- Installed Steam game discovery with guarded FSR4 RC9 install/restore toggles
+- Global DirectMesh / RADV status, installation, and AMDGPU prerequisite
+- Retired R2 cleanup before DirectMesh setup, plus a standalone R2 remover;
+  original Proton, prefixes, and game settings are preserved. Former R2 games
+  need ordinary Proton selection and old `bc250-r2` launch-option removal.
+- Installed Steam game discovery with guarded FSR4 install/restore toggles
 
 GPU voltage editing and saving WGP routing for boot remain in the toolkit CLI.
+Global DirectMesh setup also needs sudo: if the frontend cannot authenticate,
+it stops before R2 cleanup and directs you to the interactive toolkit CLI.
 
 ## UI Overview
 

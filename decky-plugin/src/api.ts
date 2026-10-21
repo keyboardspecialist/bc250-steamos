@@ -48,7 +48,7 @@ export const setHdmiSurround = callable<[enabled: boolean], void>(
   "set_hdmi_surround",
 );
 export const getMeshStatus = callable<[], MeshStatus>("get_mesh_status");
-export const installNativeMesh = callable<[], void>("install_native_mesh");
+export const installDirectMesh = callable<[], void>("install_directmesh");
 export const uninstallNativeMesh = callable<[], void>("uninstall_native_mesh");
 export const getFsr4Inventory = callable<[], Fsr4Inventory>("get_fsr4_inventory");
 export const installFsr4Dll = callable<[targetId: string], void>("install_fsr4_dll");

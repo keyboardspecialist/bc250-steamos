@@ -1827,6 +1827,7 @@ class BackendMutationTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertFalse(status["scriptAvailable"])
         self.assertEqual(status["runtimeState"], "not-installed")
+        self.assertIsNone(status["directMeshVersion"])
         self.assertFalse(status["kernelReady"])
         self.assertFalse(status["schedulerConfigured"])
         self.assertFalse(status["schedulerActive"])
@@ -1851,7 +1852,8 @@ class BackendMutationTests(unittest.IsolatedAsyncioTestCase):
                 {
                     "scriptAvailable": True,
                     "runtimeState": "ready",
-                    "mesaVersion": "mesa-26.2.2",
+                    "mesaVersion": "mesa-26.2.5",
+                    "directMeshVersion": "directmesh-v1.3.1",
                     "icdPath": "/home/deck/radeon_driconf_icd.x86_64.json",
                     "configValid": True,
                     "kernelReady": True,
@@ -1881,6 +1883,7 @@ class BackendMutationTests(unittest.IsolatedAsyncioTestCase):
         status = await backend.get_mesh_status()
 
         self.assertEqual(status["runtimeState"], "ready")
+        self.assertEqual(status["directMeshVersion"], "directmesh-v1.3.1")
         self.assertTrue(status["kernelReady"])
         self.assertTrue(status["schedulerConfigured"])
         self.assertTrue(status["schedulerActive"])
@@ -1906,23 +1909,62 @@ class BackendMutationTests(unittest.IsolatedAsyncioTestCase):
         with self.assertRaisesRegex(CommandError, "invalid JSON"):
             await backend.get_mesh_status()
 
-    async def test_native_mesh_mutations_use_fixed_tool_commands(self):
+    async def test_directmesh_install_and_legacy_removal_use_fixed_tool_commands(self):
         backend = object.__new__(ToolkitBackend)
         prepare_mutation_backend(backend)
         backend._user_tool = AsyncMock(return_value="")
+        backend._user_exec = AsyncMock(return_value=(0, "", ""))
 
-        installed = await backend.install_native_mesh()
+        installed = await backend.install_directmesh()
         removed = await backend.uninstall_native_mesh()
 
-        self.assertIn("Steam launch options were not changed", installed["message"])
+        self.assertIn("installed globally after retired R2 cleanup", installed["message"])
+        backend._user_exec.assert_awaited_once_with(
+            ["/usr/bin/sudo", "-n", "-v"], timeout=15, check=False
+        )
         self.assertIn("global RADV runtime was unchanged", removed["message"])
         self.assertEqual(
             backend._user_tool.await_args_list,
             [
-                call("bc250-mesh-shader.sh", "setup", "--native-mesh", timeout=3600),
+                call("bc250-mesh-shader.sh", "setup", "--directmesh", timeout=3600),
                 call("bc250-mesh-shader.sh", "uninstall", "--native-mesh", timeout=120),
             ],
         )
+
+    async def test_old_private_mesh_install_api_does_not_silently_enable_global_driver(self):
+        backend = object.__new__(ToolkitBackend)
+        backend._user_tool = AsyncMock(return_value="")
+        with self.assertRaisesRegex(CommandError, "R2 installation is retired"):
+            await backend.install_native_mesh()
+        backend._user_tool.assert_not_awaited()
+
+    async def test_directmesh_frontend_requires_sudo_before_r2_cleanup(self):
+        backend = object.__new__(ToolkitBackend)
+        prepare_mutation_backend(backend)
+        backend._user_exec = AsyncMock(return_value=(1, "", "a password is required"))
+        backend._user_tool = AsyncMock(return_value="")
+        with self.assertRaisesRegex(CommandError, "No R2 cleanup was started"):
+            await backend.install_directmesh()
+        backend._user_tool.assert_not_awaited()
+
+    async def test_mesh_status_rejects_invalid_directmesh_versions(self):
+        backend = object.__new__(ToolkitBackend)
+        backend.user_home = Path("/home/deck")
+        prepare_mutation_backend(backend)
+        backend._user_script_available = MagicMock(return_value=True)
+        payload = {
+            "runtimeState": "ready", "games": [], "configValid": True,
+            "icdPath": "/home/deck/icd.json",
+        }
+        for version, state in ((1, "ready"), ("r2-20260921", "ready"),
+                               ("directmesh-v1.3.1\n", "ready"),
+                               ("directmesh-v1.3.1", "invalid")):
+            with self.subTest(version=version, state=state):
+                backend._user_tool = AsyncMock(return_value=json.dumps({
+                    **payload, "runtimeState": state, "directMeshVersion": version,
+                }))
+                with self.assertRaisesRegex(CommandError, "invalid DirectMesh version"):
+                    await backend.get_mesh_status()
 
     async def test_mesh_game_toggle_rejects_removed_per_game_mode(self):
         backend = object.__new__(ToolkitBackend)

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Build and manage DryhoppedIPA's alternate GFX1013 Mesa/RADV ICD.
+# Build and manage the BC-250 DirectMesh + FSR4 Mesa/RADV ICD.
 # Its compute queues require the matching kernel repair from bc250-audio-fix.
 set -euo pipefail
 
@@ -8,17 +8,20 @@ UPSTREAM_REPO="https://github.com/DryhoppedIPA/bc250-gfx1013-fix"
 UPSTREAM_COMMIT="d3e6dc062c34d2523db0abe5741d1f5b0dea00d9"
 AMDGPU_REVISION="smu-8core-metrics-r1"
 LEGACY_UPSTREAM_COMMIT="b66203e012594204e5e3049856b28a2681112985"
-RADV_PROFILE_REVISION="production-fsr4-v4"
+RADV_PROFILE_REVISION="directmesh-1.3.1-fsr4-v5"
 RAW_BASE="https://raw.githubusercontent.com/DryhoppedIPA/bc250-gfx1013-fix/$UPSTREAM_COMMIT"
 FSR4_RADV_REPO="https://github.com/MastaG/linux-cachyos-bc250"
-FSR4_RADV_COMMIT="db49878af40551b481f511053201fcf1e1bd5d90"
+FSR4_RADV_COMMIT="f05991ace64a42eda3d2dc583e96b8d35ce393e3"
 FSR4_RADV_BASE="https://raw.githubusercontent.com/MastaG/linux-cachyos-bc250/$FSR4_RADV_COMMIT/patches/mesa"
-DEFAULT_MESA_TAG="mesa-26.2.2"
-MESA_COMMIT="3281a69a8bfd9f997e91c15ed0e6290cae12dd32"
+DEFAULT_MESA_TAG="mesa-26.2.5"
+MESA_COMMIT="ddaf85e353442d9d7f192fdcf1823e652e3f2ee3"
 MESA_REPO="https://gitlab.freedesktop.org/mesa/mesa.git"
-LIBDRM_TARBALL="libdrm-2.4.133.tar.xz"
+LIBDRM_TARBALL="libdrm-2.4.134.tar.xz"
 LIBDRM_URL="https://dri.freedesktop.org/libdrm/$LIBDRM_TARBALL"
-LIBDRM_SHA256="fc68f9d0ba2ea63c9432a299e14fea09fad7a8a66e8039fcd7802ca59f77b4f5"
+LIBDRM_SHA256="ac5e74d157830eb8bee44c6a6bf3ad49774ef0dd2a72bdad74a8f20308b52a95"
+DIRECTMESH_RELEASE="directmesh-v1.3.1"
+MESA_PATCH_DIR="${SELF%/*}/bc250-mesa-patches"
+DIRECTMESH_REBASE="$MESA_PATCH_DIR/rebase-directmesh.py"
 
 STATE_DIR="${BC250_MESH_STATE_DIR:-$HOME/.local/share/bc250-mesh-shader}"
 CACHE_DIR="$STATE_DIR/upstream-$UPSTREAM_COMMIT"
@@ -141,6 +144,8 @@ require_normal_user() {
 }
 
 ensure_state_dir() {
+    native_mesh_paths_are_safe "$STATE_DIR" "$LOCK_FILE" \
+        || die "Refusing symlinked or unsafe state/lock ancestor."
     [[ ! -L "$STATE_DIR" ]] || die "Refusing symlinked state directory: $STATE_DIR"
     mkdir -p "$STATE_DIR"
     chmod 0700 "$STATE_DIR"
@@ -375,7 +380,7 @@ fetch_verified() {
 }
 
 stage_upstream() {
-    local profile="${1:-default}"
+    local profile="${1:-default}" rebased
     fetch_verified upstream-MIT-LICENSE \
         ddf5d9be5c762bcc5237e36235a1c5f00be521cfc92d8c264dfcce392e2c1313 \
         "$RAW_BASE/LICENSE"
@@ -386,23 +391,34 @@ stage_upstream() {
         ccf962b0b8aca2b9a67a2e2081d4edf6a66f8403fdf66a54d08a1ef10367f3eb \
         "$RAW_BASE/NOTICE.md"
     fetch_verified 0001-gfx1013-compute-queue-fix.patch \
-        b30db62d989977e0cf7c99813f029ade75da128623966616330b0dacc98a5788 \
+        eac1b6b82f64b67c33d822a33bd81310414b661588993724db2fd1bf61585936 \
         "$FSR4_RADV_BASE/0001-gfx1013-compute-queue-fix.patch"
-    fetch_verified 0005-bc250-fsr4-v3.patch \
-        43202e01e3a3cad51c9d879b49a56ef8b06232daf6f30e2d196e13df634bb502 \
-        "$FSR4_RADV_BASE/0005-bc250-fsr4-v3.patch"
-    fetch_verified 0006-bc250-fsr4-combined-unroll.patch \
-        b19281863aa2b8465649d370a39bf436d65ae6f06c51fb8f79228d0277d848ec \
-        "$FSR4_RADV_BASE/0006-bc250-fsr4-combined-unroll.patch"
-    fetch_verified 0007-bc250-fsr4-imageprep-texture.patch \
-        004644a2704e69b1083cf26c8d250f860eb9595573188343137615afdcc31c93 \
-        "$FSR4_RADV_BASE/0007-bc250-fsr4-imageprep-texture.patch"
-    fetch_verified 0008-bc250-fsr4-resolution-variants.patch \
-        517cf1be2d9e69031793121d9b80a1d968411cc06b982a3155de927690aa1d42 \
-        "$FSR4_RADV_BASE/0008-bc250-fsr4-resolution-variants.patch"
-    fetch_verified 0009-bc250-fsr4-production-defaults.patch \
-        f0a38daa798f681b44ba07f6222ff3338726f64b78d4a33b3c04c9e424025496 \
-        "$FSR4_RADV_BASE/0009-bc250-fsr4-production-defaults.patch"
+    fetch_verified 0002-bc250-directmesh.patch \
+        505a5df741aab30f51405630f5fab853e942db6c44beb5aa1d787480a3b127ee \
+        "$FSR4_RADV_BASE/0002-bc250-directmesh.patch"
+    [[ -f "$DIRECTMESH_REBASE" && ! -L "$DIRECTMESH_REBASE" ]] \
+        || die "The DirectMesh rebase helper is missing or unsafe."
+    rebased=$(mktemp "$CACHE_DIR/.directmesh-rebase.XXXXXX")
+    if ! python3 -I "$DIRECTMESH_REBASE" "$CACHE_DIR/0002-bc250-directmesh.patch" > "$rebased"; then
+        rm -f -- "$rebased"
+        die "The pinned DirectMesh patch could not be rebased onto Mesa 26.2.5."
+    fi
+    mv -f -- "$rebased" "$CACHE_DIR/directmesh-mesa-26.2.5.patch"
+    fetch_verified 0003-bc250-fsr4-v3.patch \
+        7663c6eb121d97f96de23f42c00583ad64af5ca83f887a9107412b80f5982b43 \
+        "$FSR4_RADV_BASE/0003-bc250-fsr4-v3.patch"
+    fetch_verified 0004-bc250-fsr4-combined-unroll.patch \
+        1eed22232b5468e45aa5ff748db3b443cf740b51fd4847c8fb3ba445ad174d84 \
+        "$FSR4_RADV_BASE/0004-bc250-fsr4-combined-unroll.patch"
+    fetch_verified 0005-bc250-fsr4-imageprep-texture.patch \
+        42f794d18d3399ddb04f466a568107b72ab417f04e158b3d48c891ea80cc1aa2 \
+        "$FSR4_RADV_BASE/0005-bc250-fsr4-imageprep-texture.patch"
+    fetch_verified 0006-bc250-fsr4-resolution-variants.patch \
+        c5ca0f1dc7129b56b52455884e55de11359e4c0152f89f7857a4bb21b727f256 \
+        "$FSR4_RADV_BASE/0006-bc250-fsr4-resolution-variants.patch"
+    fetch_verified 0007-bc250-fsr4-production-defaults.patch \
+        5f4ff8b9937818a0c19543b9051859f3a49ec6edb39e9bab59f58a79920006c8 \
+        "$FSR4_RADV_BASE/0007-bc250-fsr4-production-defaults.patch"
     if [[ "$profile" == fsr4 ]]; then
         fetch_verified "$FSR4_PATCH_NAME" "$FSR4_PATCH_SHA256" "$FSR4_PATCH_URL"
     fi
@@ -421,45 +437,6 @@ stage_upstream() {
     fi
     [[ "$(git --git-dir="$MESA_GIT_CACHE" rev-parse "$MESA_COMMIT")" == "$MESA_COMMIT" ]] \
         || die "Fetched Mesa source does not match pinned commit $MESA_COMMIT"
-}
-
-stage_native_mesh_upstream() {
-    local supplied=${BC250_R2_ARCHIVE:-} target="$CACHE_DIR/$NATIVE_MESH_ARCHIVE" temporary
-    if [[ -z "$supplied" ]]; then
-        fetch_verified "$NATIVE_MESH_ARCHIVE" "$NATIVE_MESH_ARCHIVE_SHA256" \
-            "$NATIVE_MESH_ARCHIVE_URL"
-        return 0
-    fi
-    [[ -f "$supplied" && ! -L "$supplied" ]] \
-        || die "The supplied BC250 R2 archive is missing or unsafe: $supplied"
-    [[ "$(sha256_file "$supplied")" == "$NATIVE_MESH_ARCHIVE_SHA256" ]] \
-        || die "Checksum mismatch for the supplied BC250 R2 archive."
-    [[ ! -L "$CACHE_DIR" ]] || die "Refusing symlinked upstream cache: $CACHE_DIR"
-    mkdir -p "$CACHE_DIR"
-    temporary=$(mktemp "$CACHE_DIR/.${NATIVE_MESH_ARCHIVE}.XXXXXX")
-    cp "$supplied" "$temporary"
-    chmod 0644 "$temporary"
-    mv -f "$temporary" "$target"
-}
-
-stage_native_mesh_source_upstream() {
-    local supplied=${BC250_R2_SOURCE_ARCHIVE:-}
-    local target="$CACHE_DIR/$NATIVE_MESH_SOURCE_ARCHIVE" temporary
-    if [[ -z "$supplied" ]]; then
-        fetch_verified "$NATIVE_MESH_SOURCE_ARCHIVE" \
-            "$NATIVE_MESH_SOURCE_ARCHIVE_SHA256" "$NATIVE_MESH_SOURCE_ARCHIVE_URL"
-        return 0
-    fi
-    [[ -f "$supplied" && ! -L "$supplied" ]] \
-        || die "The supplied BC250 R2 Mesa source archive is missing or unsafe: $supplied"
-    [[ "$(sha256_file "$supplied")" == "$NATIVE_MESH_SOURCE_ARCHIVE_SHA256" ]] \
-        || die "Checksum mismatch for the supplied BC250 R2 Mesa source archive."
-    [[ ! -L "$CACHE_DIR" ]] || die "Refusing symlinked upstream cache: $CACHE_DIR"
-    mkdir -p "$CACHE_DIR"
-    temporary=$(mktemp "$CACHE_DIR/.${NATIVE_MESH_SOURCE_ARCHIVE}.XXXXXX")
-    cp "$supplied" "$temporary"
-    chmod 0644 "$temporary"
-    mv -f "$temporary" "$target"
 }
 
 verify_fsr4_patch() {
@@ -741,6 +718,7 @@ read_manifest() {
             || "$STORED_COMMIT" == "$LEGACY_UPSTREAM_COMMIT" ) \
         && ( -z "$STORED_PROFILE_REVISION" \
             || "$STORED_PROFILE_REVISION" == "compute-only-v2" \
+            || "$STORED_PROFILE_REVISION" == "production-fsr4-v4" \
             || "$STORED_PROFILE_REVISION" == "$RADV_PROFILE_REVISION" ) \
         && ( -z "$STORED_GENERATOR_SHA" \
             || "$STORED_GENERATOR_SHA" =~ ^[0-9a-f]{64}$ ) \
@@ -1152,141 +1130,6 @@ exec "\$@"
 EOF
 }
 
-render_native_mesh_runner() {
-    local marker_q audio_marker_q metrics_marker_q module_q active_q revision_active_q policy_q
-    local driver_q icd_q manifest_q runner_q upstream_runner_q license_q readme_q limitations_q
-    local third_party_q upstream_manifest_q config_q tool_marker_q dll_q commit_q revision_q
-    local mesa_license_q vkd3d_copying_q vkd3d_lgpl_q
-    marker_q=$(shell_word "$COMPUTE_MARKER")
-    audio_marker_q=$(shell_word "$AUDIO_MARKER")
-    metrics_marker_q=$(shell_word "$METRICS_MARKER")
-    module_q=$(shell_word "$COMPUTE_MODULE")
-    active_q=$(shell_word "$COMPUTE_ACTIVE")
-    revision_active_q=$(shell_word "$AMDGPU_REVISION_ACTIVE")
-    policy_q=$(shell_word "$SCHED_POLICY")
-    driver_q=$(shell_word "$NATIVE_MESH_DRIVER")
-    icd_q=$(shell_word "$NATIVE_MESH_ICD")
-    manifest_q=$(shell_word "$NATIVE_MESH_MANIFEST")
-    runner_q=$(shell_word "$NATIVE_MESH_RUNNER")
-    upstream_runner_q=$(shell_word "$NATIVE_MESH_UPSTREAM_RUNNER")
-    license_q=$(shell_word "$NATIVE_MESH_LICENSE")
-    readme_q=$(shell_word "$NATIVE_MESH_README")
-    limitations_q=$(shell_word "$NATIVE_MESH_LIMITATIONS")
-    third_party_q=$(shell_word "$NATIVE_MESH_DIR/THIRD-PARTY.md")
-    upstream_manifest_q=$(shell_word "$NATIVE_MESH_DIR/manifest.json")
-    config_q=$(shell_word "$NATIVE_MESH_DIR/config.json")
-    mesa_license_q=$(shell_word "$NATIVE_MESH_DIR/licenses/mesa-license.rst")
-    vkd3d_copying_q=$(shell_word "$NATIVE_MESH_DIR/licenses/vkd3d-COPYING.txt")
-    vkd3d_lgpl_q=$(shell_word "$NATIVE_MESH_DIR/licenses/vkd3d-LGPL-2.1.txt")
-    tool_marker_q=$(shell_word "$NATIVE_MESH_TOOL/$NATIVE_MESH_TOOL_MARKER")
-    dll_q=$(shell_word "$NATIVE_MESH_TOOL/$NATIVE_MESH_DLL_RELATIVE")
-    commit_q=$(shell_word "$UPSTREAM_COMMIT")
-    revision_q=$(shell_word "$AMDGPU_REVISION")
-    cat <<EOF
-#!/usr/bin/env bash
-set -euo pipefail
-MARKER=$marker_q
-AUDIO_MARKER=$audio_marker_q
-METRICS_MARKER=$metrics_marker_q
-MODULE=$module_q
-ACTIVE=$active_q
-REVISION_ACTIVE=$revision_active_q
-SCHED_POLICY=$policy_q
-DRIVER=$driver_q
-ICD=$icd_q
-MANIFEST=$manifest_q
-RUNNER=$runner_q
-UPSTREAM_RUNNER=$upstream_runner_q
-LICENSE=$license_q
-README=$readme_q
-LIMITATIONS=$limitations_q
-THIRD_PARTY=$third_party_q
-UPSTREAM_MANIFEST=$upstream_manifest_q
-CONFIG=$config_q
-MESA_LICENSE=$mesa_license_q
-VKD3D_COPYING=$vkd3d_copying_q
-VKD3D_LGPL=$vkd3d_lgpl_q
-TOOL_MARKER=$tool_marker_q
-DLL=$dll_q
-COMPUTE_COMMIT=$commit_q
-REVISION=$revision_q
-R2_RELEASE=$NATIVE_MESH_RELEASE
-R2_COMMIT=$NATIVE_MESH_COMMIT
-ARCHIVE_SHA=$NATIVE_MESH_ARCHIVE_SHA256
-SOURCE_ARCHIVE_SHA=$NATIVE_MESH_SOURCE_ARCHIVE_SHA256
-DRIVER_SHA=$NATIVE_MESH_DRIVER_SHA256
-DLL_SHA=$NATIVE_MESH_VKD3D_SHA256
-fail() { printf '[bc250-r2] %s\n' "\$*" >&2; exit 1; }
-[[ \$# -gt 0 ]] || fail "No game command was provided."
-for path in "\$MARKER" "\$AUDIO_MARKER" "\$METRICS_MARKER" "\$MODULE" \
-    "\$DRIVER" "\$ICD" "\$MANIFEST" "\$RUNNER" "\$UPSTREAM_RUNNER" \
-    "\$LICENSE" "\$README" "\$LIMITATIONS" "\$THIRD_PARTY" \
-    "\$UPSTREAM_MANIFEST" "\$CONFIG" "\$MESA_LICENSE" "\$VKD3D_COPYING" \
-    "\$VKD3D_LGPL" "\$TOOL_MARKER" "\$DLL"; do
-    [[ -f "\$path" && ! -L "\$path" ]] || fail "Required attested file is missing or unsafe: \$path"
-done
-[[ -r "\$ACTIVE" && ! -L "\$ACTIVE" \
-    && -r "\$REVISION_ACTIVE" && ! -L "\$REVISION_ACTIVE" \
-    && -r "\$SCHED_POLICY" && ! -L "\$SCHED_POLICY" ]] \
-    || fail "The patched AMDGPU runtime is not active."
-actual=\$(sha256sum "\$MODULE" | awk '{print \$1}')
-for marker in "\$MARKER" "\$AUDIO_MARKER" "\$METRICS_MARKER"; do
-    read -r expected marker_revision < "\$marker" || fail "Could not read \$marker"
-    [[ "\$expected" =~ ^[0-9a-f]{64}\$ && "\$actual" == "\$expected" \
-        && "\$marker_revision" == "\$REVISION" ]] \
-        || fail "The selected AMDGPU module does not match its attestations."
-done
-resolved=\$(modinfo -k "\$(uname -r)" -F filename amdgpu 2>/dev/null) \
-    || fail "Could not resolve the selected AMDGPU module."
-[[ "\$(readlink -f "\$resolved")" == "\$(readlink -f "\$MODULE")" ]] \
-    || fail "The selected AMDGPU module is not the attested module."
-[[ "\$(cat "\$ACTIVE")" == "\$COMPUTE_COMMIT" ]] || fail "The loaded AMDGPU repair does not match RADV."
-[[ "\$(cat "\$REVISION_ACTIVE")" == "\$REVISION" ]] || fail "The loaded AMDGPU revision does not match RADV."
-[[ "\$(cat "\$SCHED_POLICY")" == 2 ]] || fail "amdgpu.sched_policy=2 is not active."
-read -r schema archive_sha driver_sha dll_sha icd_sha runner_sha upstream_sha \
-    config_sha upstream_manifest_sha license_sha readme_sha third_party_sha limitations_sha \
-    mesa_license_sha vkd3d_copying_sha vkd3d_lgpl_sha release commit driver_origin \
-    source_archive_sha extra < "\$MANIFEST" \
-    || fail "The BC250 R2 profile manifest is malformed."
-provenance_valid=0
-if [[ "\$schema" == 2 && "\$archive_sha" == "\$ARCHIVE_SHA" \
-    && "\$driver_sha" == "\$DRIVER_SHA" && -z "\${driver_origin:-}" \
-    && -z "\${source_archive_sha:-}" ]]; then
-    provenance_valid=1
-elif [[ "\$schema" == 3 && "\$archive_sha" == "\$ARCHIVE_SHA" \
-    && "\$driver_sha" =~ ^[0-9a-f]{64}\$ && "\$driver_origin" == source \
-    && "\$source_archive_sha" == "\$SOURCE_ARCHIVE_SHA" ]]; then
-    provenance_valid=1
-fi
-[[ -z "\${extra:-}" && "\$provenance_valid" == 1 && "\$dll_sha" == "\$DLL_SHA" \
-    && "\$release" == "\$R2_RELEASE" && "\$commit" == "\$R2_COMMIT" ]] \
-    || fail "The BC250 R2 profile manifest is invalid."
-[[ "\$(sha256sum "\$DRIVER" | awk '{print \$1}')" == "\$driver_sha" \
-    && "\$(sha256sum "\$DLL" | awk '{print \$1}')" == "\$dll_sha" \
-    && "\$(sha256sum "\$ICD" | awk '{print \$1}')" == "\$icd_sha" \
-    && "\$(sha256sum "\$RUNNER" | awk '{print \$1}')" == "\$runner_sha" \
-    && "\$(sha256sum "\$UPSTREAM_RUNNER" | awk '{print \$1}')" == "\$upstream_sha" \
-    && "\$(sha256sum "\$CONFIG" | awk '{print \$1}')" == "\$config_sha" \
-    && "\$(sha256sum "\$UPSTREAM_MANIFEST" | awk '{print \$1}')" == "\$upstream_manifest_sha" \
-    && "\$(sha256sum "\$LICENSE" | awk '{print \$1}')" == "\$license_sha" \
-    && "\$(sha256sum "\$README" | awk '{print \$1}')" == "\$readme_sha" \
-    && "\$(sha256sum "\$THIRD_PARTY" | awk '{print \$1}')" == "\$third_party_sha" \
-    && "\$(sha256sum "\$LIMITATIONS" | awk '{print \$1}')" == "\$limitations_sha" \
-    && "\$(sha256sum "\$MESA_LICENSE" | awk '{print \$1}')" == "\$mesa_license_sha" \
-    && "\$(sha256sum "\$VKD3D_COPYING" | awk '{print \$1}')" == "\$vkd3d_copying_sha" \
-    && "\$(sha256sum "\$VKD3D_LGPL" | awk '{print \$1}')" == "\$vkd3d_lgpl_sha" ]] \
-    || fail "The BC250 R2 profile failed hash verification."
-linkage=\$(LC_ALL=C ldd -r "\$DRIVER" 2>&1) \
-    || fail "The BC250 R2 driver is incompatible with this runtime: \$linkage"
-if grep -Eq 'not found|undefined symbol:' <<< "\$linkage"; then
-    fail "The BC250 R2 driver has unresolved runtime dependencies: \$linkage"
-fi
-[[ "\$(cat "\$TOOL_MARKER")" == "\$R2_RELEASE" ]] \
-    || fail "The private BC250 R2 Proton copy is not recorded."
-exec "\$UPSTREAM_RUNNER" "\$@"
-EOF
-}
-
 read_native_mesh_manifest() {
     local profile="${1:-$NATIVE_MESH_DIR}" manifest extra line provenance_valid=0
     manifest="$profile/install.conf"
@@ -1347,6 +1190,53 @@ read_native_mesh_manifest() {
         && "$(wc -l < "$manifest")" -eq 1 ]]
 }
 
+native_mesh_paths_are_safe() {
+    python3 -I - "$@" <<'PY'
+from pathlib import Path
+import sys
+
+for value in sys.argv[1:]:
+    path = Path(value)
+    if not path.is_absolute() or ".." in path.parts:
+        raise SystemExit(1)
+    if any(parent.is_symlink() for parent in (path, *path.parents)):
+        raise SystemExit(1)
+PY
+}
+
+native_mesh_profile_layout_valid() {
+    native_mesh_paths_are_safe "$1" || return 1
+    python3 -I - "$1" "$2" <<'PY'
+from pathlib import Path
+import stat
+import sys
+
+root = Path(sys.argv[1])
+files = ({"libvulkan_radeon.so", "icd.json", "bc250-r2", "run-r2.sh",
+          "config.json", "manifest.json", "LICENSE", "README.md", "THIRD-PARTY.md",
+          "VALIDATION.md", "licenses/mesa-license.rst", "licenses/vkd3d-COPYING.txt",
+          "licenses/vkd3d-LGPL-2.1.txt", "install.conf"} if sys.argv[2] == "r2" else
+         {"libvulkan_radeon.so", "radeon_native_mesh_icd.x86_64.json",
+          "bc250-native-mesh-run", "LONEWOLF-LICENSE.md", "LONEWOLF-README.md",
+          "LONEWOLF-KNOWN_LIMITATIONS.md", "install.conf"})
+directories = {"licenses"} if sys.argv[2] == "r2" else set()
+try:
+    seen = set()
+    for path in root.rglob("*"):
+        relative = path.relative_to(root).as_posix()
+        mode = path.lstat().st_mode
+        if stat.S_ISDIR(mode) and relative in directories:
+            continue
+        if relative not in files or not stat.S_ISREG(mode):
+            raise SystemExit(1)
+        seen.add(relative)
+    if seen != files:
+        raise SystemExit(1)
+except OSError:
+    raise SystemExit(1)
+PY
+}
+
 verify_owned_native_mesh_profile() {
     local profile="${1:-$NATIVE_MESH_DIR}" driver icd runner upstream config upstream_manifest
     local license readme third_party limitations mesa_license vkd3d_copying vkd3d_lgpl
@@ -1363,6 +1253,7 @@ verify_owned_native_mesh_profile() {
     mesa_license="$profile/licenses/mesa-license.rst"
     vkd3d_copying="$profile/licenses/vkd3d-COPYING.txt"
     vkd3d_lgpl="$profile/licenses/vkd3d-LGPL-2.1.txt"
+    native_mesh_profile_layout_valid "$profile" r2 || return 1
     read_native_mesh_manifest "$profile" || return 1
     [[ -d "$profile" && ! -L "$profile" \
         && -f "$driver" && ! -L "$driver" \
@@ -1398,6 +1289,7 @@ verify_owned_native_mesh_profile() {
 verify_owned_native_mesh_tool() {
     local tool="${1:-$NATIVE_MESH_TOOL}" dll
     dll="$tool/$NATIVE_MESH_DLL_RELATIVE"
+    native_mesh_paths_are_safe "$tool" "$dll" || return 1
     [[ "$NATIVE_MESH_COMPAT_ROOT" == /* && ! -L "$NATIVE_MESH_COMPAT_ROOT" \
         && -d "$tool" && ! -L "$tool" \
         && -f "$tool/$NATIVE_MESH_TOOL_MARKER" && ! -L "$tool/$NATIVE_MESH_TOOL_MARKER" \
@@ -1417,15 +1309,15 @@ verify_owned_native_mesh_runtime() {
 }
 
 verify_current_native_mesh_runtime() {
-    verify_owned_native_mesh_runtime \
-        && cmp -s "$NATIVE_MESH_RUNNER" <(render_native_mesh_runner) \
-        && native_mesh_runtime_dependencies_compatible "$NATIVE_MESH_DRIVER"
+    # Retired profiles are inspected only for ownership, never runtime readiness.
+    verify_owned_native_mesh_runtime
 }
 
 verify_legacy_native_mesh_runtime() {
     local profile="${1:-$NATIVE_MESH_DIR}" line extra
     local driver_sha icd_sha runner_sha license_sha readme_sha limitations_sha
     local mesa_tag mesa_commit mesh_commit rebase_sha
+    native_mesh_profile_layout_valid "$profile" legacy || return 1
     [[ -d "$profile" && ! -L "$profile" \
         && -f "$profile/install.conf" && ! -L "$profile/install.conf" ]] || return 1
     IFS= read -r line < "$profile/install.conf" || return 1
@@ -1434,8 +1326,9 @@ verify_legacy_native_mesh_runtime() {
     [[ -z "$extra" && "$driver_sha" =~ ^[0-9a-f]{64}$ \
         && "$icd_sha" =~ ^[0-9a-f]{64}$ && "$runner_sha" =~ ^[0-9a-f]{64}$ \
         && "$license_sha" =~ ^[0-9a-f]{64}$ && "$readme_sha" =~ ^[0-9a-f]{64}$ \
-        && "$limitations_sha" =~ ^[0-9a-f]{64}$ && "$mesa_tag" == "$DEFAULT_MESA_TAG" \
-        && "$mesa_commit" == "$MESA_COMMIT" && "$mesh_commit" == "$LEGACY_NATIVE_MESH_COMMIT" \
+        && "$limitations_sha" =~ ^[0-9a-f]{64}$ && "$mesa_tag" == mesa-26.2.2 \
+        && "$mesa_commit" == 3281a69a8bfd9f997e91c15ed0e6290cae12dd32 \
+        && "$mesh_commit" == "$LEGACY_NATIVE_MESH_COMMIT" \
         && "$rebase_sha" == "$LEGACY_NATIVE_MESH_REBASE_SHA256" \
         && "$(sha256_file "$profile/libvulkan_radeon.so")" == "$driver_sha" \
         && "$(sha256_file "$profile/radeon_native_mesh_icd.x86_64.json")" == "$icd_sha" \
@@ -1456,12 +1349,30 @@ recover_native_mesh_install_transaction() {
         && -f "$NATIVE_MESH_TRANSACTION_DIR/transaction.conf" \
         && ! -L "$NATIVE_MESH_TRANSACTION_DIR/transaction.conf" ]] \
         || die "Invalid native-mesh install transaction; manual recovery required."
-    local phase had_previous extra
+    local phase had_previous extra entry
     read -r phase had_previous extra < "$NATIVE_MESH_TRANSACTION_DIR/transaction.conf" \
         || die "Malformed native-mesh install transaction; manual recovery required."
     [[ ( "$phase" == prepared || "$phase" == swapping ) \
-        && ( "$had_previous" == 0 || "$had_previous" == 1 ) && -z "$extra" ]] \
+        && ( "$had_previous" == 0 || "$had_previous" == 1 ) && -z "$extra" \
+        && "$(wc -l < "$NATIVE_MESH_TRANSACTION_DIR/transaction.conf")" -eq 1 ]] \
         || die "Malformed native-mesh install transaction; manual recovery required."
+    for entry in "$NATIVE_MESH_TRANSACTION_DIR"/* \
+        "$NATIVE_MESH_TRANSACTION_DIR"/.[!.]* "$NATIVE_MESH_TRANSACTION_DIR"/..?*; do
+        [[ -e "$entry" || -L "$entry" ]] || continue
+        [[ "$entry" == "$NATIVE_MESH_TRANSACTION_DIR/transaction.conf" \
+            || "$entry" == "$NATIVE_MESH_TRANSACTION_DIR/previous" ]] \
+            || die "Native-mesh transaction contains unrecognized files; manual recovery required."
+    done
+    if [[ "$had_previous" == 1 ]]; then
+        [[ -d "$NATIVE_MESH_TRANSACTION_DIR/previous" \
+            && ! -L "$NATIVE_MESH_TRANSACTION_DIR/previous" ]] \
+            || die "Native-mesh transaction backup is missing; manual recovery required."
+        verify_recorded_native_mesh_profile "$NATIVE_MESH_TRANSACTION_DIR/previous" \
+            || die "Native-mesh transaction backup failed attestation; manual recovery required."
+    elif [[ -e "$NATIVE_MESH_TRANSACTION_DIR/previous" \
+        || -L "$NATIVE_MESH_TRANSACTION_DIR/previous" ]]; then
+        die "Native-mesh transaction has an unrecognized backup; manual recovery required."
+    fi
     if [[ "$phase" == prepared ]]; then
         rm -rf "$NATIVE_MESH_TRANSACTION_DIR"
         fsync_paths "$STATE_DIR"
@@ -1473,12 +1384,9 @@ recover_native_mesh_install_transaction() {
         log "Completed recovery of an intact native-mesh profile installation."
         return 0
     fi
-    if [[ "$had_previous" == 1 ]]; then
-        [[ -d "$NATIVE_MESH_TRANSACTION_DIR/previous" \
-            && ! -L "$NATIVE_MESH_TRANSACTION_DIR/previous" ]] \
-            || die "Native-mesh transaction backup is missing; manual recovery required."
-        verify_recorded_native_mesh_profile "$NATIVE_MESH_TRANSACTION_DIR/previous" \
-            || die "Native-mesh transaction backup failed attestation; manual recovery required."
+    if [[ -e "$NATIVE_MESH_DIR" || -L "$NATIVE_MESH_DIR" ]]; then
+        verify_recorded_native_mesh_profile \
+            || die "Native-mesh transaction left a modified or unrecognized profile; manual recovery required."
     fi
     if [[ -e "$NATIVE_MESH_TOOL" || -L "$NATIVE_MESH_TOOL" ]]; then
         verify_owned_native_mesh_tool \
@@ -1954,8 +1862,10 @@ refresh_current_generator() (
 
 install_default_profile() {
     local output="$1" mesa_tag="$2"
-    log "Installing audited $mesa_tag with DryhoppedIPA's patch series ${UPSTREAM_COMMIT:0:7}."
+    remove_retired_native_mesh
+    log "Installing $mesa_tag with $DIRECTMESH_RELEASE and the checksum-pinned FSR4 patch series."
     log "The alternate ICD will become global for this user after the user manager reloads."
+    log "DirectMesh is enabled by default on BC-250. Per-game opt-out: RADV_DIRECTMESH=0 %command%"
     arm_install_transaction "$ro_was_enabled"
     unlock_root
     as_root install -o root -g root -m 0755 "$output" "$staged_driver"
@@ -2041,333 +1951,11 @@ validate_mesa_output() {
     validate_mesa_binary "$output"
     for marker in bc250-fsr4-integrated-v3 BC250_FSR4_DISABLE \
         BC250_FSR4_IMAGEPREP BC250_FSR4_TEXTURE \
-        BC250_FSR4_RESOLUTION_VARIANTS BC250_FSR4_RESOLUTION_GUARD; do
+        BC250_FSR4_RESOLUTION_VARIANTS BC250_FSR4_RESOLUTION_GUARD \
+        RADV_DIRECTMESH RADV_BC250_MESH_IDXPASS; do
         grep -aqF "$marker" "$output" \
             || die "Built RADV driver is missing FSR4 marker: $marker"
     done
-}
-
-validate_native_mesh_build_output() {
-    local output=$1 marker
-    validate_mesa_binary "$output"
-    for marker in RADV_BC250_NATIVE_TASK RADV_BC250_HYBRID_TASK BC250_COMPACT_VERTICES; do
-        grep -aqF "$marker" "$output" \
-            || die "Built BC250 R2 driver is missing native-mesh marker: $marker"
-    done
-}
-
-validate_native_mesh_source_archive() {
-    local archive=$1
-    python3 -I - "$archive" <<'PY'
-import pathlib
-import sys
-import tarfile
-
-seen = set()
-symlinks = {}
-total = 0
-with tarfile.open(sys.argv[1], "r:gz") as archive:
-    members = archive.getmembers()
-    if len(members) > 20000:
-        raise SystemExit("BC250 R2 Mesa source archive contains too many entries")
-    for member in members:
-        name = member.name.rstrip("/")
-        path = pathlib.PurePosixPath(name)
-        if not name or path.is_absolute() or ".." in path.parts or "\x00" in name:
-            raise SystemExit("unsafe path in BC250 R2 Mesa source archive: " + repr(name))
-        if name in seen:
-            raise SystemExit("duplicate BC250 R2 Mesa source archive path: " + repr(name))
-        if not (member.isfile() or member.isdir() or member.issym()):
-            raise SystemExit("unsupported BC250 R2 Mesa source archive entry: " + repr(name))
-        if member.isfile():
-            total += member.size
-        elif member.issym():
-            link = pathlib.PurePosixPath(member.linkname)
-            if not member.linkname or link.is_absolute() or "\x00" in member.linkname:
-                raise SystemExit("unsafe link in BC250 R2 Mesa source archive: " + repr(name))
-            symlinks[path.parts] = link.parts
-        seen.add(name)
-if total > 512 * 1024 * 1024:
-    raise SystemExit("BC250 R2 Mesa source archive expands beyond the safety limit")
-for name in seen:
-    parts = pathlib.PurePosixPath(name).parts
-    if any(parts[:index] in symlinks for index in range(1, len(parts))):
-        raise SystemExit("BC250 R2 Mesa source archive places an entry below a link: " + repr(name))
-for origin, target in symlinks.items():
-    pending = [*origin[:-1], *target]
-    resolved = []
-    expansions = 0
-    while pending:
-        part = pending.pop(0)
-        if part in ("", "."):
-            continue
-        if part == "..":
-            if not resolved:
-                raise SystemExit("unsafe link resolution in BC250 R2 Mesa source archive: " + repr("/".join(origin)))
-            resolved.pop()
-            continue
-        resolved.append(part)
-        linked = symlinks.get(tuple(resolved))
-        if linked is not None:
-            expansions += 1
-            if expansions > len(symlinks):
-                raise SystemExit("cyclic link in BC250 R2 Mesa source archive: " + repr("/".join(origin)))
-            resolved.pop()
-            pending[:0] = linked
-required = {
-    "VERSION", "meson.build", "meson.options", "licenses/MIT",
-    "src/amd/common/amd_family.h", "src/amd/vulkan/radv_bc250.c",
-    "src/amd/vulkan/radv_physical_device.c",
-}
-if not required.issubset(seen):
-    raise SystemExit("BC250 R2 Mesa source archive is incomplete")
-PY
-}
-
-extract_native_mesh_source_archive() {
-    local archive=$1 destination=$2
-    validate_native_mesh_source_archive "$archive"
-    python3 -I - "$archive" "$destination" <<'PY'
-import pathlib
-import shutil
-import sys
-import tarfile
-
-destination = pathlib.Path(sys.argv[2])
-if destination.exists() or destination.is_symlink():
-    raise SystemExit("refusing existing BC250 R2 Mesa source destination")
-destination.mkdir(mode=0o700, parents=True)
-with tarfile.open(sys.argv[1], "r:gz") as archive:
-    members = archive.getmembers()
-    for member in members:
-        if not member.isdir():
-            continue
-        target = destination.joinpath(*pathlib.PurePosixPath(member.name.rstrip("/")).parts)
-        target.mkdir(mode=0o700, parents=True, exist_ok=True)
-    for member in members:
-        if not member.isfile():
-            continue
-        target = destination.joinpath(*pathlib.PurePosixPath(member.name).parts)
-        target.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
-        source = archive.extractfile(member)
-        if source is None:
-            raise SystemExit("could not read BC250 R2 Mesa source entry: " + repr(member.name))
-        with source, target.open("xb") as output:
-            shutil.copyfileobj(source, output)
-        target.chmod(0o755 if member.mode & 0o111 else 0o644)
-    for member in members:
-        if not member.issym():
-            continue
-        target = destination.joinpath(*pathlib.PurePosixPath(member.name).parts)
-        target.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
-        target.symlink_to(member.linkname)
-PY
-}
-
-build_native_mesh_driver() {
-    local archive=$1 work=$2 target=$3
-    local source="$work/mesa-r2-source" build="$work/mesa-r2-build"
-    extract_native_mesh_source_archive "$archive" "$source"
-    [[ "$(<"$source/VERSION")" == 26.2.1 ]] \
-        || die "BC250 R2 Mesa source has an unexpected version."
-    grep -qF 'CHIP_GFX1013' "$source/src/amd/common/amd_family.h" \
-        && grep -qF 'RADV_BC250_HYBRID_TASK' \
-            "$source/src/amd/vulkan/radv_physical_device.c" \
-        && grep -qF 'BC250_TRACE_NATIVE_TASK' "$source/src/amd/vulkan/radv_bc250.c" \
-        || die "BC250 R2 Mesa source is missing native-mesh markers."
-    log "Building the pinned BC250 R2 RADV source against this SteamOS runtime."
-    meson setup "$build" "$source" \
-        --buildtype=debugoptimized \
-        -Dvulkan-drivers=amd -Dgallium-drivers= \
-        -Dllvm=disabled -Dglx=disabled -Degl=disabled \
-        -Dgles1=disabled -Dgles2=disabled -Dbuild-tests=true
-    ninja -C "$build" src/amd/vulkan/libvulkan_radeon.so
-    validate_native_mesh_build_output \
-        "$build/src/amd/vulkan/libvulkan_radeon.so"
-    install -m 0755 "$build/src/amd/vulkan/libvulkan_radeon.so" "$target"
-    validate_native_mesh_build_output "$target"
-}
-
-validate_native_mesh_archive() {
-    local archive=$1
-    python3 -I - "$archive" <<'PY'
-import pathlib
-import sys
-import tarfile
-
-root = "bc250-r2-linux-x86_64"
-seen = set()
-total = 0
-with tarfile.open(sys.argv[1], "r:gz") as archive:
-    members = archive.getmembers()
-    if len(members) > 1000:
-        raise SystemExit("BC250 R2 archive contains too many entries")
-    for member in members:
-        name = member.name.rstrip("/")
-        path = pathlib.PurePosixPath(name)
-        if not name or path.is_absolute() or ".." in path.parts or "\x00" in name:
-            raise SystemExit("unsafe path in BC250 R2 archive: " + repr(name))
-        if path.parts[0] != root or name in seen:
-            raise SystemExit("unexpected or duplicate BC250 R2 archive path: " + repr(name))
-        if not (member.isfile() or member.isdir()):
-            raise SystemExit("unsupported BC250 R2 archive entry: " + repr(name))
-        if member.isfile():
-            total += member.size
-        seen.add(name)
-if total > 512 * 1024 * 1024:
-    raise SystemExit("BC250 R2 archive expands beyond the safety limit")
-required = {
-    f"{root}/LICENSE", f"{root}/README.md", f"{root}/THIRD-PARTY.md",
-    f"{root}/VALIDATION.md", f"{root}/manifest.json", f"{root}/run.sh",
-    f"{root}/payload/libvulkan_radeon.so", f"{root}/payload/d3d12core.dll",
-    f"{root}/licenses/mesa-license.rst", f"{root}/licenses/vkd3d-COPYING.txt",
-    f"{root}/licenses/vkd3d-LGPL-2.1.txt",
-}
-if not required.issubset(seen):
-    raise SystemExit("BC250 R2 archive is missing required payloads or notices")
-PY
-}
-
-extract_native_mesh_archive() {
-    local archive=$1 destination=$2
-    python3 -I - "$archive" "$destination" <<'PY'
-import pathlib
-import shutil
-import sys
-import tarfile
-
-root = "bc250-r2-linux-x86_64"
-destination = pathlib.Path(sys.argv[2]).resolve()
-destination.mkdir(mode=0o700, parents=True, exist_ok=True)
-seen = set()
-with tarfile.open(sys.argv[1], "r:gz") as archive:
-    for member in archive.getmembers():
-        name = member.name.rstrip("/")
-        path = pathlib.PurePosixPath(name)
-        if (not name or path.is_absolute() or ".." in path.parts
-                or "\x00" in name or path.parts[0] != root or name in seen
-                or not (member.isfile() or member.isdir())):
-            raise SystemExit("refusing unsafe BC250 R2 archive entry: " + repr(name))
-        seen.add(name)
-        target = destination.joinpath(*path.parts)
-        if member.isdir():
-            target.mkdir(mode=0o700, parents=True, exist_ok=True)
-            continue
-        target.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
-        source = archive.extractfile(member)
-        if source is None:
-            raise SystemExit("could not read BC250 R2 archive entry: " + repr(name))
-        with source, target.open("xb") as output:
-            shutil.copyfileobj(source, output)
-        target.chmod(0o755 if member.mode & 0o111 else 0o644)
-PY
-}
-
-validate_native_mesh_bundle() {
-    local bundle=$1
-    python3 -I - "$bundle" "$NATIVE_MESH_RELEASE" "$NATIVE_MESH_DRIVER_SHA256" \
-        "$NATIVE_MESH_VKD3D_SHA256" "$NATIVE_MESH_MESA_COMMIT" \
-        "$NATIVE_MESH_MESA_BASE" "$NATIVE_MESH_VKD3D_COMMIT" \
-        "$NATIVE_MESH_VKD3D_BASE" <<'PY'
-import hashlib
-import json
-import os
-from pathlib import Path
-import stat
-import struct
-import sys
-
-root = Path(sys.argv[1]).resolve()
-release, driver_sha, dll_sha, mesa_commit, mesa_base, vkd3d_commit, vkd3d_base = sys.argv[2:]
-for path in root.rglob("*"):
-    mode = path.lstat().st_mode
-    if stat.S_ISLNK(mode) or not (stat.S_ISDIR(mode) or stat.S_ISREG(mode)):
-        raise SystemExit("unsafe BC250 R2 bundle entry: " + str(path.relative_to(root)))
-try:
-    manifest = json.loads((root / "manifest.json").read_text(encoding="utf-8"))
-except (OSError, TypeError, ValueError) as error:
-    raise SystemExit("invalid BC250 R2 manifest") from error
-if manifest.get("release") != release \
-        or manifest.get("proton_base") != "proton-11.0-2c-x86_64" \
-        or manifest.get("mesa_commit") != mesa_commit \
-        or manifest.get("mesa_base") != mesa_base \
-        or manifest.get("vkd3d_commit") != vkd3d_commit \
-        or manifest.get("vkd3d_base") != vkd3d_base \
-        or manifest.get("payload_sha256") != {
-            "payload/libvulkan_radeon.so": driver_sha,
-            "payload/d3d12core.dll": dll_sha,
-        }:
-    raise SystemExit("unexpected BC250 R2 manifest identity")
-for relative, expected in manifest["payload_sha256"].items():
-    path = root / relative
-    content = path.read_bytes()
-    digest = hashlib.sha256(content).hexdigest()
-    if not path.is_file() or digest != expected:
-        raise SystemExit("BC250 R2 payload checksum mismatch: " + relative)
-driver = (root / "payload/libvulkan_radeon.so").read_bytes()
-if (len(driver) < 64 or driver[:7] != b"\x7fELF\x02\x01\x01"
-        or struct.unpack_from("<H", driver, 18)[0] != 62):
-    raise SystemExit("BC250 R2 RADV payload is not an x86-64 ELF")
-dll = (root / "payload/d3d12core.dll").read_bytes()
-if len(dll) < 64 or dll[:2] != b"MZ":
-    raise SystemExit("BC250 R2 vkd3d payload is not a PE binary")
-pe_offset = struct.unpack_from("<I", dll, 0x3c)[0]
-if (pe_offset + 6 > len(dll) or dll[pe_offset:pe_offset + 4] != b"PE\0\0"
-        or struct.unpack_from("<H", dll, pe_offset + 4)[0] != 0x8664):
-    raise SystemExit("BC250 R2 vkd3d payload is not an x86-64 PE binary")
-PY
-}
-
-native_mesh_runtime_dependencies_compatible() {
-    local driver=$1 linkage
-    NATIVE_MESH_RUNTIME_DEPENDENCY_ERROR=""
-    if ! linkage=$(LC_ALL=C ldd -r "$driver" 2>&1); then
-        NATIVE_MESH_RUNTIME_DEPENDENCY_ERROR=$linkage
-        return 1
-    fi
-    if grep -Eq 'not found|undefined symbol:' <<< "$linkage"; then
-        NATIVE_MESH_RUNTIME_DEPENDENCY_ERROR=$linkage
-        return 1
-    fi
-}
-
-validate_native_mesh_runtime_dependencies() {
-    native_mesh_runtime_dependencies_compatible "$1" \
-        || die "BC250 R2 driver dependencies are unavailable: $NATIVE_MESH_RUNTIME_DEPENDENCY_ERROR"
-}
-
-require_native_mesh_host() {
-    [[ $(uname -m) == x86_64 ]] \
-        || die "BC250 RADV R2 requires an x86-64 Linux host."
-}
-
-verify_native_mesh_proton_base() {
-    local base=$1
-    [[ -d "$base" && ! -L "$base" && -x "$base/proton" && ! -L "$base/proton" \
-        && -f "$base/toolmanifest.vdf" && ! -L "$base/toolmanifest.vdf" \
-        && -f "$base/version" && ! -L "$base/version" \
-        && -f "$base/$NATIVE_MESH_DLL_RELATIVE" \
-        && ! -L "$base/$NATIVE_MESH_DLL_RELATIVE" \
-        && $(grep -cF "$NATIVE_MESH_PROTON_VERSION" "$base/version") -gt 0 ]]
-}
-
-find_native_mesh_proton_base() {
-    local supplied=${BC250_R2_PROTON_BASE:-} candidate
-    if [[ -n "$supplied" ]]; then
-        verify_native_mesh_proton_base "$supplied" \
-            || die "BC250_R2_PROTON_BASE is not the required Proton 11.0-2c distribution: $supplied"
-        printf '%s\n' "$supplied"
-        return 0
-    fi
-    for candidate in "$NATIVE_MESH_STEAM_ROOT/steamapps/common/Proton 11.0" \
-        "$NATIVE_MESH_STEAM_ROOT/steamapps/common"/*; do
-        [[ -e "$candidate" ]] || continue
-        if verify_native_mesh_proton_base "$candidate"; then
-            printf '%s\n' "$candidate"
-            return 0
-        fi
-    done
-    die "Proton 11.0-2c was not found. Install it in Steam, or set BC250_R2_PROTON_BASE to its directory."
 }
 
 cmd_setup() (
@@ -2381,9 +1969,6 @@ cmd_setup() (
     require_production_kernel_paths
     [[ -f "$BOOT_CONFIG" && ! -L "$BOOT_CONFIG" ]] \
         || die "AMDGPU scheduler-policy helper is missing or unsafe: $BOOT_CONFIG"
-    if ! ensure_compute_kernel_prerequisite; then
-        return 0
-    fi
     if [[ ! -e "$TRANSACTION_DIR" && ! -L "$TRANSACTION_DIR" \
         && ! -e "$FSR4_TRANSACTION_DIR" && ! -L "$FSR4_TRANSACTION_DIR" ]]; then
         preflight_runtime_ownership "$replace_unmanaged"
@@ -2396,12 +1981,16 @@ cmd_setup() (
     ensure_state_dir
     exec 9> "$LOCK_FILE"
     flock 9
+    remove_retired_native_mesh
     recover_install_transaction
     recover_fsr4_install_transaction
     preflight_runtime_ownership "$replace_unmanaged"
     if [[ -e "$FSR4_DIR" || -L "$FSR4_DIR" ]]; then
         verify_owned_fsr4_runtime \
             || die "Existing legacy FSR4 V3 profile is incomplete or not a recorded toolkit install."
+    fi
+    if ! ensure_compute_kernel_prerequisite; then
+        return 0
     fi
     ensure_radv_prerequisites
     if runtime_generator_can_refresh; then refresh_current_generator; fi
@@ -2413,6 +2002,7 @@ cmd_setup() (
         fi
     fi
     if [[ "$profile" == default ]] && verify_current_runtime; then
+        remove_retired_native_mesh
         if ! verify_scheduler_configured; then
             if ! as_root bash "$BOOT_CONFIG" install; then
                 report_fsr4_preserved
@@ -2554,14 +2144,20 @@ cmd_setup() (
                 || die "Mesa worktree does not match pinned commit $MESA_COMMIT"
             mkdir -p "$source/subprojects/packagecache"
             cp "$CACHE_DIR/$LIBDRM_TARBALL" "$source/subprojects/packagecache/"
+            [[ -f "$MESA_PATCH_DIR/libdrm-2.4.134-wrap.patch" \
+                && ! -L "$MESA_PATCH_DIR/libdrm-2.4.134-wrap.patch" ]] \
+                || die "The libdrm fallback manifest patch is missing or unsafe."
+            patch -d "$source" -p1 --fuzz=0 --no-backup-if-mismatch \
+                -i "$MESA_PATCH_DIR/libdrm-2.4.134-wrap.patch"
             local patch_name
             for patch_name in \
                 0001-gfx1013-compute-queue-fix.patch \
-                0005-bc250-fsr4-v3.patch \
-                0006-bc250-fsr4-combined-unroll.patch \
-                0007-bc250-fsr4-imageprep-texture.patch \
-                0008-bc250-fsr4-resolution-variants.patch \
-                0009-bc250-fsr4-production-defaults.patch; do
+                directmesh-mesa-26.2.5.patch \
+                0003-bc250-fsr4-v3.patch \
+                0004-bc250-fsr4-combined-unroll.patch \
+                0005-bc250-fsr4-imageprep-texture.patch \
+                0006-bc250-fsr4-resolution-variants.patch \
+                0007-bc250-fsr4-production-defaults.patch; do
                 patch -d "$source" -p1 --fuzz=0 --no-backup-if-mismatch \
                     --dry-run -i "$CACHE_DIR/$patch_name"
                 patch -d "$source" -p1 --fuzz=0 --no-backup-if-mismatch \
@@ -2699,229 +2295,6 @@ EOF
         fi
         return 0
     fi
-)
-
-cmd_setup_native_mesh() (
-    require_normal_user
-    local work archive bundle profile_stage compat_stage="" proton_base="" driver_payload
-    local source_archive source_driver driver_origin=prebuilt
-    local transaction_stage transaction_tmp had_previous=0 committed=0 reuse_tool=0
-    require_native_mesh_host
-    require_production_kernel_paths
-    ensure_radv_core_tools
-    ensure_state_dir
-    if [[ -z ${BC250_R2_ARCHIVE:-} ]] \
-        && { [[ ! -f "$CACHE_DIR/$NATIVE_MESH_ARCHIVE" \
-            || -L "$CACHE_DIR/$NATIVE_MESH_ARCHIVE" ]] \
-            || [[ "$(sha256_file "$CACHE_DIR/$NATIVE_MESH_ARCHIVE")" \
-                != "$NATIVE_MESH_ARCHIVE_SHA256" ]]; } \
-        && ! command -v curl >/dev/null 2>&1; then
-        log "Installing signed SteamOS download support required for BC250 R2."
-        install_signed_steamos_packages curl
-    fi
-    if [[ -z ${BC250_R2_ARCHIVE:-} ]]; then
-        command -v curl >/dev/null 2>&1 \
-            || die "curl is required to download BC250 R2."
-    fi
-    command -v ldd >/dev/null 2>&1 || die "ldd is required for BC250 R2."
-    [[ "$NATIVE_MESH_COMPAT_ROOT" == /* && ! -L "$NATIVE_MESH_COMPAT_ROOT" ]] \
-        || die "The BC250 R2 Steam compatibility-tool path is unsafe."
-    mkdir -p "$NATIVE_MESH_COMPAT_ROOT"
-    exec 9> "$LOCK_FILE"
-    flock 9
-    recover_native_mesh_install_transaction
-    if [[ -e "$NATIVE_MESH_DIR" || -L "$NATIVE_MESH_DIR" ]]; then
-        verify_recorded_native_mesh_profile \
-            || die "Existing native-mesh profile is incomplete or not a recorded toolkit install."
-    fi
-    if [[ -e "$NATIVE_MESH_TOOL" || -L "$NATIVE_MESH_TOOL" ]]; then
-        verify_owned_native_mesh_tool \
-            || die "An unowned BC250-R2 Steam compatibility tool already exists at $NATIVE_MESH_TOOL"
-        verify_owned_native_mesh_profile \
-            || die "The recorded BC250 R2 compatibility tool has no matching profile; remove it before reinstalling."
-        reuse_tool=1
-    fi
-    require_compute_kernel
-    verify_scheduler_active \
-        || die "BC250 R2 requires active amdgpu.sched_policy=2."
-    if verify_current_native_mesh_runtime; then
-        log "BC250 RADV R2 is already installed and verified."
-        log "Runner: $NATIVE_MESH_RUNNER"
-        return 0
-    fi
-    stage_native_mesh_upstream
-    if [[ $reuse_tool -eq 0 ]]; then
-        proton_base=$(find_native_mesh_proton_base)
-    fi
-    work=$(mktemp -d "$STATE_DIR/.native-mesh-setup.XXXXXX")
-    cleanup_native_mesh_setup() {
-        local rc=$?
-        trap - EXIT
-        if [[ $committed -eq 0 && $rc -ne 0 ]]; then
-            recover_native_mesh_install_transaction || rc=1
-        fi
-        [[ -z "$work" ]] || rm -rf "$work"
-        [[ -z "$compat_stage" ]] || rm -rf "$compat_stage"
-        exit "$rc"
-    }
-    trap cleanup_native_mesh_setup EXIT
-    profile_stage="$work/native-mesh"
-    transaction_stage="$work/native-mesh-transaction"
-    if [[ $reuse_tool -eq 0 ]]; then
-        compat_stage=$(mktemp -d "$NATIVE_MESH_COMPAT_ROOT/.bc250-r2-stage.XXXXXX")
-    fi
-    archive="$CACHE_DIR/$NATIVE_MESH_ARCHIVE"
-
-    validate_native_mesh_archive "$archive" \
-        || die "The BC250 R2 archive layout is unsafe or incomplete."
-    extract_native_mesh_archive "$archive" "$work"
-    bundle="$work/bc250-r2-linux-x86_64"
-    validate_native_mesh_bundle "$bundle" \
-        || die "The BC250 R2 release payload failed validation."
-    driver_payload="$bundle/payload/libvulkan_radeon.so"
-    if ! native_mesh_runtime_dependencies_compatible "$driver_payload"; then
-        log "The pinned prebuilt BC250 R2 driver is incompatible with this SteamOS runtime."
-        if grep -Fq GLIBC_ABI_GNU2_TLS <<< "$NATIVE_MESH_RUNTIME_DEPENDENCY_ERROR"; then
-            log "The prebuilt driver requires GLIBC_ABI_GNU2_TLS; rebuilding its pinned Mesa source locally."
-        else
-            log "Prebuilt dependency check: $NATIVE_MESH_RUNTIME_DEPENDENCY_ERROR"
-            log "Rebuilding the pinned Mesa source locally instead of substituting system libraries."
-        fi
-        ensure_mesa_build_prerequisites
-        stage_native_mesh_source_upstream
-        source_archive="$CACHE_DIR/$NATIVE_MESH_SOURCE_ARCHIVE"
-        [[ -f "$source_archive" && ! -L "$source_archive" \
-            && "$(sha256_file "$source_archive")" \
-                == "$NATIVE_MESH_SOURCE_ARCHIVE_SHA256" ]] \
-            || die "The pinned BC250 R2 Mesa source archive failed verification."
-        source_driver="$work/libvulkan_radeon-r2-local.so"
-        build_native_mesh_driver "$source_archive" "$work" "$source_driver"
-        driver_payload=$source_driver
-        driver_origin=source
-    fi
-    require_compute_kernel
-    verify_scheduler_active \
-        || die "amdgpu.sched_policy=2 became inactive during BC250 R2 setup."
-
-    if [[ $reuse_tool -eq 0 ]]; then
-        cp -a --reflink=auto "$proton_base/." "$compat_stage/"
-        [[ -f "$compat_stage/$NATIVE_MESH_DLL_RELATIVE" \
-            && ! -L "$compat_stage/$NATIVE_MESH_DLL_RELATIVE" ]] \
-            || die "The private Proton copy has an unsafe vkd3d layout."
-        install -m 0644 "$bundle/payload/d3d12core.dll" \
-            "$compat_stage/$NATIVE_MESH_DLL_RELATIVE"
-        [[ "$(sha256_file "$compat_stage/$NATIVE_MESH_DLL_RELATIVE")" \
-            == "$NATIVE_MESH_VKD3D_SHA256" ]] \
-            || die "The staged BC250 R2 vkd3d DLL failed verification."
-        cat > "$compat_stage/compatibilitytool.vdf" <<'EOF'
-"compatibilitytools" { "compat_tools" { "BC250-R2" { "install_path" "." "display_name" "BC250 R2 (experimental)" "from_oslist" "windows" "to_oslist" "linux" } } }
-EOF
-        printf '%s\n' "$NATIVE_MESH_RELEASE" > "$compat_stage/$NATIVE_MESH_TOOL_MARKER"
-        chmod 0644 "$compat_stage/compatibilitytool.vdf" "$compat_stage/$NATIVE_MESH_TOOL_MARKER"
-    fi
-
-    mkdir -m 0700 "$profile_stage"
-    install -m 0755 "$driver_payload" "$profile_stage/libvulkan_radeon.so"
-    install -m 0755 "$bundle/run.sh" "$profile_stage/run-r2.sh"
-    render_native_mesh_runner > "$profile_stage/bc250-r2"
-    chmod 0755 "$profile_stage/bc250-r2"
-    cat > "$profile_stage/icd.json" <<EOF
-{
-  "file_format_version": "1.0.0",
-  "ICD": {"library_path": "$NATIVE_MESH_DRIVER", "api_version": "1.3.0"}
-}
-EOF
-    python3 - "$NATIVE_MESH_TOOL/proton" > "$profile_stage/config.json" <<'PY'
-import json
-import sys
-print(json.dumps({"proton": sys.argv[1]}, indent=2))
-PY
-    chmod 0644 "$profile_stage/icd.json" "$profile_stage/config.json"
-    for patch_name in LICENSE README.md THIRD-PARTY.md VALIDATION.md manifest.json; do
-        install -m 0644 "$bundle/$patch_name" "$profile_stage/$patch_name"
-    done
-    cp -a "$bundle/licenses" "$profile_stage/licenses"
-    local manifest_values=(
-        "$NATIVE_MESH_ARCHIVE_SHA256"
-        "$(sha256_file "$profile_stage/libvulkan_radeon.so")"
-        "$NATIVE_MESH_VKD3D_SHA256"
-        "$(sha256_file "$profile_stage/icd.json")"
-        "$(sha256_file "$profile_stage/bc250-r2")"
-        "$(sha256_file "$profile_stage/run-r2.sh")"
-        "$(sha256_file "$profile_stage/config.json")"
-        "$(sha256_file "$profile_stage/manifest.json")"
-        "$(sha256_file "$profile_stage/LICENSE")"
-        "$(sha256_file "$profile_stage/README.md")"
-        "$(sha256_file "$profile_stage/THIRD-PARTY.md")"
-        "$(sha256_file "$profile_stage/VALIDATION.md")"
-        "$(sha256_file "$profile_stage/licenses/mesa-license.rst")"
-        "$(sha256_file "$profile_stage/licenses/vkd3d-COPYING.txt")"
-        "$(sha256_file "$profile_stage/licenses/vkd3d-LGPL-2.1.txt")"
-        "$NATIVE_MESH_RELEASE"
-        "$NATIVE_MESH_COMMIT"
-    )
-    if [[ "$driver_origin" == source ]]; then
-        printf '3 %s %s %s %s %s %s %s %s %s %s %s %s %s %s %s %s %s source %s\n' \
-            "${manifest_values[@]}" "$NATIVE_MESH_SOURCE_ARCHIVE_SHA256" \
-            > "$profile_stage/install.conf"
-    else
-        printf '2 %s %s %s %s %s %s %s %s %s %s %s %s %s %s %s %s %s\n' \
-            "${manifest_values[@]}" > "$profile_stage/install.conf"
-    fi
-    chmod 0600 "$profile_stage/install.conf"
-
-    mkdir -m 0700 "$transaction_stage"
-    if [[ -d "$NATIVE_MESH_DIR" ]]; then
-        cp -a "$NATIVE_MESH_DIR" "$transaction_stage/previous"
-        verify_recorded_native_mesh_profile "$transaction_stage/previous" \
-            || die "Could not verify the previous native-mesh profile backup."
-        had_previous=1
-    fi
-    printf 'prepared %s\n' "$had_previous" > "$transaction_stage/transaction.conf"
-    if [[ "$had_previous" == 1 ]]; then
-        fsync_paths "$transaction_stage/previous/"* "$transaction_stage/previous"
-    fi
-    fsync_paths "$transaction_stage/transaction.conf" "$transaction_stage"
-    mv "$transaction_stage" "$NATIVE_MESH_TRANSACTION_DIR"
-    fsync_paths "$STATE_DIR"
-    transaction_tmp=$(mktemp "$NATIVE_MESH_TRANSACTION_DIR/.transaction.XXXXXX")
-    printf 'swapping %s\n' "$had_previous" > "$transaction_tmp"
-    fsync_paths "$transaction_tmp"
-    mv -f "$transaction_tmp" "$NATIVE_MESH_TRANSACTION_DIR/transaction.conf"
-    fsync_paths "$NATIVE_MESH_TRANSACTION_DIR/transaction.conf" "$NATIVE_MESH_TRANSACTION_DIR"
-    rm -rf "$NATIVE_MESH_DIR"
-    if [[ $reuse_tool -eq 0 ]]; then
-        if ! mv "$compat_stage" "$NATIVE_MESH_TOOL"; then
-            recover_native_mesh_install_transaction
-            die "Could not install the private BC250 R2 Proton copy."
-        fi
-        compat_stage=""
-        fsync_paths "$NATIVE_MESH_COMPAT_ROOT"
-    fi
-    if ! mv "$profile_stage" "$NATIVE_MESH_DIR"; then
-        recover_native_mesh_install_transaction
-        die "Could not install the BC250 R2 profile."
-    fi
-    if ! verify_current_native_mesh_runtime; then
-        recover_native_mesh_install_transaction
-        die "Installed BC250 R2 profile failed attestation; the previous profile was restored."
-    fi
-    fsync_paths "$NATIVE_MESH_DRIVER" "$NATIVE_MESH_ICD" "$NATIVE_MESH_RUNNER" \
-        "$NATIVE_MESH_UPSTREAM_RUNNER" \
-        "$NATIVE_MESH_LICENSE" "$NATIVE_MESH_README" "$NATIVE_MESH_LIMITATIONS" \
-        "$NATIVE_MESH_MANIFEST" "$NATIVE_MESH_DIR" "$STATE_DIR" \
-        "$NATIVE_MESH_TOOL/$NATIVE_MESH_TOOL_MARKER" \
-        "$NATIVE_MESH_TOOL/$NATIVE_MESH_DLL_RELATIVE" "$NATIVE_MESH_TOOL"
-    rm -rf "$NATIVE_MESH_TRANSACTION_DIR"
-    fsync_paths "$STATE_DIR"
-    committed=1
-    if [[ "$driver_origin" == source ]]; then
-        log "Installed BC250 RADV R2 with a locally built pinned RADV driver and its private Proton 11.0-2c copy."
-    else
-        log "Installed BC250 RADV R2 with its private Proton 11.0-2c copy."
-    fi
-    log "Restart Steam and select 'BC250 R2 (experimental)' for the game."
-    log "Steam launch option: $NATIVE_MESH_RUNNER %command%"
 )
 
 manage_games() {
@@ -3094,6 +2467,7 @@ cmd_status() {
     fi
     if verify_current_runtime; then
         echo "  runtime: installed ($STORED_MESA_TAG)"
+        echo "  DirectMesh: $DIRECTMESH_RELEASE (global on BC-250; per-game opt-out: RADV_DIRECTMESH=0)"
         echo "  driver:  $DRIVER"
         echo "  ICD:     $ICD"
     elif verify_owned_runtime; then
@@ -3120,11 +2494,11 @@ cmd_status() {
         fsr4_dll_rc=2
     fi
     if [[ $fsr4_dll_rc -eq 0 ]]; then
-        echo "  FSR4 RC9:  installed ($fsr4_dll_installs game-local DLL target(s))"
+        echo "  FSR4 DLL:  installed ($fsr4_dll_installs game-local DLL target(s))"
     elif [[ $fsr4_dll_rc -eq 1 ]]; then
-        echo "  FSR4 RC9:  not installed"
+        echo "  FSR4 DLL:  not installed"
     else
-        echo "  FSR4 RC9:  incomplete or ownership mismatch"
+        echo "  FSR4 DLL:  incomplete or ownership mismatch"
         failed=2
     fi
     if [[ -e "$FSR4_TRANSACTION_DIR" || -L "$FSR4_TRANSACTION_DIR" ]]; then
@@ -3147,10 +2521,9 @@ cmd_status() {
         echo "  native mesh: interrupted installation requires recovery"
         failed=2
     elif verify_current_native_mesh_runtime; then
-        echo "  native mesh: BC250 RADV R2 installed (private Proton + RADV profile)"
-        echo "  R2 runner: $NATIVE_MESH_RUNNER"
+        echo "  retired R2: toolkit-owned files remain; DirectMesh setup will remove them"
     elif verify_legacy_native_mesh_runtime; then
-        echo "  native mesh: legacy LoneWolf profile requires replacement with BC250 R2"
+        echo "  native mesh: retired LoneWolf profile; remove it or install DirectMesh"
         failed=2
     elif [[ -e "$NATIVE_MESH_DIR" || -L "$NATIVE_MESH_DIR" \
         || -e "$NATIVE_MESH_TOOL" || -L "$NATIVE_MESH_TOOL" ]]; then
@@ -3224,15 +2597,16 @@ cmd_status_json() {
         error="$games"
         games="[]"
     fi
-    python3 - "$runtime_state" "$mesa_version" "$ICD" "$config_valid" "$error" "$games" "$kernel_ready" "$global_enabled" "$restart_required" "$scheduler_configured" "$scheduler_active" "$fsr4_state" "$FSR4_ICD" "$FSR4_RUNNER" "$fsr4_dll_state" "$fsr4_dll_install_count" "$native_mesh_state" "$NATIVE_MESH_ICD" "$NATIVE_MESH_RUNNER" <<'PY'
+    python3 - "$runtime_state" "$mesa_version" "$ICD" "$config_valid" "$error" "$games" "$kernel_ready" "$global_enabled" "$restart_required" "$scheduler_configured" "$scheduler_active" "$fsr4_state" "$FSR4_ICD" "$FSR4_RUNNER" "$fsr4_dll_state" "$fsr4_dll_install_count" "$native_mesh_state" "$NATIVE_MESH_ICD" "$NATIVE_MESH_RUNNER" "$DIRECTMESH_RELEASE" <<'PY'
 import json
 import sys
 
-runtime_state, mesa_version, icd_path, config_valid, error, games, kernel_ready, global_enabled, restart_required, scheduler_configured, scheduler_active, fsr4_state, fsr4_icd, fsr4_runner, fsr4_dll_state, fsr4_dll_install_count, native_mesh_state, native_mesh_icd, native_mesh_runner = sys.argv[1:]
+runtime_state, mesa_version, icd_path, config_valid, error, games, kernel_ready, global_enabled, restart_required, scheduler_configured, scheduler_active, fsr4_state, fsr4_icd, fsr4_runner, fsr4_dll_state, fsr4_dll_install_count, native_mesh_state, native_mesh_icd, native_mesh_runner, directmesh_release = sys.argv[1:]
 print(json.dumps({
     "scriptAvailable": True,
     "runtimeState": runtime_state,
     "mesaVersion": mesa_version or None,
+    "directMeshVersion": directmesh_release if runtime_state == "ready" else None,
     "icdPath": icd_path,
     "configValid": config_valid == "1",
     "error": error or None,
@@ -3279,26 +2653,101 @@ cmd_uninstall_native_mesh() (
         || die "The BC250 R2 Steam compatibility-tool path is unsafe."
     exec 9> "$LOCK_FILE"
     flock 9
-    recover_native_mesh_install_transaction
-    if [[ ! -e "$NATIVE_MESH_DIR" && ! -L "$NATIVE_MESH_DIR" \
-        && ! -e "$NATIVE_MESH_TOOL" && ! -L "$NATIVE_MESH_TOOL" ]]; then
-        log "BC250 R2 is not installed."
-        return 0
+    remove_retired_native_mesh
+)
+
+require_r2_idle() {
+    local scan_script scan_rc=0 target_uid="$UID"
+    scan_script=$(cat <<'PY'
+import os
+from pathlib import Path
+import sys
+
+roots = [os.fsencode(path) + b"/" for path in sys.argv[1:3]]
+target_uid = int(sys.argv[3])
+for process in Path("/proc").iterdir():
+    if not process.name.isdigit() or int(process.name) == os.getpid():
+        continue
+    try:
+        # Nondumpable processes can expose root-owned proc entries despite
+        # running as this user. Read kernel-reported credentials, not inode UID.
+        credentials = next((line.split()[1:] for line in
+                            (process / "status").read_bytes().splitlines()
+                            if line.startswith(b"Uid:")), None)
+        if credentials is None or len(credentials) != 4:
+            raise SystemExit("Could not identify process owner; refusing R2 cleanup.")
+        if target_uid not in {int(value) for value in credentials}:
+            continue
+        for name in ("cmdline", "maps"):
+            data = (process / name).read_bytes()
+            if any(root in data for root in roots):
+                raise SystemExit("BC250 R2 is in use (PID %s); close its games/tools and retry." % process.name)
+    except (FileNotFoundError, ProcessLookupError):
+        continue
+    except PermissionError:
+        # Nondumpable desktop services can hide maps from their own user.
+        # Retry read-only as root rather than assuming such mappings are idle.
+        raise SystemExit(75)
+PY
+)
+    python3 -I - "$NATIVE_MESH_DIR" "$NATIVE_MESH_TOOL" "$target_uid" \
+        <<< "$scan_script" || scan_rc=$?
+    if [[ $scan_rc -eq 75 ]]; then
+        log "Checking protected process mappings with sudo (read-only)."
+        as_root /usr/bin/python3 -I - "$NATIVE_MESH_DIR" "$NATIVE_MESH_TOOL" "$target_uid" \
+            <<< "$scan_script" \
+            || die "Could not verify that R2 is idle; close its games/tools and retry. No R2 files were removed."
+    else
+        return "$scan_rc"
     fi
-    if verify_owned_native_mesh_runtime; then
+}
+
+preflight_retired_native_mesh() {
+    native_mesh_paths_are_safe "$NATIVE_MESH_DIR" "$NATIVE_MESH_TOOL" \
+        "$NATIVE_MESH_TRANSACTION_DIR" "$CACHE_DIR" \
+        || die "Retired R2 paths contain a symlink or unsafe ancestor; refusing cleanup."
+    if [[ -e "$NATIVE_MESH_DIR" || -e "$NATIVE_MESH_TOOL" \
+        || -e "$NATIVE_MESH_TRANSACTION_DIR" ]]; then require_r2_idle; fi
+    recover_native_mesh_install_transaction
+    local present=0
+    if [[ -e "$NATIVE_MESH_DIR" || -L "$NATIVE_MESH_DIR" ]]; then
+        verify_recorded_native_mesh_profile \
+            || die "Retired native-mesh profile is modified or unrecognized; refusing cleanup. Restore its recorded files or remove it manually before DirectMesh setup."
+        present=1
+    fi
+    if [[ -e "$NATIVE_MESH_TOOL" || -L "$NATIVE_MESH_TOOL" ]]; then
+        verify_owned_native_mesh_tool \
+            || die "BC250-R2 compatibility tool is modified or unrecognized; refusing cleanup. Remove it manually before DirectMesh setup."
+        present=1
+    fi
+    if [[ $present -eq 1 ]]; then require_r2_idle; fi
+}
+
+# Called under the shared RADV lock, both by setup and the retained R2 remover.
+# Verify both destinations before deleting either. Independently attested orphans
+# remain removable if an earlier cleanup stopped after removing the other half.
+remove_retired_native_mesh() {
+    preflight_retired_native_mesh
+    if [[ -d "$NATIVE_MESH_TOOL" ]]; then
         rm -rf "$NATIVE_MESH_TOOL"
         fsync_paths "$NATIVE_MESH_COMPAT_ROOT"
-    elif verify_legacy_native_mesh_runtime; then
-        [[ ! -e "$NATIVE_MESH_TOOL" && ! -L "$NATIVE_MESH_TOOL" ]] \
-            || die "An unrecognized BC250-R2 compatibility tool exists; refusing removal."
-    else
-        die "Native-mesh profile is not a recorded toolkit install; refusing removal."
     fi
-    rm -rf "$NATIVE_MESH_DIR"
-    fsync_paths "$STATE_DIR"
-    log "Removed the private BC250 R2 profile and compatibility tool."
-    log "The global RADV runtime, game prefixes, and original Proton were unchanged."
-)
+    if [[ -d "$NATIVE_MESH_DIR" ]]; then
+        rm -rf "$NATIVE_MESH_DIR"
+        fsync_paths "$STATE_DIR"
+    fi
+    local name expected
+    for name in "$NATIVE_MESH_ARCHIVE" "$NATIVE_MESH_SOURCE_ARCHIVE"; do
+        expected=$NATIVE_MESH_ARCHIVE_SHA256
+        [[ "$name" != "$NATIVE_MESH_SOURCE_ARCHIVE" ]] || expected=$NATIVE_MESH_SOURCE_ARCHIVE_SHA256
+        if [[ -f "$CACHE_DIR/$name" && ! -L "$CACHE_DIR/$name" \
+            && "$(sha256_file "$CACHE_DIR/$name")" == "$expected" ]]; then
+            rm -f -- "$CACHE_DIR/$name"
+        fi
+    done
+    log "Retired R2/native-mesh cleanup complete. Original Proton, prefixes, saves, and global RADV were unchanged by cleanup."
+    log "For former R2 games, select ordinary Proton and remove the old bc250-r2 launch option in Steam."
+}
 
 cmd_setup_fsr4_dll() {
     require_normal_user
@@ -3687,20 +3136,20 @@ prompt_helixsr_prepare() {
     if [[ "$latest" == 1 ]]; then
         if [[ -n "$dlss" ]]; then
             confirm_menu_action \
-                "Prepare latest experimental HelixSR from this DLL? This YMMV release is not the pinned v1.4.3; generated NVIDIA-derived files stay user-local and anti-cheat games must not use injection." \
+                "Prepare latest experimental HelixSR upscaler from this DLL? Latest is YMMV; generated NVIDIA-derived files stay user-local and anti-cheat games must not use injection." \
                 helixsr-prepare --latest "$dlss"
         else
             confirm_menu_action \
-                "Prepare latest experimental HelixSR? This YMMV release is not the pinned v1.4.3; downloads and generated NVIDIA-derived files stay user-local and anti-cheat games must not use injection." \
+                "Prepare latest experimental HelixSR upscaler? Latest is YMMV; downloads and generated NVIDIA-derived files stay user-local and anti-cheat games must not use injection." \
                 helixsr-prepare --latest
         fi
     elif [[ -n "$dlss" ]]; then
         confirm_menu_action \
-            "Prepare pinned experimental HelixSR v1.4.3 from this DLL? Generated NVIDIA-derived files stay user-local and anti-cheat games must not use injection." \
+            "Prepare pinned experimental HelixSR v2.0.0 upscaler from this DLL? Frame generation and Scaler are not installed. Generated NVIDIA-derived files stay user-local; do not use injection with anti-cheat games." \
             helixsr-prepare "$dlss"
     else
         confirm_menu_action \
-            "Prepare pinned experimental HelixSR v1.4.3? Downloads and generated NVIDIA-derived files stay user-local and anti-cheat games must not use injection." \
+            "Prepare pinned experimental HelixSR v2.0.0 upscaler? Frame generation and Scaler are not installed. Downloads and generated NVIDIA-derived files stay user-local; do not use injection with anti-cheat games." \
             helixsr-prepare
     fi
 }
@@ -3731,7 +3180,7 @@ mesh_menu_graph_badge() {
         action__fsr4_dll) fsr4_dll_badge ;;
         menu__helixsr|action__helixsr_status|action__helixsr_prepare|action__helixsr_prepare_latest|action__helixsr_install) helixsr_payload_badge ;;
         action__helixsr_uninstall) helixsr_install_badge ;;
-        action__native_mesh_install|action__native_mesh_remove) native_mesh_badge ;;
+        action__native_mesh_remove) native_mesh_badge ;;
         action__legacy_cleanup)
             if ! legacy_games=$(manage_games list 2>/dev/null); then
                 printf '%s' "${CR}[invalid]${C0}"
@@ -3757,11 +3206,7 @@ mesh_menu_graph_activate() {
         action__helixsr_uninstall) prompt_helixsr_uninstall ;;
         action__setup)
             confirm_menu_action \
-                "Install or resume FSR4 RADV and its AMDGPU prerequisite? This is not required for the portable FSR4 RC9 route." setup
-            ;;
-        action__native_mesh_install)
-            confirm_menu_action \
-                "Install experimental BC250 RADV R2 with a private copy of Proton 11.0-2c? The current compute kernel and sched_policy=2 must already be active." setup --native-mesh
+                "Close games, remove verified retired R2 files, and install the global DirectMesh + FSR4 driver and AMDGPU prerequisites? Select ordinary Proton and remove old R2 launch options for former R2 games. Portable FSR4 DLLs do not require this driver." setup --directmesh
             ;;
         action__native_mesh_remove)
             confirm_menu_action \
@@ -3801,35 +3246,28 @@ mesh_menu_graph_render() {
                 if [[ "$badge" == *"|"* || "$badge" == *$'\n'* ]]; then
                     die "Invalid generated menu badge: action__fsr4_dll"
                 fi
-                items+=("Install FSR4 RC9 game DLL (recommended)|${badge}|Portable FSR4 route. Replaces one exact existing DLL and retains the original; no custom RADV installation is needed.")
+                items+=("Install portable FSR4 game DLL (recommended)|${badge}|Portable FSR4 route. Replaces one exact existing DLL and retains the original; no custom RADV installation is needed.")
                 targets+=("action__fsr4_dll")
                 badges+=("$badge")
                 if ! badge=$(mesh_menu_graph_badge menu__helixsr menu); then badge=; fi
                 if [[ "$badge" == *"|"* || "$badge" == *$'\n'* ]]; then
                     die "Invalid generated menu badge: menu__helixsr"
                 fi
-                items+=("HelixSR v1.4.3 pinned (experimental)|${badge}|Prepare and manage the user-local HelixSR payload. Do not use injected DLLs with anti-cheat games.")
+                items+=("HelixSR pinned (experimental)|${badge}|Prepare and manage the user-local HelixSR payload. Do not use injected DLLs with anti-cheat games.")
                 targets+=("menu__helixsr")
                 badges+=("$badge")
                 if ! badge=$(mesh_menu_graph_badge action__setup install); then badge=; fi
                 if [[ "$badge" == *"|"* || "$badge" == *$'\n'* ]]; then
                     die "Invalid generated menu badge: action__setup"
                 fi
-                items+=("Install / resume FSR4 RADV|${badge}|Installs AMDGPU first when needed, then builds async compute plus the FSR4 v4 driver for GE Proton.")
+                items+=("Install / resume global DirectMesh + FSR4 RADV|${badge}|Remove verified retired R2 files first, then build the global BC-250 DirectMesh/FSR4 driver and its AMDGPU prerequisites.")
                 targets+=("action__setup")
-                badges+=("$badge")
-                if ! badge=$(mesh_menu_graph_badge action__native_mesh_install experimental); then badge=; fi
-                if [[ "$badge" == *"|"* || "$badge" == *$'\n'* ]]; then
-                    die "Invalid generated menu badge: action__native_mesh_install"
-                fi
-                items+=("Install BC250 RADV R2 (experimental)|${badge}|Install the verified R2 driver and patched vkd3d into a private Proton 11.0-2c copy for explicit per-game use.")
-                targets+=("action__native_mesh_install")
                 badges+=("$badge")
                 if ! badge=$(mesh_menu_graph_badge action__native_mesh_remove cleanup); then badge=; fi
                 if [[ "$badge" == *"|"* || "$badge" == *$'\n'* ]]; then
                     die "Invalid generated menu badge: action__native_mesh_remove"
                 fi
-                items+=("Remove BC250 RADV R2|${badge}|Remove R2 and its private Proton copy; preserve global RADV, the original Proton, game prefixes, and saves.")
+                items+=("Remove retired BC250 RADV R2|${badge}|Remove R2 and its private Proton copy; preserve global RADV, the original Proton, game prefixes, and saves.")
                 targets+=("action__native_mesh_remove")
                 badges+=("$badge")
                 if ! badge=$(mesh_menu_graph_badge action__legacy_cleanup cleanup); then badge=; fi
@@ -3855,7 +3293,7 @@ mesh_menu_graph_render() {
                 badges+=("$badge")
                 ;;
             menu__helixsr)
-                title="HelixSR v1.4.3 pinned (experimental)"
+                title="HelixSR pinned (experimental)"
                 if ! badge=$(mesh_menu_graph_badge action__helixsr_status read_only); then badge=; fi
                 if [[ "$badge" == *"|"* || "$badge" == *$'\n'* ]]; then
                     die "Invalid generated menu badge: action__helixsr_status"
@@ -3867,7 +3305,7 @@ mesh_menu_graph_render() {
                 if [[ "$badge" == *"|"* || "$badge" == *$'\n'* ]]; then
                     die "Invalid generated menu badge: action__helixsr_prepare"
                 fi
-                items+=("Prepare pinned HelixSR v1.4.3|${badge}|Use the known stable release, optionally with a local DLSS DLL. NVIDIA-derived files are not redistributed.")
+                items+=("Prepare pinned HelixSR|${badge}|Use the checksum-pinned release, optionally with a local DLSS DLL. NVIDIA-derived files are not redistributed.")
                 targets+=("action__helixsr_prepare")
                 badges+=("$badge")
                 if ! badge=$(mesh_menu_graph_badge action__helixsr_prepare_latest experimental); then badge=; fi
@@ -3925,30 +3363,27 @@ cmd_menu() {
 
 cmd_help() {
     cat <<EOF
-Usage: $0 [menu|setup [--replace-unmanaged|--native-mesh|--fsr4 TARGET_DLL|--fsr4-legacy]|helixsr-prepare [--latest] [DLSS_DLL]|helixsr-payload-status|helixsr-install TARGET_DLL|helixsr-uninstall TARGET_DLL|--all|status|status-json|legacy-clear|uninstall [--native-mesh|--fsr4 TARGET_DLL|--fsr4-legacy]|purge|help]
+Usage: $0 [menu|setup [--replace-unmanaged|--directmesh|--fsr4 TARGET_DLL|--fsr4-legacy]|helixsr-prepare [--latest] [DLSS_DLL]|helixsr-payload-status|helixsr-install TARGET_DLL|helixsr-uninstall TARGET_DLL|--all|status|status-json|legacy-clear|uninstall [--native-mesh|--fsr4 TARGET_DLL|--fsr4-legacy]|purge|help]
 
   setup                        Fetch the verified upstream series, build the
-                               audited Mesa RADV driver with GFX1013 async
+                               Mesa RADV driver with DirectMesh, GFX1013 async
                                compute, install a separate ICD, and configure
                                safe global activation. The default profile includes
-                               the FSR4 v4 patches required by BC-250 GE
-                               Proton. Usually takes 3-5 minutes.
+                               FSR4 patches required by BC-250 GE Proton.
+                               Verified retired R2 files are removed first.
   setup --replace-unmanaged    Explicitly replace existing regular driver, ICD,
                                generator, and manifest files that cannot be
                                verified as a toolkit-owned installation.
-  setup --native-mesh          Install the checksum-pinned BC250 RADV R2 bundle,
-                                private Proton 11.0-2c copy, patched vkd3d core,
-                                and per-game runner. If the prebuilt RADV is not
-                                compatible, build its pinned release source locally.
-                                Requires the current compute kernel and
-                                amdgpu.sched_policy=2 to be active.
+  setup --directmesh           Explicit alias for global DirectMesh setup.
+                               Old 'setup --native-mesh' requests are refused;
+                               they never silently authorize global activation.
   setup --fsr4 TARGET_DLL      Recommended FSR4 route. Replace one exact existing
                                game or OptiScaler DLL, retaining the original.
                                Absolute paths are recommended; quote spaces at the shell.
   setup --fsr4-legacy          Retired compatibility command; exits without
                                changing an existing legacy profile.
   helixsr-prepare [--latest] [DLSS_DLL]
-                               Prepare pinned HelixSR v1.4.3 by default; --latest
+                               Prepare checksum-pinned HelixSR by default; --latest
                                opts into GitHub's latest release (YMMV). Either
                                mode can use a local DLSS DLL.
   helixsr-payload-status       Show whether the HelixSR payload is ready.
@@ -3977,15 +3412,17 @@ an update when the policy is already active.
 The patched ICD serves 64-bit processes; SteamOS's stock RADV serves 32-bit
 processes through the same global driver list.
 
-BC250 R2 is never enabled globally and does not edit game settings. Restart
-Steam, select "BC250 R2 (experimental)" under the game's Compatibility tab,
-and use this launch option:
-  $NATIVE_MESH_RUNNER %command%
-The exact Proton 11.0-2c base is copied privately; the original remains intact.
-Set BC250_R2_PROTON_BASE to its directory when it is outside Steam's default
-library.
-R2 uses native mesh dispatch where eligible, compute-emulated TASK, and its
-patched vkd3d compute-to-graphics queue workaround. It remains experimental.
+DirectMesh ($DIRECTMESH_RELEASE) is enabled by default on BC-250 with this global
+driver. Per-game opt-out: RADV_DIRECTMESH=0 %command%.
+R2 installation is retired. Setup removes only recognized toolkit-owned R2
+files and its private Proton copy. Modified recorded profiles/unrecognized tools
+block setup. The old private Proton copy has no full-tree manifest; preserve any
+personal additions there before cleanup removes the entire private copy.
+Protected process mappings may require a read-only sudo check; if inspection
+fails, cleanup stops without assuming R2 is idle.
+Close R2 games first. Original Proton, game prefixes, saves, and game settings
+are preserved. For former R2 games select ordinary Proton in Steam and remove
+the old bc250-r2 runner from launch options manually.
 
 Legacy FSR4 V3 RADV setup has been retired. Existing recorded legacy profiles can
 still be inspected and removed with 'uninstall --fsr4-legacy'.
@@ -3998,7 +3435,7 @@ Async-compute upstream (pinned to $UPSTREAM_COMMIT):
   $UPSTREAM_REPO
 FSR4 patches (pinned to $FSR4_RADV_COMMIT):
   $FSR4_RADV_REPO
-Native mesh R2 release (pinned to $NATIVE_MESH_RELEASE at $NATIVE_MESH_COMMIT):
+Retired R2 ownership provenance (removal only, $NATIVE_MESH_RELEASE):
   $NATIVE_MESH_REPO
 EOF
 }
@@ -4009,16 +3446,19 @@ case "${1:-menu}" in
         if (($# == 1)); then cmd_setup default
         elif (($# == 2)) && [[ "$2" == --replace-unmanaged ]]; then
             cmd_setup default 1
+        elif (($# == 2)) && [[ "$2" == --directmesh ]]; then
+            cmd_setup default
         elif (($# == 2)) && [[ "$2" == --native-mesh ]]; then
-            cmd_setup_native_mesh
+            die "R2 installation is retired. Use 'setup --directmesh' for the global DirectMesh driver, or 'uninstall --native-mesh' to remove old R2 files."
         elif (($# == 3)) && [[ "$2" == --fsr4 ]]; then cmd_setup_fsr4_dll "$3"
         elif (($# == 2)) && [[ "$2" == --fsr4-legacy ]]; then
-            die "Legacy FSR4 V3 builds are retired; use FSR4 RADV or the portable RC9 DLL."
-        else die "Usage: $0 setup [--replace-unmanaged|--native-mesh|--fsr4 TARGET_DLL|--fsr4-legacy]"
+            die "Legacy FSR4 V3 builds are retired; use DirectMesh/FSR4 RADV or the portable FSR4 DLL."
+        else die "Usage: $0 setup [--replace-unmanaged|--directmesh|--fsr4 TARGET_DLL|--fsr4-legacy]"
         fi ;;
     helixsr-prepare)
-        (($# <= 2)) || die "Usage: $0 helixsr-prepare [DLSS_DLL]"
-        if (($# == 2)); then cmd_helixsr_prepare "$2"; else cmd_helixsr_prepare; fi
+        (($# <= 3)) || die "Usage: $0 helixsr-prepare [--latest] [DLSS_DLL]"
+        shift
+        cmd_helixsr_prepare "$@"
         ;;
     helixsr-payload-status) (($# == 1)) || die "Usage: $0 helixsr-payload-status"; cmd_helixsr_payload_status ;;
     helixsr-install) (($# == 2)) || die "Usage: $0 helixsr-install TARGET_DLL"; cmd_helixsr_install "$2" ;;

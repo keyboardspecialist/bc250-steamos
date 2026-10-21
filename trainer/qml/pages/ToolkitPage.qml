@@ -38,6 +38,8 @@ ColumnLayout {
     }
 
     function requestOperation(operationId) {
+        if (!operationId)
+            return
         var metadata = operation(operationId)
         if (!metadata)
             return
@@ -59,8 +61,8 @@ ColumnLayout {
         ListElement { componentId: "swap"; categoryName: "PERFORMANCE"; title: "COMPRESSED SWAP"; description: "Choose half-RAM zstd zram, or lz4 zswap with a 16 GiB persistent disk swapfile. The swap menu offers both compressors for either profile."; primary: "swap-zram-install"; repair: "swap-zswap-install"; secondaryText: "ZSWAP"; remove: "swap-remove" }
         ListElement { componentId: "compute"; categoryName: "PERFORMANCE"; title: "GPU CU PREREQUISITES"; description: "Build UMR only; routing, stability testing, and boot replay are separate steps."; primary: "compute-build"; repair: ""; secondaryText: "REPAIR"; remove: "compute-remove" }
         ListElement { componentId: "proton"; categoryName: "PERFORMANCE"; title: "BC-250 GE-PROTON"; description: "Latest verified compatibility tool with the BC-250 FSR4 integration."; primary: "proton-install"; repair: "proton-update"; secondaryText: "UPDATE"; remove: "proton-remove" }
-        ListElement { componentId: "mesh"; categoryName: "PERFORMANCE"; title: "MESA / RADV ASYNC COMPUTE"; description: "Installs or repairs AMDGPU, RADV async compute, and scheduler policy through the resumable graphics workflow."; primary: "graphics-setup"; repair: ""; secondaryText: "REPAIR"; remove: "mesh-remove" }
-        ListElement { componentId: "native-mesh"; categoryName: "PERFORMANCE"; title: "BC250 RADV R2"; description: "Experimental verified RADV and vkd3d pair in a private Proton copy; requires explicit per-game selection."; primary: "native-mesh-install"; repair: ""; secondaryText: "REPAIR"; remove: "native-mesh-remove" }
+        ListElement { componentId: "mesh"; categoryName: "PERFORMANCE"; title: "GLOBAL DIRECTMESH + FSR4"; description: "Global driver; removes verified retired R2 before activation. Preserves original Proton and prefixes. Select ordinary Proton; remove old bc250-r2 launch options."; primary: "directmesh-install"; repair: ""; secondaryText: "REPAIR"; remove: "mesh-remove" }
+        ListElement { componentId: "native-mesh"; categoryName: "PERFORMANCE"; title: "RETIRED R2 CLEANUP ONLY"; description: "Remove verified retired R2 files only. Global RADV, original Proton, prefixes, and saves are preserved. Select ordinary Proton; remove old bc250-r2 launch options."; primary: "native-mesh-remove"; repair: ""; secondaryText: "REPAIR"; remove: "" }
         ListElement { componentId: "ac3"; categoryName: "DEVICES"; title: "HDMI AC-3 SURROUND"; description: "Managed real-time Dolby Digital 5.1 output over HDMI/DisplayPort."; primary: "ac3-install"; repair: ""; secondaryText: "REPAIR"; remove: "ac3-remove" }
         ListElement { componentId: "fan"; categoryName: "DEVICES"; title: "NCT6687 FAN DRIVER"; description: "Pinned hwmon tachometer and PWM support for the onboard BC-250 controller."; primary: "fan-install"; repair: ""; secondaryText: "REPAIR"; remove: "fan-remove" }
         ListElement { componentId: "aic"; categoryName: "DEVICES"; title: "AIC8800 WIRELESS"; description: "Hardware-specific WiFi and Bluetooth modules."; primary: "aic-install"; repair: ""; secondaryText: "REPAIR"; remove: "aic-remove" }
@@ -250,7 +252,7 @@ ColumnLayout {
                 repairText: secondaryText
                 actionEnabled: root.actionsEnabled && installState !== "unknown"
                 repairVisible: repair.length > 0
-                removeVisible: installState !== "not-installed" && installState !== "unavailable"
+                removeVisible: remove.length > 0 && installState !== "not-installed" && installState !== "unavailable"
                 onPrimaryRequested: root.requestOperation(primary)
                 onRepairRequested: root.requestOperation(repair)
                 onRemoveRequested: root.requestOperation(remove)

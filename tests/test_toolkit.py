@@ -62,7 +62,7 @@ class ToolkitTests(unittest.TestCase):
             "proton-uninstall",
             "audio",
             "mesh",
-            "native-mesh-install",
+            "directmesh-install",
             "helixsr-prepare",
             "helixsr-payload-status",
             "helixsr-install",
@@ -96,7 +96,7 @@ class ToolkitTests(unittest.TestCase):
     def test_readme_documents_pinned_user_local_helixsr(self):
         readme = (ROOT / "README.md").read_text(encoding="utf-8")
         self.assertIn("https://github.com/lonewolf0622/HelixSR", readme)
-        self.assertIn("HelixSR v1.4.3", readme)
+        self.assertIn("HelixSR v2.0.0", readme)
         self.assertIn("--latest", readme)
         self.assertIn("amd_fidelityfx_upscaler_dx12.dll", readme)
         self.assertIn("amd_fidelityfx_dx12.dll", readme)
@@ -358,7 +358,7 @@ class ToolkitTests(unittest.TestCase):
         )
         self.assertLess(
             install_plugin.index("ensure_decky_loader"),
-            install_plugin.index("command -v pnpm"),
+            install_plugin.index("ensure_build_toolchain"),
         )
 
     def test_decky_root_helper_uses_explicit_smu_patch_allowlist(self):
@@ -1135,7 +1135,7 @@ class ToolkitTests(unittest.TestCase):
                 ),
                 "audio-build": ("direct", "bc250-audio-fix/patch-driver.sh"),
                 "mesh-setup": ("direct", "bc250-mesh-shader.sh", "setup"),
-                "native-mesh-install": ("direct", "bc250-mesh-shader.sh", "setup", "--native-mesh"),
+                "directmesh-install": ("direct", "bc250-mesh-shader.sh", "setup", "--directmesh"),
                 "native-mesh-remove": ("direct", "bc250-mesh-shader.sh", "uninstall", "--native-mesh"),
                 "decky-install": ("direct", "decky-plugin/install.sh", "install"),
                 "desktop-install": ("direct", "desktop-control/install.sh", "install"),

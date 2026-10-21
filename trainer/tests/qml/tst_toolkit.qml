@@ -50,7 +50,7 @@ TestCase {
             {"id": "proton-remove", "title": "Remove Proton", "verb": "REMOVE", "description": "Remove Proton.", "destructive": true},
             {"id": "graphics-setup", "title": "Install graphics stack", "verb": "INSTALL / RESUME", "description": "Install graphics.", "destructive": false},
             {"id": "mesh-remove", "title": "Remove RADV", "verb": "REMOVE", "description": "Remove RADV.", "destructive": true}
-            ,{"id": "native-mesh-install", "title": "Install BC250 RADV R2", "verb": "INSTALL", "description": "Private RADV, vkd3d, and Proton pair for per-game use.", "destructive": false}
+            ,{"id": "directmesh-install", "title": "Install global DirectMesh + FSR4", "verb": "INSTALL / RESUME", "description": "Global driver after verified retired R2 cleanup.", "destructive": false}
             ,{"id": "native-mesh-remove", "title": "Remove BC250 RADV R2", "verb": "REMOVE", "description": "Preserve global RADV, prefixes, saves, and original Proton.", "destructive": true}
         ]
         property bool refreshing: false
@@ -172,6 +172,11 @@ TestCase {
         verify(ac3 !== null)
         verify(proton !== null)
         verify(nativeMesh !== null)
+        compare(nativeMesh.primaryText, "REMOVE")
+        verify(!nativeMesh.removeVisible)
+        var directMesh = findChild(page, "toolkitCard-mesh")
+        verify(directMesh !== null)
+        compare(directMesh.primaryText, "INSTALL / RESUME")
         verify(findChild(page, "toolkitCard-cec") === null)
         verify(findChild(page, "toolkitCard-persistence") === null)
         verify(coolercontrol !== null)

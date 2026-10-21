@@ -47,7 +47,7 @@ commit [`3e45131`](https://github.com/Hexxeh/bc250-efi-core-unlock/commit/3e4513
 copyright Liam McLoughlin and licensed under the MIT notice in
 [`EFI-LICENSE`](EFI-LICENSE). It builds against headers fetched only from
 [`yoppeh/efi`](https://github.com/yoppeh/efi) commit
-[`761b114`](https://github.com/yoppeh/efi/commit/761b114e3b186adb82516d5fa8e7a4c559f56ba5),
+[`d438479`](https://github.com/yoppeh/efi/commit/d438479f1e2b3a9c99623a5127d9e65bbeb813e7),
 copyright Warren Mann and licensed under
 [`EFI-HEADERS-LICENSE`](EFI-HEADERS-LICENSE). The toolkit ships no fetched header
 or EFI binary.
@@ -89,3 +89,31 @@ mask, but not the warm reset AGESA requires. After validating all eight cores,
 choose either the standard Linux/systemd method or the EFI pre-boot alternative.
 These automatic unlock methods are mutually exclusive and cannot be enabled
 together.
+
+## Upstream review (2026-10-21)
+
+- Linux upstream was reviewed through
+  [`569785a36bd19008f8d83eb91c0b3ee80596c430`](https://github.com/rw-r-r-0644/bc250-core-unlock/commit/569785a36bd19008f8d83eb91c0b3ee80596c430).
+  The derived source baseline remains `87ec09877df57d2e310a9b9961584a78b6d1c79d`,
+  not a claim of tracking the latest script. Upstream changed the Q3 `0x98`
+  target from the `0x0115a870` mirror to the `0x0005a870` base address, accepts
+  the low-byte `0xff` result, and offers `-f` for non-`0x77` masks. We retain
+  the established mirror and **full-word** readback in both toolkit helpers;
+  no address/semantics change is adopted without hardware validation. The
+  toolkit deliberately already supports non-factory masks after its manual
+  stability-testing/persistence gate; upstream's force option is not imported.
+  Disabled cores can be defective and can silently corrupt results or data.
+- EFI upstream was reviewed through
+  [`671936bd2655542326496518afdd2d8c9510b7d5`](https://github.com/Hexxeh/bc250-efi-core-unlock/commit/671936bd2655542326496518afdd2d8c9510b7d5).
+  The adapted source baseline remains `3e45131678b111c50e5c285834869ecd3c487a2e`.
+  New upstream code unlocks secure SMU access, writes the mask through a
+  different primitive, and unconditionally injects telemetry patches before
+  OS boot. These writes are **not** imported: our separate opt-in Linux
+  `smu-metrics` injector checks firmware, expected original bytes, eight-core
+  topology, and driver ABI. The EFI application's one-attempt guard,
+  `EFI_ABORTED` continuation, and exact ownership/removal transaction remain
+  unchanged.
+- Header pin advanced from `761b114e3b186adb82516d5fa8e7a4c559f56ba5` to
+  `d438479f1e2b3a9c99623a5127d9e65bbeb813e7`. The complete diff adds only the
+  `EFI_ERROR(Status)` macro: no structure, calling convention, license, or
+  binary ABI change. Our explicit 64-bit error-status encoding is retained.

@@ -35,16 +35,16 @@ ColumnLayout {
     Component.onCompleted: syncFromSnapshot()
 
     C.ConfirmDialog { id: confirm }
-    C.SectionHeader { text: "Mesa / RADV and compute queues" }
+    C.SectionHeader { text: "Global DirectMesh / RADV and compute queues" }
     C.StatusRow { label: "Patched AMDGPU"; value: root.mesh.kernelReady ? "Installed and active" : "Not ready"; health: root.mesh.kernelReady ? 1 : -1 }
     C.StatusRow { label: "Scheduler policy"; value: root.mesh.schedulerActive ? "Active" : root.mesh.schedulerConfigured ? "Reboot required" : "Disabled"; health: root.mesh.schedulerActive ? 1 : root.mesh.schedulerConfigured ? 0 : -1 }
     C.StatusRow { label: "RADV runtime"; value: root.mesh.runtimeState || "Unavailable"; health: root.mesh.runtimeState === "ready" ? 1 : -1 }
     C.StatusRow { label: "Global activation"; value: root.mesh.globalEnabled ? "Enabled" : "Disabled"; health: root.mesh.globalEnabled ? 1 : 0 }
-    C.StatusRow { label: "FSR4 RC9 game DLLs"; value: (root.mesh.fsr4DllState || "Unavailable") + " (" + (root.mesh.fsr4DllInstallCount || 0) + ")"; health: root.mesh.fsr4DllState === "ready" ? 1 : root.mesh.fsr4DllState === "invalid" ? -1 : 0 }
+    C.StatusRow { label: "DirectMesh"; value: root.mesh.directMeshVersion || "Not installed / update required"; health: root.mesh.directMeshVersion ? 1 : 0 }
+    C.StatusRow { label: "FSR4 game DLLs"; value: (root.mesh.fsr4DllState || "Unavailable") + " (" + (root.mesh.fsr4DllInstallCount || 0) + ")"; health: root.mesh.fsr4DllState === "ready" ? 1 : root.mesh.fsr4DllState === "invalid" ? -1 : 0 }
     C.StatusRow { label: "Legacy FSR4 V3 profile"; value: root.mesh.fsr4State || "Unavailable"; health: root.mesh.fsr4State === "ready" ? 1 : root.mesh.fsr4State === "invalid" ? -1 : 0 }
-    C.StatusRow { label: "BC250 RADV R2"; value: root.mesh.nativeMeshState || "Unavailable"; health: root.mesh.nativeMeshState === "ready" ? 1 : root.mesh.nativeMeshState === "invalid" ? -1 : 0 }
-    C.StatusRow { label: "R2 runner"; value: root.mesh.nativeMeshRunnerPath || "Not installed" }
-    Text { text: "R2 is never enabled globally. Select BC250 R2 (experimental) in Steam and add its runner to launch options."; color: "#7898a3"; font.family: "monospace"; font.pixelSize: 8; wrapMode: Text.Wrap; Layout.fillWidth: true }
+    C.StatusRow { label: "Retired R2 files"; value: root.mesh.nativeMeshState === "ready" ? "Cleanup required" : (root.mesh.nativeMeshState || "Unavailable"); health: root.mesh.nativeMeshState === "not-installed" ? 1 : -1 }
+    Text { text: "Install global DirectMesh from TOOLKIT. Setup removes verified R2 files first. For former R2 games select ordinary Proton and remove the old runner. Per-game opt-out: RADV_DIRECTMESH=0 %command%."; color: "#7898a3"; font.family: "monospace"; font.pixelSize: 8; wrapMode: Text.Wrap; Layout.fillWidth: true }
     Text { visible: Boolean(root.mesh.error) || root.mesh.runtimeState === "invalid" || root.mesh.fsr4State === "invalid" || root.mesh.fsr4DllState === "invalid" || root.mesh.nativeMeshState === "invalid"; text: root.mesh.error || "A Mesa / RADV, FSR4, or native-mesh runtime failed integrity validation. Repair it from the toolkit."; color: "#ff6aa2"; font.family: "monospace"; font.pixelSize: 9; wrapMode: Text.Wrap; Layout.fillWidth: true }
     C.SectionHeader { text: "Frequency control" }
     C.StatusRow { label: "Live / saved mode"; value: (root.gpu.mode || "--") + " / " + (root.gpu.requestedMode || "--"); health: root.gpu.dbusReady ? 1 : -1 }
