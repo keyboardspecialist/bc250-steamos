@@ -64,10 +64,14 @@ Select **Toolkit Update** or run:
 ./bc250-toolkit.sh toolkit-update
 ```
 
-Before asking for confirmation, the CLI displays the target release's GitHub
-patch notes and a link to the release page. If notes cannot be loaded, it shows
-the link instead; you can still cancel or continue. No update artifacts are
-downloaded or installed until you confirm.
+Before asking for confirmation, the CLI displays GitHub patch notes for every
+published stable toolkit release newer than your installed version, through the
+target release. Notes are grouped by version, oldest first, with a release-page
+link for each. Drafts, prereleases, and Trainer releases are excluded. Releases
+without notes are marked explicitly; very long notes are truncated with a link
+to the full text. If notes cannot be loaded, it shows the target release's link
+instead; you can still cancel or continue. No update artifacts are downloaded or
+installed until you confirm.
 
 The updater completes these tasks:
 

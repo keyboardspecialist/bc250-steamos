@@ -96,8 +96,7 @@ def fetch_releases():
     raise UpdateError("GitHub release pagination exceeded the safety limit")
 
 
-def select_release(releases):
-    candidates = []
+def stable_releases(releases):
     for release in releases:
         if (
             not isinstance(release, dict)
@@ -108,7 +107,11 @@ def select_release(releases):
         tag = release.get("tag_name")
         if not isinstance(tag, str) or TAG_PATTERN.fullmatch(tag) is None:
             continue
-        candidates.append((version_tuple(tag), release))
+        yield version_tuple(tag), release
+
+
+def select_release(releases):
+    candidates = list(stable_releases(releases))
     if not candidates:
         raise UpdateError("No published vMAJOR.MINOR.PATCH toolkit release was found")
     return max(candidates, key=lambda candidate: candidate[0])[1]
@@ -320,11 +323,7 @@ def format_check_env(result):
     )
 
 
-def release_notes(expected_version, releases=None):
-    version_tuple(expected_version)
-    release = select_release(fetch_releases() if releases is None else releases)
-    if release["tag_name"] != expected_version:
-        raise UpdateError("The available toolkit release changed; check for updates again")
+def format_release_notes(release):
     body = release.get("body")
     if not isinstance(body, str):
         body = ""
@@ -334,7 +333,27 @@ def release_notes(expected_version, releases=None):
     if len(body) > MAX_RELEASE_NOTES_CHARS:
         body = body[:MAX_RELEASE_NOTES_CHARS] + "\n[Patch notes truncated; see the release page below.]"
     return "Patch notes for {}:\n\n{}\n\nhttps://github.com/{}/releases/tag/{}".format(
-        expected_version, body, REPOSITORY, expected_version
+        release["tag_name"], body, REPOSITORY, release["tag_name"]
+    )
+
+
+def release_notes(current_version, expected_version, releases=None):
+    current = version_tuple(current_version)
+    expected = version_tuple(expected_version)
+    if expected <= current:
+        raise UpdateError("The selected toolkit release is not newer than the installed version")
+    releases = fetch_releases() if releases is None else releases
+    if select_release(releases)["tag_name"] != expected_version:
+        raise UpdateError("The available toolkit release changed; check for updates again")
+    pending = [
+        (version, release)
+        for version, release in stable_releases(releases)
+        if current < version <= expected
+    ]
+    pending.sort(key=lambda item: item[0])
+    return "Patch notes: {} -> {} (oldest first)\n\n{}".format(
+        current_version, expected_version,
+        "\n\n".join(format_release_notes(release) for _version, release in pending),
     )
 
 
@@ -428,6 +447,7 @@ def main():
         else:
             subparser.add_argument("--format", choices=("json", "env"), default="json")
     notes_parser = subparsers.add_parser("notes")
+    notes_parser.add_argument("--current-version", required=True)
     notes_parser.add_argument("--expected-version", required=True)
     arguments = parser.parse_args()
     try:
@@ -436,7 +456,7 @@ def main():
         if arguments.command == "check":
             result = check_for_update(arguments.toolkit_dir)
         elif arguments.command == "notes":
-            print(release_notes(arguments.expected_version))
+            print(release_notes(arguments.current_version, arguments.expected_version))
             return 0
         else:
             result = install_update(arguments.toolkit_dir, arguments.expected_version)

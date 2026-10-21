@@ -216,7 +216,7 @@ cmd_toolkit_update() {
     printf '%s\n' "${CG}${CB}Toolkit update available: $TOOLKIT_VERSION -> $TOOLKIT_LATEST_VERSION${C0}"
     echo
     if ! python3 -I "$TOOLKIT_UPDATE_HELPER" notes \
-        --expected-version "$TOOLKIT_LATEST_VERSION"; then
+        --expected-version "$TOOLKIT_LATEST_VERSION" --current-version "$TOOLKIT_VERSION"; then
         printf '%s\n' "${CY}Could not load patch notes. Review them at:${C0}" \
             "https://github.com/keyboardspecialist/bc250-steamos/releases/tag/$TOOLKIT_LATEST_VERSION"
     fi

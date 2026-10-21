@@ -98,7 +98,7 @@ class ToolkitUpdateTests(unittest.TestCase):
     def test_release_notes_show_selected_release_body_and_canonical_link(self):
         latest = release("v1.10.0")
         latest["body"] = "## Fixes\r\n- Fix Decky installation.\n- Improve updates."
-        output = UPDATER.release_notes("v1.10.0", [release("v1.9.0"), latest])
+        output = UPDATER.release_notes("v1.9.0", "v1.10.0", [release("v1.9.0"), latest])
         self.assertIn("Patch notes for v1.10.0:", output)
         self.assertIn("## Fixes\n- Fix Decky installation.\n- Improve updates.", output)
         self.assertIn(
@@ -111,19 +111,19 @@ class ToolkitUpdateTests(unittest.TestCase):
             with self.subTest(body=body):
                 latest = release("v1.10.0")
                 latest["body"] = body
-                output = UPDATER.release_notes("v1.10.0", [latest])
+                output = UPDATER.release_notes("v1.9.0", "v1.10.0", [latest])
                 self.assertIn("No patch notes were published", output)
 
     def test_release_notes_remove_terminal_controls_and_limit_output(self):
         latest = release("v1.10.0")
         latest["body"] = "Fix\x1b[2J\x00\x07\x9b\u202e\n\tDetails"
-        output = UPDATER.release_notes("v1.10.0", [latest])
+        output = UPDATER.release_notes("v1.9.0", "v1.10.0", [latest])
         for control in ("\x1b", "\x00", "\x07", "\x9b", "\u202e"):
             self.assertNotIn(control, output)
         self.assertIn("\n\tDetails", output)
 
         latest["body"] = "x" * (UPDATER.MAX_RELEASE_NOTES_CHARS + 1)
-        output = UPDATER.release_notes("v1.10.0", [latest])
+        output = UPDATER.release_notes("v1.9.0", "v1.10.0", [latest])
         self.assertIn("x" * UPDATER.MAX_RELEASE_NOTES_CHARS, output)
         self.assertNotIn("x" * (UPDATER.MAX_RELEASE_NOTES_CHARS + 1), output)
         self.assertIn("Patch notes truncated", output)
@@ -131,20 +131,96 @@ class ToolkitUpdateTests(unittest.TestCase):
 
     def test_release_notes_reject_changed_release(self):
         with self.assertRaisesRegex(UPDATER.UpdateError, "release changed"):
-            UPDATER.release_notes("v1.9.0", [release("v1.10.0")])
+            UPDATER.release_notes("v1.8.0", "v1.9.0", [release("v1.10.0")])
+
+    def test_release_notes_include_all_missed_releases_oldest_first(self):
+        releases = [release("v0.34.{}".format(patch)) for patch in range(8, 0, -1)]
+        for item in releases:
+            item["body"] = "- Changes in {}".format(item["tag_name"])
+        output = UPDATER.release_notes("v0.34.2", "v0.34.8", releases)
+        self.assertIn("v0.34.2 -> v0.34.8 (oldest first)", output)
+        positions = []
+        for patch in range(3, 9):
+            tag = "v0.34.{}".format(patch)
+            positions.append(output.index("Patch notes for {}:".format(tag)))
+            self.assertIn("- Changes in {}".format(tag), output)
+            self.assertIn("/releases/tag/{}".format(tag), output)
+        self.assertEqual(positions, sorted(positions))
+        self.assertNotIn("Patch notes for v0.34.2:", output)
+        self.assertNotIn("Patch notes for v0.34.1:", output)
+
+    def test_release_notes_use_semantic_order_and_exclude_nonstable_releases(self):
+        releases = [
+            release("v1.10.0"), release("v1.9.9"), release("v1.9.0"),
+            release("v1.8.0"), release("v1.9.5", draft=True),
+            release("v1.9.6", prerelease=True), release("trainer-v99.0.0"),
+            release("v2.0.0", draft=True), release("v1.9.7-rc1"),
+            {"tag_name": None}, None,
+        ]
+        output = UPDATER.release_notes("v1.9.0", "v1.10.0", releases)
+        self.assertLess(
+            output.index("Patch notes for v1.9.9:"),
+            output.index("Patch notes for v1.10.0:"),
+        )
+        self.assertEqual(output.count("Patch notes for "), 2)
+        self.assertNotIn("trainer-", output)
+        self.assertNotIn("v1.9.5", output)
+        self.assertNotIn("v1.9.6", output)
+        self.assertNotIn("v1.9.7-rc1", output)
+
+    def test_release_notes_include_releases_from_later_api_pages(self):
+        first_page = [release("v0.34.8")] + [release("trainer-v0.1.0")] * 99
+        second_page = [release("v0.34.3"), release("v0.34.2")]
+        with mock.patch.object(
+            UPDATER, "fetch_release_page", side_effect=[first_page, second_page]
+        ) as fetch_page:
+            output = UPDATER.release_notes("v0.34.2", "v0.34.8")
+        self.assertEqual(fetch_page.call_args_list, [mock.call(1), mock.call(2)])
+        self.assertLess(
+            output.index("Patch notes for v0.34.3:"),
+            output.index("Patch notes for v0.34.8:"),
+        )
+        self.assertEqual(output.count("Patch notes for "), 2)
+
+    def test_missing_or_long_intermediate_notes_do_not_hide_later_releases(self):
+        missing = release("v0.34.3")
+        long_notes = release("v0.34.4")
+        long_notes["body"] = "x" * (UPDATER.MAX_RELEASE_NOTES_CHARS + 1)
+        latest = release("v0.34.8")
+        latest["body"] = "- Latest fix"
+        output = UPDATER.release_notes("v0.34.2", "v0.34.8", [latest, missing, long_notes])
+        self.assertIn("Patch notes for v0.34.3:\n\nNo patch notes were published", output)
+        self.assertIn("Patch notes truncated", output)
+        self.assertIn("/releases/tag/v0.34.4", output)
+        self.assertIn("Patch notes for v0.34.8:\n\n- Latest fix", output)
+
+    def test_release_notes_reject_invalid_or_nonupgrade_ranges_before_fetching(self):
+        for current, expected in (
+            ("v0.34.2", "v0.34.2"), ("v0.34.8", "v0.34.2"),
+            ("bad", "v0.34.8"), ("v0.34.2", "bad"),
+        ):
+            with self.subTest(current=current, expected=expected), \
+                    mock.patch.object(UPDATER, "fetch_releases") as fetch:
+                with self.assertRaises(UPDATER.UpdateError):
+                    UPDATER.release_notes(current, expected)
+                fetch.assert_not_called()
 
     def test_notes_command_prints_text_without_installing(self):
         latest = release("v1.10.0")
         latest["body"] = "- Fix Decky installation."
+        intermediate = release("v1.9.1")
+        intermediate["body"] = "- Intermediate fix."
         output = io.StringIO()
         with mock.patch.object(UPDATER.sys, "argv", [
-            str(UPDATER_PATH), "notes", "--expected-version", "v1.10.0"
+            str(UPDATER_PATH), "notes", "--expected-version", "v1.10.0",
+            "--current-version", "v1.9.0",
         ]), mock.patch.object(UPDATER.os, "geteuid", return_value=1000), \
-                mock.patch.object(UPDATER, "fetch_releases", return_value=[latest]), \
+                mock.patch.object(UPDATER, "fetch_releases", return_value=[latest, intermediate]), \
                 mock.patch.object(UPDATER, "install_update") as install, \
                 mock.patch.object(UPDATER.sys, "stdout", output):
             self.assertEqual(UPDATER.main(), 0)
         self.assertIn("- Fix Decky installation.", output.getvalue())
+        self.assertIn("- Intermediate fix.", output.getvalue())
         install.assert_not_called()
 
     def test_safe_extract_validates_layout_and_release_version(self):

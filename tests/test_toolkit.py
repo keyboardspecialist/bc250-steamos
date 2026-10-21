@@ -848,6 +848,8 @@ class ToolkitTests(unittest.TestCase):
                         'python3() { '
                         '[[ "$3" == notes && "$4" == --expected-version && "$5" == v9.8.7 ]] '
                         '|| return 99; '
+                        '[[ "$6" == --current-version && "$7" == "$TOOLKIT_VERSION" ]] '
+                        '|| return 99; '
                         'if [[ $notes_rc -ne 0 ]]; then return "$notes_rc"; fi; '
                         'printf "%s\\n" "- Test patch notes"; }; '
                         'perform_toolkit_update() { echo INSTALL_CALLED; }; '
