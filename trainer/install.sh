@@ -2,6 +2,12 @@
 # Install BC250 Trainer and register its shared service use.
 set -euo pipefail
 
+if [[ "${BASH_SOURCE[0]:-}" == "$0" ]]; then
+    _bc250_hook="$(dirname -- "${BASH_SOURCE[0]}")/../scripts/feature-tracking.sh"
+    if [[ -f "$_bc250_hook" && ! -L "$_bc250_hook" ]]; then source "$_bc250_hook" trainer help "$@"; fi
+    unset _bc250_hook
+fi
+
 SOURCE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_DIR="$(cd "$SOURCE_DIR/.." && pwd)"
 SHARED_INSTALLER="$REPO_DIR/desktop-control/shared-service-install.sh"

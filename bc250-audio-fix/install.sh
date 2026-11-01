@@ -3,6 +3,12 @@
 # modules updates/ override. Run as: sudo ./install.sh
 set -euo pipefail
 
+if [[ "${BASH_SOURCE[0]:-}" == "$0" ]]; then
+    _bc250_hook="$(dirname -- "${BASH_SOURCE[0]}")/../scripts/feature-tracking.sh"
+    if [[ -f "$_bc250_hook" && ! -L "$_bc250_hook" ]]; then source "$_bc250_hook" audio install "$@"; fi
+    unset _bc250_hook
+fi
+
 ACKNOWLEDGE_DCN201_DISPLAY_RISK=0
 case "${1:-}" in
     "") ;;

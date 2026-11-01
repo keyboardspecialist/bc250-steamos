@@ -1,6 +1,12 @@
 #!/usr/bin/env bash
 # Prepare and install pinned or latest HelixSR with verified rollback records.
 set -euo pipefail
+
+if [[ "${BASH_SOURCE[0]:-}" == "$0" ]]; then
+    _bc250_hook="$(dirname -- "${BASH_SOURCE[0]}")/scripts/feature-tracking.sh"
+    if [[ -f "$_bc250_hook" && ! -L "$_bc250_hook" ]]; then source "$_bc250_hook" helixsr help "$@"; fi
+    unset _bc250_hook
+fi
 umask 077
 
 RELEASE="${BC250_HELIXSR_RELEASE:-v2.0.0}"

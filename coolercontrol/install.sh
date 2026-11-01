@@ -2,6 +2,12 @@
 # Install the pinned CoolerControl daemon AppImage and local Web UI launcher.
 set -euo pipefail
 
+if [[ "${BASH_SOURCE[0]:-}" == "$0" ]]; then
+    _bc250_hook="$(dirname -- "${BASH_SOURCE[0]}")/../scripts/feature-tracking.sh"
+    if [[ -f "$_bc250_hook" && ! -L "$_bc250_hook" ]]; then source "$_bc250_hook" coolercontrol help "$@"; fi
+    unset _bc250_hook
+fi
+
 VERSION=5.1.1
 APPIMAGE_NAME=CoolerControlD-x86_64.AppImage
 APPIMAGE_SHA256=89d35570b098c885673afda56d3f38f830286b42f61051e0194e864d21495130

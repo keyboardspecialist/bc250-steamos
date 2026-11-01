@@ -10,6 +10,12 @@
 #   ./patch-driver.sh uninstall
 set -euo pipefail
 
+if [[ "${BASH_SOURCE[0]:-}" == "$0" ]]; then
+    _bc250_hook="$(dirname -- "${BASH_SOURCE[0]}")/../scripts/feature-tracking.sh"
+    if [[ -f "$_bc250_hook" && ! -L "$_bc250_hook" ]]; then source "$_bc250_hook" audio install "$@"; fi
+    unset _bc250_hook
+fi
+
 HERE=$(cd "$(dirname "$0")" && pwd)
 TREE_DRIFT_EXIT=75
 GFX1013_COMMIT=d3e6dc062c34d2523db0abe5741d1f5b0dea00d9

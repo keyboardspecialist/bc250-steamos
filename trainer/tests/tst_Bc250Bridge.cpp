@@ -79,6 +79,19 @@ private slots:
         bridge.setTtmPages(65535);
         QVERIFY(bridge.error().contains(QStringLiteral("65536")));
         QVERIFY(!bridge.busy());
+
+        bridge.clearMessage();
+        bridge.setTtmPages(3670017);
+        QVERIFY(bridge.error().contains(QStringLiteral("3670016")));
+        QVERIFY(!bridge.busy());
+    }
+
+    void acceptsKytyTtmLimit()
+    {
+        Bc250Bridge bridge(true);
+        bridge.setTtmPages(3670016);
+        QTRY_VERIFY_WITH_TIMEOUT(!bridge.busy(), 2000);
+        QVERIFY2(bridge.error().isEmpty(), qPrintable(bridge.error()));
     }
 
     void telemetryOnlyPollsOnVisibleStatusPage()

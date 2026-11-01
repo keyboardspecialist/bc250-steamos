@@ -110,7 +110,8 @@ ColumnLayout {
         Layout.fillWidth: true
         Repeater {
             model: [{label: "8G", pages: 2097152}, {label: "10G", pages: 2621440},
-                    {label: "GUIDE 11.5G", pages: 3014656}, {label: "12G", pages: 3145728}]
+                    {label: "GUIDE 11.5G", pages: 3014656}, {label: "12G", pages: 3145728},
+                    {label: "KYTY 14G", pages: 3670016}]
             C.NeonButton {
                 required property var modelData
                 text: modelData.label
@@ -125,7 +126,7 @@ ColumnLayout {
         Layout.fillWidth: true
         C.NeonSpinBox {
             objectName: "ttmInput"
-            from: 65536; to: 3145728; stepSize: 65536; value: root.ttmPages; editable: true
+            from: 65536; to: 3670016; stepSize: 65536; value: root.ttmPages; editable: true
             Layout.fillWidth: true; enabled: root.ttmWritable
             onValueModified: root.ttmPages = value
             textFromValue: function(value) { return value + " pages // " + root.gibibytes(value) + " GiB" }

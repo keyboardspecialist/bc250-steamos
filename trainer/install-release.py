@@ -290,6 +290,12 @@ def install_latest():
         result = subprocess.run(["bash", str(installer), "install"], cwd=str(extracted))
         if result.returncode != 0:
             raise InstallError("Trainer installer failed with status {}".format(result.returncode))
+        try:
+            sys.path.insert(0, str(extracted / "backend/bc250_control"))
+            from feature_state import record_event
+            record_event("trainer", "install")
+        except (ImportError, OSError, ValueError) as error:
+            print("[bc250-trainer-release] Feature tracking could not be saved: {}".format(error), file=sys.stderr)
 
 
 def main():

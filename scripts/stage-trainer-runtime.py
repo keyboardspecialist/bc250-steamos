@@ -92,6 +92,8 @@ def normalize_tree(root: Path, epoch: int) -> None:
 
 
 def copy_host_runtime(temporary: Path) -> None:
+    for name in ("feature-tracking.sh", "feature-event.py"):
+        copy_file(REPOSITORY / "scripts" / name, temporary / "scripts" / name)
     for name in (
         "bc250-fsr4.sh",
         "bc250-helixsr.sh",

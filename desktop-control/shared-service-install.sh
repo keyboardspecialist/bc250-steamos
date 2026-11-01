@@ -53,6 +53,8 @@ shared_validate_sources() {
         "$SHARED_SOURCE_DIR/service/io.github.keyboardspecialist.bc250-control.policy" \
         "$SHARED_SOURCE_DIR/vendor/dbus_next" \
         "$SHARED_REPO_DIR/backend/bc250_control" \
+        "$SHARED_REPO_DIR/scripts/feature-tracking.sh" \
+        "$SHARED_REPO_DIR/scripts/feature-event.py" \
         "$SHARED_REPO_DIR/backend/vendor/tomli" \
         "$SHARED_SOURCE_DIR/bc250-desktop-control-repair" \
         "$SHARED_SOURCE_DIR/templates" \
@@ -117,6 +119,12 @@ shared_stage_payload() {
         "$SHARED_STAGE/py_modules/bc250_control_service"
     shared_copy_tree "$SHARED_REPO_DIR/backend/bc250_control" \
         "$SHARED_STAGE/py_modules/bc250_control"
+    install -d -o root -g root -m 0755 "$SHARED_STAGE/scripts"
+    install -o root -g root -m 0644 \
+        "$SHARED_REPO_DIR/scripts/feature-tracking.sh" \
+        "$SHARED_REPO_DIR/scripts/feature-event.py" "$SHARED_STAGE/scripts/"
+    install -o root -g root -m 0644 "$SHARED_REPO_DIR/backend/bc250_control/feature_state.py" \
+        "$SHARED_STAGE/scripts/feature_state.py"
     shared_copy_tree "$SHARED_REPO_DIR/backend/vendor/tomli" \
         "$SHARED_STAGE/py_modules/tomli"
     shared_copy_tree "$SHARED_SOURCE_DIR/vendor/dbus_next" \

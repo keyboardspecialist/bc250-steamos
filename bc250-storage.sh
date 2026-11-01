@@ -3,6 +3,12 @@
 # retaining the conventional /var/lib/bc250-control path.
 set -euo pipefail
 
+if [[ "${BASH_SOURCE[0]:-}" == "$0" ]]; then
+    _bc250_hook="$(dirname -- "${BASH_SOURCE[0]}")/scripts/feature-tracking.sh"
+    if [[ -f "$_bc250_hook" && ! -L "$_bc250_hook" ]]; then source "$_bc250_hook" storage menu "$@"; fi
+    unset _bc250_hook
+fi
+
 ROOT_DIR=/var/lib/bc250-control
 BACKING_DIR=/home/.steamos/offload/var/lib/bc250-control
 SYSTEMD_DIR=/etc/systemd/system
@@ -992,7 +998,7 @@ cmd_menu() {
 
 cmd_help() {
     cat << EOF
-Usage: $0 {install|repair|repair-infrastructure|uninstall|purge|installed|can-uninstall|status|menu|help|render}
+Usage: $0 {install|repair|repair-infrastructure|uninstall|purge|installed|verify|can-uninstall|status|menu|help|render}
 
 Run with no arguments in a terminal to open the interactive menu.
 Privileged actions request confirmation before invoking sudo.
@@ -1028,6 +1034,7 @@ case "$1" in
         run_privileged purge
         ;;
     installed) cmd_installed ;;
+    verify) (($# == 1)) || die "Usage: $0 verify"; infrastructure_healthy ;;
     can-uninstall) can_uninstall ;;
     status) show_status ;;
     menu) cmd_menu ;;

@@ -51,6 +51,12 @@
 # registered in SteamOS's atomic-update keep list during installation.
 set -euo pipefail
 
+if [[ "${BASH_SOURCE[0]:-}" == "$0" ]]; then
+    _bc250_hook="$(dirname -- "${BASH_SOURCE[0]}")/scripts/feature-tracking.sh"
+    if [[ -f "$_bc250_hook" && ! -L "$_bc250_hook" ]]; then source "$_bc250_hook" cec menu "$@"; fi
+    unset _bc250_hook
+fi
+
 REAL_USER=$(id -un)
 REAL_HOME="${REAL_HOME:-$(getent passwd "$REAL_USER" | cut -d: -f6)}"
 [[ "$REAL_HOME" == /* ]] || { echo "Could not resolve home for $REAL_USER" >&2; exit 1; }
@@ -202,6 +208,7 @@ ask() {   # ask "Prompt" [default] -> REPLY
 run_action() {
     local rc=0
     ( trap cleanup EXIT; "$@" ) || rc=$?
+    if declare -F bc250_feature_note_command >/dev/null; then bc250_feature_note_command "$rc" "$@"; fi
     if [[ $rc -ne 0 ]]; then
         echo -e "${CR}${CB}[cec]${C0} action failed (exit $rc) -- see message above."
     fi

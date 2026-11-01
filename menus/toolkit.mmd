@@ -22,6 +22,9 @@ menu__cmd_storage_updates_menu["Legacy Storage and Updates Entry<br/>Direct-CLI 
 action__auto_base_installation["Auto Base Toolkit Installation<br/>Install or resume the safe foundation in dependency order."]:::install
 action__toolkit_update["Toolkit Update<br/>Download, verify, and install the latest main toolkit release."]:::install
 action__system_health["System Health<br/>Show operational state using the same domain names as the menu."]:::read_only
+action__track_features["Track Used Features<br/>Remember locally installed components and TTM settings before OS updates; no telemetry."]:::install
+action__repair_plan["Preview Known-Feature Repairs<br/>Read-only checks of tracked components; distinguish damage from reboot-needed state."]:::read_only
+action__repair_known["Repair Damaged Known Features<br/>Confirm supported targeted repairs without replaying unlocks, CMOS writes, tuning or game DLL injection."]:::install
 action__guided_overview["Setup Overview<br/>Review goals, current state, and restart checkpoints."]:::read_only
 action__amdgpu["AMDGPU Kernel Fixes<br/>Build the corrected kernel module and reboot before RADV setup."]:::install
 action__graphics_setup["Install or Resume Global DirectMesh<br/>Install AMDGPU first when needed, then resume global DirectMesh and FSR4 RADV with retired R2 cleanup."]:::install
@@ -133,6 +136,9 @@ menu__cmd_interfaces_menu --> action__coolercontrol
 menu__cmd_interfaces_menu --> action__trainer
 
 menu__cmd_maintenance_menu --> child__persistence
+menu__cmd_maintenance_menu --> action__track_features
+menu__cmd_maintenance_menu --> action__repair_plan
+menu__cmd_maintenance_menu --> action__repair_known
 menu__cmd_maintenance_menu --> action__amdgpu_clean
 menu__cmd_maintenance_menu --> child__manage
 

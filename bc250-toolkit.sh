@@ -46,6 +46,7 @@ C0=$'\033[0m'; CB=$'\033[1m'; CD=$'\033[2m'; CI=$'\033[7m'
 CG=$'\033[32m'; CY=$'\033[33m'; CR=$'\033[31m'; CC=$'\033[36m'
 TUI_CURSOR_HIDDEN=0
 SUDO_KEEPALIVE_PID=0
+FEATURE_TRACKING=0
 
 log() { echo "[bc250-toolkit] $*"; }
 die() { echo "[bc250-toolkit] $*" >&2; exit 1; }
@@ -58,13 +59,19 @@ tui_show_cursor() {
 }
 
 toolkit_cleanup() {
+    local result=$?
     tui_show_cursor
+    if [[ $FEATURE_TRACKING -eq 1 ]]; then
+        bash "$MAINTENANCE_SH" track >/dev/null \
+            || log "Feature tracking failed; run '$MAINTENANCE_SH track' before updating SteamOS." >&2
+    fi
     if [[ $SUDO_KEEPALIVE_PID -gt 0 ]]; then
         kill "$SUDO_KEEPALIVE_PID" 2>/dev/null || true
         wait "$SUDO_KEEPALIVE_PID" 2>/dev/null || true
         sudo -n -k >/dev/null 2>&1 || true
         SUDO_KEEPALIVE_PID=0
     fi
+    return "$result"
 }
 trap toolkit_cleanup EXIT
 
@@ -95,10 +102,29 @@ require_script() {
     [[ -f "$1" && ! -L "$1" ]] || die "Toolkit component is missing or unsafe: $1"
 }
 
+mark_feature_tracking() {
+    [[ $FEATURE_TRACKING -eq 0 ]] || return 0
+    FEATURE_TRACKING=1
+    if [[ -f "$MAINTENANCE_SH" && ! -L "$MAINTENANCE_SH" ]]; then
+        bash "$MAINTENANCE_SH" track >/dev/null \
+            || log "Could not snapshot features before this action; explicit tracking is available in Maintenance." >&2
+    fi
+}
+
+track_script_action() {
+    # Inventory/help probes remain read-only. Menus may mutate in a child.
+    case "${2:-install}" in
+        status|status-json|installed|probe|help|--help|-h|verify|render|payload-status) return 0 ;;
+    esac
+    [[ "$1" != "$MAINTENANCE_SH" ]] || return 0
+    mark_feature_tracking
+}
+
 run_script() {
     local script="$1"
     shift
     require_script "$script"
+    track_script_action "$script" "$@"
     bash "$script" "$@"
 }
 
@@ -106,6 +132,7 @@ run_sudo_script() {
     local script="$1"
     shift
     require_script "$script"
+    track_script_action "$script" "$@"
     sudo bash "$script" "$@"
 }
 
@@ -116,7 +143,7 @@ confirm_action() {
     printf '%s' "${CB}${prompt} [y/N] ${C0}"
     IFS= read -r answer
     case "$answer" in
-        y|Y|yes|YES) "$@" ;;
+        y|Y|yes|YES) mark_feature_tracking; "$@" ;;
         *) log "Cancelled." ;;
     esac
 }
@@ -568,6 +595,7 @@ show_auto_base_installation_plan() {
     printf '%s\n' "    - Required signed packages, storage, and update protection"
     printf '%s\n' "  Excludes hardware unlocks, tuning, swap, device-specific drivers, interfaces, FSR4, and BC250 RADV R2."
     printf '%s\n' "  Re-run this same option after each requested reboot to resume."
+    printf '%s\n' "  Automatically tracks observed installed features locally after each stage; no separate tracking command is needed."
 }
 
 show_graphics_setup_plan() {
@@ -636,6 +664,16 @@ run_graphics_setup() {
     fi
 }
 
+track_auto_install_checkpoint() {
+    local stage="$1"
+    if [[ -f "$MAINTENANCE_SH" && ! -L "$MAINTENANCE_SH" ]] \
+        && bash "$MAINTENANCE_SH" track >/dev/null; then
+        log "Feature tracking saved: $stage (local only)."
+    else
+        log "Could not save feature tracking after $stage; installation progress is unchanged. Run '$MAINTENANCE_SH track' before updating SteamOS." >&2
+    fi
+}
+
 run_auto_base_installation() {
     require_normal_user
     require_script "$POWER_SH"
@@ -660,6 +698,10 @@ run_auto_base_installation() {
         invalid) die "The existing RAM / VRAM helper is incomplete or unverified. Review '$RAM_SPLIT_SH status' before continuing." ;;
         *) die "Unknown RAM / VRAM helper state: ${ram_tool_state:-unavailable}" ;;
     esac
+    # Keep tracking inside the workflow so every caller, including resumed
+    # installs, records real observed state rather than merely attempted steps.
+    mark_feature_tracking
+    log "Auto-install feature tracking is enabled locally; no separate tracking command is needed."
     if ! power_foundation_installed; then
         log "Installing the power foundation."
         sudo bash "$POWER_SH" all
@@ -667,6 +709,7 @@ run_auto_base_installation() {
             || die "Power installation completed, but the foundation did not pass verification."
         log "The GPU governor is test-started only. Load-test it before enabling it at boot."
     fi
+    track_auto_install_checkpoint "power foundation"
     if [[ "$ram_tool_state" == not-installed ]]; then
         log "Installing the RAM / VRAM helper."
         sudo bash "$RAM_SPLIT_SH" install
@@ -676,8 +719,10 @@ run_auto_base_installation() {
             || die "RAM / VRAM helper installation did not pass verification."
         log "No CMOS UMA or dynamic TTM value was selected automatically."
     fi
+    track_auto_install_checkpoint "RAM / VRAM helper"
 
     run_graphics_setup
+    track_auto_install_checkpoint "graphics / reboot checkpoint"
 
     amdgpu_json=$(bash "$AUDIO_FIX_SH" status-json 2>/dev/null || true)
     radv_json=$(bash "$MESH_SHADER_SH" status-json 2>/dev/null || true)
@@ -788,6 +833,12 @@ run_machine_action() {
     require_normal_user
     local operation="$1"
     export BC250_TOOLKIT_MACHINE=1
+
+    # Most operations use the tracked wrappers below; the guided graphics/base
+    # workflows invoke several helpers directly.
+    case "$operation" in
+        graphics-setup) mark_feature_tracking ;;
+    esac
 
     case "$operation" in
         auto-base-installation) run_auto_base_installation ;;
@@ -1467,6 +1518,9 @@ menu_graph_badge() {
 
 menu_graph_activate() {
     case "$1" in
+        action__track_features) run_menu_action track-features ;;
+        action__repair_plan) run_menu_action repair-plan ;;
+        action__repair_known) run_menu_action repair ;;
         action__auto_base_installation) run_menu_action auto-base-installation ;;
         action__toolkit_update) run_toolkit_update_menu_action ;;
         action__system_health) run_menu_action status ;;
@@ -1945,6 +1999,27 @@ menu_graph_render() {
                 items+=("SteamOS Update Protection|${badge}|Protect and recover supported component settings across updates.")
                 targets+=("child__persistence")
                 badges+=("$badge")
+                if ! badge=$(menu_graph_badge action__track_features install); then badge=; fi
+                if [[ "$badge" == *"|"* || "$badge" == *$'\n'* ]]; then
+                    die "Invalid generated menu badge: action__track_features"
+                fi
+                items+=("Track Used Features|${badge}|Remember locally installed components and TTM settings before OS updates; no telemetry.")
+                targets+=("action__track_features")
+                badges+=("$badge")
+                if ! badge=$(menu_graph_badge action__repair_plan read_only); then badge=; fi
+                if [[ "$badge" == *"|"* || "$badge" == *$'\n'* ]]; then
+                    die "Invalid generated menu badge: action__repair_plan"
+                fi
+                items+=("Preview Known-Feature Repairs|${badge}|Read-only checks of tracked components; distinguish damage from reboot-needed state.")
+                targets+=("action__repair_plan")
+                badges+=("$badge")
+                if ! badge=$(menu_graph_badge action__repair_known install); then badge=; fi
+                if [[ "$badge" == *"|"* || "$badge" == *$'\n'* ]]; then
+                    die "Invalid generated menu badge: action__repair_known"
+                fi
+                items+=("Repair Damaged Known Features|${badge}|Confirm supported targeted repairs without replaying unlocks, CMOS writes, tuning or game DLL injection.")
+                targets+=("action__repair_known")
+                badges+=("$badge")
                 if ! badge=$(menu_graph_badge action__amdgpu_clean cleanup); then badge=; fi
                 if [[ "$badge" == *"|"* || "$badge" == *$'\n'* ]]; then
                     die "Invalid generated menu badge: action__amdgpu_clean"
@@ -2419,6 +2494,10 @@ Commands:
   coolercontrol          Install the CoolerControl daemon and local Web UI
   trainer                Download and install the latest BC250 Trainer release
   manage                 Open installed-component maintenance and cleanup
+  track-features         Remember locally used components and TTM settings
+  features               Show the local feature journal (no telemetry)
+  repair-plan [COMPONENT|all]  Preview post-update repairs without changes
+  repair [COMPONENT|all] [--yes]  Repair only supported damaged tracked features
 
 Compatibility aliases: audio (amdgpu), mesh (radv)
 
@@ -2457,6 +2536,8 @@ fi
 command_name="$1"
 shift
 case "$command_name" in
+    track-features) (($# == 0)) || die "Usage: $0 track-features"; run_script "$MAINTENANCE_SH" track ;;
+    features|repair-plan|repair) run_script "$MAINTENANCE_SH" "$command_name" "$@" ;;
     menu) (($# == 0)) || die "Usage: $0 menu"; cmd_menu ;;
     toolkit-update) (($# == 0)) || die "Usage: $0 toolkit-update"; cmd_toolkit_update ;;
     toolkit-update-check)

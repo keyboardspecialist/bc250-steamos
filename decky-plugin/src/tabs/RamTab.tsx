@@ -14,7 +14,7 @@ export function RamTab({ snapshot, busy, runMutation }: TabProps) {
   const ttmDisabled = controlsDisabled || ram.ttmState === "foreign";
   const umaValid = Number.isInteger(umaMiB) && umaMiB >= 256 && umaMiB <= 12288 && umaMiB % 16 === 0
     && umaMiB !== 2048;
-  const ttmValid = Number.isInteger(ttmPages) && ttmPages >= 65536 && ttmPages <= 3145728;
+  const ttmValid = Number.isInteger(ttmPages) && ttmPages >= 65536 && ttmPages <= 3670016;
   const gibibytes = (pages: number | null) => pages === null
     ? "Unavailable"
     : `${(pages / 262144).toFixed(2)} GiB`;
@@ -86,12 +86,20 @@ export function RamTab({ snapshot, busy, runMutation }: TabProps) {
       </PanelSection>
 
       <PanelSection title="Dynamic TTM Limit">
+        <EmptyState>
+          KytyPS5-Native: 14 GiB (3670016 pages), with 512 MiB UMA recommended for large games. Increases memory pressure; reboot required.
+        </EmptyState>
+        <ActionButton
+          label="Select Kyty 14 GiB preset"
+          disabled={ttmDisabled}
+          onClick={() => setTtmPageCount(3670016)}
+        />
         <SliderField
           label="Maximum dynamic VRAM"
           description={`${gibibytes(ttmPages)} (${ttmPages} pages)`}
           value={ttmPages}
           min={65536}
-          max={3145728}
+          max={3670016}
           step={65536}
           editableValue
           disabled={ttmDisabled}

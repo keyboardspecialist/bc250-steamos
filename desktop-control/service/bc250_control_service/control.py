@@ -454,8 +454,8 @@ class ControlService:
 
     async def set_ttm_pages(self, sender: str, pages: int) -> str:
         _whole(pages, "TTM limit must be a whole page count.")
-        if not 65536 <= pages <= 3145728:
-            raise InvalidArguments("TTM limit must be 65536-3145728 pages.")
+        if not 65536 <= pages <= 3670016:
+            raise InvalidArguments("TTM limit must be 65536-3670016 pages.")
         return await self._submit(
             sender,
             "ram",

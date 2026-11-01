@@ -2,6 +2,12 @@
 # Install the pinned BC-250 VA-API compute codec in persistent SteamOS storage.
 set -euo pipefail
 
+if [[ "${BASH_SOURCE[0]:-}" == "$0" ]]; then
+    _bc250_hook="$(dirname -- "${BASH_SOURCE[0]}")/../scripts/feature-tracking.sh"
+    if [[ -f "$_bc250_hook" && ! -L "$_bc250_hook" ]]; then source "$_bc250_hook" video-codec help "$@"; fi
+    unset _bc250_hook
+fi
+
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 RELEASE=v0.5.4
 SOURCE_COMMIT=bc1191850fa521ceb3345986c59c1a882ed757fc

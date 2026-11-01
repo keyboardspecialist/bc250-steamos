@@ -14,6 +14,9 @@ from bc250_control import ToolkitBackend
 ROOT_HELPER_DIR = Path("/var/lib/bc250-control/helper")
 INSTALL_MARKER = Path(".decky-helper-manifest")
 PAYLOAD_FILES: Tuple[Tuple[Path, int], ...] = (
+    (Path("scripts/feature-tracking.sh"), 0o644),
+    (Path("scripts/feature-event.py"), 0o644),
+    (Path("scripts/feature_state.py"), 0o644),
     (Path("bc250-fsr4.sh"), 0o755),
     (Path("bc250-helixsr.sh"), 0o755),
     (Path("bc250-optiscaler.sh"), 0o755),

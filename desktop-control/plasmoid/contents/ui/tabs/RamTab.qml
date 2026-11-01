@@ -68,8 +68,16 @@ ColumnLayout {
 
     Components.Section {
         title: "Dynamic TTM Limit"
+        QQC2.Label {
+            text: "KytyPS5-Native: 14 GiB (3670016 pages), with 512 MiB UMA recommended for large games. Increases memory pressure; reboot required."
+            wrapMode: Text.Wrap; Layout.fillWidth: true
+        }
+        Components.ActionButton {
+            text: "Select Kyty 14 GiB preset"; enabled: root.ttmEnabled
+            onClicked: root.ttmPages = 3670016
+        }
         QQC2.SpinBox {
-            from: 65536; to: 3145728; stepSize: 65536; value: root.ttmPages; editable: true
+            from: 65536; to: 3670016; stepSize: 65536; value: root.ttmPages; editable: true
             enabled: root.ttmEnabled; Layout.fillWidth: true
             textFromValue: (value) => value + " pages (" + root.gibibytes(value) + ")"
             valueFromText: (text) => parseInt(text)

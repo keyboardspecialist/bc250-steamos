@@ -2,6 +2,12 @@
 # Install the pinned OptiScaler runtime into one game directory.
 set -euo pipefail
 
+if [[ "${BASH_SOURCE[0]:-}" == "$0" ]]; then
+    _bc250_hook="$(dirname -- "${BASH_SOURCE[0]}")/scripts/feature-tracking.sh"
+    if [[ -f "$_bc250_hook" && ! -L "$_bc250_hook" ]]; then source "$_bc250_hook" optiscaler help "$@"; fi
+    unset _bc250_hook
+fi
+
 RELEASE="${BC250_OPTISCALER_RELEASE:-v0.9.4}"
 [[ "$RELEASE" =~ ^v[0-9][0-9A-Za-z._-]*$ ]] \
     || { printf '[bc250-optiscaler] Invalid release identifier.\n' >&2; exit 1; }

@@ -18,6 +18,12 @@
 # headers but deliberately leaves the expensive source fallback interactive.
 set -euo pipefail
 
+if [[ "${BASH_SOURCE[0]:-}" == "$0" ]]; then
+    _bc250_hook="$(dirname -- "${BASH_SOURCE[0]}")/../scripts/feature-tracking.sh"
+    if [[ -f "$_bc250_hook" && ! -L "$_bc250_hook" ]]; then source "$_bc250_hook" aic install "$@"; fi
+    unset _bc250_hook
+fi
+
 ROOT_DATA_DIR=/var/lib/bc250-control
 AIC_DATA_DIR=$ROOT_DATA_DIR/aic8800
 ROOT_SOURCE=$AIC_DATA_DIR/source

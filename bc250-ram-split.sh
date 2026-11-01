@@ -2,6 +2,12 @@
 # Configure the BC-250 CMOS UMA minimum and Linux's dynamic TTM VRAM limit.
 set -euo pipefail
 
+if [[ "${BASH_SOURCE[0]:-}" == "$0" ]]; then
+    _bc250_hook="$(dirname -- "${BASH_SOURCE[0]}")/scripts/feature-tracking.sh"
+    if [[ -f "$_bc250_hook" && ! -L "$_bc250_hook" ]]; then source "$_bc250_hook" ram menu "$@"; fi
+    unset _bc250_hook
+fi
+
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SELF="$SCRIPT_DIR/$(basename "${BASH_SOURCE[0]}")"
 ROOT_DATA_DIR="${ROOT_DATA_DIR:-/var/lib/bc250-control}"
@@ -10,6 +16,7 @@ STATE_DIR="$ROOT_DATA_DIR/ram-split"
 MEMCFG_BIN="${MEMCFG_BIN:-$BIN_DIR/bc250memcfg}"
 MANIFEST="${RAM_MANIFEST:-$STATE_DIR/install.conf}"
 PROFILE="${RAM_PROFILE:-$STATE_DIR/settings.conf}"
+TTM_PROFILE="${RAM_TTM_PROFILE:-$STATE_DIR/ttm.conf}"
 RELEASE_API="${MEMCFG_RELEASE_API:-https://api.github.com/repos/fanoush/bc250_memcfg/releases/latest}"
 ASSET_NAME=bc250_memcfg.zip
 TTM_CONFIG="${TTM_CONFIG:-/etc/default/grub.d/bc250-ttm.cfg}"
@@ -438,9 +445,9 @@ regenerate_grub() {
 }
 
 validate_ttm_pages() {
-    [[ "$1" =~ ^[1-9][0-9]*$ ]] || die "ttm.pages_limit must be a whole page count."
-    ((10#$1 >= 65536 && 10#$1 <= 3145728)) \
-        || die "ttm.pages_limit must be between 65536 pages (256 MiB) and 3145728 pages (12 GiB)."
+    [[ "$1" =~ ^[1-9][0-9]{0,6}$ ]] || die "ttm.pages_limit must be a whole page count."
+    ((10#$1 >= 65536 && 10#$1 <= 3670016)) \
+        || die "ttm.pages_limit must be between 65536 pages (256 MiB) and 3670016 pages (14 GiB)."
 }
 
 restore_ttm_state() {
@@ -514,6 +521,7 @@ cmd_ttm_set() {
         restore_ttm_state "$config_backup" "$had_config" "$grub_backup" "$had_grub"
         die "Update persistence failed; the prior TTM configuration was restored."
     fi
+    write_ttm_profile "$pages"
     unlock_grub_config
     log "Configured ttm.pages_limit=$pages ($(pages_to_gib "$pages") GiB dynamic limit)."
     log "Reboot is required before the new TTM limit is active."
@@ -525,6 +533,7 @@ cmd_ttm_remove() {
     if ! ttm_config_exists; then
         log "No toolkit-managed TTM override is installed."
         remove_update_persistence
+        write_ttm_profile default
         return 0
     fi
     lock_grub_config
@@ -546,8 +555,37 @@ cmd_ttm_remove() {
         restore_ttm_state "$config_backup" 1 "$grub_backup" "$had_grub"
         die "Update persistence cleanup failed; the TTM configuration was restored."
     fi
+    write_ttm_profile default
     unlock_grub_config
     log "Removed the toolkit-managed TTM override. Reboot to return to the default limit."
+}
+
+write_ttm_profile() {
+    # Record explicit removal separately from an update losing the GRUB drop-in.
+    install -d -o root -g root -m 0755 "$STATE_DIR"
+    [[ ! -L "$TTM_PROFILE" ]] || die "Unsafe TTM profile: $TTM_PROFILE"
+    local temporary
+    temporary=$(mktemp "$STATE_DIR/.ttm-profile.XXXXXX")
+    printf 'TTM_PAGES=%s\n' "$1" > "$temporary"
+    chown root:root "$temporary"
+    chmod 0644 "$temporary"
+    mv -f "$temporary" "$TTM_PROFILE"
+}
+
+cmd_ttm_verify() {
+    local pages
+    pages=$(configured_ttm_pages) || return 1
+    validate_generated_grub "$GRUB_CFG" "$pages"
+}
+
+profile_ttm_pages() {
+    local line pages
+    [[ -f "$TTM_PROFILE" && ! -L "$TTM_PROFILE" ]] || return 1
+    IFS= read -r line < "$TTM_PROFILE" || return 1
+    [[ "$line" =~ ^TTM_PAGES=([1-9][0-9]{0,6})$ ]] || return 1
+    pages=${BASH_REMATCH[1]}
+    ((pages >= 65536 && pages <= 3670016)) || return 1
+    printf '%s\n' "$pages"
 }
 
 ram_is_installed() {
@@ -631,7 +669,15 @@ cmd_status_json() {
     if [[ -n "$boot" ]]; then printf '%s' "$boot"; else printf 'null'; fi
     printf ',"ttmLivePages":'
     if [[ -n "$module" ]]; then printf '%s' "$module"; else printf 'null'; fi
-    printf ',"rebootRequired":%s,"protected":%s}\n' "$reboot_required" "$protected"
+    printf ',"rebootRequired":%s,"protected":%s' "$reboot_required" "$protected"
+    local removed=false
+    if [[ -f "$TTM_PROFILE" && ! -L "$TTM_PROFILE" ]] \
+        && [[ "$(cat "$TTM_PROFILE")" == TTM_PAGES=default ]]; then removed=true; fi
+    printf ',"ttmOverrideRemoved":%s,"ttmLastRequestedPages":' "$removed"
+    local requested
+    requested=$(profile_ttm_pages || true)
+    if [[ -n "$requested" ]]; then printf '%s' "$requested"; else printf 'null'; fi
+    printf '}\n'
 }
 
 cmd_uninstall() {
@@ -642,6 +688,7 @@ cmd_uninstall() {
         cmd_ttm_remove
     else
         remove_update_persistence
+        write_ttm_profile default
     fi
     rm -f "$MEMCFG_BIN" "$MANIFEST"
     rmdir "$BIN_DIR" 2>/dev/null || true
@@ -750,6 +797,7 @@ run_action() {
     local rc=0
     echo
     "$@" || rc=$?
+    if declare -F bc250_feature_note_command >/dev/null; then bc250_feature_note_command "$rc" "$@"; fi
     [[ $rc -eq 0 ]] || printf '%s\n' "${CR}${CB}[bc250-ram]${C0} action failed (exit $rc)"
     pause_key
 }
@@ -807,6 +855,7 @@ ram_menu_graph_badge() {
         action__ttm_2621440) ttm_preset_badge 2621440 ;;
         action__ttm_3014656) ttm_preset_badge 3014656 ;;
         action__ttm_3145728) ttm_preset_badge 3145728 ;;
+        action__ttm_3670016) ttm_preset_badge 3670016 ;;
     esac
 }
 
@@ -831,6 +880,7 @@ ram_menu_graph_activate() {
         action__ttm_2621440) confirm_ttm 2621440 ;;
         action__ttm_3014656) confirm_ttm 3014656 ;;
         action__ttm_3145728) confirm_ttm 3145728 ;;
+        action__ttm_3670016) confirm_ttm 3670016 ;;
         action__ttm_custom) ask "ttm.pages_limit page count" "3014656"; confirm_ttm "$REPLY" ;;
         action__ttm_remove) run_privileged ttm-remove ;;
         *) die "Unknown generated RAM-split menu target: $1" ;;
@@ -1001,6 +1051,13 @@ ram_menu_graph_render() {
                 items+=("12 GiB dynamic limit|${badge}|Exact 12 GiB dynamic page count.")
                 targets+=("action__ttm_3145728")
                 badges+=("$badge")
+                if ! badge=$(ram_menu_graph_badge action__ttm_3670016 advanced); then badge=; fi
+                if [[ "$badge" == *"|"* || "$badge" == *$'\n'* ]]; then
+                    die "Invalid generated menu badge: action__ttm_3670016"
+                fi
+                items+=("14 GiB dynamic limit (KytyPS5-Native)|${badge}|3670016 pages; upstream recommends 512 MiB UMA for large games. Increases memory pressure; reboot required.")
+                targets+=("action__ttm_3670016")
+                badges+=("$badge")
                 if ! badge=$(ram_menu_graph_badge action__ttm_custom advanced); then badge=; fi
                 if [[ "$badge" == *"|"* || "$badge" == *$'\n'* ]]; then
                     die "Invalid generated menu badge: action__ttm_custom"
@@ -1051,7 +1108,7 @@ cmd_help() {
 bc250-ram-split.sh -- BC-250 RAM / VRAM split configuration
 
 Usage: $0 {menu|status|status-json|installed|install|show|set UMA_MB --yes|
-           ttm-set PAGES --yes|ttm-remove|uninstall|help}
+           ttm-set PAGES --yes|ttm-remove|ttm-verify|uninstall|help}
 
   install              Download the latest fanoush/bc250_memcfg release,
                        verify GitHub's SHA-256 digest and x86-64 ELF payload,
@@ -1061,8 +1118,10 @@ Usage: $0 {menu|status|status-json|installed|install|show|set UMA_MB --yes|
                        16 MiB increments; 2048 MiB is blocked because the
                        BC-250 guide warns that Linux does not boot with it.
   ttm-set PAGES --yes  Set ttm.pages_limit using a dedicated GRUB drop-in.
+                       65536-3670016 pages (256 MiB-14 GiB).
                        Pages are 4 KiB: GiB * 262144 = PAGES.
   ttm-remove           Remove the toolkit-owned TTM override and regenerate GRUB.
+  ttm-verify           Read-only check of the managed drop-in and generated GRUB.
   status               Show installed release, last requested UMA size, and
                        configured/active TTM values without network access.
   installed            Machine-readable lifecycle probe.
@@ -1077,6 +1136,9 @@ timing controls from the upstream utility.
 ttm.pages_limit caps dynamic system-memory-backed GPU allocations. The BC-250
 guide's 3014656-page preset is 11.50 GiB dynamic, approximately 12 GB total
 when paired with a 512 MiB UMA minimum. Reboot after changing or removing it.
+KytyPS5-Native requires 3670016 pages (14 GiB); large games recommend 512 MiB
+UMA. This raises a dynamic allocation cap, not reserved VRAM. It can increase
+system memory pressure. The TTM preset does not change CMOS or AMDGPU options.
 EOF
 }
 
@@ -1096,6 +1158,7 @@ case "$1" in
     set) shift; cmd_set "$@" ;;
     ttm-set) shift; cmd_ttm_set "$@" ;;
     ttm-remove) (($# == 1)) || die "Usage: $0 ttm-remove"; cmd_ttm_remove ;;
+    ttm-verify) (($# == 1)) || die "Usage: $0 ttm-verify"; cmd_ttm_verify ;;
     uninstall) (($# == 1)) || die "Usage: $0 uninstall"; cmd_uninstall ;;
     help|-h|--help) (($# == 1)) || die "Usage: $0 help"; cmd_help ;;
     *) cmd_help >&2; exit 1 ;;

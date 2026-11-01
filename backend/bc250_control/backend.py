@@ -5,6 +5,7 @@ import fcntl
 import glob
 import hashlib
 import json
+import logging
 import math
 import os
 import pwd
@@ -18,6 +19,7 @@ from pathlib import Path
 from typing import Any, AsyncIterator, Optional, Union
 
 from .parity import CLI_SECTIONS, CLI_SECTION_IDS, CONTROL_CAPABILITIES, voltage_arguments
+from . import feature_state
 
 try:
     import tomllib
@@ -4380,14 +4382,56 @@ class ToolkitBackend:
     async def _mutate(self, callback: Any) -> Any:
         async with self._mutation_lock:
             async with self._process_lock():
-                return await callback()
+                return await self._tracked_mutation(callback)
+
+    async def _record_feature_change(self, callback: Any, success: bool) -> None:
+        # Callback names are internal code, not user-supplied operation IDs or
+        # arguments. Never retain game paths, CEC device names or arbitrary data.
+        names = getattr(callback, "__qualname__", "").split(".")
+        if len(names) < 2 or names[0] != "ToolkitBackend" or not hasattr(self, "user_uid"):
+            return
+        action = names[1]
+        components = {
+            "gpu_voltage_action": "power", "reset_gpu_ramp": "power",
+            "install_directmesh": "mesh", "uninstall_native_mesh": "native-mesh",
+            "prepare_helixsr": "helixsr", "install_helixsr": "helixsr", "uninstall_helixsr": "helixsr",
+            "install_fsr4_dll": "fsr4", "uninstall_fsr4_dll": "fsr4",
+            "install_optiscaler": "optiscaler", "uninstall_optiscaler": "optiscaler",
+            "set_uma_size": "ram", "set_ttm_pages": "ram", "remove_ttm_override": "ram",
+            "set_cu_wgp": "compute", "set_gpu_frequency": "power", "set_load_target": "power",
+            "set_custom_load_target": "power", "set_temperature_target": "power", "set_ramp": "power",
+            "cpu_oc_action": "power", "set_cpu_mitigations": "power", "set_cpu_smt_disabled": "power",
+            "set_hdmi_surround": "ac3", "cpu_unlock_action": "power", "cec_action": "cec",
+            "set_cec_toggle": "cec", "set_cec_name": "cec",
+        }
+        component = components.get(action)
+        if component is None:
+            return
+        try:
+            result = "success" if success else "failed"
+            if success and action == "uninstall_native_mesh":
+                result = "removed"
+            arguments = [component, action, result]
+            if component == "ram":
+                arguments.append(json.dumps(await self.get_ram_status()))
+            # Execute the bundled stdlib-only recorder as the authenticated user,
+            # even when the service itself is root. No root-owned user files.
+            source = Path(feature_state.__file__).read_text(encoding="utf-8")
+            await self._user_exec([PYTHON3, "-I", "-c", source, *arguments], timeout=20)
+        except Exception as error:
+            logging.getLogger(__name__).warning("Feature tracking failed after %s: %s", action, error)
+
+    async def _tracked_mutation(self, callback: Any) -> Any:
+        result = await callback()
+        await self._record_feature_change(callback, True)
+        return result
 
     async def _cli_gpu_mutation(self, callback: Any) -> Any:
         # The CLI owns this same inter-process flock and its rollback. Holding
         # _process_lock here would deadlock the child; never bypass the CLI lock.
         async def transaction() -> Any:
             async with self._mutation_lock:
-                return await callback()
+                return await self._tracked_mutation(callback)
         return await self._complete_transaction(transaction())
 
     @staticmethod
@@ -4850,8 +4894,8 @@ class ToolkitBackend:
         return await self._mutate(action)
 
     async def set_ttm_pages(self, pages: int) -> dict[str, str]:
-        if type(pages) is not int or not 65536 <= pages <= 3145728:
-            raise CommandError("TTM limit must be 65536-3145728 pages.")
+        if type(pages) is not int or not 65536 <= pages <= 3670016:
+            raise CommandError("TTM limit must be 65536-3670016 pages.")
 
         async def action() -> dict[str, str]:
             await self._ram_tool("ttm-set", str(pages), "--yes", timeout=120)

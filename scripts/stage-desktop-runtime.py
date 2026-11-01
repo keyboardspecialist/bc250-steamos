@@ -94,6 +94,8 @@ def stage(output: Path, epoch: int) -> None:
     output.parent.mkdir(parents=True, exist_ok=True)
     temporary = Path(tempfile.mkdtemp(prefix=".desktop-runtime-", dir=str(output.parent)))
     try:
+        for name in ("feature-tracking.sh", "feature-event.py"):
+            copy_file(REPOSITORY / "scripts" / name, temporary / "scripts" / name)
         for name in (
             "bc250-fsr4.sh",
             "bc250-helixsr.sh",

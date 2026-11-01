@@ -702,8 +702,8 @@ void Bc250Bridge::setUmaSize(int umaMiB)
 
 void Bc250Bridge::setTtmPages(int pages)
 {
-    if (pages < 65536 || pages > 3145728) {
-        reject(QStringLiteral("TTM limit must be 65536-3145728 pages."));
+    if (pages < 65536 || pages > 3670016) {
+        reject(QStringLiteral("TTM limit must be 65536-3670016 pages."));
         return;
     }
     if (!ensureReady()) return;

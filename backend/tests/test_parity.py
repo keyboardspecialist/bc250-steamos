@@ -290,8 +290,10 @@ class MutationParityTests(unittest.IsolatedAsyncioTestCase):
             backend._exec = AsyncMock(return_value=(0, "", ""))
             result = await backend.cpu_unlock_action("metrics-enable")
             self.assertEqual(result, {"action": "metrics-enable", "nextStep": "warm-reboot"})
-            argv = backend._exec.call_args.args[0]
+            argv = backend._exec.call_args_list[0].args[0]
             self.assertEqual(argv, [module.BASH, "/trusted/bc250-power.sh", "cpu-unlock", "metrics-enable"])
+            self.assertEqual(backend._exec.call_args_list[1].args[0][-3:],
+                             ["power", "cpu_unlock_action", "success"])
             backend._exec.reset_mock()
             with self.assertRaisesRegex(CommandError, "automatic-reboot-pending"):
                 await backend.cpu_unlock_action("uninstall")

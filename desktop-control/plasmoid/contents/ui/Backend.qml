@@ -354,7 +354,7 @@ QtObject {
     }
 
     function setTtmPages(pages) {
-        _startMutation("SetTtmPages", "u", [Utils.integer(pages, 65536, 3145728)],
+        _startMutation("SetTtmPages", "u", [Utils.integer(pages, 65536, 3670016)],
             "Updating TTM boot limit");
     }
 

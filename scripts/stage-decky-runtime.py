@@ -84,6 +84,10 @@ def stage(output: Path, epoch: int) -> None:
         ):
             copy_file(PLUGIN_SOURCE / name, temporary / name)
         copy_file(PLUGIN_SOURCE / "dist/index.js", temporary / "dist/index.js")
+        for name in ("feature-tracking.sh", "feature-event.py"):
+            copy_file(REPOSITORY / "scripts" / name, temporary / "privileged-helper/scripts" / name)
+        copy_file(BACKEND_SOURCE / "bc250_control/feature_state.py",
+                  temporary / "privileged-helper/scripts/feature_state.py")
         for name in (
             "bc250-fsr4.sh",
             "bc250-helixsr.sh",

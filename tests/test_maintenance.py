@@ -1,3 +1,4 @@
+import json
 import os
 import subprocess
 import tempfile
@@ -24,6 +25,7 @@ class MaintenanceTests(unittest.TestCase):
 
         env = os.environ.copy()
         env["HOME"] = str(directory / "home")
+        env["XDG_STATE_HOME"] = str(directory / "state")
         env["PATH"] = f"{bindir}:{env['PATH']}"
         env["CALL_LOG"] = str(call_log)
 
@@ -116,6 +118,65 @@ class MaintenanceTests(unittest.TestCase):
         self.assertIn("uninstall COMPONENT|all", result.stdout)
         self.assertIn("preserves settings and persistent data", result.stdout)
         self.assertIn("purge", result.stdout)
+
+    def make_feature_journal(self, env, component):
+        journal = Path(env["XDG_STATE_HOME"]) / "bc250-toolkit/features.json"
+        journal.parent.mkdir(parents=True, mode=0o700)
+        journal.write_text(json.dumps({"schemaVersion": 1, "features": {
+            component: {"firstSeen": "2026-11-01", "lastSeen": "2026-11-01"}
+        }}))
+        journal.chmod(0o600)
+        return journal
+
+    def test_successful_uninstall_forgets_feature_but_failure_preserves_it(self):
+        for failed in (False, True):
+            with self.subTest(failed=failed), tempfile.TemporaryDirectory() as temporary:
+                env, call_log = self.make_environment(Path(temporary))
+                journal = self.make_feature_journal(env, "fan")
+                if failed:
+                    env["FAIL_COMPONENT"] = "fan"
+                result = subprocess.run(
+                    ["bash", str(MAINTENANCE), "uninstall", "fan", "--yes"],
+                    capture_output=True, text=True, env=env,
+                )
+                self.assertEqual(result.returncode == 0, not failed, result.stderr)
+                self.assertEqual("fan" in json.loads(journal.read_text())["features"], failed)
+
+    def test_repair_cli_uses_only_tracked_broken_component_and_verifies_it(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            directory = Path(temporary)
+            env, call_log = self.make_environment(directory)
+            self.make_feature_journal(env, "fan")
+            marker = directory / "repaired"
+            env["REPAIR_MARKER"] = str(marker)
+            Path(env["FAN_SH"]).write_text(
+                '#!/bin/bash\ncase "$1" in\n'
+                'status) test -f "$REPAIR_MARKER" ;;\n'
+                'install) echo fan:install >> "$CALL_LOG"; touch "$REPAIR_MARKER" ;;\n'
+                '*) exit 2 ;;\nesac\n'
+            )
+            result = subprocess.run(
+                ["bash", str(MAINTENANCE), "repair", "fan", "--yes"],
+                capture_output=True, text=True, env=env,
+            )
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual(call_log.read_text().splitlines(), ["fan:install"])
+            self.assertIn("fan: healthy", result.stdout)
+
+    def test_failed_persistence_cleanup_does_not_forget_feature_or_remove_storage(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            env, call_log = self.make_environment(Path(temporary))
+            journal = self.make_feature_journal(env, "fan")
+            Path(env["PERSISTENCE_SH"]).write_text(
+                '#!/bin/bash\n[[ "$*" != "remove fan" ]] || exit 9\n'
+            )
+            result = subprocess.run(
+                ["bash", str(MAINTENANCE), "uninstall", "all", "--yes"],
+                capture_output=True, text=True, env=env,
+            )
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("fan", json.loads(journal.read_text())["features"])
+            self.assertNotIn("storage:uninstall", call_log.read_text())
 
     def test_status_and_plan_are_read_only(self):
         with tempfile.TemporaryDirectory() as temporary:

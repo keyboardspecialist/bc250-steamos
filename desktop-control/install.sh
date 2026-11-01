@@ -2,6 +2,12 @@
 # Install the Plasma desktop control and register it with the shared service.
 set -euo pipefail
 
+if [[ "${BASH_SOURCE[0]:-}" == "$0" ]]; then
+    _bc250_hook="$(dirname -- "${BASH_SOURCE[0]}")/../scripts/feature-tracking.sh"
+    if [[ -f "$_bc250_hook" && ! -L "$_bc250_hook" ]]; then source "$_bc250_hook" desktop help "$@"; fi
+    unset _bc250_hook
+fi
+
 SOURCE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_DIR="$(cd "$SOURCE_DIR/.." && pwd)"
 PLASMOID_ID=io.github.keyboardspecialist.bc250control

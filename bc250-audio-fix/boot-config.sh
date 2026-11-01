@@ -2,6 +2,12 @@
 # Manage mutually exclusive BC-250 AMDGPU boot options.
 set -euo pipefail
 
+if [[ "${BASH_SOURCE[0]:-}" == "$0" ]]; then
+    _bc250_hook="$(dirname -- "${BASH_SOURCE[0]}")/../scripts/feature-tracking.sh"
+    if [[ -f "$_bc250_hook" && ! -L "$_bc250_hook" ]]; then source "$_bc250_hook" amdgpu-options help "$@"; fi
+    unset _bc250_hook
+fi
+
 HERE=$(cd "$(dirname "$0")" && pwd)
 SCHED_CONFIG=${SCHED_CONFIG:-/etc/default/grub.d/bc250-amdgpu.cfg}
 GRUB_DEFAULT=${GRUB_DEFAULT:-/etc/default/grub}

@@ -3,6 +3,12 @@
 # tuning files from the previous image when upgrading an older installation.
 set -euo pipefail
 
+if [[ "${BASH_SOURCE[0]:-}" == "$0" ]]; then
+    _bc250_hook="$(dirname -- "${BASH_SOURCE[0]}")/scripts/feature-tracking.sh"
+    if [[ -f "$_bc250_hook" && ! -L "$_bc250_hook" ]]; then source "$_bc250_hook" persistence menu "$@"; fi
+    unset _bc250_hook
+fi
+
 KEEP_DIR=/etc/atomic-update.conf.d
 LEGACY_KEEP_FILE="$KEEP_DIR/bc250-steamos.conf"
 PREVIOUS_ETC=/etc/previous

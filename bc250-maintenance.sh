@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Inventory and safely remove BC-250 SteamOS toolkit components.
+# Track, repair, inventory and safely remove BC-250 SteamOS toolkit components.
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -26,6 +26,7 @@ TRAINER_SH="${TRAINER_SH:-$SCRIPT_DIR/trainer/install.sh}"
 TRAINER_FLATPAK_SH="${TRAINER_FLATPAK_SH:-$SCRIPT_DIR/trainer/install-flatpak.sh}"
 COOLERCONTROL_SH="${COOLERCONTROL_SH:-$SCRIPT_DIR/coolercontrol/install.sh}"
 SERVICE_CLIENT_DIR="${BC250_SERVICE_CLIENT_DIR:-/var/lib/bc250-control/service-clients}"
+FEATURE_RECOVERY="$SCRIPT_DIR/scripts/feature-recovery.py"
 
 COMPONENTS=(trainer desktop decky coolercontrol cec ac3 power ram swap compute proton helixsr native-mesh video-codec mesh audio fan aic)
 UNINSTALL_ORDER=(trainer desktop decky coolercontrol cec ac3 power ram swap compute proton helixsr native-mesh video-codec mesh audio fan aic)
@@ -47,6 +48,18 @@ require_normal_user() {
         || die "Run as the logged-in Deck user, not with sudo. This tool requests administrator access when needed."
 }
 require_script() { [[ -f "$1" && ! -L "$1" ]] || die "Required component script is missing or unsafe: $1"; }
+
+feature_recovery() {
+    require_script "$FEATURE_RECOVERY"
+    python3 -I "$FEATURE_RECOVERY" "$@"
+}
+
+forget_feature() {
+    # Do not create tracking data for users who have never used it.
+    local state_home="${XDG_STATE_HOME:-$HOME/.local/state}"
+    [[ -e "$state_home/bc250-toolkit/features.json" || -L "$state_home/bc250-toolkit/features.json" ]] || return 0
+    feature_recovery forget "$1" --yes
+}
 
 component_label() {
     case "$1" in
@@ -447,7 +460,8 @@ run_component_uninstall() {
         *) die "Unknown component: $component" ;;
     esac
     [[ $rc -eq 0 ]] || return "$rc"
-    remove_persistence_for "$component"
+    remove_persistence_for "$component" || return $?
+    forget_feature "$component"
 }
 
 confirm_component() {
@@ -475,6 +489,7 @@ uninstall_one() {
     if [[ ( "$state" == not-installed && "$component" != audio ) \
         || "$state" == data-preserved ]]; then
         log "$(component_label "$component") is not installed."
+        forget_feature "$component"
         return 0
     fi
     run_component_uninstall "$component"
@@ -509,6 +524,7 @@ uninstall_all() {
         run_component_uninstall storage
     fi
     log "All installed components were removed. Preserved data can be deleted later with '$SELF purge'."
+    forget_feature all
     log "Reboot to complete any pending ACPI, compute, audio, or driver rollback."
 }
 
@@ -616,6 +632,7 @@ run_menu_action() {
 
 maintenance_menu_graph_badge() {
     case "$1" in
+        action__track|action__features|action__repair_plan|action__repair) ;;
         action__status) printf '%s' "${CD}[read only]${C0}" ;;
         action__remove_trainer) state_badge "$(component_state trainer)" ;;
         action__remove_desktop) state_badge "$(component_state desktop)" ;;
@@ -643,6 +660,10 @@ maintenance_menu_graph_badge() {
 
 maintenance_menu_graph_activate() {
     case "$1" in
+        action__track) run_menu_action track ;;
+        action__features) run_menu_action features ;;
+        action__repair_plan) run_menu_action repair-plan ;;
+        action__repair) run_menu_action repair ;;
         action__status) run_menu_action status ;;
         action__remove_trainer) run_menu_action uninstall trainer ;;
         action__remove_desktop) run_menu_action uninstall desktop ;;
@@ -685,6 +706,34 @@ maintenance_menu_graph_render() {
                 fi
                 items+=("Show component inventory|${badge}|Inspect installed, partial, and preserved-data state.")
                 targets+=("action__status")
+                badges+=("$badge")
+                if ! badge=$(maintenance_menu_graph_badge action__track install); then badge=; fi
+                if [[ "$badge" == *"|"* || "$badge" == *$'\n'* ]]; then
+                    die "Invalid generated menu badge: action__track"
+                fi
+                items+=("Track used features locally|${badge}|Remember installed components and TTM settings before an OS update; no telemetry.")
+                targets+=("action__track")
+                badges+=("$badge")
+                if ! badge=$(maintenance_menu_graph_badge action__features read_only); then badge=; fi
+                if [[ "$badge" == *"|"* || "$badge" == *$'\n'* ]]; then
+                    die "Invalid generated menu badge: action__features"
+                fi
+                items+=("Show tracked features|${badge}|Read the local feature journal.")
+                targets+=("action__features")
+                badges+=("$badge")
+                if ! badge=$(maintenance_menu_graph_badge action__repair_plan read_only); then badge=; fi
+                if [[ "$badge" == *"|"* || "$badge" == *$'\n'* ]]; then
+                    die "Invalid generated menu badge: action__repair_plan"
+                fi
+                items+=("Preview known-feature repairs|${badge}|Read-only health checks; distinguish damage, reboot-needed and manual review.")
+                targets+=("action__repair_plan")
+                badges+=("$badge")
+                if ! badge=$(maintenance_menu_graph_badge action__repair install); then badge=; fi
+                if [[ "$badge" == *"|"* || "$badge" == *$'\n'* ]]; then
+                    die "Invalid generated menu badge: action__repair"
+                fi
+                items+=("Repair damaged known features|${badge}|Confirm targeted repairs only; never replay CMOS writes, unlocks, tuning or game DLL injection.")
+                targets+=("action__repair")
                 badges+=("$badge")
                 if ! badge=$(maintenance_menu_graph_badge action__remove_trainer cleanup); then badge=; fi
                 if [[ "$badge" == *"|"* || "$badge" == *$'\n'* ]]; then
@@ -860,11 +909,17 @@ cmd_menu() {
 cmd_help() {
     cat << EOF
 Usage: $0 {menu|status|status-json|plan [COMPONENT|all]|uninstall COMPONENT|all [--yes]|purge [--yes]|help}
+       $0 {track|features|repair-plan [COMPONENT|all]|repair [COMPONENT|all] [--yes]|forget COMPONENT|all --yes}
 
 Components: trainer, desktop, decky, coolercontrol, cec, ac3, power, ram, swap, compute, proton, helixsr, native-mesh, video-codec, mesh, audio, fan, aic, storage
 
   status                 Show lifecycle state for every component.
   status-json            Emit versioned JSON lifecycle state for automation.
+  track                  Remember locally observed features and verified TTM settings.
+  features               Show the local feature journal (JSON); no telemetry.
+  repair-plan [COMPONENT|all]  Read-only health/repair plan for tracked features.
+  repair [COMPONENT|all]  Confirm and repair supported damaged tracked features.
+  forget COMPONENT --yes Stop tracking without uninstalling anything.
   plan [COMPONENT|all]   Describe removals and preserved data without changing anything.
   uninstall COMPONENT    Restore stock behavior and remove one component.
   uninstall all          Remove components in dependency-safe order, then remove storage infrastructure.
@@ -872,6 +927,10 @@ Components: trainer, desktop, decky, coolercontrol, cec, ac3, power, ram, swap, 
 
 Uninstall preserves settings and persistent data by default. Destructive commands
 prompt for confirmation; --yes is available for explicit noninteractive automation.
+Mutations are tracked automatically; track can discover older installations.
+Missing pieces do not erase remembered use after OS updates. Repairs
+never replay CMOS writes, CPU/GPU unlocks, overclocks or game DLL injection.
+Manual/blocked pieces are reported, not silently treated as repaired.
 EOF
 }
 
@@ -893,6 +952,7 @@ EOF
 
 require_normal_user
 case "${1:-menu}" in
+    track|features|repair-plan|repair|forget) feature_recovery "$@" ;;
     menu) (($# <= 1)) || die "Usage: $0 menu"; cmd_menu ;;
     status) (($# == 1)) || die "Usage: $0 status"; show_status ;;
     status-json) (($# == 1)) || die "Usage: $0 status-json"; show_status_json ;;

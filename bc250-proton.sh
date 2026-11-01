@@ -2,6 +2,12 @@
 # Install the latest verified BC-250 GE-Proton build as a user-local Steam compatibility tool.
 set -euo pipefail
 
+if [[ "${BASH_SOURCE[0]:-}" == "$0" ]]; then
+    _bc250_hook="$(dirname -- "${BASH_SOURCE[0]}")/scripts/feature-tracking.sh"
+    if [[ -f "$_bc250_hook" && ! -L "$_bc250_hook" ]]; then source "$_bc250_hook" proton help "$@"; fi
+    unset _bc250_hook
+fi
+
 SELF="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/$(basename "${BASH_SOURCE[0]}")"
 TOOL_NAME=protonge-latest-bc250
 RELEASE_REPOSITORY=MastaG/linux-cachyos-bc250

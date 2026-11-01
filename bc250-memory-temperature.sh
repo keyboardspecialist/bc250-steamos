@@ -2,6 +2,12 @@
 # Stage and run pan-Rijovich's experimental BC-250 GDDR6 temperature payload.
 set -euo pipefail
 
+if [[ "${BASH_SOURCE[0]:-}" == "$0" ]]; then
+    _bc250_hook="$(dirname -- "${BASH_SOURCE[0]}")/scripts/feature-tracking.sh"
+    if [[ -f "$_bc250_hook" && ! -L "$_bc250_hook" ]]; then source "$_bc250_hook" memory-temperature help "$@"; fi
+    unset _bc250_hook
+fi
+
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 HELPER_SOURCE="$SCRIPT_DIR/memory-temperature/bc250-memory-temperature.py"
 UPSTREAM_REPO="https://github.com/pan-Rijovich/bc250-memory-temperature"

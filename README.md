@@ -100,6 +100,13 @@ Open the main menu:
 For a new system, select **Auto Base Toolkit Installation**. Run the same
 action after each requested reboot.
 
+Auto-install automatically enables local feature tracking and saves the observed
+inventory after each foundation, memory-helper, and graphics stage, including
+reboot checkpoints and resumed runs. No separate `track-features` command is
+needed. Completed stages remain recorded if a later stage fails; unsuccessful
+attempts are not treated as successfully installed features. Tracking errors
+are reported without discarding installation progress.
+
 The base workflow completes these stages:
 
 1. Install persistent storage, the power foundation, the memory helper, and
@@ -184,7 +191,22 @@ default.
 | `sudo ./bc250-ram-split.sh show` | Read the CMOS memory configuration |
 | `sudo ./bc250-ram-split.sh set 512 --yes` | Set 512 MiB minimum VRAM |
 | `sudo ./bc250-ram-split.sh ttm-set 3014656 --yes` | Set the 11.50 GiB dynamic limit preset |
+| `sudo ./bc250-ram-split.sh ttm-set 3670016 --yes` | Set KytyPS5-Native's 14 GiB dynamic limit |
 | `./bc250-ram-split.sh status` | Show UMA and TTM state |
+
+[KytyPS5-Native](https://github.com/superkeka/KytyPS5-Native) requires
+`ttm.pages_limit=3670016` (14 GiB, using 4 KiB pages) for large games. Its
+upstream guidance recommends **512 MiB UMA** to leave enough CPU-visible RAM.
+The CLI, Decky, Plasma and Trainer support the 14 GiB preset/maximum; older
+presets remain available. This changes a **dynamic allocation cap**, not the
+CMOS reserved VRAM, and can increase system memory pressure. Reboot after
+applying it. No AMDGPU patches/options or CMOS changes are applied by the TTM
+preset. See [upstream kernel guidance](https://github.com/superkeka/KytyPS5-Native/blob/main/tools/bc250-amdgpu/README.md).
+Refresh installed frontends and their shared service to pick up the new input
+validation; updating this checkout alone does not replace deployed copies.
+Use only one TTM boot-setting manager: if Kyty's plugin already supplies a
+`ttm.pages_limit` drop-in, the toolkit refuses a competing override rather than
+overwriting it. Remove it through its owning tool before switching managers.
 
 ### Compressed swap
 
@@ -755,6 +777,63 @@ See [`trainer/README.md`](trainer/README.md) for native and Flatpak packages.
 
 Toolkit installers register component files with the SteamOS atomic-update
 keep list. Persistent data remains under `/home/.steamos/offload`.
+
+### Track and repair previously used features
+
+Use **Maintenance & Recovery > Track Used Features** before an update, then
+**Preview Known-Feature Repairs** and **Repair Damaged Known Features** after it:
+
+```bash
+./bc250-toolkit.sh track-features
+./bc250-toolkit.sh features
+./bc250-toolkit.sh repair-plan
+./bc250-toolkit.sh repair             # confirms the plan
+./bc250-toolkit.sh repair ram --yes   # explicit noninteractive selection
+```
+
+Tracking is **local only**, at
+`${XDG_STATE_HOME:-$HOME/.local/state}/bc250-toolkit/features.json`; nothing is
+sent to a server. Installs, updates, removals and configuration changes update
+this same journal automatically, including standalone component commands,
+interactive menu actions, and Decky/Plasma/Trainer controls. Each mutation saves
+its feature, action, result and timestamp; arbitrary arguments, game paths and
+device names are not logged. Failed commands never become successful installs.
+Auto-install also takes inventory snapshots at each stage and reboot checkpoint.
+Read-only status/query commands and dry runs do not update tracking.
+
+Privileged commands record as the invoking `sudo` user; graphical services use
+the authenticated requesting user, never root-owned files in that user's home.
+Unattended root services are not attributed to an arbitrary desktop account.
+Refresh installed frontend/helper payloads to deploy the tracking hooks.
+External file edits and SteamOS updates are not live-watched: `track-features`
+can reconcile existing installations, but cannot reconstruct fully erased
+history that was never recorded. Missing pieces do not erase remembered use.
+
+Repairs only target remembered components with failing health checks. Supported
+automatic repairs are persistent storage (first), current-kernel AMDGPU fixes,
+NCT6687, AIC8800, verified RAM-tool/TTM configuration, and GE-Proton's transactional
+update/repair. Existing ownership, checksum and hardware guards still apply.
+Verified installations that only need a reboot are not rebuilt. RAM repair
+restores the **recorded** page count, not an automatic upgrade to 14 GiB, and
+never writes CMOS. Explicitly removed TTM overrides are not re-enabled.
+
+Other recorded components are flagged for manual review: the repair pass does
+not replay CPU/GPU unlocks, overclocks, swap profile selection, game DLL installs,
+experimental payloads, or guess which RADV/frontend setup was wanted. Failed,
+blocked or manual-review items produce a nonzero repair exit status. Storage
+failure stops dependent repairs; independent failures are reported and retained
+for retry. A component may download/build software or request sudo during repair.
+
+Successful full-component uninstalls remove that component from tracking;
+partial/subfeature or per-game removals retain their change history. If you
+manually remove a feature outside the toolkit, explicitly stop tracking it:
+
+```bash
+./bc250-maintenance.sh forget fan --yes  # tracking only; does not uninstall
+```
+
+Missing components remain remembered across OS updates until explicitly
+forgotten; a fresh scan does not silently erase their history.
 
 Check storage and persistence:
 

@@ -2,6 +2,12 @@
 # Install the pinned NCT6687D fan-control module on SteamOS.
 set -euo pipefail
 
+if [[ "${BASH_SOURCE[0]:-}" == "$0" ]]; then
+    _bc250_hook="$(dirname -- "${BASH_SOURCE[0]}")/../scripts/feature-tracking.sh"
+    if [[ -f "$_bc250_hook" && ! -L "$_bc250_hook" ]]; then source "$_bc250_hook" fan install "$@"; fi
+    unset _bc250_hook
+fi
+
 ROOT_DATA_DIR=/var/lib/bc250-control
 DATA_DIR=$ROOT_DATA_DIR/nct6687d
 ROOT_SOURCE=$DATA_DIR/source

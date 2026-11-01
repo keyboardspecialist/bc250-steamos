@@ -125,6 +125,16 @@ class RamSplitTests(unittest.TestCase):
         self.assertEqual(run_sourced('validate_uma_size "$1"', "512").returncode, 0)
         self.assertEqual(run_sourced('validate_uma_size "$1"', "12288").returncode, 0)
 
+    def test_ttm_14_gib_boundary_and_legacy_values(self):
+        for pages in ("65536", "3014656", "3145728", "3670016"):
+            result = run_sourced('validate_ttm_pages "$1"', pages)
+            self.assertEqual(result.returncode, 0, result.stderr)
+        for pages in ("65535", "3670017", "0", "-1", "14GB", "3.5", "03670016"):
+            self.assertNotEqual(run_sourced('validate_ttm_pages "$1"', pages).returncode, 0)
+        self.assertEqual(run_sourced('pages_to_gib 3670016').stdout, "14.00")
+        graph = parse(ROOT / "menus/ram-split.mmd")
+        self.assertIn("KytyPS5-Native", graph.nodes["action__ttm_3670016"].title)
+
     def test_cmos_write_passes_only_uma_size(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -160,6 +170,7 @@ class RamSplitTests(unittest.TestCase):
                 'TTM_CONFIG=$1; GRUB_CFG=$2; PROC_CMDLINE=$3; '
                 'require_root() { :; }; install_storage() { :; }; '
                 'install_update_persistence() { :; }; chown() { :; }; '
+                'write_ttm_profile() { :; }; '
                 'lock_grub_config() { :; }; unlock_grub_config() { :; }; '
                 'preflight_no_foreign_ttm() { :; }; preflight_grub_target() { :; }; '
                 'regenerate_grub() { printf "%s\\n" "linux ttm.pages_limit=3014656" > "$GRUB_CFG"; }; '
@@ -176,6 +187,48 @@ class RamSplitTests(unittest.TestCase):
                 'ttm.pages_limit=3014656"',
                 config.read_text(encoding="utf-8"),
             )
+
+    def test_explicit_ttm_removal_marker_is_reported(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            profile = root / "ttm.conf"
+            profile.write_text("TTM_PAGES=default\n")
+            result = run_sourced(
+                'TTM_PROFILE=$1; TTM_CONFIG=$2; MEMCFG_BIN=$2; MANIFEST=$2; '
+                'PROFILE=$2; KEEP_FILE=$2; PROC_CMDLINE=$2; TTM_SYS_PARAM=$2; cmd_status_json',
+                str(profile), str(root / "missing"),
+            )
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertTrue(json.loads(result.stdout)["ttmOverrideRemoved"])
+            self.assertIsNone(json.loads(result.stdout)["ttmLastRequestedPages"])
+
+    def test_persistent_ttm_profile_records_set_and_explicit_removal(self):
+        with tempfile.TemporaryDirectory() as directory:
+            profile = Path(directory) / "ttm.conf"
+            result = run_sourced(
+                'STATE_DIR=$1; TTM_PROFILE=$2; '
+                'install() { mkdir -p "$STATE_DIR"; }; chown() { :; }; '
+                'write_ttm_profile 3670016; [[ "$(profile_ttm_pages)" == 3670016 ]]; '
+                'write_ttm_profile default; ! profile_ttm_pages',
+                directory, str(profile),
+            )
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual(profile.read_text(), "TTM_PAGES=default\n")
+            self.assertEqual(profile.stat().st_mode & 0o777, 0o644)
+
+    def test_ttm_verify_checks_generated_14_gib_boot_configuration(self):
+        with tempfile.TemporaryDirectory() as directory:
+            config = Path(directory) / "ttm.cfg"
+            grub = Path(directory) / "grub.cfg"
+            grub.write_text("linux /vmlinuz ttm.pages_limit=3670016\n")
+            result = run_sourced(
+                'TTM_CONFIG=$1; GRUB_CFG=$2; render_ttm_config 3670016 > "$TTM_CONFIG"; cmd_ttm_verify',
+                str(config), str(grub),
+            )
+            self.assertEqual(result.returncode, 0, result.stderr)
+            grub.write_text("linux /vmlinuz ttm.pages_limit=3145728\n")
+            invalid = run_sourced('TTM_CONFIG=$1; GRUB_CFG=$2; cmd_ttm_verify', str(config), str(grub))
+            self.assertNotEqual(invalid.returncode, 0)
 
     def test_ttm_regeneration_failure_restores_config_and_grub(self):
         with tempfile.TemporaryDirectory() as directory:

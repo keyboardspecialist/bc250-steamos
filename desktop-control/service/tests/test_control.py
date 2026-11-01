@@ -279,6 +279,11 @@ class ControlServiceTests(unittest.IsolatedAsyncioTestCase):
             self.authorizer.calls, [(":1.1", 1000, "audit:1000", "cec")]
         )
 
+    async def test_ttm_14_gib_is_accepted_and_forwarded(self):
+        operation_id = await self.service.set_ttm_pages(":1.1", 3670016)
+        await self.wait_for_status(":1.1", operation_id, "succeeded")
+        self.assertEqual(self.backends[0].calls, [("set_ttm_pages", (3670016,))])
+
     async def test_mutations_from_different_users_are_serialized(self):
         first = await self.service.set_ramp(":1.1", 500)
         second = await self.service.set_ramp(":1.2", 600)
@@ -543,7 +548,7 @@ class ControlServiceTests(unittest.IsolatedAsyncioTestCase):
         for value in (255, 513, 2048, 12289, True):
             with self.subTest(uma=value), self.assertRaises(InvalidArguments):
                 await self.service.set_uma_size(":1.1", value)
-        for value in (65535, 3145729, True):
+        for value in (65535, 3670017, True):
             with self.subTest(ttm=value), self.assertRaises(InvalidArguments):
                 await self.service.set_ttm_pages(":1.1", value)
         self.assertEqual(self.authorizer.calls, [])

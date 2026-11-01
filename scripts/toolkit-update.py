@@ -460,6 +460,12 @@ def main():
             return 0
         else:
             result = install_update(arguments.toolkit_dir, arguments.expected_version)
+            try:
+                sys.path.insert(0, str(Path(arguments.toolkit_dir) / "backend/bc250_control"))
+                from feature_state import record_event
+                record_event("toolkit", "update")
+            except (ImportError, OSError, ValueError) as error:
+                print("[bc250-toolkit-update] Feature tracking could not be saved: {}".format(error), file=sys.stderr)
         if arguments.command == "check" and arguments.format == "env":
             print(format_check_env(result))
         else:

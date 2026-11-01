@@ -3142,6 +3142,41 @@ class BackendLockTests(unittest.IsolatedAsyncioTestCase):
 
 
 class RamControlTests(unittest.IsolatedAsyncioTestCase):
+    async def test_graphical_change_records_verified_settings_as_requesting_user(self):
+        backend = object.__new__(ToolkitBackend)
+        prepare_mutation_backend(backend)
+        backend.user_uid = 1000
+        backend._ram_tool = AsyncMock(return_value="")
+        backend._user_exec = AsyncMock(return_value=(0, "", ""))
+        observed = {"toolState": "verified", "ttmState": "configured",
+                    "ttmConfiguredPages": 3670016}
+        backend.get_ram_status = AsyncMock(return_value=observed)
+        await backend.set_ttm_pages(3670016)
+        argv = backend._user_exec.call_args.args[0]
+        self.assertEqual(argv[:3], [backend_module.PYTHON3, "-I", "-c"])
+        self.assertEqual(argv[-4:-1], ["ram", "set_ttm_pages", "success"])
+        self.assertEqual(json.loads(argv[-1]), observed)
+
+    async def test_failed_graphical_mutation_does_not_record_success(self):
+        backend = object.__new__(ToolkitBackend)
+        prepare_mutation_backend(backend)
+        backend._ram_tool = AsyncMock(side_effect=CommandError("write failed"))
+        backend._record_feature_change = AsyncMock()
+        with self.assertRaises(CommandError):
+            await backend.set_ttm_pages(3670016)
+        backend._record_feature_change.assert_not_awaited()
+
+    async def test_tracking_failure_preserves_successful_graphical_change(self):
+        backend = object.__new__(ToolkitBackend)
+        prepare_mutation_backend(backend)
+        backend.user_uid = 1000
+        backend._ram_tool = AsyncMock(return_value="")
+        backend.get_ram_status = AsyncMock(return_value={})
+        backend._user_exec = AsyncMock(side_effect=CommandError("journal unavailable"))
+        with self.assertLogs("bc250_control.backend", level="WARNING"):
+            result = await backend.set_ttm_pages(3670016)
+        self.assertIn("3670016", result["message"])
+
     async def test_ram_status_is_validated(self):
         backend = object.__new__(ToolkitBackend)
         status = {
@@ -3168,14 +3203,14 @@ class RamControlTests(unittest.IsolatedAsyncioTestCase):
         backend._ram_tool = AsyncMock(return_value="")
 
         await backend.set_uma_size(512)
-        await backend.set_ttm_pages(3014656)
+        await backend.set_ttm_pages(3670016)
         await backend.remove_ttm_override()
 
         self.assertEqual(
             backend._ram_tool.await_args_list,
             [
                 call("set", "512", "--yes", timeout=120),
-                call("ttm-set", "3014656", "--yes", timeout=120),
+                call("ttm-set", "3670016", "--yes", timeout=120),
                 call("ttm-remove", timeout=120),
             ],
         )
@@ -3187,7 +3222,7 @@ class RamControlTests(unittest.IsolatedAsyncioTestCase):
         for value in (255, 513, 2048, 12289, True):
             with self.subTest(uma=value), self.assertRaises(CommandError):
                 await backend.set_uma_size(value)
-        for value in (65535, 3145729, True):
+        for value in (65535, 3670017, True):
             with self.subTest(ttm=value), self.assertRaises(CommandError):
                 await backend.set_ttm_pages(value)
         backend._ram_tool.assert_not_awaited()

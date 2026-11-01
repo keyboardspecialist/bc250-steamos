@@ -424,7 +424,9 @@ class ToolkitTests(unittest.TestCase):
             script.parent.mkdir(parents=True, exist_ok=True)
             script.write_text(
                 "#!/usr/bin/env bash\n"
-                f"printf '{relative}' >> \"$CALL_LOG\"\n"
+                + ('if [[ "${1:-}" == track ]]; then echo track >> "$TRACK_LOG"; exit 0; fi\n'
+                   if relative == "bc250-maintenance.sh" else "")
+                + f"printf '{relative}' >> \"$CALL_LOG\"\n"
                 "for argument; do printf '|%s' \"$argument\" >> \"$CALL_LOG\"; done\n"
                 "printf '|machine=%s\\n' \"${BC250_TOOLKIT_MACHINE:-}\" >> \"$CALL_LOG\"\n",
                 encoding="utf-8",
@@ -433,7 +435,20 @@ class ToolkitTests(unittest.TestCase):
         env = os.environ.copy()
         env["PATH"] = f"{bindir}:{env['PATH']}"
         env["CALL_LOG"] = str(call_log)
+        env["TRACK_LOG"] = str(root / "tracking-calls")
         return toolkit, call_log, env
+
+    def test_mutating_dispatch_snapshots_features_before_and_after_but_reads_do_not(self):
+        with tempfile.TemporaryDirectory() as directory:
+            toolkit, call_log, env = self.make_action_environment(Path(directory))
+            subprocess.run(["bash", str(toolkit), "action", "ram-install"],
+                           check=True, capture_output=True, text=True, env=env)
+            tracking = Path(env["TRACK_LOG"])
+            self.assertEqual(tracking.read_text().splitlines(), ["track", "track"])
+            tracking.unlink()
+            subprocess.run(["bash", str(toolkit), "helixsr-payload-status"],
+                           check=True, capture_output=True, text=True, env=env)
+            self.assertFalse(tracking.exists())
 
     def make_inventory_environment(self, root):
         toolkit = root / TOOLKIT.name
@@ -1282,6 +1297,14 @@ class ToolkitTests(unittest.TestCase):
             encoding="utf-8",
         )
 
+        (root / "bc250-maintenance.sh").write_text(
+            '#!/bin/bash\n[[ "$1" == track ]] || exit 2\n'
+            'power=missing; [[ ! -e "$POWER_STATE_FILE" ]] || power=installed\n'
+            'ram=missing; [[ ! -e "$RAM_STATE_FILE" ]] || ram=$(cat "$RAM_STATE_FILE")\n'
+            'printf "power=%s ram=%s audio=%s mesh=%s\\n" "$power" "$ram" '
+            '"$(cat "$AUDIO_STATE_FILE")" "$(cat "$RADV_STATE_FILE")" >> "$FEATURE_SNAPSHOTS"\n'
+        )
+
         env = {
             **os.environ,
             "PATH": f"{bindir}:{os.environ['PATH']}",
@@ -1290,6 +1313,7 @@ class ToolkitTests(unittest.TestCase):
             "RADV_STATE_FILE": str(radv_state_file),
             "RAM_STATE_FILE": str(ram_state_file),
             "POWER_STATE_FILE": str(power_state_file),
+            "FEATURE_SNAPSHOTS": str(root / "feature-snapshots"),
         }
         return toolkit, call_log, ram_state_file, env
 
@@ -1311,6 +1335,11 @@ class ToolkitTests(unittest.TestCase):
             )
             self.assertIn("Reboot to activate the AMDGPU kernel fixes", result.stdout)
             self.assertNotIn("mesh|setup", call_log.read_text(encoding="utf-8"))
+            snapshots = Path(env["FEATURE_SNAPSHOTS"]).read_text().splitlines()
+            self.assertIn("power=installed ram=missing audio=not-installed mesh=not-installed", snapshots)
+            self.assertIn("power=installed ram=verified audio=not-installed mesh=not-installed", snapshots)
+            self.assertIn("power=installed ram=verified audio=reboot-required mesh=not-installed", snapshots)
+            self.assertIn("no separate tracking command is needed", result.stdout)
 
     def test_auto_base_installation_resumes_with_radv_after_amdgpu_reboot(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -1330,6 +1359,8 @@ class ToolkitTests(unittest.TestCase):
             )
             self.assertEqual(call_log.read_text(encoding="utf-8").strip(), "mesh|setup")
             self.assertIn("Reboot to activate the scheduler policy", result.stdout)
+            self.assertIn("power=installed ram=verified audio=ready mesh=reboot-required",
+                          Path(env["FEATURE_SNAPSHOTS"]).read_text())
 
     def test_graphics_setup_rebuilds_valid_retained_amdgpu_state(self):
         with tempfile.TemporaryDirectory() as directory:

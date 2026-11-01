@@ -33,6 +33,12 @@
 #   ./bc250-power.sh all           acpi + governor
 set -euo pipefail
 
+if [[ "${BASH_SOURCE[0]:-}" == "$0" ]]; then
+    _bc250_hook="$(dirname -- "${BASH_SOURCE[0]}")/scripts/feature-tracking.sh"
+    if [[ -f "$_bc250_hook" && ! -L "$_bc250_hook" ]]; then source "$_bc250_hook" power menu "$@"; fi
+    unset _bc250_hook
+fi
+
 REAL_USER="${SUDO_USER:-${USER:-$(id -un)}}"
 if [[ "$REAL_USER" == root ]] && getent passwd deck >/dev/null 2>&1; then
     REAL_USER=deck
@@ -435,6 +441,7 @@ run_action() {
     ( set -e; trap cleanup EXIT; "$@" )
     rc=$?
     set -e
+    if declare -F bc250_feature_note_command >/dev/null; then bc250_feature_note_command "$rc" "$@"; fi
     if [[ $rc -ne 0 ]]; then
         echo -e "${CR}${CB}[power]${C0} action failed (exit $rc) -- see message above."
     fi

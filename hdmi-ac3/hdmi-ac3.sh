@@ -2,6 +2,12 @@
 # Enable real-time HDMI AC-3 5.1 encoding through ALSA and WirePlumber.
 set -euo pipefail
 
+if [[ "${BASH_SOURCE[0]:-}" == "$0" ]]; then
+    _bc250_hook="$(dirname -- "${BASH_SOURCE[0]}")/../scripts/feature-tracking.sh"
+    if [[ -f "$_bc250_hook" && ! -L "$_bc250_hook" ]]; then source "$_bc250_hook" ac3 help "$@"; fi
+    unset _bc250_hook
+fi
+
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SELF="$HERE/$(basename "${BASH_SOURCE[0]}")"
 PERSISTENCE_SH="${PERSISTENCE_SH:-$HERE/../bc250-update-persistence.sh}"
