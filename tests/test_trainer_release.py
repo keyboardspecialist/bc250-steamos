@@ -3,11 +3,14 @@
 
 import hashlib
 import os
+import re
+import shutil
 import subprocess
 import sys
 import tempfile
 import unittest
 import zipfile
+import xml.etree.ElementTree as ET
 from pathlib import Path
 
 
@@ -291,6 +294,43 @@ class TrainerReleaseTests(unittest.TestCase):
         self.assertIn("share/bc250-trainer", cmake)
         self.assertIn("m_interface->isValid()", bridge)
         self.assertNotIn("isServiceRegistered", bridge)
+
+    def test_flatpak_source_layout_contains_all_qt_resource_inputs(self):
+        manifest_path = ROOT / "trainer/packaging/io.github.keyboardspecialist.bc250trainer.yml"
+        manifest = manifest_path.read_text(encoding="utf-8")
+        subdir = re.search(r"^    subdir: (\S+)$", manifest, re.MULTILINE)
+        self.assertIsNotNone(subdir)
+        sources = re.findall(
+            r"^      - type: (dir|file)\n"
+            r"        path: (\S+)\n"
+            r"        dest: (\S+)\n",
+            manifest, re.MULTILINE,
+        )
+        self.assertEqual(len(sources), manifest.count("      - type:"))
+        self.assertTrue(sources)
+        with tempfile.TemporaryDirectory() as temporary:
+            build_root = Path(temporary)
+            for kind, relative, destination in sources:
+                source = (manifest_path.parent / relative).resolve()
+                target = build_root / destination
+                if kind == "dir":
+                    shutil.copytree(source, target, ignore=shutil.ignore_patterns(
+                        "build", "build-*", "out", "bc250-trainer", "__pycache__",
+                    ))
+                else:
+                    target.mkdir(parents=True, exist_ok=True)
+                    shutil.copyfile(source, target / source.name)
+            project = build_root / subdir.group(1)
+            self.assertTrue((project / "CMakeLists.txt").is_file())
+            for entry in ET.parse(project / "resources.qrc").iter("file"):
+                with self.subTest(resource=entry.text):
+                    resource = (project / entry.text).resolve()
+                    resource.relative_to(build_root)
+                    self.assertTrue(resource.is_file(), str(resource))
+            self.assertEqual(
+                (build_root / "scripts/toolkit-update.py").read_bytes(),
+                (ROOT / "scripts/toolkit-update.py").read_bytes(),
+            )
 
     def test_shared_payload_and_client_registry_contract(self):
         source = SHARED.read_text(encoding="utf-8")

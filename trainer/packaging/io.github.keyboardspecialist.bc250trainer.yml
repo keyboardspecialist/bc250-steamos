@@ -21,13 +21,19 @@ modules:
   - name: bc250-trainer
     buildsystem: cmake-ninja
     builddir: true
+    subdir: trainer
     config-opts:
       - -DCMAKE_BUILD_TYPE=Release
       - -DBUILD_TESTING=OFF
     sources:
       - type: dir
         path: ..
+        dest: trainer
         skip:
           - build
           - build-*
           - out
+      # resources.qrc embeds this sibling script in the application binary.
+      - type: file
+        path: ../../scripts/toolkit-update.py
+        dest: scripts
