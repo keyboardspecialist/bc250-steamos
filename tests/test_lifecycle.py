@@ -661,6 +661,9 @@ cmd_freq 0 1850
             busctl = root / "busctl"
             busctl.write_text("#!/bin/sh\nexit 0\n", encoding="ascii")
             busctl.chmod(0o755)
+            systemd_cat = root / "systemd-cat"
+            systemd_cat.write_text("#!/bin/sh\nexit 0\n", encoding="ascii")
+            systemd_cat.chmod(0o755)
             calls = root / "calls"
             result = subprocess.run(
                 [

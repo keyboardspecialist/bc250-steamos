@@ -10,7 +10,7 @@ import tempfile
 import time
 import zipfile
 from pathlib import Path
-from typing import Iterable
+from typing import Iterable, Optional
 
 
 REPOSITORY = Path(__file__).resolve().parent.parent
@@ -71,7 +71,7 @@ def normalize_tree(root: Path, epoch: int) -> None:
     os.utime(str(root), (epoch, epoch), follow_symlinks=False)
 
 
-def stage(output: Path, epoch: int) -> None:
+def stage(output: Path, epoch: int, *, frontend: Optional[Path] = None) -> None:
     output = output.resolve()
     output.parent.mkdir(parents=True, exist_ok=True)
     temporary = Path(tempfile.mkdtemp(prefix=".decky-runtime-", dir=str(output.parent)))
@@ -83,7 +83,8 @@ def stage(output: Path, epoch: int) -> None:
             "plugin.json",
         ):
             copy_file(PLUGIN_SOURCE / name, temporary / name)
-        copy_file(PLUGIN_SOURCE / "dist/index.js", temporary / "dist/index.js")
+        copy_file(frontend if frontend is not None else PLUGIN_SOURCE / "dist/index.js",
+                  temporary / "dist/index.js")
         for name in ("feature-tracking.sh", "feature-event.py"):
             copy_file(REPOSITORY / "scripts" / name, temporary / "privileged-helper/scripts" / name)
         copy_file(BACKEND_SOURCE / "bc250_control/feature_state.py",
@@ -196,10 +197,12 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--output", type=Path, default=DEFAULT_OUTPUT)
     parser.add_argument("--archive", type=Path)
+    parser.add_argument("--frontend", type=Path,
+                        help="Use this built frontend entrypoint instead of decky-plugin/dist/index.js.")
     arguments = parser.parse_args()
 
     epoch = source_date_epoch()
-    stage(arguments.output, epoch)
+    stage(arguments.output, epoch, frontend=arguments.frontend)
     if arguments.archive is not None:
         write_archive(arguments.output.resolve(), arguments.archive, epoch)
 

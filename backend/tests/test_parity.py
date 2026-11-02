@@ -225,6 +225,9 @@ class MutationParityTests(unittest.IsolatedAsyncioTestCase):
             account = pwd.getpwuid(os.getuid())
             backend = ToolkitBackend(account.pw_name, account.pw_dir,
                                      lock_path=Path(directory) / "backend.lock")
+            # This is a lock-ordering test with a fake hardware CLI. Do not
+            # spawn a recorder or write the runner's real feature journal.
+            backend._record_feature_change = AsyncMock()
             calls = []
 
             async def cli(*args, **kwargs):

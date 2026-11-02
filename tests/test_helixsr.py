@@ -322,7 +322,7 @@ class HelixSRTests(unittest.TestCase):
     shader_count = 60
 
     def setUp(self):
-        self.temporary = tempfile.TemporaryDirectory(dir="/tmp/opencode")
+        self.temporary = tempfile.TemporaryDirectory()
         self.root = Path(self.temporary.name)
         self.archive = make_archive(self.root / f"HelixSR-{self.release}.zip", release=self.release)
         self.state = self.root / "state"
@@ -415,6 +415,9 @@ class HelixSRTests(unittest.TestCase):
 
     def records(self):
         return json.loads(self.run_helper("records-json").stdout)
+
+    def test_fixture_uses_the_standard_temporary_directory(self):
+        self.assertEqual(self.root.parent.resolve(), Path(tempfile.gettempdir()).resolve())
 
     def test_script_parses_and_help_lists_interface(self):
         subprocess.run(["bash", "-n", str(HELPER)], check=True)

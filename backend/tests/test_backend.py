@@ -3370,6 +3370,29 @@ class DeckyHelperBootstrapTests(unittest.TestCase):
 
 
 class DeckyRuntimeTests(unittest.TestCase):
+    def test_staging_rejects_missing_or_symlinked_frontend_without_replacing_output(self):
+        repository = Path(__file__).resolve().parents[2]
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            target = root / "frontend.js"
+            target.write_text("// frontend fixture\n", encoding="utf-8")
+            link = root / "linked-frontend.js"
+            link.symlink_to(target)
+            output = root / "runtime"
+            output.mkdir()
+            sentinel = output / "existing-runtime"
+            sentinel.write_text("preserve", encoding="utf-8")
+            for frontend in (root / "missing.js", link):
+                with self.subTest(frontend=frontend):
+                    result = subprocess.run(
+                        [sys.executable, str(repository / "scripts/stage-decky-runtime.py"),
+                         "--frontend", str(frontend), "--output", str(output)],
+                        capture_output=True, text=True,
+                    )
+                    self.assertNotEqual(result.returncode, 0)
+                    self.assertIn("required runtime file is missing or unsafe", result.stderr)
+                    self.assertEqual(sentinel.read_text(encoding="utf-8"), "preserve")
+
     def test_staged_runtime_imports_in_isolation_and_is_reproducible(self):
         repository = Path(__file__).resolve().parents[2]
         stage_script = repository / "scripts/stage-decky-runtime.py"
@@ -3379,11 +3402,18 @@ class DeckyRuntimeTests(unittest.TestCase):
             second = root / "second"
             first_archive = root / "first.zip"
             second_archive = root / "second.zip"
+            # Python-only CI intentionally has no Node build or ignored dist/.
+            # Test the runtime packaging/import contract with a private fixture;
+            # frontend compilation is checked separately by the native jobs.
+            frontend = root / "frontend.js"
+            frontend.write_text("// isolated runtime packaging fixture\n", encoding="utf-8")
             environment = {**os.environ, "SOURCE_DATE_EPOCH": "315532800"}
             subprocess.run(
                 [
                     sys.executable,
                     str(stage_script),
+                    "--frontend",
+                    str(frontend),
                     "--output",
                     str(first),
                     "--archive",
@@ -3396,6 +3426,8 @@ class DeckyRuntimeTests(unittest.TestCase):
                 [
                     sys.executable,
                     str(stage_script),
+                    "--frontend",
+                    str(frontend),
                     "--output",
                     str(second),
                     "--archive",
@@ -3404,6 +3436,7 @@ class DeckyRuntimeTests(unittest.TestCase):
                 check=True,
                 env=environment,
             )
+            self.assertEqual((first / "dist/index.js").read_bytes(), frontend.read_bytes())
 
             payload_sources = {
                 Path("bc250-fsr4.sh"): repository / "bc250-fsr4.sh",

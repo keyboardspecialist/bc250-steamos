@@ -16,6 +16,14 @@ INSTALLER = (ROOT / "decky-plugin/install.sh").read_text(encoding="utf-8")
 
 
 class BuildDependencyTests(unittest.TestCase):
+    def test_native_and_release_jobs_install_archive_tools_for_package_fixtures(self):
+        for name in ("trainer-checks.yml", "trainer-release.yml", "release-artifacts.yml"):
+            with self.subTest(workflow=name):
+                source = (ROOT / ".github/workflows" / name).read_text(encoding="utf-8")
+                packages = source.split("sudo apt-get install -y", 1)[1].split("\n\n", 1)[0]
+                self.assertIn("zstd", packages.split())
+                self.assertIn("p7zip-full", packages.split())
+
     def test_installer_and_ci_share_the_pinned_toolchain(self):
         manager, version = PACKAGE["packageManager"].split("@")
         self.assertEqual(manager, "pnpm")
