@@ -16,7 +16,7 @@ FSR4 = ROOT / "bc250-fsr4.sh"
 UPSTREAM_COMMIT = "d3e6dc062c34d2523db0abe5741d1f5b0dea00d9"
 AMDGPU_REVISION = "smu-8core-metrics-r1"
 MESA_TAG = "mesa-26.2.5"
-RADV_PROFILE_REVISION = "directmesh-1.3.1-fsr4-v5"
+RADV_PROFILE_REVISION = "directmesh-1.4-fsr4-v6"
 NATIVE_MESH_RELEASE = "r2-20260921"
 NATIVE_MESH_COMMIT = "3367cd5eed23ab38fddfc0fb52dbc4e17adf6e11"
 
@@ -2213,7 +2213,7 @@ ensure_radv_prerequisites
         )
         for patch in (
             "0001-gfx1013-compute-queue-fix.patch",
-            "0002-bc250-directmesh.patch",
+            "bc250-directmesh-mesa-26.2.1.patch",
             "0003-bc250-fsr4-v3.patch",
             "0004-bc250-fsr4-combined-unroll.patch",
             "0005-bc250-fsr4-imageprep-texture.patch",
@@ -2222,7 +2222,7 @@ ensure_radv_prerequisites
         ):
             self.assertIn(patch, script)
         self.assertIn(
-            'patch -d "$source" -p1 --fuzz=0 --no-backup-if-mismatch',
+            'patch -d "$source" -p1 --forward --fuzz=0 --no-backup-if-mismatch',
             script,
         )
         for marker in (
@@ -2232,6 +2232,7 @@ ensure_radv_prerequisites
             "BC250_FSR4_TEXTURE",
             "BC250_FSR4_RESOLUTION_VARIANTS",
             "BC250_FSR4_RESOLUTION_GUARD",
+            "RADV_BC250_MESH_TASK_IDX",
         ):
             self.assertIn(marker, script)
 

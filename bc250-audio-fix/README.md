@@ -20,7 +20,40 @@ cd ~/.local/share/bc250-fixes/bc250-steamos/bc250-audio-fix
 sudo reboot
 ```
 
-`patch-driver.sh` restores the SteamOS build toolchain if an OS update removed it, fetches matching sources and kernel-specific dependencies, applies the host-tool compatibility backport needed by GCC 15/C23, builds the module, validates it, and invokes `sudo` for privileged steps. If Valve omitted the exact headers package, it builds the exact kernel source completely to generate the missing symbol inventory. That fallback can take hours and requires about 40 GiB of free temporary space.
+`patch-driver.sh` restores the SteamOS build toolchain if an OS update removed it,
+fetches matching sources and host-channel dependencies, applies an older-kernel
+host-tool compatibility backport only when needed, builds the module, validates
+it, and invokes `sudo` for privileged steps. If Valve omitted the exact headers
+package, it builds the exact kernel source completely to generate the missing
+symbol inventory. That fallback can take hours and requires about 40 GiB of free
+temporary space.
+
+### Build dependencies after a SteamOS update
+
+Dependencies follow the installed `pacman-conf --repo-list` configuration. For
+SteamOS 3.9.5 this selects `extra-3.9` and `core-3.9`, **not** rolling `*-main`.
+Mixing main's newer Python/glibc packages with the stable image can fail in
+Kbuild with `GLIBC_2.44 not found` even when `python3 --version` succeeds.
+
+`fetch-build-deps.sh` verifies package SHA-256s against the selected repository
+metadata, builds a fresh private `deps/` tree, and checks tool execution, Python
+extension imports, Perl modules/libraries, and host C headers before publishing
+it. It never replaces the system libc. A changed channel/package set or a legacy
+unversioned extraction cache is rebuilt automatically, ignoring stale `.done`
+markers. The previous cache is retained under `.deps-previous.*` for inspection;
+cleanup does not remove those backups.
+
+To repair only dependencies without cleaning or downloading the kernel again:
+
+```bash
+./fetch-build-deps.sh
+```
+
+Cross-host fetching can explicitly select a matching pair, for example
+`DEP_REPOS='extra-3.9 core-3.9' ./fetch-build-deps.sh`. Mixed channels are refused.
+The libbpf C23 backport is already upstream in the inspected Valve 6.18.53 and
+7.2.7 sources and is skipped there. It remains available for older supported
+kernels; the kernel's own libbpf is still built when Kbuild needs it.
 
 Kernel 7.2 can also build experimental DCN201 DSC and HDMI 2.1 PCON support for
 4K at 120 Hz. It is omitted by default because it may cause display instability.
@@ -179,6 +212,7 @@ with policy `2`; the two options are never emitted together.
 | `../bc250-toolkit.sh kfd-runlist` | Toggle the experimental persistent KFD HWS runlist workaround |
 | `./patch-driver.sh uninstall` | Noninteractively restore stock modules for all installed kernels |
 | `./fetch-sources.sh` | Fetch the matching kernel source, symbols, and dependencies |
+| `./fetch-build-deps.sh` | Verify or rebuild private dependencies for the installed SteamOS channel |
 | `./ensure-build-prereqs.sh` | Restore a missing SteamOS host build toolchain |
 | `./prepare-kernel.sh` | Prepare an exact Kbuild tree for external modules |
 | `./build.sh` | Build and validate `amdgpu.ko.zst` |
@@ -260,10 +294,11 @@ The complete fallback remains mandatory for the AMDGPU override. AIC8800 may ins
 |---|---|
 | `patch-driver.sh` | Complete build and installation workflow |
 | `fetch-sources.sh` | Source, symbol, and dependency acquisition |
+| `fetch-build-deps.sh` | Channel-matched, checksum-verified, staged build dependency acquisition |
 | `ensure-build-prereqs.sh` | Conditional SteamOS host-toolchain installation |
 | `prepare-kernel.sh` | Shared exact Kbuild preparation for Wi-Fi and GPU modules |
 | `build.sh` | Patch application, module build, packaging, and validation |
-| `bc250-libbpf-c23-const.patch` | GCC 15/C23 const-correctness backport for the kernel's libbpf host tool |
+| `bc250-libbpf-c23-const.patch` | Older-kernel GCC 15/C23 backport; skipped when already upstream |
 | `check-module.sh` | Vermagic and ABI validation |
 | `install.sh` | Module override installation and initramfs generation |
 | `mkinitcpio-compat.sh` | Initramfs generation with SteamOS 7.2 BLAKE2 hook compatibility |

@@ -42,8 +42,10 @@ class DirectMeshTests(unittest.TestCase):
         source = MESH.read_text()
         self.assertIn('DEFAULT_MESA_TAG="mesa-26.2.5"', source)
         self.assertIn('MESA_COMMIT="ddaf85e353442d9d7f192fdcf1823e652e3f2ee3"', source)
-        self.assertIn('RADV_PROFILE_REVISION="directmesh-1.3.1-fsr4-v5"', source)
-        self.assertIn('DIRECTMESH_RELEASE="directmesh-v1.3.1"', source)
+        self.assertIn('RADV_PROFILE_REVISION="directmesh-1.4-fsr4-v6"', source)
+        self.assertIn('DIRECTMESH_RELEASE="directmesh-v1.4"', source)
+        self.assertIn('https://github.com/lonewolf0622/Mesh-Shaders-for-Rdna-1-', source)
+        self.assertIn('a51b430e7465b9de37d2cc88778c8970676c301c1f77d4b330edca28caff7418', source)
         self.assertIn('if (($# == 1)); then cmd_setup default', source)
         self.assertIn('[[ "$2" == --directmesh ]]', source)
         self.assertIn('RADV_DIRECTMESH=0 %command%', source)
@@ -195,6 +197,34 @@ verify_current_runtime
                 self.assert_ok(result)
                 self.assertFalse(profile.exists())
                 self.assertFalse(tool.exists())
+
+    def test_directmesh_131_is_owned_but_stale_and_can_upgrade(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            env = self.environment(root)
+            self.install_runtime(env)
+            manifest = Path(env["BC250_MESH_STATE_DIR"]) / "install.conf"
+            fields = manifest.read_text().split()
+            fields[4] = "directmesh-1.3.1-fsr4-v5"
+            manifest.write_text(" ".join(fields) + "\n")
+            (root / "new-driver.so").write_bytes(b"DirectMesh 1.4 driver\n")
+            result = self.run_shell(env, '''
+preflight_runtime_ownership 0
+! verify_current_runtime
+ro_was_enabled=0
+staged_driver="${DRIVER}.bc250-new"
+work=$(mktemp -d "$STATE_DIR/.migration.XXXXXX")
+unlock_root() { :; }
+relock_root() { :; }
+ensure_state_dir
+exec 9> "$LOCK_FILE"
+flock 9
+install_default_profile "${DRIVER%/*}/new-driver.so" "$DEFAULT_MESA_TAG"
+verify_current_runtime
+''')
+            self.assert_ok(result)
+            self.assertEqual(manifest.read_text().split()[4], fixtures.RADV_PROFILE_REVISION)
+            self.assertEqual(Path(env["BC250_MESH_DRIVER"]).read_bytes(), b"DirectMesh 1.4 driver\n")
 
     def test_cleanup_refuses_unowned_or_modified_orphan_tool(self):
         for kind in ("unowned", "modified", "symlink"):

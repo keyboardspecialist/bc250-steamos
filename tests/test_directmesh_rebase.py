@@ -16,7 +16,7 @@ SPEC.loader.exec_module(REBASE)
 class DirectMeshRebaseTests(unittest.TestCase):
     def fixture(self):
         return (
-            "@@ -565,7 +683,29 @@ struct radv_compiler_info {\n"
+            "@@ -566,7 +684,29 @@ struct radv_compiler_info {\n"
             "       uint32_t no_implicit_varying_subgroup_size : 1;\n"
             "       uint32_t force_nan_preserve_min_max : 1;\n"
             "       uint32_t nir_debug_info : 1;\n"
@@ -28,6 +28,7 @@ class DirectMeshRebaseTests(unittest.TestCase):
             "+   STATIC_ASSERT(sizeof(device->compiler_info.key) == 24);\n"
             '+                 "BC250 route policy must retain the complete 24-byte compiler key");\n'
             "+       * and size preserves every switch-off key byte; the key stays 24 bytes. */\n"
+            + "\n".join(original for original, _replacement in REBASE.MESA_COMPAT_REPLACEMENTS)
         ).encode()
 
     def test_unknown_upstream_patch_is_rejected_before_rebasing(self):
@@ -52,11 +53,33 @@ class DirectMeshRebaseTests(unittest.TestCase):
         for data in (
             self.fixture().replace(b"route_key[24]", b"route_key[20]"),
             self.fixture() + b"+   uint8_t route_key[24];\n",
+            self.fixture().replace(b"VkShaderStageFlagBits bound_stages = 0", b"unexpected_context"),
         ):
             with self.subTest(data=data), patch.object(
                 REBASE, "UPSTREAM_SHA256", hashlib.sha256(data).hexdigest()
             ), self.assertRaisesRegex(ValueError, "missing or ambiguous"):
                 REBASE.rebase(data)
+
+    def test_rebase_preserves_mesa_fixes_and_v14_cache_identity(self):
+        data = self.fixture()
+        with patch.object(REBASE, "UPSTREAM_SHA256", hashlib.sha256(data).hexdigest()):
+            result = REBASE.rebase(data).decode()
+        self.assertNotIn("diff --git a/src/compiler/nir/nir_opt_uub.c", result)
+        self.assertNotIn("+         bound_stages |= pStages[i];", result)
+        self.assertIn("VkShaderStageFlagBits stages = 0, bound_stages = 0;", result)
+        self.assertIn("max_indirect_draw_count", result)
+        self.assertIn("uint32_t base_array_layer", result)
+        self.assertIn("+      if (fs_stage->nir &&", result)
+        self.assertIn("-      if (!stage->layout.set[i].layout)", result)
+
+    def test_hunk_counts_follow_rebased_context(self):
+        text = "@@ -4,1 +5,1 @@ test\n context\n-old\n+new\n+extra\n"
+        self.assertEqual(REBASE.recount_hunks(text), "@@ -4,2 +5,3 @@ test\n context\n-old\n+new\n+extra\n")
+
+    def test_split_signatures_do_not_require_context_fuzz(self):
+        text = "@@ -4,4 +5,5 @@ test\n first\n second\n third\n fourth\n+added\n"
+        result = REBASE.recount_hunks(text)
+        self.assertEqual(result, "@@ -5,3 +6,4 @@ test\n second\n third\n fourth\n+added\n")
 
 
 if __name__ == "__main__":

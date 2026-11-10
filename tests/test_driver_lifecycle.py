@@ -774,6 +774,8 @@ int main(void) {
                 str(AUDIO_CLEAN),
                 str(AUDIO_ROLLBACK),
                 str(AUDIO_PREREQS),
+                str(ROOT / "bc250-audio-fix/fetch-build-deps.sh"),
+                str(ROOT / "bc250-audio-fix/build-env.sh"),
                 str(AUDIO_MKINITCPIO),
                 str(HDMI_AC3),
             ],

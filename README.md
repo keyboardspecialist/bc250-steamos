@@ -429,8 +429,8 @@ Open the expert menu:
 | `./bc250-mesh-shader.sh uninstall` | Remove the global runtime |
 
 The global runtime uses the patched 64-bit RADV ICD. SteamOS supplies the
-32-bit RADV path. It builds Mesa **26.2.5** with the pinned MastaG patch series
-including **DirectMesh 1.3.1**. DirectMesh is enabled by default on BC-250;
+32-bit RADV path. It builds Mesa **26.2.5** with pinned MastaG compute/FSR4
+patches and LoneWolf's checksum-pinned **DirectMesh 1.4** release. DirectMesh is enabled by default on BC-250;
 disable it for an individual game with this Steam launch option:
 
 ```text
@@ -453,8 +453,9 @@ DirectMesh, use:
 ./bc250-mesh-shader.sh uninstall --native-mesh
 ```
 
-All seven patches apply with zero fuzz, and a full RADV build with `ninja -j2`
-passed. This is build validation, not installation or GPU/gameplay qualification.
+All seven patches apply with zero fuzz. A full RADV build with `ninja -j4`,
+ELF/linkage checks, and 124 upstream BC-250/DirectMesh CPU tests passed. This is
+not installation or GPU/gameplay qualification.
 See [`bc250-mesa-patches/README.md`](bc250-mesa-patches/README.md) for source
 provenance, rebase details, and retained removal-only legacy metadata.
 
@@ -946,7 +947,7 @@ security certification.
 | BC-250 Memory Config | [fanoush/bc250_memcfg](https://github.com/fanoush/bc250_memcfg) |
 | BC-250 GDDR6 Memory Temperature | [pan-Rijovich/bc250-memory-temperature](https://github.com/pan-Rijovich/bc250-memory-temperature) · [integrated commit `4a2221d`](https://github.com/pan-Rijovich/bc250-memory-temperature/commit/4a2221d1da387fa2e738bb9368b39594e242ba4b) |
 | GFX1013 Fix | [DryhoppedIPA/bc250-gfx1013-fix](https://github.com/DryhoppedIPA/bc250-gfx1013-fix) |
-| DirectMesh 1.3.1 | [lonewolf0622/bc250meshtaskwork](https://github.com/lonewolf0622/bc250meshtaskwork) |
+| DirectMesh 1.4 | [lonewolf0622/Mesh-Shaders-for-Rdna-1-](https://github.com/lonewolf0622/Mesh-Shaders-for-Rdna-1-) |
 | Retired BC250 RADV R2 (removal provenance only) | [luckiskind/bc250-radv-r2](https://github.com/luckiskind/bc250-radv-r2) |
 | OptiScaler | [optiscaler/OptiScaler](https://github.com/optiscaler/OptiScaler) |
 | HelixSR v2.0.0 (upscaling only; latest is optional/YMMV) | [lonewolf0622/HelixSR](https://github.com/lonewolf0622/HelixSR) |

@@ -104,7 +104,7 @@ cd "$TREE"
 step "apply host-tool compatibility patches"
 LIBBPF_PATCH=$HERE/bc250-libbpf-c23-const.patch
 if patch -p1 -R --dry-run -s -f < "$LIBBPF_PATCH" >/dev/null 2>&1; then
-    echo "libbpf C23 const-correctness patch already applied"
+    echo "libbpf C23 compatibility fix already upstream or applied; no backport needed"
 elif patch -p1 --dry-run -s -f < "$LIBBPF_PATCH" >/dev/null 2>&1; then
     patch -p1 -s < "$LIBBPF_PATCH"
     echo "libbpf C23 const-correctness patch applied"

@@ -1,5 +1,30 @@
 # External dependency update audit
 
+## 2026-11-09 follow-up
+
+- AMDGPU build dependencies now follow the installed SteamOS core/extra channel,
+  rather than rolling main. Fresh staged extraction, checksums, runtime/import
+  probes, and private Perl paths prevent the reproduced SteamOS 3.9.5
+  `GLIBC_2.44` Python failure. Legacy extraction caches are rebuilt and retained
+  as backups, not overlaid using stale `.done` markers. Real 3.9 dependency
+  extraction, runtime checks, and a complete `resolve_btfids`/in-tree libbpf
+  host-tool build passed in isolation; no host packages changed.
+- DirectMesh advances to LoneWolf **v1.4** (November 8 release; asset SHA-256
+  `a51b430e7465b9de37d2cc88778c8970676c301c1f77d4b330edca28caff7418`).
+  Mesa 26.2.5 and the pinned MastaG compute/FSR4 series are retained. All seven
+  patches apply forward-only with zero fuzz after the reviewed rebase. A full
+  RADV `ninja -j4` build, final ELF/linkage/feature-marker checks, and 124 upstream
+  BC-250/DirectMesh CPU tests with the no-op DRM shim passed. Existing
+  1.3.1 runtime ownership remains recognized for migration, while its build
+  profile is invalidated. No installation or GPU/gameplay qualification.
+- Final regressions: **696 toolkit tests** (694 passed, 2 skipped), **166 backend
+  tests**, and **59 desktop-service tests** passed. Bash syntax, generated-menu
+  consistency, and whitespace checks passed. Build/test outputs remained
+  isolated under `/tmp/opencode`; installed drivers and boot settings were not
+  changed.
+
+The following sections retain the October 21 audit and its historical baseline.
+
 Checked and implementation summary updated: 2026-10-21. Pre-change toolkit
 baseline: `ce9d1fc` (`v0.34.3`).
 

@@ -14,7 +14,7 @@ UPSTREAM_REPO="https://github.com/DryhoppedIPA/bc250-gfx1013-fix"
 UPSTREAM_COMMIT="d3e6dc062c34d2523db0abe5741d1f5b0dea00d9"
 AMDGPU_REVISION="smu-8core-metrics-r1"
 LEGACY_UPSTREAM_COMMIT="b66203e012594204e5e3049856b28a2681112985"
-RADV_PROFILE_REVISION="directmesh-1.3.1-fsr4-v5"
+RADV_PROFILE_REVISION="directmesh-1.4-fsr4-v6"
 RAW_BASE="https://raw.githubusercontent.com/DryhoppedIPA/bc250-gfx1013-fix/$UPSTREAM_COMMIT"
 FSR4_RADV_REPO="https://github.com/MastaG/linux-cachyos-bc250"
 FSR4_RADV_COMMIT="f05991ace64a42eda3d2dc583e96b8d35ce393e3"
@@ -25,7 +25,10 @@ MESA_REPO="https://gitlab.freedesktop.org/mesa/mesa.git"
 LIBDRM_TARBALL="libdrm-2.4.134.tar.xz"
 LIBDRM_URL="https://dri.freedesktop.org/libdrm/$LIBDRM_TARBALL"
 LIBDRM_SHA256="ac5e74d157830eb8bee44c6a6bf3ad49774ef0dd2a72bdad74a8f20308b52a95"
-DIRECTMESH_RELEASE="directmesh-v1.3.1"
+DIRECTMESH_RELEASE="directmesh-v1.4"
+DIRECTMESH_REPO="https://github.com/lonewolf0622/Mesh-Shaders-for-Rdna-1-"
+DIRECTMESH_PATCH="bc250-${DIRECTMESH_RELEASE}.patch"
+DIRECTMESH_SHA256="a51b430e7465b9de37d2cc88778c8970676c301c1f77d4b330edca28caff7418"
 MESA_PATCH_DIR="${SELF%/*}/bc250-mesa-patches"
 DIRECTMESH_REBASE="$MESA_PATCH_DIR/rebase-directmesh.py"
 
@@ -399,13 +402,12 @@ stage_upstream() {
     fetch_verified 0001-gfx1013-compute-queue-fix.patch \
         eac1b6b82f64b67c33d822a33bd81310414b661588993724db2fd1bf61585936 \
         "$FSR4_RADV_BASE/0001-gfx1013-compute-queue-fix.patch"
-    fetch_verified 0002-bc250-directmesh.patch \
-        505a5df741aab30f51405630f5fab853e942db6c44beb5aa1d787480a3b127ee \
-        "$FSR4_RADV_BASE/0002-bc250-directmesh.patch"
+    fetch_verified "$DIRECTMESH_PATCH" "$DIRECTMESH_SHA256" \
+        "$DIRECTMESH_REPO/releases/download/$DIRECTMESH_RELEASE/bc250-directmesh-mesa-26.2.1.patch"
     [[ -f "$DIRECTMESH_REBASE" && ! -L "$DIRECTMESH_REBASE" ]] \
         || die "The DirectMesh rebase helper is missing or unsafe."
     rebased=$(mktemp "$CACHE_DIR/.directmesh-rebase.XXXXXX")
-    if ! python3 -I "$DIRECTMESH_REBASE" "$CACHE_DIR/0002-bc250-directmesh.patch" > "$rebased"; then
+    if ! python3 -I "$DIRECTMESH_REBASE" "$CACHE_DIR/$DIRECTMESH_PATCH" > "$rebased"; then
         rm -f -- "$rebased"
         die "The pinned DirectMesh patch could not be rebased onto Mesa 26.2.5."
     fi
@@ -725,6 +727,7 @@ read_manifest() {
         && ( -z "$STORED_PROFILE_REVISION" \
             || "$STORED_PROFILE_REVISION" == "compute-only-v2" \
             || "$STORED_PROFILE_REVISION" == "production-fsr4-v4" \
+            || "$STORED_PROFILE_REVISION" == "directmesh-1.3.1-fsr4-v5" \
             || "$STORED_PROFILE_REVISION" == "$RADV_PROFILE_REVISION" ) \
         && ( -z "$STORED_GENERATOR_SHA" \
             || "$STORED_GENERATOR_SHA" =~ ^[0-9a-f]{64}$ ) \
@@ -1958,9 +1961,9 @@ validate_mesa_output() {
     for marker in bc250-fsr4-integrated-v3 BC250_FSR4_DISABLE \
         BC250_FSR4_IMAGEPREP BC250_FSR4_TEXTURE \
         BC250_FSR4_RESOLUTION_VARIANTS BC250_FSR4_RESOLUTION_GUARD \
-        RADV_DIRECTMESH RADV_BC250_MESH_IDXPASS; do
+        RADV_DIRECTMESH RADV_BC250_MESH_IDXPASS RADV_BC250_MESH_TASK_IDX; do
         grep -aqF "$marker" "$output" \
-            || die "Built RADV driver is missing FSR4 marker: $marker"
+            || die "Built RADV driver is missing DirectMesh/FSR4 marker: $marker"
     done
 }
 
@@ -2164,13 +2167,16 @@ cmd_setup() (
                 0005-bc250-fsr4-imageprep-texture.patch \
                 0006-bc250-fsr4-resolution-variants.patch \
                 0007-bc250-fsr4-production-defaults.patch; do
-                patch -d "$source" -p1 --fuzz=0 --no-backup-if-mismatch \
+                patch -d "$source" -p1 --forward --fuzz=0 --no-backup-if-mismatch \
                     --dry-run -i "$CACHE_DIR/$patch_name"
-                patch -d "$source" -p1 --fuzz=0 --no-backup-if-mismatch \
+                patch -d "$source" -p1 --forward --fuzz=0 --no-backup-if-mismatch \
                     -i "$CACHE_DIR/$patch_name"
             done
             grep -qF has_async_compute_threadgroup_bug "$source/src/amd/common/ac_gpu_info.c" \
                 || die "Patched Mesa source is missing the GFX1013 async-compute marker"
+            grep -qF 'radv_bc250_task_idx_pipeline_create' "$source/src/amd/vulkan/radv_pipeline_graphics.c" \
+                && grep -qF '{"RADV_BC250_MESH_TASK_IDX", "1"}' "$source/src/amd/vulkan/radv_directmesh.c" \
+                || die "Patched Mesa source is missing DirectMesh 1.4 Task-index support"
             grep -qF bc250-fsr4-integrated-v3 "$source/src/amd/vulkan/radv_physical_device.c" \
                 && grep -qF bc250_imageprep_spirv "$source/src/amd/vulkan/radv_shader.c" \
                 || die "Patched Mesa source is missing FSR4 markers"
@@ -3441,6 +3447,8 @@ Async-compute upstream (pinned to $UPSTREAM_COMMIT):
   $UPSTREAM_REPO
 FSR4 patches (pinned to $FSR4_RADV_COMMIT):
   $FSR4_RADV_REPO
+DirectMesh (checksum-pinned $DIRECTMESH_RELEASE):
+  $DIRECTMESH_REPO
 Retired R2 ownership provenance (removal only, $NATIVE_MESH_RELEASE):
   $NATIVE_MESH_REPO
 EOF

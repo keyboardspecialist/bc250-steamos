@@ -36,13 +36,6 @@ fi
 MIRROR=${MIRROR:-https://steamdeck-packages.steamos.cloud/archlinux-mirror}
 KERNEL_REMOTE=${KERNEL_REMOTE:-https://github.com/Evlav/linux-integration.git}
 KERNEL_API=${KERNEL_API:-https://api.github.com/repos/Evlav/linux-integration}
-DEP_PKGS=(pahole bc libelf openssl zlib glibc linux-api-headers bison flex cpio gettext perl python)
-# SteamOS 3.9 strips /usr/include from the image, so HOSTCC can't find even
-# sys/types.h. The libraries themselves (libc.so, crt*.o) are still installed,
-# so for these two packages only usr/include is extracted — pulling glibc's
-# usr/lib into deps/ would shadow the system libc via LD_LIBRARY_PATH.
-HEADERS_ONLY_PKGS=(glibc linux-api-headers)
-DEP_REPOS=(extra-main core-main)
 
 die()  { echo "FATAL: $*" >&2; exit 1; }
 step() { echo; echo "==> $*"; }
@@ -159,46 +152,7 @@ else
 fi
 
 step "build deps into deps/ (runbook step 2)"
-DEPS=$HERE/deps
-mkdir -p "$DEPS"
-for repo in "${DEP_REPOS[@]}"; do
-    curl -fsSL -o "$TMPD/$repo.db" "$MIRROR/$repo/os/x86_64/$repo.db" \
-        || die "could not fetch package database for $repo"
-done
-for pkg in "${DEP_PKGS[@]}"; do
-    # exact-name match: a db entry dir is <name>-<ver>-<rel>/, so an entry
-    # belongs to $pkg iff stripping the last two -fields leaves exactly $pkg
-    # (a naive prefix grep matches openssl-1.1 when you want openssl)
-    ENTRY='' REPO=''
-    for repo in "${DEP_REPOS[@]}"; do
-        # Consume the complete tar listing: exiting awk on the first match
-        # SIGPIPEs tar, which is fatal under pipefail.
-        ENTRY=$(tar -tf "$TMPD/$repo.db" | sed -n 's|/$||p' \
-            | awk -F- -v p="$pkg" 'NF>2 { n=""; for(i=1;i<=NF-2;i++) n=n (i>1?"-":"") $i; if (n==p && !found) { print; found=1 } }')
-        [ -n "$ENTRY" ] && { REPO=$repo; break; }
-    done
-    [ -n "$ENTRY" ] || die "package '$pkg' not found in: ${DEP_REPOS[*]}"
-
-    if [ -e "$DEPS/.$ENTRY.done" ]; then
-        echo "$pkg: $ENTRY already extracted"
-        continue
-    fi
-    FILE=$ENTRY-x86_64.pkg.tar.zst
-    if [ ! -f "$HERE/$FILE" ]; then
-        # ':' in an epoch (pahole-1:1.30-2) must be %-encoded in the URL
-        curl -fL -o "$TMPD/$FILE" "$MIRROR/$REPO/os/x86_64/${FILE//:/%3A}" \
-            || die "download failed: $FILE from $REPO"
-        mv "$TMPD/$FILE" "$HERE/$FILE"
-    fi
-    # extract only usr/ — skips .PKGINFO/.MTREE clutter
-    SUBTREE=usr
-    for h in "${HEADERS_ONLY_PKGS[@]}"; do
-        [ "$pkg" = "$h" ] && SUBTREE=usr/include
-    done
-    tar --zstd -xf "$HERE/$FILE" -C "$DEPS" "$SUBTREE"
-    touch "$DEPS/.$ENTRY.done"
-    echo "$pkg: $ENTRY extracted from $REPO"
-done
+MIRROR="$MIRROR" bash "$HERE/fetch-build-deps.sh"
 
 step "verify complete build environment"
 # shellcheck source=bc250-audio-fix/build-env.sh
