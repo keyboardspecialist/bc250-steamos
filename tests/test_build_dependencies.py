@@ -16,6 +16,14 @@ INSTALLER = (ROOT / "decky-plugin/install.sh").read_text(encoding="utf-8")
 
 
 class BuildDependencyTests(unittest.TestCase):
+    def test_ci_pins_the_python38_and_native_qt_runner_baseline(self):
+        for name in ("trainer-checks.yml", "trainer-release.yml", "release-artifacts.yml"):
+            with self.subTest(workflow=name):
+                source = (ROOT / ".github/workflows" / name).read_text(encoding="utf-8")
+                runners = re.findall(r"^\s*runs-on:\s*(\S+)", source, re.M)
+                self.assertTrue(runners)
+                self.assertEqual(set(runners), {"ubuntu-24.04"})
+
     def test_native_and_release_jobs_install_archive_tools_for_package_fixtures(self):
         for name in ("trainer-checks.yml", "trainer-release.yml", "release-artifacts.yml"):
             with self.subTest(workflow=name):

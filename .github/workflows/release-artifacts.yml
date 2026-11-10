@@ -14,9 +14,10 @@ concurrency:
 
 jobs:
   # Node 24 actions require runner >=2.327.1 (provided by GitHub-hosted Ubuntu).
+  # Ubuntu 26.04 has no setup-python build for Decky's Python 3.8 baseline.
   build:
     name: Build artifacts
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     env:
       DECKY_ARTIFACT_BASENAME: bc250-decky-control-${{ github.ref_name }}
       DESKTOP_ARTIFACT_BASENAME: bc250-desktop-control-${{ github.ref_name }}
@@ -186,7 +187,7 @@ jobs:
   publish:
     name: Publish artifacts
     needs: build
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     permissions:
       actions: read
       contents: write

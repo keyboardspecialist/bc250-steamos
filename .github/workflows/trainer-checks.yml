@@ -31,9 +31,10 @@ permissions:
 
 jobs:
   # Node 24 actions require runner >=2.327.1 (provided by GitHub-hosted Ubuntu).
+  # Pin the OS: Ubuntu 26.04 lacks Python 3.8 builds and changes the Qt baseline.
   python:
     name: Service tests (Python ${{ matrix.python }})
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     strategy:
       fail-fast: false
       matrix:
@@ -55,7 +56,7 @@ jobs:
 
   linux:
     name: Native Linux build and tests
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
 
     steps:
       - name: Check out repository

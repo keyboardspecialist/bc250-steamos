@@ -14,9 +14,10 @@ concurrency:
 
 jobs:
   # Node 24 actions require runner >=2.327.1 (provided by GitHub-hosted Ubuntu).
+  # Keep Python 3.8 availability and the native Qt baseline aligned with checks.
   release:
     name: Build and publish BC250 Trainer
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     env:
       TAG_NAME: ${{ github.ref_name }}
       ARTIFACT_BASENAME: bc250-${{ github.ref_name }}
