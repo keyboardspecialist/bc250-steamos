@@ -202,6 +202,9 @@ export function OverviewSummary({
           }
           good={topology.topologyState === "unlocked"}
         />
+        <StatusRow label="Active swap capacity" value={snapshot.swap?.available && snapshot.swap.activeSizeMiB != null ? `${snapshot.swap.activeSizeMiB} MiB (all devices)` : "Unavailable"} />
+        <StatusRow label="Managed disk swap" value={snapshot.swap?.available ? `${snapshot.swap.diskSizeGiB ?? "Unknown"} GiB configured` : "Unavailable"} />
+        <StatusRow label="Swappiness (active / saved)" value={snapshot.swap?.available ? `${snapshot.swap.swappiness ?? "Unknown"} / ${snapshot.swap.configuredSwappiness ?? "OS default"}` : "Unavailable"} />
       </PanelSection>
 
       <div

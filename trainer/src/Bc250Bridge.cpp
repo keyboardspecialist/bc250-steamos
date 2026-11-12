@@ -718,6 +718,39 @@ void Bc250Bridge::removeTtmOverride()
                   QStringLiteral("Removing TTM boot limit"), false);
 }
 
+void Bc250Bridge::configureSwap(const QString &mode, const QString &compressor, int sizeGiB)
+{
+    if (!QStringList{QStringLiteral("zram"), QStringLiteral("zswap")}.contains(mode)
+        || !QStringList{QStringLiteral("zstd"), QStringLiteral("lz4")}.contains(compressor)
+        || !((sizeGiB >= 4 && sizeGiB <= 64) || (mode == QStringLiteral("zram") && sizeGiB == 0))) {
+        reject(QStringLiteral("Choose zram or zswap, zstd or lz4, and 4-64 GiB disk swap (0 disables zram disk fallback)."));
+        return;
+    }
+    if (!ensureReady()) return;
+    startMutation(QStringLiteral("ConfigureSwap"), {mode, compressor, QVariant::fromValue<uint>(sizeGiB)},
+                  QStringLiteral("Configuring swap profile"), false);
+}
+
+void Bc250Bridge::setSwappiness(int value)
+{
+    if (value < 0 || value > 200) { reject(QStringLiteral("Swappiness must be 0-200.")); return; }
+    if (!ensureReady()) return;
+    startMutation(QStringLiteral("SetSwappiness"), {QVariant::fromValue<uint>(value)},
+                  QStringLiteral("Setting swappiness"), false);
+}
+
+void Bc250Bridge::removeSwapProfile()
+{
+    if (!ensureReady()) return;
+    startMutation(QStringLiteral("RemoveSwapProfile"), {}, QStringLiteral("Removing swap profile"), false);
+}
+
+void Bc250Bridge::verifySwap()
+{
+    if (!ensureReady()) return;
+    startMutation(QStringLiteral("VerifySwap"), {}, QStringLiteral("Verifying swap profile"), false);
+}
+
 void Bc250Bridge::setHdmiSurround(bool enabled)
 {
     if (!ensureReady()) return;
@@ -999,8 +1032,9 @@ void Bc250Bridge::makeMockSnapshot()
         toolkit.insert(QStringLiteral("controlCapabilities"), QStringList{
             QStringLiteral("gpu-voltage-curve"), QStringLiteral("gpu-ramp-reset"),
             QStringLiteral("cpu-oc-update"), QStringLiteral("cpu-unlock-metrics"),
-            QStringLiteral("cpu-unlock-uninstall"), QStringLiteral("cli-handoff"), QStringLiteral("hwmon-sensors")});
+            QStringLiteral("cpu-unlock-uninstall"), QStringLiteral("cli-handoff"), QStringLiteral("hwmon-sensors"), QStringLiteral("swap-control")});
         m_snapshot.insert(QStringLiteral("toolkit"), toolkit);
+        m_snapshot.insert(QStringLiteral("swap"), parseJsonObject(R"json({"schemaVersion":1,"available":true,"configuredProfile":"zram","runtime":"zram+disk","diskSizeGiB":16,"activeSizeMiB":24576,"compressor":"zstd","pending":"none","swappiness":60,"configuredSwappiness":null,"healthy":true,"details":"Offline mock swap status"})json"));
         m_snapshot.insert(QStringLiteral("cec"), parseJsonObject(R"json({"devicePresent":true,"service":{"enabled":"enabled","active":"active"},"active":true,"poweroffIntegration":true,"sleepIntegration":true,"osdName":"BC250","wakeTv":true,"suspendTv":false,"allowStandby":false,"uinput":true})json"));
         QVariantMap power = m_snapshot.value(QStringLiteral("power")).toMap();
         power.insert(QStringLiteral("sensors"), QVariantList{
@@ -1008,7 +1042,7 @@ void Bc250Bridge::makeMockSnapshot()
             QVariantMap{{QStringLiteral("key"), QStringLiteral("nct6687:fan1_input")}, {QStringLiteral("device"), QStringLiteral("nct6687")}, {QStringLiteral("label"), QStringLiteral("CPU fan")}, {QStringLiteral("value"), 1200}, {QStringLiteral("unit"), QStringLiteral("RPM")}},
             QVariantMap{{QStringLiteral("key"), QStringLiteral("nct6687:in0_input")}, {QStringLiteral("device"), QStringLiteral("nct6687")}, {QStringLiteral("label"), QStringLiteral("Vcore")}, {QStringLiteral("value"), 1.05}, {QStringLiteral("unit"), QStringLiteral("V")}}});
         m_snapshot.insert(QStringLiteral("power"), power);
-        for (const QString &method : QStringList{QStringLiteral("GpuVoltageAction"), QStringLiteral("ResetGpuRamp"), QStringLiteral("CpuOcAction"), QStringLiteral("CpuUnlockAction"), QStringLiteral("CecAction"), QStringLiteral("SetCecName"), QStringLiteral("SetCecToggle")})
+        for (const QString &method : QStringList{QStringLiteral("GpuVoltageAction"), QStringLiteral("ResetGpuRamp"), QStringLiteral("CpuOcAction"), QStringLiteral("CpuUnlockAction"), QStringLiteral("CecAction"), QStringLiteral("SetCecName"), QStringLiteral("SetCecToggle"), QStringLiteral("ConfigureSwap"), QStringLiteral("SetSwappiness"), QStringLiteral("RemoveSwapProfile"), QStringLiteral("VerifySwap")})
             m_capabilities.insert(method, true);
         m_cliCatalog = {{QStringLiteral("schemaVersion"), 1}, {QStringLiteral("available"), !sandboxed()},
             {QStringLiteral("toolkitVersion"), QStringLiteral("mock source")},
@@ -1153,6 +1187,22 @@ void Bc250Bridge::startMockMutation(const QString &method, const QVariantList &a
 
 void Bc250Bridge::applyMockMutation()
 {
+    if (QStringList{QStringLiteral("ConfigureSwap"), QStringLiteral("SetSwappiness"), QStringLiteral("RemoveSwapProfile"), QStringLiteral("VerifySwap")}.contains(m_mockMethod)) {
+        QVariantMap swap = m_snapshot.value(QStringLiteral("swap")).toMap();
+        if (m_mockMethod == QStringLiteral("ConfigureSwap")) {
+            swap.insert(QStringLiteral("configuredProfile"), m_mockArguments.at(0));
+            swap.insert(QStringLiteral("compressor"), m_mockArguments.at(1));
+            swap.insert(QStringLiteral("diskSizeGiB"), m_mockArguments.at(2));
+            swap.insert(QStringLiteral("pending"), QStringLiteral("reboot"));
+        } else if (m_mockMethod == QStringLiteral("SetSwappiness")) {
+            swap.insert(QStringLiteral("swappiness"), m_mockArguments.at(0));
+            swap.insert(QStringLiteral("configuredSwappiness"), m_mockArguments.at(0));
+        } else if (m_mockMethod == QStringLiteral("RemoveSwapProfile")) {
+            swap.insert(QStringLiteral("pending"), QStringLiteral("uninstall"));
+        }
+        m_snapshot.insert(QStringLiteral("swap"), swap);
+        return;
+    }
     if (QStringList{QStringLiteral("InstallFsr4Dll"), QStringLiteral("UninstallFsr4Dll"),
         QStringLiteral("InstallHelixsr"), QStringLiteral("UninstallHelixsr"),
         QStringLiteral("InstallOptiscaler"), QStringLiteral("UninstallOptiscaler")}.contains(m_mockMethod)) {

@@ -10,6 +10,7 @@ ColumnLayout {
     required property var backend
     readonly property var snapshot: backend.snapshot
     readonly property var unlock: backend.cpuUnlockStatus || ({})
+    readonly property var swap: snapshot.swap || ({})
     spacing: Kirigami.Units.largeSpacing
 
     function samples(key) {
@@ -78,6 +79,9 @@ ColumnLayout {
 
     Components.Section {
         title: "System Overview"
+        Components.StatusRow { label: "Active swap capacity"; value: root.swap.available && root.swap.activeSizeMiB !== undefined && root.swap.activeSizeMiB !== null ? root.swap.activeSizeMiB + " MiB (all devices)" : "Unavailable" }
+        Components.StatusRow { label: "Managed disk swap"; value: root.swap.available ? (root.swap.diskSizeGiB ?? "Unknown") + " GiB configured" : "Unavailable" }
+        Components.StatusRow { label: "Swappiness (active / saved)"; value: root.swap.available ? (root.swap.swappiness ?? "Unknown") + " / " + (root.swap.configuredSwappiness ?? "OS default") : "Unavailable" }
         Components.StatusRow {
             label: "Compute units"
             value: root.snapshot.cu.available ? root.snapshot.cu.total + "/" + root.snapshot.cu.maximum : "Unavailable"

@@ -18,7 +18,7 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any, AsyncIterator, Optional, Union
 
-from .parity import CLI_SECTIONS, CLI_SECTION_IDS, CONTROL_CAPABILITIES, voltage_arguments
+from .parity import CLI_SECTIONS, CLI_SECTION_IDS, CONTROL_CAPABILITIES, voltage_arguments, swap_arguments
 from . import feature_state
 
 try:
@@ -112,6 +112,8 @@ DESKTOP_CPU_HELPER_REQUIRED_PATHS = (
     DESKTOP_HELPER_PATH.parent / "smu-oc-patches/api.py",
 )
 RAM_HELPER_PATH = Path("/var/lib/bc250-control/desktop/bc250-ram-split.sh")
+SWAP_HELPER_PATH = Path("/var/lib/bc250-control/desktop/bc250-swap.sh")
+DECKY_SWAP_HELPER_PATH = Path("/var/lib/bc250-control/helper/bc250-swap.sh")
 DECKY_RAM_HELPER_PATH = Path("/var/lib/bc250-control/helper/bc250-ram-split.sh")
 CPU_STATE_DIR = Path("/var/lib/bc250-control/smu-oc")
 CPU_UNLOCK_PAYLOAD_PATH = Path("/var/lib/bc250-control/desktop")
@@ -692,6 +694,113 @@ class ToolkitBackend:
             [BASH, str(helper), *args], timeout=timeout, env=env
         )
         return out
+
+    @classmethod
+    def _swap_helper_path(cls) -> Optional[Path]:
+        for helper in (SWAP_HELPER_PATH, DECKY_SWAP_HELPER_PATH):
+            required = [
+                helper.parent / name for name in (
+                    "bc250-swap.sh", "bc250-storage.sh", "bc250-update-persistence.sh",
+                )
+            ]
+            if helper == DECKY_SWAP_HELPER_PATH:
+                required.append(helper.parent / ".decky-helper-manifest")
+            if all(cls._trusted_root_file(path) for path in required):
+                return helper
+        return None
+
+    @classmethod
+    def _swap_helper_available(cls) -> bool:
+        return cls._swap_helper_path() is not None
+
+    async def _swap_tool(self, *args: str, timeout: float = 120) -> str:
+        helper = self._swap_helper_path()
+        if helper is None:
+            raise CommandError(
+                "Swap helper is missing or unsafe; reinstall the frontend / shared service."
+            )
+        code, out, err = await self._exec(
+            [BASH, str(helper), *args], timeout=timeout, check=False,
+            env={
+                "PATH": "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+                "HOME": "/root", "USER": "root", "LOGNAME": "root",
+                "BC250_STORAGE_SKIP_LEGACY_AIC": "1",
+            },
+        )
+        # Uninstall deliberately leaves active disk swap in place until reboot.
+        if code and not (args == ("uninstall",) and code == 75):
+            raise CommandError((err or out)[-4000:] or "Swap operation failed.")
+        return out
+
+    async def get_swap_status(self) -> dict[str, Any]:
+        unavailable = {
+            "available": False,
+            "error": "Reinstall the frontend / shared service to add trusted swap controls.",
+        }
+        if not self._swap_helper_available():
+            return unavailable
+        try:
+            status = json.loads(await self._swap_tool("status", "--json", timeout=20))
+            if (not isinstance(status, dict)
+                    or type(status.get("schemaVersion")) is not int
+                    or status["schemaVersion"] != 1):
+                raise ValueError("Unsupported swap status schema.")
+            if (
+                status.get("configuredProfile") not in {"none", "zram", "zswap", "legacy-zswap", "partial"}
+                or status.get("runtime") not in {"inactive", "zram", "zswap-disk", "zram+disk", "mixed"}
+                or type(status.get("diskSizeGiB")) is not int
+                or not 0 <= status["diskSizeGiB"] <= 64
+                or status.get("compressor") not in {None, "lz4", "zstd"}
+                or status.get("pending") not in {"none", "creating", "reboot", "zswap-removal", "uninstall"}
+                or type(status.get("healthy")) is not bool
+                or type(status.get("details")) is not str
+            ):
+                raise ValueError("Invalid swap status data.")
+            for key in ("swappiness", "configuredSwappiness"):
+                value = status.get(key)
+                if value is not None and (type(value) is not int or not 0 <= value <= 200):
+                    raise ValueError("Invalid swappiness status.")
+            capacity = status.get("activeSizeMiB")
+            if capacity is not None and (type(capacity) is not int or capacity < 0):
+                raise ValueError("Invalid active swap capacity.")
+            return dict(status, available=True, error=None)
+        except (CommandError, ValueError, TypeError) as error:
+            return dict(unavailable, error=str(error))
+
+    async def configure_swap(
+        self, mode: str, compressor: str, size_gib: int
+    ) -> dict[str, str]:
+        try:
+            args = swap_arguments(mode, compressor, size_gib)
+        except ValueError as error:
+            raise CommandError(str(error)) from error
+
+        async def apply() -> dict[str, str]:
+            output = await self._swap_tool(*args, timeout=300)
+            return {"message": output.strip(), "nextStep": "warm-reboot"}
+
+        return await self._complete_transaction(self._mutate(apply))
+
+    async def set_swappiness(self, value: int) -> dict[str, str]:
+        if type(value) is not int or not 0 <= value <= 200:
+            raise CommandError("Swappiness must be an integer from 0 to 200.")
+
+        async def apply() -> dict[str, str]:
+            return {"message": (await self._swap_tool("swappiness", str(value))).strip()}
+
+        return await self._complete_transaction(self._mutate(apply))
+
+    async def remove_swap_profile(self) -> dict[str, str]:
+        async def apply() -> dict[str, str]:
+            return {"message": (await self._swap_tool("uninstall")).strip(), "nextStep": "warm-reboot"}
+
+        return await self._complete_transaction(self._mutate(apply))
+
+    async def verify_swap(self) -> dict[str, str]:
+        async def apply() -> dict[str, str]:
+            return {"message": (await self._swap_tool("verify")).strip()}
+
+        return await self._complete_transaction(self._mutate(apply))
 
     @classmethod
     def _hdmi_audio_helper_path(cls) -> Optional[Path]:
@@ -3037,7 +3146,7 @@ class ToolkitBackend:
             and power_available
             and cec_available
         )
-        cu, power, gpu, cpu, cec, ram, audio = await asyncio.gather(
+        cu, power, gpu, cpu, cec, ram, audio, swap = await asyncio.gather(
             self.get_cu_status(),
             self.get_power_status(),
             self.get_gpu_status(),
@@ -3045,6 +3154,7 @@ class ToolkitBackend:
             self.get_cec_status(),
             self.get_ram_status(),
             self.get_hdmi_audio_status(),
+            self.get_swap_status(),
         )
         return {
             "toolkit": {
@@ -3066,6 +3176,7 @@ class ToolkitBackend:
             "cec": cec,
             "ram": ram,
             "audio": audio,
+            "swap": swap,
         }
 
     async def get_snapshot(self) -> dict[str, Any]:
@@ -4311,7 +4422,7 @@ class ToolkitBackend:
             raise CommandError("Mesa / RADV status returned an invalid Mesa version.")
         if directmesh_version is not None and (
             not isinstance(directmesh_version, str)
-            or re.fullmatch(r"directmesh-v[0-9]+\.[0-9]+\.[0-9]+", directmesh_version) is None
+            or re.fullmatch(r"directmesh-v[0-9]+\.[0-9]+(?:\.[0-9]+)?", directmesh_version) is None
             or runtime_state != "ready"
         ):
             raise CommandError("Mesa / RADV status returned an invalid DirectMesh version.")
@@ -4355,11 +4466,19 @@ class ToolkitBackend:
                 raise CommandError("Mesa / RADV status returned an invalid FSR4 path.")
         if status_error is not None and not isinstance(status_error, str):
             raise CommandError("Mesa / RADV status returned an invalid error message.")
+        install_mesa = status.get("installMesaVersion")
+        install_directmesh = status.get("installDirectMeshVersion")
+        if install_mesa is not None and (type(install_mesa) is not str or re.fullmatch(r"mesa-[0-9]+\.[0-9]+\.[0-9]+", install_mesa) is None):
+            raise CommandError("Mesa / RADV status returned an invalid installation version.")
+        if install_directmesh is not None and (type(install_directmesh) is not str or re.fullmatch(r"directmesh-v[0-9]+\.[0-9]+(?:\.[0-9]+)?", install_directmesh) is None):
+            raise CommandError("Mesa / RADV status returned an invalid DirectMesh installation version.")
         return {
             "scriptAvailable": True,
             "runtimeState": runtime_state,
             "mesaVersion": mesa_version,
             "directMeshVersion": directmesh_version,
+            "installMesaVersion": install_mesa,
+            "installDirectMeshVersion": install_directmesh,
             "icdPath": icd_path,
             "configValid": config_valid,
             "kernelReady": kernel_ready,
@@ -4398,6 +4517,7 @@ class ToolkitBackend:
             "install_fsr4_dll": "fsr4", "uninstall_fsr4_dll": "fsr4",
             "install_optiscaler": "optiscaler", "uninstall_optiscaler": "optiscaler",
             "set_uma_size": "ram", "set_ttm_pages": "ram", "remove_ttm_override": "ram",
+            "configure_swap": "swap", "set_swappiness": "swap", "remove_swap_profile": "swap",
             "set_cu_wgp": "compute", "set_gpu_frequency": "power", "set_load_target": "power",
             "set_custom_load_target": "power", "set_temperature_target": "power", "set_ramp": "power",
             "cpu_oc_action": "power", "set_cpu_mitigations": "power", "set_cpu_smt_disabled": "power",
@@ -4411,6 +4531,10 @@ class ToolkitBackend:
             result = "success" if success else "failed"
             if success and action == "uninstall_native_mesh":
                 result = "removed"
+            if success and action == "remove_swap_profile":
+                status = await self.get_swap_status()
+                if status.get("available") and status.get("configuredProfile") == "none":
+                    result = "removed"
             arguments = [component, action, result]
             if component == "ram":
                 arguments.append(json.dumps(await self.get_ram_status()))

@@ -123,9 +123,12 @@ QtObject {
     ]
     property var snapshot: ({
         toolkit: { available: true, privileged: true, powerAvailable: true,
-            controlApiVersion: 1, controlCapabilities: ["gpu-voltage-curve", "gpu-ramp-reset", "cpu-oc-update", "cpu-unlock-metrics", "cpu-unlock-uninstall", "cli-handoff", "hwmon-sensors"],
+            controlApiVersion: 1, controlCapabilities: ["gpu-voltage-curve", "gpu-ramp-reset", "cpu-oc-update", "cpu-unlock-metrics", "cpu-unlock-uninstall", "cli-handoff", "hwmon-sensors", "swap-control"],
             cpuControlAvailable: true, cecAvailable: true, ramControlAvailable: true,
             audioAvailable: true, path: "/mock/bc250-steamos" },
+        swap: { available: true, configuredProfile: "zram", runtime: "zram+disk", diskSizeGiB: 16, activeSizeMiB: 24576,
+            compressor: "zstd", pending: "none", swappiness: 0, configuredSwappiness: 0,
+            healthy: true, details: "Mock-only swap status; no hardware changes." },
         cu: {
             available: true, controllable: true, liveReason: null, total: 24, maximum: 40,
             rows: [
@@ -224,6 +227,10 @@ QtObject {
     function setUmaSize() { start("Writing CMOS minimum VRAM"); }
     function setTtmPages() { start("Updating TTM boot limit"); }
     function removeTtmOverride() { start("Removing TTM boot limit"); }
+    function configureSwap() { start("Configuring swap profile"); }
+    function setSwappiness() { start("Setting swappiness"); }
+    function verifySwap() { start("Verifying swap profile"); }
+    function removeSwapProfile() { start("Removing swap profile"); }
     function setHdmiSurround() { start("Updating HDMI surround"); }
     function cecAction() { start("Sending CEC command"); }
     function setCecToggle() { start("Updating CEC behavior"); }

@@ -16,6 +16,7 @@
         <file alias="qml/components/SectionHeader.qml">qml/components/SectionHeader.qml</file>
         <file alias="qml/components/StatusRow.qml">qml/components/StatusRow.qml</file>
         <file alias="qml/components/ToolkitCard.qml">qml/components/ToolkitCard.qml</file>
+        <file alias="qml/components/SwapControls.qml">qml/components/SwapControls.qml</file>
         <file alias="qml/components/GameTarget.qml">qml/components/GameTarget.qml</file>
         <file alias="qml/components/OptiscalerTarget.qml">qml/components/OptiscalerTarget.qml</file>
         <file alias="qml/pages/GamesPage.qml">qml/pages/GamesPage.qml</file>

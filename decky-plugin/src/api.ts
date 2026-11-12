@@ -45,6 +45,10 @@ export const cpuUnlockAction = callable<[action: string], void>(
 export const setUmaSize = callable<[umaMiB: number], void>("set_uma_size");
 export const setTtmPages = callable<[pages: number], void>("set_ttm_pages");
 export const removeTtmOverride = callable<[], void>("remove_ttm_override");
+export const configureSwap = callable<[mode: string, compressor: string, sizeGiB: number], void>("configure_swap");
+export const setSwappiness = callable<[value: number], void>("set_swappiness");
+export const removeSwapProfile = callable<[], void>("remove_swap_profile");
+export const verifySwap = callable<[], void>("verify_swap");
 export const cecAction = callable<[action: string], void>("cec_action");
 export const setCecToggle = callable<
   [key: string, enabled: boolean],

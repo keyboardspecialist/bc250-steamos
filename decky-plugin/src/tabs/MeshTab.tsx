@@ -643,6 +643,7 @@ export function MeshTab({ busy, runMutation }: { busy: boolean; runMutation: Mut
         <StatusRow label="Global activation" value={status.globalEnabled ? "Enabled" : "Disabled"} good={status.globalEnabled} />
         <StatusRow label="Mesa" value={status.mesaVersion ?? "Not installed"} />
         <StatusRow label="DirectMesh" value={status.directMeshVersion ?? "Not installed / update required"} good={Boolean(status.directMeshVersion)} />
+        <StatusRow label="Install target (Mesa / DirectMesh)" value={`${status.installMesaVersion ?? "Refresh toolkit"} / ${status.installDirectMeshVersion ?? "Unknown"}`} />
         <StatusRow label="Alternate ICD" value={status.icdPath || "Unavailable"} good={status.runtimeState === "ready"} />
         <StatusRow label="FSR4 game DLLs" value={`${status.fsr4DllState} (${status.fsr4DllInstallCount})`} good={status.fsr4DllState === "ready"} />
         <StatusRow label="Legacy FSR4 V3 profile" value={status.fsr4State} good={status.fsr4State === "ready"} />

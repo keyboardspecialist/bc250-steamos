@@ -2609,16 +2609,18 @@ cmd_status_json() {
         error="$games"
         games="[]"
     fi
-    python3 - "$runtime_state" "$mesa_version" "$ICD" "$config_valid" "$error" "$games" "$kernel_ready" "$global_enabled" "$restart_required" "$scheduler_configured" "$scheduler_active" "$fsr4_state" "$FSR4_ICD" "$FSR4_RUNNER" "$fsr4_dll_state" "$fsr4_dll_install_count" "$native_mesh_state" "$NATIVE_MESH_ICD" "$NATIVE_MESH_RUNNER" "$DIRECTMESH_RELEASE" <<'PY'
+    python3 - "$runtime_state" "$mesa_version" "$ICD" "$config_valid" "$error" "$games" "$kernel_ready" "$global_enabled" "$restart_required" "$scheduler_configured" "$scheduler_active" "$fsr4_state" "$FSR4_ICD" "$FSR4_RUNNER" "$fsr4_dll_state" "$fsr4_dll_install_count" "$native_mesh_state" "$NATIVE_MESH_ICD" "$NATIVE_MESH_RUNNER" "$DIRECTMESH_RELEASE" "$DEFAULT_MESA_TAG" <<'PY'
 import json
 import sys
 
-runtime_state, mesa_version, icd_path, config_valid, error, games, kernel_ready, global_enabled, restart_required, scheduler_configured, scheduler_active, fsr4_state, fsr4_icd, fsr4_runner, fsr4_dll_state, fsr4_dll_install_count, native_mesh_state, native_mesh_icd, native_mesh_runner, directmesh_release = sys.argv[1:]
+runtime_state, mesa_version, icd_path, config_valid, error, games, kernel_ready, global_enabled, restart_required, scheduler_configured, scheduler_active, fsr4_state, fsr4_icd, fsr4_runner, fsr4_dll_state, fsr4_dll_install_count, native_mesh_state, native_mesh_icd, native_mesh_runner, directmesh_release, install_mesa = sys.argv[1:]
 print(json.dumps({
     "scriptAvailable": True,
     "runtimeState": runtime_state,
     "mesaVersion": mesa_version or None,
     "directMeshVersion": directmesh_release if runtime_state == "ready" else None,
+    "installMesaVersion": install_mesa,
+    "installDirectMeshVersion": directmesh_release,
     "icdPath": icd_path,
     "configValid": config_valid == "1",
     "error": error or None,
@@ -3258,21 +3260,21 @@ mesh_menu_graph_render() {
                 if [[ "$badge" == *"|"* || "$badge" == *$'\n'* ]]; then
                     die "Invalid generated menu badge: action__fsr4_dll"
                 fi
-                items+=("Install portable FSR4 game DLL (recommended)|${badge}|Portable FSR4 route. Replaces one exact existing DLL and retains the original; no custom RADV installation is needed.")
+                items+=("Install portable FSR4 v4.0.0-rc11 DLL (recommended)|${badge}|Portable FSR4 route. Replaces one exact existing DLL and retains the original; no custom RADV installation is needed.")
                 targets+=("action__fsr4_dll")
                 badges+=("$badge")
                 if ! badge=$(mesh_menu_graph_badge menu__helixsr menu); then badge=; fi
                 if [[ "$badge" == *"|"* || "$badge" == *$'\n'* ]]; then
                     die "Invalid generated menu badge: menu__helixsr"
                 fi
-                items+=("HelixSR pinned (experimental)|${badge}|Prepare and manage the user-local HelixSR payload. Do not use injected DLLs with anti-cheat games.")
+                items+=("HelixSR v2.0.0 (experimental)|${badge}|Prepare and manage the user-local HelixSR payload. Do not use injected DLLs with anti-cheat games.")
                 targets+=("menu__helixsr")
                 badges+=("$badge")
                 if ! badge=$(mesh_menu_graph_badge action__setup install); then badge=; fi
                 if [[ "$badge" == *"|"* || "$badge" == *$'\n'* ]]; then
                     die "Invalid generated menu badge: action__setup"
                 fi
-                items+=("Install / resume global DirectMesh + FSR4 RADV|${badge}|Remove verified retired R2 files first, then build the global BC-250 DirectMesh/FSR4 driver and its AMDGPU prerequisites.")
+                items+=("Install / resume Mesa 26.2.5 + DirectMesh 1.4 + FSR4 RADV|${badge}|Remove verified retired R2 files first, then build the global BC-250 DirectMesh/FSR4 driver and its AMDGPU prerequisites.")
                 targets+=("action__setup")
                 badges+=("$badge")
                 if ! badge=$(mesh_menu_graph_badge action__native_mesh_remove cleanup); then badge=; fi
@@ -3305,7 +3307,7 @@ mesh_menu_graph_render() {
                 badges+=("$badge")
                 ;;
             menu__helixsr)
-                title="HelixSR pinned (experimental)"
+                title="HelixSR v2.0.0 (experimental)"
                 if ! badge=$(mesh_menu_graph_badge action__helixsr_status read_only); then badge=; fi
                 if [[ "$badge" == *"|"* || "$badge" == *$'\n'* ]]; then
                     die "Invalid generated menu badge: action__helixsr_status"
@@ -3317,7 +3319,7 @@ mesh_menu_graph_render() {
                 if [[ "$badge" == *"|"* || "$badge" == *$'\n'* ]]; then
                     die "Invalid generated menu badge: action__helixsr_prepare"
                 fi
-                items+=("Prepare pinned HelixSR|${badge}|Use the checksum-pinned release, optionally with a local DLSS DLL. NVIDIA-derived files are not redistributed.")
+                items+=("Prepare HelixSR v2.0.0|${badge}|Use the checksum-pinned release, optionally with a local DLSS DLL. NVIDIA-derived files are not redistributed.")
                 targets+=("action__helixsr_prepare")
                 badges+=("$badge")
                 if ! badge=$(mesh_menu_graph_badge action__helixsr_prepare_latest experimental); then badge=; fi

@@ -1007,6 +1007,13 @@ show_status() {
         failed=1; failed_components+=("Compressed swap")
     fi
 
+    state=$(status_value "$swap_output" "capacity: " || true)
+    secondary=$(status_value "$swap_output" "disk size: " || true)
+    status_row "Swap capacity" "observed" dim "${state:-unknown}; disk ${secondary:-unknown}"
+    state=$(status_value "$swap_output" "swappiness: " || true)
+    secondary=$(status_value "$swap_output" "swappiness configured: " || true)
+    status_row "Swappiness" "observed" dim "active ${state:-unknown}; saved ${secondary:-OS default}"
+
     installed_count=$(grep -c 'keep list: installed' <<< "$persistence_output" || true)
     pending_count=$(grep -Ec 'keep list: (stale|foreign)' <<< "$persistence_output" || true)
     if [[ $persistence_rc -ne 0 ]]; then
@@ -1720,7 +1727,7 @@ menu_graph_render() {
                 if [[ "$badge" == *"|"* || "$badge" == *$'\n'* ]]; then
                     die "Invalid generated menu badge: action__graphics_setup"
                 fi
-                items+=("Install or Resume Global DirectMesh|${badge}|Install AMDGPU first when needed, then resume global DirectMesh and FSR4 RADV with retired R2 cleanup.")
+                items+=("Install or Resume Mesa 26.2.5 / DirectMesh 1.4|${badge}|Install AMDGPU first when needed, then resume global DirectMesh and FSR4 RADV with retired R2 cleanup.")
                 targets+=("action__graphics_setup")
                 badges+=("$badge")
                 ;;
@@ -1810,7 +1817,7 @@ menu_graph_render() {
                 if [[ "$badge" == *"|"* || "$badge" == *$'\n'* ]]; then
                     die "Invalid generated menu badge: action__coolercontrol"
                 fi
-                items+=("CoolerControl|${badge}|Install fan profiles, curves, and monitoring for the onboard controller.")
+                items+=("CoolerControl 5.1.1|${badge}|Install fan profiles, curves, and monitoring for the onboard controller.")
                 targets+=("action__coolercontrol")
                 badges+=("$badge")
                 ;;
@@ -1827,7 +1834,7 @@ menu_graph_render() {
                 if [[ "$badge" == *"|"* || "$badge" == *$'\n'* ]]; then
                     die "Invalid generated menu badge: action__graphics_setup"
                 fi
-                items+=("Install or Resume Global DirectMesh|${badge}|Install AMDGPU first when needed, then resume global DirectMesh and FSR4 RADV with retired R2 cleanup.")
+                items+=("Install or Resume Mesa 26.2.5 / DirectMesh 1.4|${badge}|Install AMDGPU first when needed, then resume global DirectMesh and FSR4 RADV with retired R2 cleanup.")
                 targets+=("action__graphics_setup")
                 badges+=("$badge")
                 if ! badge=$(menu_graph_badge child__radv menu); then badge=; fi
@@ -1965,28 +1972,28 @@ menu_graph_render() {
                 if [[ "$badge" == *"|"* || "$badge" == *$'\n'* ]]; then
                     die "Invalid generated menu badge: action__decky"
                 fi
-                items+=("Decky Plugin|${badge}|Install BC-250 controls for Gaming Mode and Quick Access.")
+                items+=("Decky Plugin 0.1.0|${badge}|Build and install BC-250 controls from this toolkit checkout for Gaming Mode and Quick Access.")
                 targets+=("action__decky")
                 badges+=("$badge")
                 if ! badge=$(menu_graph_badge action__desktop install); then badge=; fi
                 if [[ "$badge" == *"|"* || "$badge" == *$'\n'* ]]; then
                     die "Invalid generated menu badge: action__desktop"
                 fi
-                items+=("Plasma Desktop Control|${badge}|Install the shared service and Plasma system-tray control.")
+                items+=("Plasma Desktop Control 1.0.1|${badge}|Install the shared service and Plasma system-tray control from this toolkit checkout.")
                 targets+=("action__desktop")
                 badges+=("$badge")
                 if ! badge=$(menu_graph_badge action__coolercontrol install); then badge=; fi
                 if [[ "$badge" == *"|"* || "$badge" == *$'\n'* ]]; then
                     die "Invalid generated menu badge: action__coolercontrol"
                 fi
-                items+=("CoolerControl|${badge}|Install fan profiles, curves, and monitoring for the onboard controller.")
+                items+=("CoolerControl 5.1.1|${badge}|Install fan profiles, curves, and monitoring for the onboard controller.")
                 targets+=("action__coolercontrol")
                 badges+=("$badge")
                 if ! badge=$(menu_graph_badge action__trainer install); then badge=; fi
                 if [[ "$badge" == *"|"* || "$badge" == *$'\n'* ]]; then
                     die "Invalid generated menu badge: action__trainer"
                 fi
-                items+=("BC250 Trainer|${badge}|Install the standalone native Qt control application.")
+                items+=("BC250 Trainer (latest release)|${badge}|Install the standalone native Qt control application; the release version is resolved at download time.")
                 targets+=("action__trainer")
                 badges+=("$badge")
                 ;;
@@ -2048,14 +2055,14 @@ menu_graph_render() {
                 if [[ "$badge" == *"|"* || "$badge" == *$'\n'* ]]; then
                     die "Invalid generated menu badge: action__proton_install"
                 fi
-                items+=("Install|${badge}|Install GE-Proton after the required FSR4 RADV runtime is active.")
+                items+=("Install GE-Proton (latest verified build)|${badge}|Install GE-Proton after the required FSR4 RADV runtime is active; show the resolved version before installing.")
                 targets+=("action__proton_install")
                 badges+=("$badge")
                 if ! badge=$(menu_graph_badge action__proton_update install); then badge=; fi
                 if [[ "$badge" == *"|"* || "$badge" == *$'\n'* ]]; then
                     die "Invalid generated menu badge: action__proton_update"
                 fi
-                items+=("Update or Repair|${badge}|Transactionally replace an older or incomplete toolkit installation.")
+                items+=("Update or Repair GE-Proton (latest verified build)|${badge}|Transactionally replace an older or incomplete toolkit installation; show the resolved version before installing.")
                 targets+=("action__proton_update")
                 badges+=("$badge")
                 if ! badge=$(menu_graph_badge action__proton_uninstall cleanup); then badge=; fi
@@ -2151,7 +2158,7 @@ menu_graph_render() {
                 if [[ "$badge" == *"|"* || "$badge" == *$'\n'* ]]; then
                     die "Invalid generated menu badge: action__video_codec_install"
                 fi
-                items+=("Install or Repair Video Codec|${badge}|Build the verified 64-bit runtime and optionally include the 32-bit Steam companion.")
+                items+=("Install or Repair Video Codec v0.5.4|${badge}|Build the verified 64-bit runtime and optionally include the 32-bit Steam companion.")
                 targets+=("action__video_codec_install")
                 badges+=("$badge")
                 if ! badge=$(menu_graph_badge action__video_codec_remove cleanup); then badge=; fi
@@ -2196,7 +2203,7 @@ menu_graph_render() {
                 if [[ "$badge" == *"|"* || "$badge" == *$'\n'* ]]; then
                     die "Invalid generated menu badge: action__graphics_setup"
                 fi
-                items+=("Install or Resume Global DirectMesh|${badge}|Install AMDGPU first when needed, then resume global DirectMesh and FSR4 RADV with retired R2 cleanup.")
+                items+=("Install or Resume Mesa 26.2.5 / DirectMesh 1.4|${badge}|Install AMDGPU first when needed, then resume global DirectMesh and FSR4 RADV with retired R2 cleanup.")
                 targets+=("action__graphics_setup")
                 badges+=("$badge")
                 if ! badge=$(menu_graph_badge action__fan_driver install); then badge=; fi

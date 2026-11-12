@@ -90,6 +90,10 @@ public:
     Q_INVOKABLE void setUmaSize(int umaMiB);
     Q_INVOKABLE void setTtmPages(int pages);
     Q_INVOKABLE void removeTtmOverride();
+    Q_INVOKABLE void configureSwap(const QString &mode, const QString &compressor, int sizeGiB);
+    Q_INVOKABLE void setSwappiness(int value);
+    Q_INVOKABLE void removeSwapProfile();
+    Q_INVOKABLE void verifySwap();
     Q_INVOKABLE void setHdmiSurround(bool enabled);
     Q_INVOKABLE void cancelOperation();
     Q_INVOKABLE void clearMessage();

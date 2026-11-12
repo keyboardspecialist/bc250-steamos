@@ -1,5 +1,55 @@
 # Frontend parity audit
 
+## 2026-11-11 follow-up: native swap and install versions
+
+- **All three frontends now expose native swap controls** on their memory page:
+  zram/zswap, both compressors, 4-64 GiB disk swap (16 GiB default), zram-only
+  opt-out (0 GiB), global swappiness 0-200, verification and removal.
+- The shared backend executes only staged, root-owned swap/storage/persistence
+  helpers with a clean environment. D-Bus mutations retain polkit authorization,
+  operation ownership and noncancellable filesystem transactions. Decky ships
+  the same helper through its verified bootstrap bundle; Trainer's Flatpak uses
+  the installed service without gaining host-command permissions.
+- `snapshot.swap` is read-only, reports configured vs active profile, compressor,
+  disk size, effective pending state and live vs saved swappiness. `swap-control`
+  capability and per-method Trainer introspection disable old-service controls.
+- Zram retains priority 100 and defaults to a 16 GiB disk fallback at priority 10;
+  zswap is disabled on boot for that profile. Profile changes are reboot-gated,
+  active swapfiles are never removed, and exit 75 remains a successful pending
+  two-stage uninstall rather than a generic frontend failure.
+- Fixed a real shared-backend regression: DirectMesh `directmesh-v1.4` was rejected
+  by a three-component-only version regex. Two- and three-component release
+  versions are now accepted, without accepting arbitrary strings.
+- Fixed Plasma's short authorization timeout for RAM/audio/graphics lifecycle
+  actions. These now use the same 130-second polkit window as other privileged
+  operations, instead of timing out at 15 seconds while authentication is open.
+- CLI menu install entries identify pinned Mesa/DirectMesh, portable FSR4,
+  HelixSR, CoolerControl and codec versions. Dynamic Trainer/GE-Proton downloads
+  remain explicitly labeled latest rather than inventing a pinned version.
+  All three graphical clients show Mesa/DirectMesh **install targets separately
+  from installed versions**, and their game inventories show upscaler releases.
+- Mesa remains **26.2.5**, pending an official DirectMesh rebase, as requested.
+- CLI System Health and all three graphical health overviews show total active
+  swap capacity (all devices), toolkit-managed configured disk size, and active
+  versus saved swappiness. Zero remains a valid displayed value.
+- This is source/build/mock parity, not installation or live hardware qualification.
+  Existing unrelated research files, nested checkouts and local binaries were
+  preserved. The older inventory below is historical; advanced domain workflows
+  still use explicit CLI handoffs and are not claimed as full-native parity.
+
+Validation: the full repository regression run passed **705 tests** (2 skipped),
+with the final swap-focused run passing **33 tests**. The shared backend passed
+**173 tests**, the service **61**, and the Decky/QML JavaScript suite **22**.
+Decky typechecking and bundling passed. Trainer compiled in the existing Ubuntu
+24.04 build container and passed all **5 CTest suites**, including native bridge,
+QML interactions and offscreen startup; QML lint completed with existing Qt
+static-analysis informational diagnostics. Plasma's production-function and
+offscreen mock/runtime checks passed. Generated menu checks and graph analysis
+also passed. No swap profile, swappiness or hardware setting was changed on the
+host, and no frontend was installed or release published.
+The final health-overview additions also passed **38 toolkit tests** and
+**9 cross-frontend contract tests**.
+
 ## Scope and provenance
 
 - **Baseline:** `a751f302d7ff3f4e4fb3d0225fb74c82a658d7c8` (`a751f30`), toolkit **`v0.35.0`**; audit date 2026-10-21.
@@ -37,7 +87,8 @@ Trainer native and Trainer Flatpak must be distinguished. Baseline Flatpak can u
 | CPU tool update; eight-core decoder/service/revision status; guarded metrics enable and full unlock/metrics uninstall | **N** | **N** | **N** | **N** |
 | Four live clock/temperature scalars plus labeled hwmon temperatures, mV, W, RPM, A | **N** | **N** | **N** | **N**, sensors actually present only |
 | CEC everyday controls and FSR4/HelixSR/OptiScaler inventory/install/repair/restore/orphan recovery | **N**, newly added | **N** | **N** | **N** |
-| Guided setup, driver/kernel/graphics/boot policies, swap, networking, storage, persistence/recovery, interfaces, toolkit update/removal | **H**, fixed catalog plus existing PTY cards | **H**, fixed catalog | **H**, desktop terminal required | **U**, intentionally no host-command access |
+| Swap profile/compressor/disk size, swappiness, status, verification and two-stage removal | **N** | **N** | **N** | **N**, updated installed service required |
+| Guided setup, driver/kernel/graphics/boot policies, networking, storage, persistence/recovery, interfaces, toolkit update/removal | **H**, fixed catalog plus existing PTY cards | **H**, fixed catalog | **H**, desktop terminal required | **U**, intentionally no host-command access |
 | Direct SMU CPU-voltage, actual CMOS reads, advanced CU management, experimental GDDR6 payload workflows | **H** through canonical domain menus, no new raw RPC | **H** | **H** | **U** as embedded workflows |
 | Arbitrary commands/paths, raw SMU writes, firmware flashing, root execution of a user checkout | **U** | **U** | **U** | **U** |
 

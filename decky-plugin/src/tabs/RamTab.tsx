@@ -3,6 +3,7 @@ import { useEffect, useState } from "react";
 import { removeTtmOverride, setTtmPages, setUmaSize } from "../api";
 import { ActionButton, EmptyState, StatusRow } from "../components/Common";
 import type { TabProps } from "./shared";
+import { SwapControls } from "./SwapControls";
 
 export function RamTab({ snapshot, busy, runMutation }: TabProps) {
   const { ram } = snapshot;
@@ -131,6 +132,7 @@ export function RamTab({ snapshot, busy, runMutation }: TabProps) {
           )}
         />
       </PanelSection>
+      <SwapControls snapshot={snapshot} busy={busy} runMutation={runMutation} />
     </>
   );
 }

@@ -94,6 +94,38 @@ private slots:
         QVERIFY2(bridge.error().isEmpty(), qPrintable(bridge.error()));
     }
 
+    void swapControlsValidateAndKeepRebootGatedRuntime()
+    {
+        Bc250Bridge bridge(true);
+        bridge.configureSwap(QStringLiteral("zswap"), QStringLiteral("lz4"), 0);
+        QVERIFY(!bridge.error().isEmpty());
+        QVERIFY(!bridge.busy());
+        bridge.clearMessage();
+        bridge.setSwappiness(201);
+        QVERIFY(!bridge.error().isEmpty());
+        QVERIFY(!bridge.busy());
+        bridge.clearMessage();
+        bridge.configureSwap(QStringLiteral("zswap"), QStringLiteral("zstd"), 16);
+        QVERIFY(bridge.busy());
+        QVERIFY(!bridge.operationCancellable());
+        QTRY_VERIFY_WITH_TIMEOUT(!bridge.busy(), 2000);
+        QVariantMap swap = bridge.snapshot().value(QStringLiteral("swap")).toMap();
+        QCOMPARE(swap.value(QStringLiteral("configuredProfile")).toString(), QStringLiteral("zswap"));
+        QCOMPARE(swap.value(QStringLiteral("compressor")).toString(), QStringLiteral("zstd"));
+        QCOMPARE(swap.value(QStringLiteral("runtime")).toString(), QStringLiteral("zram+disk"));
+        QCOMPARE(swap.value(QStringLiteral("pending")).toString(), QStringLiteral("reboot"));
+        bridge.setSwappiness(0);
+        QVERIFY(!bridge.operationCancellable());
+        QTRY_VERIFY_WITH_TIMEOUT(!bridge.busy(), 2000);
+        swap = bridge.snapshot().value(QStringLiteral("swap")).toMap();
+        QCOMPARE(swap.value(QStringLiteral("swappiness")).toInt(), 0);
+        QCOMPARE(swap.value(QStringLiteral("configuredSwappiness")).toInt(), 0);
+        bridge.removeSwapProfile();
+        QVERIFY(!bridge.operationCancellable());
+        QTRY_VERIFY_WITH_TIMEOUT(!bridge.busy(), 2000);
+        QCOMPARE(bridge.snapshot().value(QStringLiteral("swap")).toMap().value(QStringLiteral("pending")).toString(), QStringLiteral("uninstall"));
+    }
+
     void telemetryOnlyPollsOnVisibleStatusPage()
     {
         Bc250Bridge bridge(true);

@@ -20,6 +20,7 @@ ColumnLayout {
     }
 
     C.ConfirmDialog { id: confirm }
+    C.SwapControls { backend: root.backend; Layout.fillWidth: true }
 
     C.SectionHeader { text: "RAM / VRAM split" }
     RowLayout {

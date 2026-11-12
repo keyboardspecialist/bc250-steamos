@@ -107,6 +107,51 @@ test("API capability checks use only the installed backend manifest", () => {
   ]) assert.equal(helpers.controlApiSupports(toolkit, "gpu-voltage-curve"), false);
 });
 
+test("native swap controls share profile arguments, confirmations, zero swappiness and service gates", async () => {
+  const calls = [];
+  const mutations = [];
+  const ui = runtime({
+    configureSwap: async (...args) => calls.push(["configure", ...args]),
+    setSwappiness: async (...args) => calls.push(["swappiness", ...args]),
+    removeSwapProfile: async () => calls.push(["remove"]),
+    verifySwap: async () => calls.push(["verify"]),
+  });
+  const Component = ui.load("tabs/SwapControls.tsx").SwapControls;
+  const props = { busy: false, runMutation: (...args) => mutations.push(args), snapshot: {
+    toolkit: { privileged: true, controlApiVersion: 1, controlCapabilities: ["swap-control"] },
+    swap: { available: true, configuredProfile: "zram", runtime: "zram+disk", diskSizeGiB: 16,
+      pending: "none", swappiness: 0, configuredSwappiness: 0 },
+  } };
+  let tree = ui.render(Component, props);
+  assert.equal(find(tree, "SliderField", "Disk swap size").value, 16);
+  assert.equal(find(tree, "SliderField", "Swappiness").value, 0);
+  find(tree, "ActionButton", "Configure swap profile").onClick();
+  assert.equal(calls.length, 0);
+  assert.equal(mutations[0][2].destructive, true);
+  await mutations[0][1]();
+  assert.deepEqual(calls[0], ["configure", "zram", "zstd", 16]);
+  find(tree, "DropdownItem", "Swap profile").onChange({ data: "zswap" });
+  tree = ui.render(Component, props);
+  find(tree, "ActionButton", "Configure swap profile").onClick();
+  await mutations[1][1]();
+  assert.deepEqual(calls[1], ["configure", "zswap", "lz4", 16]);
+  find(tree, "SliderField", "Disk swap size").onChange(0);
+  tree = ui.render(Component, props);
+  assert.equal(find(tree, "ActionButton", "Configure swap profile").disabled, true);
+  find(tree, "DropdownItem", "Swap profile").onChange({ data: "zram" });
+  tree = ui.render(Component, props);
+  assert.equal(find(tree, "ActionButton", "Configure swap profile").disabled, false);
+  find(tree, "ActionButton", "Set swappiness").onClick();
+  await mutations[2][1]();
+  assert.deepEqual(calls[2], ["swappiness", 0]);
+  props.snapshot.swap.pending = "uninstall";
+  assert.equal(find(ui.render(Component, props), "ActionButton", "Set swappiness").disabled, true);
+  props.snapshot.toolkit.controlCapabilities = [];
+  tree = ui.render(Component, props);
+  for (const label of ["Configure swap profile", "Set swappiness", "Verify swap profile", "Remove swap profile"])
+    assert.equal(find(tree, "ActionButton", label).disabled, true);
+});
+
 test("history contains only four finite scalars, preserves zero, rejects undefined/NaN", () => {
   assert.deepEqual(helpers.historySample({ cpuClock: 0, gpuClock: NaN, gpuTemp: Infinity, sensors: curve }), {
     cpuClock: 0, gpuClock: null, cpuTemp: null, gpuTemp: null,
@@ -423,6 +468,21 @@ test("Overview exposes full sensor inventory without substituting stale live tem
   assert.equal(find(legacyTree, "StatusRow", "cpu · Tctl").value, "52 °C");
   const liveTree = ui.render(Overview, { snapshot, history: [], sensors: [] });
   assert.equal(nodes(liveTree).some((node) => node.props?.label === "cpu · Tctl"), false);
+});
+
+test("system health displays swap capacity and live/saved swappiness, including zero", () => {
+  const ui = runtime();
+  const Summary = ui.load("tabs/OverviewTab.tsx").OverviewSummary;
+  const snapshot = { power: { temperatures: [], governor: { active: "active" } }, gpu: {},
+    cpu: { service: {} }, cpuUnlock: { topologyState: "unavailable" }, cu: {},
+    swap: { available: true, activeSizeMiB: 0, diskSizeGiB: 16, swappiness: 0, configuredSwappiness: 0 } };
+  let tree = ui.render(Summary, { snapshot, history: [] });
+  assert.equal(find(tree, "StatusRow", "Active swap capacity").value, "0 MiB (all devices)");
+  assert.equal(find(tree, "StatusRow", "Managed disk swap").value, "16 GiB configured");
+  assert.equal(find(tree, "StatusRow", "Swappiness (active / saved)").value, "0 / 0");
+  snapshot.swap = undefined;
+  tree = ui.render(Summary, { snapshot, history: [] });
+  assert.equal(find(tree, "StatusRow", "Managed disk swap").value, "Unavailable");
 });
 
 test("the navigation rail has its own scroll viewport for the maintenance tab", () => {

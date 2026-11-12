@@ -139,12 +139,17 @@ QtObject {
             "SetTemperatureTarget", "SetRamp", "ResetGpuRamp", "GpuVoltageAction", "OpenCliSection",
             "CpuOcAction", "CpuUnlockAction", "SetCpuMitigations", "SetCpuSmtDisabled", "CecAction", "SetCecToggle", "SetCecName",
             "SetUmaSize", "SetTtmPages", "RemoveTtmOverride", "SetHdmiSurround", "InstallFsr4Dll", "UninstallFsr4Dll",
+            "ConfigureSwap", "SetSwappiness", "RemoveSwapProfile", "VerifySwap",
             "PrepareHelixsr", "InstallHelixsr", "UninstallHelixsr", "InstallOptiscaler", "UninstallOptiscaler",
             "InstallDirectMesh", "InstallNativeMesh", "UninstallNativeMesh", "CancelOperation"]);
-        signature = Utils.allowed(signature, ["", "b", "s", "u", "y", "yy", "suu", "siii", "yyyb", "suuu", "sb", "ss"]);
+        signature = Utils.allowed(signature, ["", "b", "s", "u", "y", "yy", "suu", "siii", "yyyb", "suuu", "sb", "ss", "ssu"]);
         var interactive = ["SetCuWgp", "SetGpuFrequency", "SetLoadTarget",
             "SetCustomLoadTarget", "SetTemperatureTarget", "SetRamp", "ResetGpuRamp", "GpuVoltageAction", "OpenCliSection",
             "CpuOcAction", "CpuUnlockAction", "SetCpuMitigations", "SetCpuSmtDisabled",
+            "ConfigureSwap", "SetSwappiness", "RemoveSwapProfile", "VerifySwap",
+            "SetUmaSize", "SetTtmPages", "RemoveTtmOverride", "SetHdmiSurround",
+            "InstallDirectMesh", "InstallNativeMesh", "UninstallNativeMesh", "InstallFsr4Dll", "UninstallFsr4Dll",
+            "PrepareHelixsr", "InstallHelixsr", "UninstallHelixsr",
             "InstallOptiscaler", "UninstallOptiscaler"].indexOf(method) >= 0;
         var command = "/usr/bin/busctl --system --json=short --timeout="
             + (interactive ? "130" : method === "GetFsr4Inventory" ? "120" : method === "GetMeshStatus" || method === "GetCpuUnlockStatus" ? "35" : "15") + " call " + service + " "
@@ -224,6 +229,7 @@ QtObject {
         error = "";
         _operationPollFailures = 0;
         var cancellable = ["OpenCliSection", "GpuVoltageAction", "ResetGpuRamp", "CpuUnlockAction", "SetCpuMitigations", "SetCpuSmtDisabled", "SetUmaSize", "SetTtmPages",
+            "ConfigureSwap", "SetSwappiness", "RemoveSwapProfile", "VerifySwap",
             "RemoveTtmOverride", "SetHdmiSurround", "InstallFsr4Dll", "UninstallFsr4Dll",
             "PrepareHelixsr", "InstallHelixsr", "UninstallHelixsr", "InstallOptiscaler", "UninstallOptiscaler",
             "InstallDirectMesh", "InstallNativeMesh", "UninstallNativeMesh"].indexOf(method) < 0
@@ -360,6 +366,27 @@ QtObject {
 
     function removeTtmOverride() {
         _startMutation("RemoveTtmOverride", "", [], "Removing TTM boot limit");
+    }
+
+    function configureSwap(mode, compressor, sizeGiB) {
+        var profile = Utils.allowed(mode, ["zram", "zswap"]);
+        var algorithm = Utils.allowed(compressor, ["zstd", "lz4"]);
+        var size = Utils.integer(sizeGiB, 0, 64);
+        if (Number(size) < 4 && !(profile === "zram" && Number(size) === 0))
+            throw new Error("Disk swap must be 4-64 GiB, or 0 for zram without disk fallback.");
+        _startMutation("ConfigureSwap", "ssu", [profile, algorithm, size], "Configuring swap profile");
+    }
+
+    function setSwappiness(value) {
+        _startMutation("SetSwappiness", "u", [Utils.integer(value, 0, 200)], "Setting swappiness");
+    }
+
+    function removeSwapProfile() {
+        _startMutation("RemoveSwapProfile", "", [], "Removing swap profile");
+    }
+
+    function verifySwap() {
+        _startMutation("VerifySwap", "", [], "Verifying swap profile");
     }
 
     function setHdmiSurround(enabled) {

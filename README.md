@@ -218,26 +218,43 @@ Open the menu:
 
 | Profile | Configuration |
 |---|---|
-| Zram | Half of physical RAM, Zstandard compression by default (LZ4 optional), priority 100 |
+| Zram and disk fallback | Half of physical RAM, Zstandard compression by default (LZ4 optional), priority 100; 16 GiB persistent disk fallback at priority 10; zswap disabled |
 | Zswap and disk | LZ4 cache by default (Zstandard optional), 10% RAM pool, memory shrinker, persistent disk swap, priority 10 |
 
 | Command | Result |
 |---|---|
-| `sudo ./bc250-swap.sh install zram` | Install the zram profile |
+| `sudo ./bc250-swap.sh install zram` | Install zram with a 16 GiB disk fallback |
 | `sudo ./bc250-swap.sh install zram lz4` | Use LZ4 compressed RAM swap |
 | `sudo ./bc250-swap.sh install zram zstd` | Use Zstandard compressed RAM swap |
+| `sudo ./bc250-swap.sh install zram zstd 32` | Use a 32 GiB disk fallback |
+| `sudo ./bc250-swap.sh install zram zstd 0` | Opt out of toolkit disk fallback (legacy zram-only behavior) |
 | `sudo ./bc250-swap.sh install zswap` | Install a 16 GiB disk-swap profile |
 | `sudo ./bc250-swap.sh install zswap 32` | Install a 32 GiB disk-swap profile |
 | `sudo ./bc250-swap.sh install zswap 16 lz4` | Use LZ4 compression with a 16 GiB disk-swap profile |
 | `sudo ./bc250-swap.sh install zswap 16 zstd` | Use Zstandard compression with a 16 GiB disk-swap profile |
 | `./bc250-swap.sh status` | Show the active profile |
+| `./bc250-swap.sh status --json` | Read-only structured frontend status |
+| `sudo ./bc250-swap.sh swappiness 150` | Set global swappiness (0-200), live and at boot, for either profile |
+| `sudo ./bc250-swap.sh verify` | Verify the profile and disk swap signature |
 | `sudo ./bc250-swap.sh uninstall` | Remove the toolkit profile |
 
 A profile transition can require one reboot and a second run of the command.
 The swap menu offers both compressors for zram and zswap. To switch an existing
 profile, rerun the install command with the desired compressor (and its current
-swapfile size for zswap), then reboot. LZ4 favors speed; Zstandard favors
+swapfile size for either profile), then reboot. LZ4 favors speed; Zstandard favors
 compression ratio.
+Existing swapfiles are reused, never resized in place. To change their size,
+remove the profile, reboot, finish removal, then install the new size. Active
+swap is never switched off or deleted by the toolkit; unrelated swapfiles are
+left alone. Allow the requested disk size plus 1 GiB of free persistent storage.
+Swappiness has no toolkit default override. A chosen value survives profile
+changes; uninstall removes the override and OS defaults return after reboot.
+
+Plasma Control, Trainer's **MEMORY** page and Decky's **RAM** tab provide the
+same native profile/compressor/size, swappiness, verification and removal
+controls. Reinstall the frontend/shared helper after updating source; rebuilding
+Trainer is required for its new native UI. Older backends disable unsupported
+controls rather than falling back to untrusted root commands.
 Zram is the recommended default. Zswap is an advanced disk-backed option and
 can still cause storage latency when sustained memory pressure forces writeback.
 

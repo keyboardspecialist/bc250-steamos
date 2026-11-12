@@ -20,9 +20,9 @@ ColumnLayout {
     C.SectionHeader { text: "FSR4 / experimental HelixSR / OptiScaler" }
     Text { text: "Do not use injected DLLs in online or anti-cheat games; bans are possible. Close games before changes. Exact rollback copies are preserved; modified files block writes."; color: "#ffb06a"; font.pixelSize: 10; wrapMode: Text.Wrap; Layout.fillWidth: true }
     C.StatusRow { label: "FSR4 / OptiScaler release"; value: (root.inventory.currentRelease || "Unavailable") + " / " + (root.inventory.currentOptiscalerRelease || "Unavailable") }
-    C.StatusRow { label: "HelixSR payload"; value: root.inventory.helixsrPayloadState || "Unavailable" }
+    C.StatusRow { label: "HelixSR payload / release"; value: (root.inventory.helixsrPayloadState || "Unavailable") + " / " + (root.inventory.currentHelixsrRelease || "Unavailable") }
     C.NeonButton {
-        text: "PREPARE HELIXSR PAYLOAD"; enabled: !root.backend.busy && root.inventory.helixsrAvailable === true && root.inventory.helixsrPayloadState !== "ready"
+        text: "PREPARE HELIXSR " + (root.inventory.currentHelixsrRelease || "PAYLOAD"); enabled: !root.backend.busy && root.inventory.helixsrAvailable === true && root.inventory.helixsrPayloadState !== "ready"
         onClicked: confirm.ask("Prepare experimental HelixSR?", "Download official HelixSR and NVIDIA DLSS inputs, then generate the payload locally. This may take time. Do not use in anti-cheat or online games.", true, function() { root.backend.prepareHelixsr() })
     }
     TextField { objectName: "gameSearch"; placeholderText: "Search Steam game or app ID (first 100 matches)"; text: root.search; onTextEdited: root.search = text; Layout.fillWidth: true }

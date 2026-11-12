@@ -80,6 +80,10 @@ class FrontendContractTests(unittest.TestCase):
             "ResetGpuRamp": "reset_gpu_ramp",
             "GetCliCatalog": "get_cli_catalog",
             "OpenCliSection": "open_cli_section",
+            "ConfigureSwap": "configure_swap",
+            "SetSwappiness": "set_swappiness",
+            "RemoveSwapProfile": "remove_swap_profile",
+            "VerifySwap": "verify_swap",
         }
         backend_methods = {node.name for node in ast.walk(self.backend) if isinstance(node, ast.AsyncFunctionDef)}
         decky = (ROOT / "decky-plugin/src/api.ts").read_text()
@@ -109,6 +113,15 @@ class FrontendContractTests(unittest.TestCase):
         plasma = (ROOT / "desktop-control/plasmoid/contents/ui/tabs/RamTab.qml").read_text()
         self.assertIn('label: "LAST CMOS REQUEST"', trainer)
         self.assertIn("last requested, not read back", plasma)
+
+    def test_all_health_overviews_include_swap_sizes_and_swappiness(self):
+        for path in ("trainer/qml/pages/StatusPage.qml",
+                     "desktop-control/plasmoid/contents/ui/tabs/OverviewTab.qml",
+                     "decky-plugin/src/tabs/OverviewTab.tsx"):
+            source = (ROOT / path).read_text()
+            for label in ("Active swap capacity", "Managed disk swap", "Swappiness (active / saved)"):
+                with self.subTest(path=path, label=label):
+                    self.assertIn(label, source)
 
     def test_fixed_cli_catalog_matches_both_native_allowlists_and_real_routes(self):
         parity = ast.parse((ROOT / "backend/bc250_control/parity.py").read_text())

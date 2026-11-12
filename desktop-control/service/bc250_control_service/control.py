@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable, Dict
 
-from bc250_control.parity import CLI_SECTION_IDS, voltage_arguments
+from bc250_control.parity import CLI_SECTION_IDS, voltage_arguments, swap_arguments
 
 from .errors import InvalidArguments
 from .operations import OperationManager
@@ -104,6 +104,28 @@ class ControlService:
     async def get_mesh_status(self, sender: str) -> str:
         caller = await self._caller(sender)
         return _compact_json(await self._backend(caller).get_mesh_status())
+
+    async def configure_swap(self, sender: str, mode: str, compressor: str, size_gib: int) -> str:
+        try:
+            swap_arguments(mode, compressor, size_gib)
+        except ValueError as error:
+            raise InvalidArguments(str(error)) from error
+        return await self._submit(sender, "ram", "ConfigureSwap",
+            lambda backend: backend.configure_swap(mode, compressor, size_gib), cancellable=False)
+
+    async def set_swappiness(self, sender: str, value: int) -> str:
+        if type(value) is not int or not 0 <= value <= 200:
+            raise InvalidArguments("Swappiness must be an integer from 0 to 200.")
+        return await self._submit(sender, "ram", "SetSwappiness",
+            lambda backend: backend.set_swappiness(value), cancellable=False)
+
+    async def remove_swap_profile(self, sender: str) -> str:
+        return await self._submit(sender, "ram", "RemoveSwapProfile",
+            lambda backend: backend.remove_swap_profile(), cancellable=False)
+
+    async def verify_swap(self, sender: str) -> str:
+        return await self._submit(sender, "ram", "VerifySwap",
+            lambda backend: backend.verify_swap(), cancellable=False)
 
     async def get_fsr4_inventory(self, sender: str) -> str:
         caller = await self._caller(sender)

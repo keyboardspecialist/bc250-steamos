@@ -145,6 +145,7 @@ ColumnLayout {
     Components.Section {
         title: "Global DirectMesh / Retired R2 Cleanup"
         Components.StatusRow { label: "DirectMesh"; value: root.mesh.directMeshVersion || "Not installed / update required"; health: root.mesh.directMeshVersion ? 1 : 0 }
+        Components.StatusRow { label: "Install target (Mesa / DirectMesh)"; value: (root.mesh.installMesaVersion || "Refresh toolkit") + " / " + (root.mesh.installDirectMeshVersion || "Unknown") }
         Components.StatusRow {
             label: "Retired R2 files"
             value: root.mesh.nativeMeshState === "ready" ? "Cleanup required" : (root.mesh.nativeMeshState || "Unavailable")

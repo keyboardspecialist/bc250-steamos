@@ -255,6 +255,8 @@ export interface MeshGame {
 }
 
 export interface MeshStatus {
+  installMesaVersion?: string | null;
+  installDirectMeshVersion?: string | null;
   scriptAvailable: boolean;
   runtimeState: "ready" | "not-installed" | "invalid";
   mesaVersion: string | null;
@@ -385,6 +387,20 @@ export interface Fsr4Inventory {
 }
 
 export interface Snapshot {
+  swap?: {
+    available: boolean;
+    error?: string | null;
+    configuredProfile?: string;
+    runtime?: string;
+    diskSizeGiB?: number;
+    activeSizeMiB?: number | null;
+    compressor?: string | null;
+    pending?: string;
+    swappiness?: number | null;
+    configuredSwappiness?: number | null;
+    healthy?: boolean;
+    details?: string;
+  };
   toolkit: {
     available: boolean;
     privileged: boolean;

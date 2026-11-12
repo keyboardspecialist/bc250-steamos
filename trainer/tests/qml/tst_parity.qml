@@ -27,6 +27,11 @@ TestCase {
         property var fsr4Inventory: ({available:true,helixsrAvailable:true,helixsrPayloadState:"ready",optiscalerAvailable:true})
         property string called: ""
         property var calledArguments: []
+        property var capabilities: ({})
+        function configureSwap(mode, compressor, size) { called = "swap"; calledArguments = [mode, compressor, size] }
+        function setSwappiness(value) { called = "swappiness"; calledArguments = [value] }
+        function removeSwapProfile() { called = "swapRemove" }
+        function verifySwap() { called = "swapVerify" }
         function setFsr4Dll(id, enabled) { called = "fsr"; calledArguments = [id, enabled] }
         function installHelixsr(id) { called = "helix"; calledArguments = [id] }
         function uninstallHelixsr(id) { called = "helixRestore"; calledArguments = [id] }
@@ -53,6 +58,7 @@ TestCase {
     Component { id: statusComponent; Pages.StatusPage { width: 650 } }
     Component { id: cecComponent; Pages.CecPage { width: 650 } }
     Component { id: cliComponent; Pages.CliPage { width: 650 } }
+    Component { id: swapComponent; C.SwapControls { width: 650 } }
 
     function init() {
         backend.busy = false
@@ -142,6 +148,42 @@ TestCase {
         compare(item.clockValue("cpuClock", 3650), "Unavailable")
         backend.telemetry = {cpuClock:0, sensors:[]}
         compare(item.clockValue("cpuClock", 3650), "0 MHz")
+    }
+
+    function test_swapControlsDefaultsValidationAndConfirmations() {
+        var original = backend.snapshot
+        backend.snapshot = {toolkit:{privileged:true}, swap:{available:true,configuredProfile:"zram",runtime:"zram+disk",diskSizeGiB:16,pending:"none",swappiness:0,configuredSwappiness:0}}
+        backend.capabilities = {ConfigureSwap:true, SetSwappiness:true, RemoveSwapProfile:true, VerifySwap:true}
+        var item = createTemporaryObject(swapComponent, testCase, {backend:backend})
+        verify(item !== null)
+        compare(item.sizeGiB, 16)
+        compare(item.swappiness, 0)
+        var apply = findChild(item, "swapConfigure")
+        verify(apply.enabled)
+        item.sizeGiB = 2
+        verify(!apply.enabled)
+        item.sizeGiB = 0
+        verify(apply.enabled)
+        item.mode = "zswap"
+        verify(!apply.enabled)
+        item.sizeGiB = 16
+        item.compressor = "lz4"
+        apply.clicked()
+        compare(backend.called, "")
+        var confirmation = findChild(item, "swapConfirm")
+        verify(confirmation.highRisk)
+        confirmation.acceptedAction()
+        confirmation.close()
+        compare(backend.calledArguments, ["zswap", "lz4", 16])
+        findChild(item, "swapSwappiness").clicked()
+        confirmation.acceptedAction()
+        confirmation.close()
+        compare(backend.called, "swappiness")
+        compare(backend.calledArguments, [0])
+        backend.capabilities = ({})
+        verify(!apply.enabled)
+        verify(!findChild(item, "swapRemove").enabled)
+        backend.snapshot = original
     }
 
     function test_cecNameBytesAndStandbyConfirmation() {

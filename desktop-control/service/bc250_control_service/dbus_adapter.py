@@ -31,6 +31,10 @@ INTROSPECTION_XML = """<node>
     <method name="ResetGpuRamp"><arg name="operation_id" type="s" direction="out"/></method>
     <method name="GetCpuUnlockStatus"><arg name="json" type="s" direction="out"/></method>
     <method name="GetMeshStatus"><arg name="json" type="s" direction="out"/></method>
+    <method name="ConfigureSwap"><arg name="mode" type="s" direction="in"/><arg name="compressor" type="s" direction="in"/><arg name="size_gib" type="u" direction="in"/><arg name="operation_id" type="s" direction="out"/></method>
+    <method name="SetSwappiness"><arg name="value" type="u" direction="in"/><arg name="operation_id" type="s" direction="out"/></method>
+    <method name="RemoveSwapProfile"><arg name="operation_id" type="s" direction="out"/></method>
+    <method name="VerifySwap"><arg name="operation_id" type="s" direction="out"/></method>
     <method name="GetFsr4Inventory"><arg name="json" type="s" direction="out"/></method>
     <method name="InstallNativeMesh"><arg name="operation_id" type="s" direction="out"/></method>
     <method name="InstallDirectMesh"><arg name="operation_id" type="s" direction="out"/></method>
@@ -178,6 +182,10 @@ class DbusAdapter:
         "ResetGpuRamp": ("", "s", "reset_gpu_ramp"),
         "GetCpuUnlockStatus": ("", "s", "get_cpu_unlock_status"),
         "GetMeshStatus": ("", "s", "get_mesh_status"),
+        "ConfigureSwap": ("ssu", "s", "configure_swap"),
+        "SetSwappiness": ("u", "s", "set_swappiness"),
+        "RemoveSwapProfile": ("", "s", "remove_swap_profile"),
+        "VerifySwap": ("", "s", "verify_swap"),
         "GetFsr4Inventory": ("", "s", "get_fsr4_inventory"),
         "InstallNativeMesh": ("", "s", "install_native_mesh"),
         "InstallDirectMesh": ("", "s", "install_directmesh"),

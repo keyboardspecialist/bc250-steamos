@@ -83,6 +83,19 @@ class FakeBackend:
     async def reset_gpu_ramp(self):
         await self._mutation("reset_gpu_ramp")
 
+    async def configure_swap(self, *args):
+        await self._mutation("configure_swap", *args)
+
+    async def set_swappiness(self, *args):
+        await self._mutation("set_swappiness", *args)
+
+    async def remove_swap_profile(self):
+        await self._mutation("remove_swap_profile")
+        return {"message": "Reboot, then finish swapfile removal."}
+
+    async def verify_swap(self):
+        await self._mutation("verify_swap")
+
     async def _mutation(self, name, *args):
         self.calls.append((name, args))
         FakeBackend.active += 1
@@ -261,6 +274,26 @@ class ControlServiceTests(unittest.IsolatedAsyncioTestCase):
         operation_id = await self.service.cpu_oc_action(":1.1", "update", 0, 0, 0)
         self.assertFalse(await self.service.cancel_operation(":1.1", operation_id))
         await self.wait_for_status(":1.1", operation_id, "succeeded")
+
+    async def test_swap_methods_are_authorized_and_not_cancellable(self):
+        for method, args in (("configure_swap", ("zram", "zstd", 16)),
+                             ("set_swappiness", (0,)), ("verify_swap", ()), ("remove_swap_profile", ())):
+            operation_id = await getattr(self.service, method)(":1.1", *args)
+            self.assertFalse(await self.service.cancel_operation(":1.1", operation_id))
+            await self.wait_for_status(":1.1", operation_id, "succeeded")
+            self.assertEqual(self.backends[0].calls[-1], (method, args))
+            self.assertEqual(self.authorizer.calls[-1][-1], "ram")
+
+    async def test_invalid_swap_inputs_are_rejected_before_auth(self):
+        for args in (("zram", "lz4", True), ("zswap", "zstd", 0), ("zram; id", "lz4", 16),
+                     ("zram", "lz4", 65), ("zram", "zstd", "16")):
+            with self.subTest(args=args), self.assertRaises(InvalidArguments):
+                await self.service.configure_swap(":1.1", *args)
+        for value in (True, -1, 201, "60", 60.5):
+            with self.subTest(value=value), self.assertRaises(InvalidArguments):
+                await self.service.set_swappiness(":1.1", value)
+        self.assertEqual(self.authorizer.calls, [])
+        self.assertEqual(self.backends, [])
 
     async def test_voltage_validation_rejects_injection_bools_and_bad_bounds_before_auth(self):
         for args in (("show", 0, 0, 0), ("set; id", 1000, 850, 0),

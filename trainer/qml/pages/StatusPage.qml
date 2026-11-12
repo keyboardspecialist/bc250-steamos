@@ -16,6 +16,7 @@ ColumnLayout {
     readonly property bool automaticRebootPending: unlockGuard.state === "automatic" && unlockGuard.currentBoot === true
     readonly property var telemetry: backend.telemetry || ({})
     readonly property var audio: snap.audio || ({})
+    readonly property var swap: snap.swap || ({})
     readonly property var metrics: unlock.metrics || ({})
     readonly property var sensors: Array.isArray(telemetry.sensors) ? telemetry.sensors
         : Array.isArray(power.sensors) ? power.sensors : []
@@ -43,6 +44,10 @@ ColumnLayout {
     C.StatusRow { label: "GPU governor"; value: root.gpu.dbusReady ? "D-Bus ready" : "Unavailable"; health: root.gpu.dbusReady ? 1 : -1 }
     C.StatusRow { label: "CPU governor"; value: root.power.cpuGovernor || "Unavailable"; health: root.power.cpuGovernor === "schedutil" ? 1 : 0 }
     C.StatusRow { label: "Frequency replay"; value: (root.power.frequencyRestore || {}).enabled || "Unknown" }
+    C.SectionHeader { text: "Swap health" }
+    C.StatusRow { label: "Active swap capacity"; value: root.swap.available && root.swap.activeSizeMiB !== undefined && root.swap.activeSizeMiB !== null ? root.swap.activeSizeMiB + " MiB (all devices)" : "Unavailable" }
+    C.StatusRow { label: "Managed disk swap"; value: root.swap.available ? (root.swap.diskSizeGiB ?? "Unknown") + " GiB configured" : "Unavailable" }
+    C.StatusRow { label: "Swappiness (active / saved)"; value: root.swap.available ? (root.swap.swappiness ?? "Unknown") + " / " + (root.swap.configuredSwappiness ?? "OS default") : "Unavailable" }
 
     C.SectionHeader { text: "Eight-core metrics compatibility" }
     C.StatusRow { objectName: "metricsCompatibility"; label: "Compatibility helper"; value: root.metrics.state || "Unavailable from installed service" }

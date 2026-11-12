@@ -44,6 +44,18 @@ class Plugin:
     async def get_mesh_status(self):
         return await self.backend.get_mesh_status()
 
+    async def configure_swap(self, mode: str, compressor: str, size_gib: int):
+        return await self.backend.configure_swap(mode, compressor, size_gib)
+
+    async def set_swappiness(self, value: int):
+        return await self.backend.set_swappiness(value)
+
+    async def remove_swap_profile(self):
+        return await self.backend.remove_swap_profile()
+
+    async def verify_swap(self):
+        return await self.backend.verify_swap()
+
     async def install_native_mesh(self):
         return await self.backend.install_native_mesh()
 

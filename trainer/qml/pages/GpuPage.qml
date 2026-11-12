@@ -47,6 +47,7 @@ ColumnLayout {
     C.StatusRow { label: "RADV runtime"; value: root.mesh.runtimeState || "Unavailable"; health: root.mesh.runtimeState === "ready" ? 1 : -1 }
     C.StatusRow { label: "Global activation"; value: root.mesh.globalEnabled ? "Enabled" : "Disabled"; health: root.mesh.globalEnabled ? 1 : 0 }
     C.StatusRow { label: "DirectMesh"; value: root.mesh.directMeshVersion || "Not installed / update required"; health: root.mesh.directMeshVersion ? 1 : 0 }
+    C.StatusRow { label: "Install target (Mesa / DirectMesh)"; value: (root.mesh.installMesaVersion || "Refresh toolkit") + " / " + (root.mesh.installDirectMeshVersion || "Unknown") }
     C.StatusRow { label: "FSR4 game DLLs"; value: (root.mesh.fsr4DllState || "Unavailable") + " (" + (root.mesh.fsr4DllInstallCount || 0) + ")"; health: root.mesh.fsr4DllState === "ready" ? 1 : root.mesh.fsr4DllState === "invalid" ? -1 : 0 }
     C.StatusRow { label: "Legacy FSR4 V3 profile"; value: root.mesh.fsr4State || "Unavailable"; health: root.mesh.fsr4State === "ready" ? 1 : root.mesh.fsr4State === "invalid" ? -1 : 0 }
     C.StatusRow { label: "Retired R2 files"; value: root.mesh.nativeMeshState === "ready" ? "Cleanup required" : (root.mesh.nativeMeshState || "Unavailable"); health: root.mesh.nativeMeshState === "not-installed" ? 1 : -1 }

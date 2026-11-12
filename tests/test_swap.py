@@ -1,4 +1,6 @@
 import os
+import json
+import shlex
 import shutil
 import subprocess
 import tempfile
@@ -22,6 +24,8 @@ class SwapTests(unittest.TestCase):
                 "BC250_SWAP_HELPER": str(root / "data/swap/bc250-zswap-setup"),
                 "BC250_ZRAM_CONFIG": str(root / "etc/90-bc250-swap.conf"),
                 "BC250_ZSWAP_TMPFILES": str(root / "tmpfiles/00-bc250-zswap.conf"),
+                "BC250_SWAPPINESS_CONFIG": str(root / "sysctl/99-bc250-swap.conf"),
+                "BC250_SWAPPINESS_SYS": str(root / "swappiness"),
                 "BC250_ZSWAP_SERVICE": str(root / "systemd/bc250-zswap-setup.service"),
                 "BC250_ZSWAP_UNIT": str(root / "systemd/swapfile.swap"),
                 "BC250_ZSWAP_WANTS": str(root / "systemd/swap.target.wants/swapfile.swap"),
@@ -174,7 +178,7 @@ render_swap_unit > "$root/units/$SWAP_UNIT_NAME"
             env["SYSTEMD_UNIT_PATH"] = str(units)
             # Check that the fixture catches the actual old ordering failure,
             # then let systemd verify the corrected boot transaction.
-            for renderer, cyclic in (("render_cyclic_service", True), ("render_service", False)):
+            for renderer, cyclic in (("render_cyclic_service", True), ("render_service", False), ("render_zram_service", False)):
                 self.run_sourced(
                     body + f'{renderer} > "$root/units/bc250-zswap-setup.service"', root
                 )
@@ -378,7 +382,7 @@ cmd_verify
             )
             self.assertEqual(result.returncode, 0, result.stderr)
 
-    def test_active_valve_zram_install_is_noop(self):
+    def test_active_valve_zram_opt_out_records_a_managed_profile_without_disk(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             meminfo = root / "meminfo"
@@ -394,15 +398,19 @@ cmd_verify
             result = self.run_sourced(
                 f'MEMINFO={str(meminfo)!r}; ZRAM_SYS={str(zram_sys)!r}; '
                 'require_root() { :; }; '
-                'begin_install_lifecycle() { echo unexpected-mutation; return 9; }; '
-                'cmd_install_zram',
+                'file_secure() { [[ -f "$1" && ! -L "$1" ]]; }; '
+                'atomic_write() { mkdir -p "$(dirname "$1")"; cat > "$1"; chmod "$2" "$1"; }; '
+                'begin_install_lifecycle() { preflight_ownership; }; '
+                'write_profile_state() { render_state "$@" | atomic_write "$STATE_FILE" 0644; }; '
+                'install_persistence() { :; }; systemctl() { :; }; '
+                'cmd_install_zram zstd 0; '
+                'read_state; [[ "$MODE" == zram && "$SIZE_GIB" == 0 && "$PENDING" == none ]]; '
+                '[[ ! -e "$SWAPFILE" ]]; configured_complete',
                 root,
                 check=False,
             )
             self.assertEqual(result.returncode, 0, result.stderr)
-            self.assertIn("already active", result.stdout)
-            self.assertIn("allocated on demand", result.stdout)
-            self.assertNotIn("unexpected-mutation", result.stdout)
+            self.assertIn("Installed the zram profile", result.stdout)
 
     def test_status_reports_all_swap_devices_and_pressure(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -458,7 +466,7 @@ write_profile_state() { render_state "$@" | atomic_write "$STATE_FILE" 0644; }
 install_persistence() { echo persistence-installed; }
 systemctl() { [[ "$*" == daemon-reload ]]; }
 initial_algorithms=$(< "$ZRAM_SYS/comp_algorithm")
-cmd_install_zram lz4
+cmd_install_zram lz4 0
 [[ $(configured_zram_compressor) == lz4 ]]
 [[ $(< "$ZRAM_SYS/comp_algorithm") == "$initial_algorithms" ]]
 preflight_ownership
@@ -475,13 +483,13 @@ status=$(cmd_status); [[ "$status" != *pending:* ]]
 cmd_installed
 cmd_verify
 # Omitting the compressor restores the default, even from an LZ4 install.
-cmd_install_zram
+cmd_install_zram zstd 0
 [[ $(configured_zram_compressor) == zstd ]]
 [[ $(< "$ZRAM_SYS/comp_algorithm") == '[lz4] zstd' ]]
 read_state; [[ "$PENDING" == reboot ]]
 printf 'lz4 [zstd]\n' > "$ZRAM_SYS/comp_algorithm"
 status=$(cmd_status); [[ "$status" != *pending:* ]]
-cmd_install_zram zstd
+cmd_install_zram zstd 0
 read_state; [[ "$PENDING" == none ]]
 '''
                 result = self.run_sourced(body, root, check=False)
@@ -506,7 +514,7 @@ render_zswap_config > "$ZRAM_CONFIG"; chmod 644 "$ZRAM_CONFIG"
 render_state zswap 4 none > "$STATE_FILE"; chmod 644 "$STATE_FILE"
 truncate -s 4G "$SWAPFILE"; chmod 600 "$SWAPFILE"
 printf 'Filename Type Size Used Priority\n%s file 4194304 0 10\n' "$SWAPFILE" > "$PROC_SWAPS"
-cmd_install_zram lz4
+cmd_install_zram lz4 0
 read_state; [[ "$MODE" == zram && "$PENDING" == zswap-removal ]]
 [[ -f "$SWAPFILE" && $(configured_zram_compressor) == lz4 ]]
 # After boot the disk swap is inactive and LZ4 zram is active.
@@ -514,14 +522,14 @@ printf 'Filename Type Size Used Priority\n/dev/zram0 partition 524288 0 100\n' >
 printf 'MemTotal: 1048576 kB\n' > "$MEMINFO"
 printf '536870912\n' > "$ZRAM_SYS/disksize"
 printf '[lz4] zstd\n' > "$ZRAM_SYS/comp_algorithm"
-cmd_install_zram lz4
+cmd_install_zram lz4 0
 [[ ! -e "$SWAPFILE" && $(configured_zram_compressor) == lz4 ]]
 read_state; [[ "$PENDING" == none ]]
 cmd_status
 '''
             result = self.run_sourced(body, Path(directory), check=False)
             self.assertEqual(result.returncode, 0, result.stderr or result.stdout)
-            self.assertIn("rerun 'install zram lz4'", result.stdout)
+            self.assertIn("rerun 'install zram lz4 0'", result.stdout)
             self.assertIn("compressor: lz4 configured", result.stdout)
 
     def test_zswap_runtime_match_requires_safe_parameters(self):
@@ -560,6 +568,158 @@ cmd_status
             )
             result = self.run_sourced("zswap_runtime_matches", root, check=False)
             self.assertNotEqual(result.returncode, 0)
+
+    def test_zram_defaults_to_16_gib_disk_fallback_and_reuses_it_for_zswap(self):
+        with tempfile.TemporaryDirectory() as directory:
+            body = r'''
+require_root() { :; }
+file_secure() { [[ -f "$1" && ! -L "$1" ]]; }
+atomic_write() { mkdir -p "$(dirname "$1")"; cat > "$1"; chmod "$2" "$1"; }
+begin_install_lifecycle() { preflight_ownership; }
+write_profile_state() { render_state "$@" | atomic_write "$STATE_FILE" 0644; }
+install_persistence() { echo persistence-installed; }
+install() { [[ "$1" == -d ]]; mkdir -p "${@: -1}"; }
+systemctl() { [[ "$*" == daemon-reload ]]; }
+validate_swapfile() { validate_swapfile_metadata "$1"; }
+# Use a sparse fixture, never allocate a real 16 GiB swapfile or activate swap.
+create_swapfile() {
+    if [[ ! -e "$SWAPFILE" ]]; then
+        mkdir -p "$STATE_DIR"
+        truncate -s "${1}G" "$SWAPFILE"; chmod 600 "$SWAPFILE"
+    fi
+    validate_swapfile_metadata "$(( $1 * 1024 * 1024 * 1024 ))"
+}
+mkdir -p "$ZRAM_SYS" "$ZSWAP_PARAMS"
+printf 'MemTotal: 1048576 kB\n' > "$MEMINFO"
+printf '536870912\n' > "$ZRAM_SYS/disksize"
+printf 'lz4 [zstd]\n' > "$ZRAM_SYS/comp_algorithm"
+printf 'Y\n' > "$ZSWAP_PARAMS/enabled"
+printf 'lz4\n' > "$ZSWAP_PARAMS/compressor"
+printf '10\n' > "$ZSWAP_PARAMS/max_pool_percent"
+printf 'Y\n' > "$ZSWAP_PARAMS/shrinker_enabled"
+cmd_install_zram
+read_state; [[ "$MODE" == zram && "$SIZE_GIB" == 16 && "$PENDING" == reboot ]]
+configured_complete
+preflight_ownership
+swap_identity=$(stat -Lc '%d:%i' "$SWAPFILE")
+printf 'Filename Type Size Used Priority\n/dev/zram0 partition 524288 0 100\n%s file 16777216 0 10\n' "$SWAPFILE" > "$PROC_SWAPS"
+rc=0; status=$(cmd_status) || rc=$?
+[[ "$status" == *'pending:    reboot'* && "$rc" == 0 ]]
+printf 'N\n' > "$ZSWAP_PARAMS/enabled"
+status=$(cmd_status); [[ "$status" == *'runtime:    zram+disk'* && "$status" != *pending:* ]]
+cmd_verify
+# A wrong disk priority is not accepted as a matching runtime.
+sed -i 's/16777216 0 10/16777216 0 100/' "$PROC_SWAPS"
+status=$(cmd_status); [[ "$status" == *'pending:    reboot'* ]]
+sed -i 's/16777216 0 100/16777216 0 10/' "$PROC_SWAPS"
+cmd_install_zram lz4
+read_state; [[ "$PENDING" == reboot ]]
+printf '[lz4] zstd\n' > "$ZRAM_SYS/comp_algorithm"
+cmd_install_zram lz4
+read_state; [[ "$PENDING" == none ]]
+cmd_install_zswap
+read_state; [[ "$MODE" == zswap && "$SIZE_GIB" == 16 && "$PENDING" == reboot ]]
+preflight_ownership
+[[ $(stat -Lc '%d:%i' "$SWAPFILE") == "$swap_identity" ]]
+# Returning to zram reuses the same disk file and never writes live zswap controls.
+cmd_install_zram
+[[ $(stat -Lc '%d:%i' "$SWAPFILE") == "$swap_identity" ]]
+[[ $(< "$ZSWAP_PARAMS/enabled") == N ]]
+preflight_ownership
+'''
+            result = self.run_sourced(body, Path(directory), check=False)
+            self.assertEqual(result.returncode, 0, result.stderr or result.stdout)
+            self.assertIn("16 GiB disk fallback at priority 10", result.stdout)
+            self.assertIn("swap signature valid", result.stdout)
+
+    def test_zram_disk_uninstall_is_two_stage_and_removes_swappiness(self):
+        with tempfile.TemporaryDirectory() as directory:
+            body = r'''
+require_root() { :; }
+file_secure() { [[ -f "$1" && ! -L "$1" ]]; }
+atomic_write() { mkdir -p "$(dirname "$1")"; cat > "$1"; chmod "$2" "$1"; }
+begin_cleanup_lifecycle() { preflight_ownership; }
+write_profile_state() { render_state "$@" | atomic_write "$STATE_FILE" 0644; }
+remove_persistence() { echo persistence-removed; }
+systemctl() { [[ "$*" == daemon-reload ]]; }
+mkdir -p "$STATE_DIR" "$(dirname "$SWAP_WANTS")"
+render_zram_config lz4 | atomic_write "$ZRAM_CONFIG" 0644
+render_zram_tmpfiles | atomic_write "$ZSWAP_TMPFILES" 0644
+render_zram_service | atomic_write "$SERVICE" 0644
+render_zram_swap_unit | atomic_write "$SWAP_UNIT" 0644
+render_swappiness 150 | atomic_write "$SWAPPINESS_CONFIG" 0644
+render_state zram 16 none | atomic_write "$STATE_FILE" 0644
+truncate -s 16G "$SWAPFILE"; chmod 600 "$SWAPFILE"
+ln -s "../$SWAP_UNIT_NAME" "$SWAP_WANTS"
+printf 'Filename Type Size Used Priority\n/dev/zram0 partition 524288 0 100\n%s file 16777216 0 10\n' "$SWAPFILE" > "$PROC_SWAPS"
+rc=0; cmd_uninstall || rc=$?; [[ "$rc" == 75 ]]
+read_state; [[ "$MODE" == zram && "$PENDING" == uninstall ]]
+[[ -f "$SWAPFILE" && ! -e "$SWAP_WANTS" && ! -e "$SWAPPINESS_CONFIG" ]]
+printf 'Filename Type Size Used Priority\n' > "$PROC_SWAPS"
+cmd_uninstall
+[[ ! -e "$SWAPFILE" && ! -e "$STATE_FILE" && ! -e "$SWAP_UNIT" && ! -e "$SERVICE" ]]
+'''
+            result = self.run_sourced(body, Path(directory), check=False)
+            self.assertEqual(result.returncode, 0, result.stderr or result.stdout)
+            self.assertIn("persistence-removed", result.stdout)
+
+    def test_swappiness_can_be_set_for_either_profile_without_changing_swap(self):
+        for mode in ("zram", "zswap"):
+            with self.subTest(mode=mode), tempfile.TemporaryDirectory() as directory:
+                body = r'''
+file_secure() { [[ -f "$1" && ! -L "$1" ]]; }
+atomic_write() { mkdir -p "$(dirname "$1")"; cat > "$1"; chmod "$2" "$1"; }
+begin_locked_lifecycle() { :; }
+install_storage() { echo unexpected-storage; return 9; }
+install_persistence() { echo persistence-installed; }
+mkdir -p "$STATE_DIR"
+render_state MODE 16 reboot | atomic_write "$STATE_FILE" 0644
+cp "$STATE_FILE" "$root/original-state"
+printf '60\n' > "$SWAPPINESS_SYS"
+for value in 0 60 150 200; do
+    cmd_swappiness "$value"
+    [[ $(< "$SWAPPINESS_SYS") == "$value" && $(configured_swappiness) == "$value" ]]
+    preflight_ownership
+done
+cmp "$STATE_FILE" "$root/original-state"
+'''.replace("render_state MODE", f"render_state {mode}")
+                result = self.run_sourced(body, Path(directory), check=False)
+                self.assertEqual(result.returncode, 0, result.stderr or result.stdout)
+                self.assertIn(f"for the {mode} profile", result.stdout)
+                self.assertNotIn("unexpected-storage", result.stdout)
+
+    def test_invalid_swappiness_fails_before_mutation(self):
+        for value in ("-1", "201", "08", "1.5", "nan", "$(touch bad)", ""):
+            with self.subTest(value=value), tempfile.TemporaryDirectory() as directory:
+                result = self.run_sourced(
+                    'begin_locked_lifecycle() { echo unexpected-mutation; }; '
+                    + "cmd_swappiness " + shlex.quote(value),
+                    Path(directory), check=False,
+                )
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn("integer from 0 to 200", result.stderr)
+                self.assertNotIn("unexpected-mutation", result.stdout)
+
+    def test_foreign_or_symlinked_swappiness_is_not_overwritten(self):
+        for symlink in (False, True):
+            with self.subTest(symlink=symlink), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                config = root / "sysctl/99-bc250-swap.conf"
+                config.parent.mkdir()
+                if symlink:
+                    target = root / "foreign"
+                    target.write_text("vm.swappiness = 80\n")
+                    config.symlink_to(target)
+                else:
+                    config.write_text("vm.swappiness = 80\n")
+                result = self.run_sourced(
+                    'file_secure() { [[ -f "$1" && ! -L "$1" ]]; }; '
+                    'begin_locked_lifecycle() { :; }; cmd_swappiness 150',
+                    root, check=False,
+                )
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn("unrecognized swappiness configuration", result.stderr)
+                self.assertEqual(config.read_text(), "vm.swappiness = 80\n")
 
     def test_status_rejects_stale_active_zswap_parameters(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -707,6 +867,41 @@ read_state; [[ "$PENDING" == none ]]
         self.assertIn('return 2', source[source.index("cmd_verify()") :])
         self.assertIn("component:swap", (ROOT / "bc250-storage.sh").read_text())
         self.assertNotIn("redbeard1083", source)
+
+    def test_json_status_is_read_only_and_retains_zero_swappiness(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            result = self.run_sourced(r'''
+file_secure() { [[ -f "$1" && ! -L "$1" ]]; }
+mkdir -p "$STATE_DIR" "$(dirname "$ZRAM_CONFIG")" "$(dirname "$SWAPPINESS_CONFIG")"
+render_state zram 0 reboot > "$STATE_FILE"; chmod 644 "$STATE_FILE"
+render_zram_config > "$ZRAM_CONFIG"; chmod 644 "$ZRAM_CONFIG"
+render_swappiness 0 > "$SWAPPINESS_CONFIG"; chmod 644 "$SWAPPINESS_CONFIG"
+printf '0\n' > "$SWAPPINESS_SYS"
+begin_install_lifecycle() { echo unexpected-mutation; exit 9; }
+cmd_status_json
+''', root)
+            payload = json.loads(result.stdout)
+            self.assertEqual(payload["schemaVersion"], 1)
+            self.assertEqual(payload["configuredProfile"], "zram")
+            self.assertEqual(payload["pending"], "reboot")
+            self.assertEqual(payload["swappiness"], 0)
+            self.assertEqual(payload["activeSizeMiB"], 0)
+            self.assertEqual(payload["configuredSwappiness"], 0)
+            self.assertFalse(payload["healthy"])
+
+    def test_orphaned_swappiness_is_partial_not_an_unmanaged_default(self):
+        with tempfile.TemporaryDirectory() as directory:
+            result = self.run_sourced(r'''
+file_secure() { [[ -f "$1" && ! -L "$1" ]]; }
+mkdir -p "$(dirname "$SWAPPINESS_CONFIG")"
+render_swappiness 150 > "$SWAPPINESS_CONFIG"; chmod 644 "$SWAPPINESS_CONFIG"
+cmd_status_json
+''', Path(directory))
+            payload = json.loads(result.stdout)
+            self.assertEqual(payload["configuredProfile"], "partial")
+            self.assertEqual(payload["configuredSwappiness"], 150)
+            self.assertFalse(payload["healthy"])
 
     @unittest.skipUnless(
         shutil.which("mkswap") and shutil.which("blkid"),

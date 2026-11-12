@@ -16,7 +16,7 @@ CLI_SECTIONS = (
     ("interfaces", "Control interfaces", "Install or update Decky, Plasma, Trainer and CoolerControl", "maintenance"),
     ("power", "Power and GPU", "Power, GPU and CPU tuning", "advanced"),
     ("ram", "Memory split", "UMA and TTM memory configuration", "advanced"),
-    ("swap", "Swap", "Swap configuration", "advanced"),
+    ("swap", "Swap", "Zram or zswap, 16 GiB disk fallback, swappiness (0-200), verification and safe removal", "advanced"),
     ("compute", "Compute units", "GPU compute-unit configuration", "advanced"),
     ("cpu-unlock", "Eight-core unlock", "CPU unlock and metrics maintenance", "advanced"),
     ("cec", "HDMI CEC", "TV and receiver controls", "maintenance"),
@@ -32,8 +32,18 @@ CLI_SECTIONS = (
 CLI_SECTION_IDS = frozenset(section[0] for section in CLI_SECTIONS)
 CONTROL_CAPABILITIES = (
     "gpu-voltage-curve", "gpu-ramp-reset", "cpu-oc-update",
-    "cpu-unlock-metrics", "cpu-unlock-uninstall", "cli-handoff", "hwmon-sensors",
+    "cpu-unlock-metrics", "cpu-unlock-uninstall", "cli-handoff", "hwmon-sensors", "swap-control",
 )
+
+
+def swap_arguments(mode, compressor, size_gib):
+    if type(mode) is not str or mode not in {"zram", "zswap"}:
+        raise ValueError("Swap profile must be zram or zswap.")
+    if type(compressor) is not str or compressor not in {"lz4", "zstd"}:
+        raise ValueError("Swap compressor must be lz4 or zstd.")
+    if type(size_gib) is not int or not (4 <= size_gib <= 64 or (mode == "zram" and size_gib == 0)):
+        raise ValueError("Disk swap must be 4-64 GiB (or 0 for zram without disk fallback).")
+    return ["install", mode, compressor, str(size_gib)] if mode == "zram" else ["install", mode, str(size_gib), compressor]
 
 
 def voltage_arguments(action, frequency, voltage, new_frequency):

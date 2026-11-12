@@ -1853,7 +1853,9 @@ class BackendMutationTests(unittest.IsolatedAsyncioTestCase):
                     "scriptAvailable": True,
                     "runtimeState": "ready",
                     "mesaVersion": "mesa-26.2.5",
-                    "directMeshVersion": "directmesh-v1.3.1",
+                    "directMeshVersion": "directmesh-v1.4",
+                    "installMesaVersion": "mesa-26.2.5",
+                    "installDirectMeshVersion": "directmesh-v1.4",
                     "icdPath": "/home/deck/radeon_driconf_icd.x86_64.json",
                     "configValid": True,
                     "kernelReady": True,
@@ -1883,7 +1885,9 @@ class BackendMutationTests(unittest.IsolatedAsyncioTestCase):
         status = await backend.get_mesh_status()
 
         self.assertEqual(status["runtimeState"], "ready")
-        self.assertEqual(status["directMeshVersion"], "directmesh-v1.3.1")
+        self.assertEqual(status["directMeshVersion"], "directmesh-v1.4")
+        self.assertEqual(status["installMesaVersion"], "mesa-26.2.5")
+        self.assertEqual(status["installDirectMeshVersion"], "directmesh-v1.4")
         self.assertTrue(status["kernelReady"])
         self.assertTrue(status["schedulerConfigured"])
         self.assertTrue(status["schedulerActive"])

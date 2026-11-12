@@ -61,7 +61,8 @@ const backend = {
 vm.createContext(backend);
 for (const name of ["latestTelemetry", "latestSensors", "_command", "_startMutation", "_readFailed",
     "gpuVoltageAction", "resetGpuRamp", "cpuUnlockAction", "cpuOcAction", "openCliSection",
-    "setTemperatureTarget", "setCustomLoadTarget", "setGpuFrequency", "_completed"]) {
+    "setTemperatureTarget", "setCustomLoadTarget", "setGpuFrequency", "_completed",
+    "configureSwap", "setSwappiness", "removeSwapProfile", "verifySwap"]) {
     const match = backendSource.match(new RegExp("^    function " + name + "\\([^\\n]*\\) \\{[\\s\\S]*?^    \\}", "m"));
     assert.ok(match, name + " production function exists");
     vm.runInContext(match[0], backend);
@@ -95,6 +96,13 @@ assert.throws(() => backend._command("GetSnapshot", "ssss", []), /allowlist/);
 assert.throws(() => backend._startMutation("Shell", "s", [], "bad"), /allowlist/);
 assert.equal(backend.busy, false); // validation must happen before busy latch
 for (const [run, pattern, cancellable] of [
+    [() => backend.configureSwap("zram", "zstd", 16), /ConfigureSwap ssu zram zstd 16$/, false],
+    [() => backend.configureSwap("zswap", "lz4", 16), /ConfigureSwap ssu zswap lz4 16$/, false],
+    [() => backend.configureSwap("zram", "lz4", 0), /ConfigureSwap ssu zram lz4 0$/, false],
+    [() => backend.setSwappiness(0), /SetSwappiness u 0$/, false],
+    [() => backend.setSwappiness(200), /SetSwappiness u 200$/, false],
+    [() => backend.verifySwap(), /VerifySwap$/, false],
+    [() => backend.removeSwapProfile(), /RemoveSwapProfile$/, false],
     [() => backend.setTemperatureTarget(85), /SetTemperatureTarget y 85$/, true],
     [() => backend.gpuVoltageAction("offset", 0, 25, 0), /GpuVoltageAction siii offset 0 25 0$/, false],
     [() => backend.resetGpuRamp(), /ResetGpuRamp$/, false],

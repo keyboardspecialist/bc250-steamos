@@ -95,6 +95,7 @@ def stage(output: Path, epoch: int, *, frontend: Optional[Path] = None) -> None:
             "bc250-optiscaler.sh",
             "bc250-power.sh",
             "bc250-ram-split.sh",
+            "bc250-swap.sh",
             "bc250-storage.sh",
             "bc250-update-persistence.sh",
             "topology.sh",

@@ -160,6 +160,7 @@ EOF
                 cat << EOF
 /etc/systemd/zram-generator.conf.d/90-bc250-swap.conf
 /etc/tmpfiles.d/00-bc250-zswap.conf
+/etc/sysctl.d/99-bc250-swap.conf
 /etc/systemd/system/bc250-zswap-setup.service
 /etc/systemd/system/var-lib-bc250\\x2dcontrol-swap-swapfile.swap
 /etc/systemd/system/swap.target.wants/var-lib-bc250\\x2dcontrol-swap-swapfile.swap

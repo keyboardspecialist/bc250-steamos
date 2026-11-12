@@ -63,6 +63,7 @@ shared_validate_sources() {
         "$SHARED_REPO_DIR/bc250-optiscaler.sh" \
         "$SHARED_REPO_DIR/bc250-power.sh" \
         "$SHARED_REPO_DIR/bc250-ram-split.sh" \
+        "$SHARED_REPO_DIR/bc250-swap.sh" \
         "$SHARED_REPO_DIR/bc250-storage.sh" \
         "$SHARED_REPO_DIR/bc250-update-persistence.sh" \
         "$SHARED_REPO_DIR/topology.sh" \
@@ -152,6 +153,8 @@ shared_stage_payload() {
     install -o root -g root -m 0755 \
         "$SHARED_REPO_DIR/bc250-ram-split.sh" "$SHARED_STAGE/bc250-ram-split.sh"
     install -o root -g root -m 0755 \
+        "$SHARED_REPO_DIR/bc250-swap.sh" "$SHARED_STAGE/bc250-swap.sh"
+    install -o root -g root -m 0755 \
         "$SHARED_REPO_DIR/bc250-storage.sh" "$SHARED_STAGE/bc250-storage.sh"
     install -o root -g root -m 0755 \
         "$SHARED_REPO_DIR/bc250-update-persistence.sh" \
@@ -195,6 +198,7 @@ shared_stage_payload() {
         && -x "$SHARED_STAGE/bc250-optiscaler.sh" \
         && -x "$SHARED_STAGE/bc250-power.sh" \
         && -x "$SHARED_STAGE/bc250-ram-split.sh" \
+        && -x "$SHARED_STAGE/bc250-swap.sh" \
         && -x "$SHARED_STAGE/bc250-storage.sh" \
         && -x "$SHARED_STAGE/bc250-update-persistence.sh" \
         && -x "$SHARED_STAGE/hdmi-ac3/hdmi-ac3.sh" \

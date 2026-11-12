@@ -555,6 +555,14 @@ class ToolkitTests(unittest.TestCase):
                     "[bc250-wifi] Active Wi-Fi services: iwd}\"\n"
                     'exit "${WIFI_HEALTH_RC:-0}"\n'
                 )
+            elif relative == "bc250-swap.sh":
+                content = (
+                    "#!/usr/bin/env bash\n"
+                    "printf '%s\\n' '  configured: zram' '  runtime: zram+disk' "
+                    "'  capacity: 24576 MiB active (all swap devices)' "
+                    "'  disk size: 16 GiB configured (toolkit-managed)' "
+                    "'  swappiness: 150' '  swappiness configured: 150'\n"
+                )
             elif relative == "bc250-cec.sh":
                 content = (
                     "#!/usr/bin/env bash\n"
@@ -646,6 +654,9 @@ class ToolkitTests(unittest.TestCase):
                 )
                 self.assertEqual(result.returncode, expected)
                 self.assertIn("BC-250 system health", result.stdout)
+                self.assertIn("24576 MiB active", result.stdout)
+                self.assertIn("16 GiB configured", result.stdout)
+                self.assertIn("active 150; saved 150", result.stdout)
                 for heading in (
                     "CORE SYSTEM",
                     "POWER & THERMALS",

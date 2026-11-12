@@ -22,6 +22,7 @@ ColumnLayout {
     }
 
     Components.ConfirmationDialog { id: confirmation }
+    Components.SwapControls { backend: root.backend; Layout.fillWidth: true }
 
     Components.Section {
         title: "RAM / VRAM Status"

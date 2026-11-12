@@ -2,15 +2,15 @@
 flowchart TD
 
 menu__root["BC-250 GPU driver and game upscalers<br/>Manage global DirectMesh, FSR4, experimental HelixSR, and retired R2 cleanup."]:::root
-menu__helixsr["HelixSR pinned (experimental)<br/>Prepare and manage the user-local HelixSR payload. Do not use injected DLLs with anti-cheat games."]:::menu
+menu__helixsr["HelixSR v2.0.0 (experimental)<br/>Prepare and manage the user-local HelixSR payload. Do not use injected DLLs with anti-cheat games."]:::menu
 action__status["Status overview<br/>Verify the patched AMDGPU module, scheduler policy, RADV runtime, and global activation."]:::read_only
-action__fsr4_dll["Install portable FSR4 game DLL (recommended)<br/>Portable FSR4 route. Replaces one exact existing DLL and retains the original; no custom RADV installation is needed."]:::install
+action__fsr4_dll["Install portable FSR4 v4.0.0-rc11 DLL (recommended)<br/>Portable FSR4 route. Replaces one exact existing DLL and retains the original; no custom RADV installation is needed."]:::install
 action__helixsr_status["HelixSR payload status<br/>Check whether the prepared HelixSR payload is valid."]:::read_only
-action__helixsr_prepare["Prepare pinned HelixSR<br/>Use the checksum-pinned release, optionally with a local DLSS DLL. NVIDIA-derived files are not redistributed."]:::experimental
+action__helixsr_prepare["Prepare HelixSR v2.0.0<br/>Use the checksum-pinned release, optionally with a local DLSS DLL. NVIDIA-derived files are not redistributed."]:::experimental
 action__helixsr_prepare_latest["Prepare latest HelixSR (YMMV)<br/>Opt in to GitHub's latest release; changes may not yet be tested. NVIDIA-derived files are not redistributed."]:::experimental
 action__helixsr_install["Install HelixSR game DLL<br/>Experimental: replace an existing lowercase amd_fidelityfx_upscaler_dx12.dll or amd_fidelityfx_dx12.dll with verified rollback."]:::experimental
 action__helixsr_uninstall["Uninstall HelixSR game DLL<br/>Restore one exact target from its verified rollback record."]:::cleanup
-action__setup["Install / resume global DirectMesh + FSR4 RADV<br/>Remove verified retired R2 files first, then build the global BC-250 DirectMesh/FSR4 driver and its AMDGPU prerequisites."]:::install
+action__setup["Install / resume Mesa 26.2.5 + DirectMesh 1.4 + FSR4 RADV<br/>Remove verified retired R2 files first, then build the global BC-250 DirectMesh/FSR4 driver and its AMDGPU prerequisites."]:::install
 action__native_mesh_remove["Remove retired BC250 RADV R2<br/>Remove R2 and its private Proton copy; preserve global RADV, the original Proton, game prefixes, and saves."]:::cleanup
 action__legacy_cleanup["Older per-game setup cleanup<br/>Migration only: remove old MESA_DRICONF_EXECUTABLE_OVERRIDE and VK_ICD_FILENAMES Steam launch options, then clear their records."]:::cleanup
 action__uninstall["Uninstall Mesa / RADV runtime<br/>Remove the alternate driver, ICD, and user environment generator; preserve build caches."]:::cleanup
