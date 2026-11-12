@@ -112,6 +112,124 @@ class SwapTests(unittest.TestCase):
             self.assertIn("Requires=bc250-zswap-setup.service", result.stdout)
             self.assertNotIn("swapoff", result.stdout)
 
+    def test_menu_size_selection_and_all_profile_actions(self):
+        with tempfile.TemporaryDirectory() as directory:
+            result = self.run_sourced(
+                r'''
+cmd_install_zram() { printf 'INSTALL zram %s %s\n' "$1" "$2"; }
+cmd_install_zswap() { printf 'INSTALL zswap %s %s\n' "$1" "$2"; }
+swap_menu_graph_activate action__size <<< $'32\nx'
+[[ "$SWAP_MENU_SIZE_GIB" == 32 ]]
+swap_menu_graph_badge action__size; echo
+for action in action__zram action__zram_lz4 action__zswap action__zswap_zstd; do
+    swap_menu_graph_activate "$action" <<< $'y\nx'
+done
+''',
+                Path(directory),
+            )
+            for arguments in ("zram zstd 32", "zram lz4 32", "zswap 32 lz4", "zswap 32 zstd"):
+                self.assertIn(f"INSTALL {arguments}", result.stdout)
+            self.assertIn("32 GiB selected", result.stdout)
+
+    def test_menu_invalid_or_cancelled_size_preserves_selection(self):
+        with tempfile.TemporaryDirectory() as directory:
+            result = self.run_sourced(
+                r'''
+SWAP_MENU_SIZE_GIB=24
+for value in '' 3 65 -1 04 abc '16; exit 2'; do
+    swap_menu_set_size <<< "$value"
+    [[ "$SWAP_MENU_SIZE_GIB" == 24 ]]
+done
+swap_menu_set_size < /dev/null
+[[ "$SWAP_MENU_SIZE_GIB" == 24 ]]
+swap_menu_set_size <<< 4
+[[ "$SWAP_MENU_SIZE_GIB" == 4 ]]
+swap_menu_set_size <<< 64
+[[ "$SWAP_MENU_SIZE_GIB" == 64 ]]
+''',
+                Path(directory),
+            )
+            self.assertIn("Cancelled.", result.stdout)
+            self.assertIn("integer from 4 to 64", result.stderr)
+
+    def test_menu_zero_size_is_zram_only_and_install_requires_confirmation(self):
+        with tempfile.TemporaryDirectory() as directory:
+            result = self.run_sourced(
+                r'''
+cmd_install_zram() { printf 'INSTALL zram %s %s\n' "$1" "$2"; }
+cmd_install_zswap() { echo UNEXPECTED; exit 2; }
+swap_menu_set_size <<< 0
+swap_menu_graph_activate action__zswap <<< x
+swap_menu_graph_activate action__zswap_zstd <<< x
+swap_menu_graph_activate action__zram <<< $'n\nx'
+swap_menu_graph_activate action__zram_lz4 <<< $'y\nx'
+''',
+                Path(directory),
+            )
+            self.assertIn("Zswap requires 4-64 GiB", result.stdout)
+            self.assertIn("INSTALL zram lz4 0", result.stdout)
+            self.assertNotIn("INSTALL zram zstd", result.stdout)
+            self.assertNotIn("UNEXPECTED", result.stdout)
+
+    def test_menu_initial_size_uses_saved_profile_or_default(self):
+        with tempfile.TemporaryDirectory() as directory:
+            result = self.run_sourced(
+                r'''
+require_root() { :; }
+swap_menu_graph_open() { printf 'SELECTED %s\n' "$SWAP_MENU_SIZE_GIB"; }
+cmd_menu
+file_secure() { [[ -f "$1" && ! -L "$1" ]]; }
+mkdir -p "$STATE_DIR"
+render_state zswap 32 reboot > "$STATE_FILE"; chmod 644 "$STATE_FILE"
+cmd_menu
+render_state zram 0 none > "$STATE_FILE"
+cmd_menu
+''',
+                Path(directory),
+            )
+            self.assertEqual(result.stdout.splitlines(), ["SELECTED 16", "SELECTED 32", "SELECTED 0"])
+
+    def test_menu_existing_swap_size_change_explains_safe_removal(self):
+        with tempfile.TemporaryDirectory() as directory:
+            result = self.run_sourced(
+                r'''
+file_secure() { [[ -f "$1" && ! -L "$1" ]]; }
+cmd_install_zram() { echo UNEXPECTED; exit 2; }
+cmd_install_zswap() { echo UNEXPECTED; exit 2; }
+mkdir -p "$STATE_DIR"
+render_state zram 16 none > "$STATE_FILE"; chmod 644 "$STATE_FILE"
+touch "$SWAPFILE"
+SWAP_MENU_SIZE_GIB=32
+swap_menu_graph_activate action__zram <<< x
+swap_menu_graph_activate action__zswap <<< x
+[[ -f "$SWAPFILE" ]]
+''',
+                Path(directory),
+            )
+            self.assertIn("cannot be resized in place", result.stdout)
+            self.assertIn("Remove toolkit profile", result.stdout)
+            self.assertNotIn("UNEXPECTED", result.stdout)
+
+    def test_menu_existing_size_can_be_reused_or_disk_fallback_disabled(self):
+        with tempfile.TemporaryDirectory() as directory:
+            result = self.run_sourced(
+                r'''
+file_secure() { [[ -f "$1" && ! -L "$1" ]]; }
+cmd_install_zram() { printf 'INSTALL zram %s %s\n' "$1" "$2"; }
+cmd_install_zswap() { printf 'INSTALL zswap %s %s\n' "$1" "$2"; }
+mkdir -p "$STATE_DIR"
+render_state zram 32 none > "$STATE_FILE"; chmod 644 "$STATE_FILE"
+touch "$SWAPFILE"
+SWAP_MENU_SIZE_GIB=32
+swap_menu_graph_activate action__zswap <<< $'y\nx'
+SWAP_MENU_SIZE_GIB=0
+swap_menu_graph_activate action__zram <<< $'y\nx'
+''',
+                Path(directory),
+            )
+            self.assertIn("INSTALL zswap 32 lz4", result.stdout)
+            self.assertIn("INSTALL zram zstd 0", result.stdout)
+
     def test_machine_probe_requires_complete_owned_profile(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

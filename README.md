@@ -239,7 +239,10 @@ Open the menu:
 | `sudo ./bc250-swap.sh uninstall` | Remove the toolkit profile |
 
 A profile transition can require one reboot and a second run of the command.
-The swap menu offers both compressors for zram and zswap. To switch an existing
+The swap menu offers **Set disk swap size** (4-64 GiB, or 0 for zram-only),
+then a choice of profile and compressor to apply that size. The size selection
+starts at the configured size, or 16 GiB for a new installation, and lasts for
+the current menu session. To switch an existing
 profile, rerun the install command with the desired compressor (and its current
 swapfile size for either profile), then reboot. LZ4 favors speed; Zstandard favors
 compression ratio.

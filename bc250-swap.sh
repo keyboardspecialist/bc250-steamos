@@ -1063,6 +1063,40 @@ confirm_action() {
     case "$answer" in y|Y|yes|YES) "$@" ;; *) log "Cancelled." ;; esac
 }
 
+swap_menu_set_size() {
+    local value
+    printf 'Disk swap size in GiB (%s-%s, or 0 for zram-only; selected: %s; blank cancels): ' \
+        "$MIN_SWAP_GIB" "$MAX_SWAP_GIB" "${SWAP_MENU_SIZE_GIB:-$DEFAULT_SWAP_GIB}"
+    if ! IFS= read -r value || [[ -z "$value" ]]; then
+        log "Cancelled."
+        return 0
+    fi
+    if [[ "$value" != 0 ]]; then
+        (validate_size "$value") || return 0
+    fi
+    SWAP_MENU_SIZE_GIB="$value"
+    log "Selected ${value} GiB disk swap for this menu session. Choose a zram or zswap profile to apply it (0 requires zram)."
+    log "Existing swapfiles cannot be resized in place: remove the profile, reboot if requested, finish removal, then install the new size."
+}
+
+swap_menu_install() {
+    local mode="$1" compressor="$2" size="${SWAP_MENU_SIZE_GIB:-$DEFAULT_SWAP_GIB}"
+    if [[ "$mode" == zswap && "$size" == 0 ]]; then
+        log "Zswap requires ${MIN_SWAP_GIB}-${MAX_SWAP_GIB} GiB of disk swap. Set a nonzero disk swap size first, or choose zram."
+        return 0
+    fi
+    if [[ "$size" != 0 && ( -e "$SWAPFILE" || -L "$SWAPFILE" ) ]] \
+        && read_state && [[ "$SIZE_GIB" != "$size" ]]; then
+        log "The existing toolkit swapfile is ${SIZE_GIB} GiB; it cannot be resized in place."
+        log "Choose 'Remove toolkit profile', reboot if requested, finish removal, then select the new size and profile."
+        return 0
+    fi
+    case "$mode" in
+        zram) confirm_action "Configure $compressor zram with ${size} GiB disk fallback (0 means none)?" cmd_install_zram "$compressor" "$size" ;;
+        zswap) confirm_action "Configure $compressor zswap with a ${size} GiB disk swapfile?" cmd_install_zswap "$size" "$compressor" ;;
+    esac
+}
+
 swap_menu_graph_badge() {
     local badge="${CD}[not configured]${C0}"
     case "$1" in
@@ -1076,6 +1110,7 @@ swap_menu_graph_badge() {
             fi
             printf '%s' "$badge"
             ;;
+        action__size) printf '%s' "${CC}[${SWAP_MENU_SIZE_GIB:-$DEFAULT_SWAP_GIB} GiB selected]${C0}" ;;
         action__swappiness|action__help) ;;
         *) return 2 ;;
     esac
@@ -1085,10 +1120,11 @@ swap_menu_graph_activate() {
     echo
     case "$1" in
         action__status) cmd_status || true ;;
-        action__zram) confirm_action "Configure zstd zram with a 16 GiB disk fallback?" cmd_install_zram zstd ;;
-        action__zram_lz4) confirm_action "Configure lz4 zram with a 16 GiB disk fallback?" cmd_install_zram lz4 ;;
-        action__zswap) confirm_action "Configure lz4 zswap with a 16 GiB disk swapfile?" cmd_install_zswap "$DEFAULT_SWAP_GIB" lz4 ;;
-        action__zswap_zstd) confirm_action "Configure zstd zswap with a 16 GiB disk swapfile?" cmd_install_zswap "$DEFAULT_SWAP_GIB" zstd ;;
+        action__size) swap_menu_set_size ;;
+        action__zram) swap_menu_install zram zstd ;;
+        action__zram_lz4) swap_menu_install zram lz4 ;;
+        action__zswap) swap_menu_install zswap lz4 ;;
+        action__zswap_zstd) swap_menu_install zswap zstd ;;
         action__swappiness)
             local value
             printf 'Swappiness (0-200; current: %s): ' "$(cat "$SWAPPINESS_SYS" 2>/dev/null || echo unknown)"
@@ -1122,32 +1158,39 @@ swap_menu_graph_render() {
                 items+=("Status overview|${badge}|Show the configured profile, active swap, zswap state, and swappiness.")
                 targets+=("action__status")
                 badges+=("$badge")
+                if ! badge=$(swap_menu_graph_badge action__size install); then badge=; fi
+                if [[ "$badge" == *"|"* || "$badge" == *$'\n'* ]]; then
+                    die "Invalid generated menu badge: action__size"
+                fi
+                items+=("Set disk swap size|${badge}|Choose 4-64 GiB (default 16), or 0 for zram-only; then select a profile below to apply. Existing files require removal before resizing.")
+                targets+=("action__size")
+                badges+=("$badge")
                 if ! badge=$(swap_menu_graph_badge action__zram install); then badge=; fi
                 if [[ "$badge" == *"|"* || "$badge" == *$'\n'* ]]; then
                     die "Invalid generated menu badge: action__zram"
                 fi
-                items+=("Use zram + disk (zstd)|${badge}|Half-RAM compressed swap at priority 100 with a 16 GiB disk fallback at priority 10. Disables zswap; reboot to apply.")
+                items+=("Use zram (zstd)|${badge}|Half-RAM compressed swap at priority 100 with the selected disk fallback at priority 10 (0 disables fallback). Disables zswap; reboot to apply.")
                 targets+=("action__zram")
                 badges+=("$badge")
                 if ! badge=$(swap_menu_graph_badge action__zram_lz4 install); then badge=; fi
                 if [[ "$badge" == *"|"* || "$badge" == *$'\n'* ]]; then
                     die "Invalid generated menu badge: action__zram_lz4"
                 fi
-                items+=("Use zram + disk (lz4)|${badge}|Fast lz4 compressed swap at priority 100 with a 16 GiB disk fallback at priority 10. Disables zswap; reboot to apply.")
+                items+=("Use zram (lz4)|${badge}|Fast lz4 compressed swap at priority 100 with the selected disk fallback at priority 10 (0 disables fallback). Disables zswap; reboot to apply.")
                 targets+=("action__zram_lz4")
                 badges+=("$badge")
                 if ! badge=$(swap_menu_graph_badge action__zswap install); then badge=; fi
                 if [[ "$badge" == *"|"* || "$badge" == *$'\n'* ]]; then
                     die "Invalid generated menu badge: action__zswap"
                 fi
-                items+=("Use zswap + disk (lz4)|${badge}|Use fast lz4 zswap with a 10% RAM pool, memory shrinker, and 16 GiB disk swapfile at priority 10. Reboot to apply.")
+                items+=("Use zswap + disk (lz4)|${badge}|Use fast lz4 zswap with a 10% RAM pool, memory shrinker, and the selected disk swapfile at priority 10. Reboot to apply.")
                 targets+=("action__zswap")
                 badges+=("$badge")
                 if ! badge=$(swap_menu_graph_badge action__zswap_zstd install); then badge=; fi
                 if [[ "$badge" == *"|"* || "$badge" == *$'\n'* ]]; then
                     die "Invalid generated menu badge: action__zswap_zstd"
                 fi
-                items+=("Use zswap + disk (zstd)|${badge}|Use higher-ratio zstd zswap with the same 10% RAM pool, memory shrinker, and 16 GiB disk swapfile. Reboot to apply.")
+                items+=("Use zswap + disk (zstd)|${badge}|Use higher-ratio zstd zswap with the same 10% RAM pool, memory shrinker, and selected disk swapfile. Reboot to apply.")
                 targets+=("action__zswap_zstd")
                 badges+=("$badge")
                 if ! badge=$(swap_menu_graph_badge action__swappiness install); then badge=; fi
@@ -1198,6 +1241,8 @@ swap_menu_graph_open() {
 
 cmd_menu() {
     require_root
+    local SWAP_MENU_SIZE_GIB="$DEFAULT_SWAP_GIB"
+    if read_state; then SWAP_MENU_SIZE_GIB="$SIZE_GIB"; fi
     swap_menu_graph_open root
 }
 
@@ -1224,8 +1269,10 @@ Usage: $0 [menu|install MODE [OPTIONS]|swappiness VALUE|status|verify|installed|
   installed                 Machine-readable installation probe.
   uninstall                 Remove toolkit settings and restore Valve defaults.
 
-The profiles are mutually exclusive and transitions are reboot-gated. Change
-the compressor by rerunning install with the desired compressor (and the same
+The profiles are mutually exclusive and transitions are reboot-gated. Use
+the menu's 'Set disk swap size' before choosing a profile to apply that size.
+The selection starts at the configured size, or 16 GiB for a new installation.
+Change the compressor by rerunning install with the desired compressor (and the same
 swapfile size for either profile); reboot to apply it. Existing swapfiles are
 reused, never resized in place; uninstall and reboot before changing their size.
 Lz4 favors compression speed;
