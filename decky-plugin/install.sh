@@ -38,11 +38,17 @@ UMR_SOURCE=""
 UMR_DATABASE_SOURCE=""
 UMR_STAGE=""
 PNPM_DOWNLOAD=""
-PNPM_VERSION="9.15.9"
-NODE_MAJOR="24"
-NODE_MIN_MINOR="12"
-# SHA-256 of the upstream v9.15.9 pnpm-linux-x64 release asset.
-PNPM_SHA256="38949c3009bd674780ca7d652baa9e2310f5cda07ab9160b0e2a9c4934ab0def"
+PNPM_STAGE=""
+PNPM_VERSION="12.21.0"
+NODE_MAJOR="26"
+NODE_MIN_MINOR="13"
+NODE_MIN_PATCH="1"
+# npm's stable dist-tag; 12.22.0 is still on its next channel.
+# SHA-256 of the upstream v12.21.0 pnpm-linux-x64.tar.gz release asset.
+PNPM_SHA256="84c4773bcf4a217f4083cd7b2a91e4cee6103cf42426c1282ef37d308f55a410"
+DECKY_INSTALLER_VERSION="v1.10.0"
+DECKY_INSTALLER_SHA256="ed2de421b9713dd355ea5ede58f70c67e02127747cd59d00f49a145053d33ba7"
+DECKY_MIN_VERSION="3.3.1"
 SMU_PATCH_SOURCES=(
     "$SRC_DIR/../smu-oc-patches/0001-transaction-level-flock.patch"
     "$SRC_DIR/../smu-oc-patches/0002-steamos-stress-fallback.patch"
@@ -55,14 +61,15 @@ SMU_PATCH_SOURCES=(
     "$SRC_DIR/../smu-oc-patches/mailbox.py"
     "$SRC_DIR/../smu-oc-patches/api.py"
 )
-# Keep the compatible pnpm 9 layout/settings isolated from newer user installs.
+# Keep build tooling isolated from user-global installations.
 export PNPM_HOME="$HOME/.local/share/bc250-control/toolchain"
-export PATH="$PNPM_HOME:$PNPM_HOME/bin:$PATH"
+export PATH="$PNPM_HOME/bin:$PNPM_HOME:$PATH"
 
 log() { printf '\n==> %s\n' "$*"; }
 die() { printf 'error: %s\n' "$*" >&2; exit 1; }
 cleanup() {
     [[ -z "$PNPM_DOWNLOAD" ]] || rm -f -- "$PNPM_DOWNLOAD"
+    [[ -z "$PNPM_STAGE" ]] || rm -rf -- "$PNPM_STAGE"
     [[ -z "$UMR_STAGE" ]] || sudo rm -rf "$UMR_STAGE"
 }
 umr_database_complete() {
@@ -87,10 +94,19 @@ ensure_build_toolchain() {
         mkdir -p "$PNPM_HOME"
         PNPM_DOWNLOAD=$(mktemp "$PNPM_HOME/.pnpm-download.XXXXXX")
         curl -fL --retry 3 --output "$PNPM_DOWNLOAD" \
-            "https://github.com/pnpm/pnpm/releases/download/v$PNPM_VERSION/pnpm-linux-x64"
+            "https://github.com/pnpm/pnpm/releases/download/v$PNPM_VERSION/pnpm-linux-x64.tar.gz"
         printf '%s  %s\n' "$PNPM_SHA256" "$PNPM_DOWNLOAD" | sha256sum -c - \
             || die "pnpm download checksum mismatch"
-        install -m 0755 "$PNPM_DOWNLOAD" "$pnpm_bin"
+        PNPM_STAGE=$(mktemp -d "$PNPM_HOME/.pnpm-stage.XXXXXX")
+        # Extract only after verifying the complete upstream archive.
+        tar -xzf "$PNPM_DOWNLOAD" --no-same-owner -C "$PNPM_STAGE"
+        [[ "$("$PNPM_STAGE/pnpm" --version)" == "$PNPM_VERSION" ]] \
+            || die "pnpm archive contains the wrong version"
+        [[ ! -e "$PNPM_HOME/pnpm-$PNPM_VERSION" && ! -L "$PNPM_HOME/pnpm-$PNPM_VERSION" ]] \
+            || die "private pnpm version directory already exists; preserve it before retrying"
+        mv -- "$PNPM_STAGE" "$PNPM_HOME/pnpm-$PNPM_VERSION"
+        PNPM_STAGE=""
+        ln -sfn -- "pnpm-$PNPM_VERSION/pnpm" "$pnpm_bin"
         rm -f -- "$PNPM_DOWNLOAD"
         PNPM_DOWNLOAD=""
     fi
@@ -98,25 +114,26 @@ ensure_build_toolchain() {
         || die "could not prepare pnpm $PNPM_VERSION"
     if ! node_compatible; then
         log "Installing Node.js $NODE_MAJOR via private pnpm"
-        "$pnpm_bin" env use --global "$NODE_MAJOR"
+        "$pnpm_bin" --ignore-workspace runtime set node "$NODE_MAJOR" -g
         hash -r
     fi
     node_compatible \
-        || die "Node.js $NODE_MAJOR.$NODE_MIN_MINOR or newer within $NODE_MAJOR.x is required"
+        || die "Node.js $NODE_MAJOR.$NODE_MIN_MINOR.$NODE_MIN_PATCH or newer within $NODE_MAJOR.x is required"
 }
 
 node_compatible() {
-    # Rollup's optional Linux native compression helper needs Node >=24.12.
     command -v node >/dev/null 2>&1 && node -e '
-        const [major, minor] = process.versions.node.split(".").map(Number);
-        process.exit(major === Number(process.argv[1]) && minor >= Number(process.argv[2]) ? 0 : 1);
-    ' "$NODE_MAJOR" "$NODE_MIN_MINOR"
+        const [major, minor, patch] = process.versions.node.split(".").map(Number);
+        const [wantMajor, wantMinor, wantPatch] = process.argv.slice(1).map(Number);
+        process.exit(major === wantMajor &&
+            (minor > wantMinor || (minor === wantMinor && patch >= wantPatch)) ? 0 : 1);
+    ' "$NODE_MAJOR" "$NODE_MIN_MINOR" "$NODE_MIN_PATCH"
 }
 
 pnpm_build() {
     # This is one package, not a workspace. In particular, leave any user's
-    # untracked pnpm-workspace.yaml intact; pnpm 9 reads our package.json rules.
-    "$PNPM_HOME/pnpm" --ignore-workspace "$@"
+    # untracked pnpm-workspace.yaml intact. No obsolete package.json pnpm rules.
+    BC250_PNPM_BIN="$PNPM_HOME/pnpm" bash "$SRC_DIR/pnpm-build.sh" "$@"
 }
 
 decky_loader_installed() {
@@ -125,9 +142,36 @@ decky_loader_installed() {
 }
 
 ensure_decky_loader() {
-    decky_loader_installed && return 0
+    if decky_loader_installed; then
+        local version_file="$HOME/homebrew/services/.loader.version" version=""
+        if [[ -f "$version_file" && ! -L "$version_file" ]]; then
+            version=$(< "$version_file")
+        fi
+        # Do not downgrade newer or prerelease/custom installations. Only a
+        # recognizable, older stable release is upgraded automatically.
+        if ! python3 - "$version" "$DECKY_MIN_VERSION" <<'PY'
+import re
+import sys
+match = re.fullmatch(r"v?(\d+)\.(\d+)\.(\d+)", sys.argv[1])
+raise SystemExit(0 if match and tuple(map(int, match.groups())) <
+                 tuple(map(int, sys.argv[2].split("."))) else 1)
+PY
+        then
+            log "Existing Decky Loader: ${version:-unknown}. Keeping it; stable v$DECKY_MIN_VERSION or newer is recommended."
+            return 0
+        fi
+        log "Upgrading Decky Loader $version to the latest stable release (minimum v$DECKY_MIN_VERSION)"
+    fi
     log "Installing Decky Loader"
-    curl -L https://github.com/SteamDeckHomebrew/decky-installer/releases/latest/download/install_release.sh | sh
+    PNPM_DOWNLOAD=$(mktemp)
+    curl -fL --retry 3 --output "$PNPM_DOWNLOAD" \
+        "https://github.com/SteamDeckHomebrew/decky-installer/releases/download/$DECKY_INSTALLER_VERSION/install_release.sh"
+    printf '%s  %s\n' "$DECKY_INSTALLER_SHA256" "$PNPM_DOWNLOAD" | sha256sum -c - \
+        || die "Decky installer checksum mismatch"
+    # The upstream script uses Bash syntax despite its /bin/sh shebang.
+    sudo bash "$PNPM_DOWNLOAD"
+    rm -f -- "$PNPM_DOWNLOAD"
+    PNPM_DOWNLOAD=""
     decky_loader_installed \
         || die "Decky Loader installation did not complete"
 }

@@ -24,7 +24,9 @@ ARCHIVE_FILES = (
     "OptiScaler.ini",
     "amd_fidelityfx_dx12.dll",
     "amd_fidelityfx_framegeneration_dx12.dll",
+    "amd_fidelityfx_framegeneration_vk.dll",
     "amd_fidelityfx_upscaler_dx12.dll",
+    "amd_fidelityfx_upscaler_vk.dll",
     "amd_fidelityfx_vk.dll",
     "dlssg_to_fsr3_amd_is_better.dll",
     "fakenvapi.dll",
@@ -52,7 +54,7 @@ def make_archive(root: Path, marker: bytes = b"fixture") -> Tuple[Path, Dict[str
         value = marker + b":" + name.encode("ascii") + b"\n"
         path.write_bytes(value)
         contents[name] = value
-    archive = root / "Optiscaler_0.9.4-final.20260718._MM.7z"
+    archive = root / "Optiscaler_0.9.5-final.20261116.7z"
     subprocess.run(
         ["7z", "a", "-t7z", str(archive), "."],
         cwd=payload,
@@ -114,6 +116,28 @@ class OptiScalerTests(unittest.TestCase):
     def test_script_parses(self):
         subprocess.run(["bash", "-n", str(HELPER)], check=True)
 
+    def test_094_record_upgrades_and_restores_new_vulkan_dll_collisions(self):
+        self.install()
+        record_path = next((self.root / "state/installs").glob("*/record.json"))
+        record = json.loads(record_path.read_text())
+        new_names = {
+            "amd_fidelityfx_framegeneration_vk.dll", "amd_fidelityfx_upscaler_vk.dll",
+        }
+        record["release"] = "v0.9.4"
+        record["files"] = [entry for entry in record["files"] if entry["path"] not in new_names]
+        record_path.write_text(json.dumps(record))
+        for name in new_names:
+            (self.game / name).write_bytes(b"original game Vulkan DLL")
+            (self.game / name).chmod(0o750)
+        self.assertEqual(self.records()["records"][0]["state"], "upgrade-required")
+        self.install()
+        for name in new_names:
+            self.assertEqual((self.game / name).read_bytes(), self.payload[name])
+        self.uninstall()
+        for name in new_names:
+            self.assertEqual((self.game / name).read_bytes(), b"original game Vulkan DLL")
+            self.assertEqual(stat.S_IMODE((self.game / name).stat().st_mode), 0o750)
+
     def test_install_status_idempotence_and_uninstall_restore_exactly(self):
         collision = self.game / "amd_fidelityfx_dx12.dll"
         collision.write_bytes(b"original collision\n")
@@ -132,7 +156,7 @@ class OptiScalerTests(unittest.TestCase):
 
         status = self.records()
         self.assertEqual(status["schemaVersion"], 1)
-        self.assertEqual(status["currentRelease"], "v0.9.4")
+        self.assertEqual(status["currentRelease"], "v0.9.5")
         self.assertEqual(status["state"], "ready")
         self.assertEqual(status["invalidRecordCount"], 0)
         self.assertEqual(len(status["records"]), 1)

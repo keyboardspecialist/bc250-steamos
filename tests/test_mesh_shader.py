@@ -15,8 +15,8 @@ MESH = ROOT / "bc250-mesh-shader.sh"
 FSR4 = ROOT / "bc250-fsr4.sh"
 UPSTREAM_COMMIT = "d3e6dc062c34d2523db0abe5741d1f5b0dea00d9"
 AMDGPU_REVISION = "smu-8core-metrics-r1"
-MESA_TAG = "mesa-26.2.5"
-RADV_PROFILE_REVISION = "directmesh-1.4-fsr4-v6"
+MESA_TAG = "mesa-26.3.0"
+RADV_PROFILE_REVISION = "directmesh-1.4-mesa-26.3-fsr4-v7"
 NATIVE_MESH_RELEASE = "r2-20260921"
 NATIVE_MESH_COMMIT = "3367cd5eed23ab38fddfc0fb52dbc4e17adf6e11"
 
@@ -1931,7 +1931,7 @@ refresh_current_generator
         self.assertIn("menu_select()", source)
         self.assertIn("DirectMesh", source)
         self.assertIn("Install portable FSR4 v4.0.0-rc11 DLL (recommended)", source)
-        self.assertIn("Install / resume Mesa 26.2.5 + DirectMesh 1.4 + FSR4 RADV", source)
+        self.assertIn("Install / resume Mesa 26.3.0 + DirectMesh 1.4 + FSR4 RADV", source)
         self.assertIn("Portable FSR4 DLLs do not require this driver", source)
         self.assertIn("Older per-game setup cleanup", source)
         self.assertIn("R2 installation is retired", source)
@@ -2208,12 +2208,12 @@ ensure_radv_prerequisites
     def test_production_fsr4_radv_patch_series_is_pinned_and_validated(self):
         script = MESH.read_text(encoding="utf-8")
         self.assertIn(
-            'FSR4_RADV_COMMIT="f05991ace64a42eda3d2dc583e96b8d35ce393e3"',
+            'FSR4_RADV_COMMIT="868b3fc12474851277f4792b7e6387e82b4f5fa5"',
             script,
         )
         for patch in (
             "0001-gfx1013-compute-queue-fix.patch",
-            "bc250-directmesh-mesa-26.2.1.patch",
+            "0002-bc250-directmesh.patch",
             "0003-bc250-fsr4-v3.patch",
             "0004-bc250-fsr4-combined-unroll.patch",
             "0005-bc250-fsr4-imageprep-texture.patch",

@@ -1727,7 +1727,7 @@ menu_graph_render() {
                 if [[ "$badge" == *"|"* || "$badge" == *$'\n'* ]]; then
                     die "Invalid generated menu badge: action__graphics_setup"
                 fi
-                items+=("Install or Resume Mesa 26.2.5 / DirectMesh 1.4|${badge}|Install AMDGPU first when needed, then resume global DirectMesh and FSR4 RADV with retired R2 cleanup.")
+                items+=("Install or Resume Mesa 26.3.0 / DirectMesh 1.4|${badge}|Install AMDGPU first when needed, then resume global DirectMesh and FSR4 RADV with retired R2 cleanup.")
                 targets+=("action__graphics_setup")
                 badges+=("$badge")
                 ;;
@@ -1817,7 +1817,7 @@ menu_graph_render() {
                 if [[ "$badge" == *"|"* || "$badge" == *$'\n'* ]]; then
                     die "Invalid generated menu badge: action__coolercontrol"
                 fi
-                items+=("CoolerControl 5.1.1|${badge}|Install fan profiles, curves, and monitoring for the onboard controller.")
+                items+=("CoolerControl 5.1.2|${badge}|Install fan profiles, curves, and monitoring for the onboard controller.")
                 targets+=("action__coolercontrol")
                 badges+=("$badge")
                 ;;
@@ -1834,7 +1834,7 @@ menu_graph_render() {
                 if [[ "$badge" == *"|"* || "$badge" == *$'\n'* ]]; then
                     die "Invalid generated menu badge: action__graphics_setup"
                 fi
-                items+=("Install or Resume Mesa 26.2.5 / DirectMesh 1.4|${badge}|Install AMDGPU first when needed, then resume global DirectMesh and FSR4 RADV with retired R2 cleanup.")
+                items+=("Install or Resume Mesa 26.3.0 / DirectMesh 1.4|${badge}|Install AMDGPU first when needed, then resume global DirectMesh and FSR4 RADV with retired R2 cleanup.")
                 targets+=("action__graphics_setup")
                 badges+=("$badge")
                 if ! badge=$(menu_graph_badge child__radv menu); then badge=; fi
@@ -1986,7 +1986,7 @@ menu_graph_render() {
                 if [[ "$badge" == *"|"* || "$badge" == *$'\n'* ]]; then
                     die "Invalid generated menu badge: action__coolercontrol"
                 fi
-                items+=("CoolerControl 5.1.1|${badge}|Install fan profiles, curves, and monitoring for the onboard controller.")
+                items+=("CoolerControl 5.1.2|${badge}|Install fan profiles, curves, and monitoring for the onboard controller.")
                 targets+=("action__coolercontrol")
                 badges+=("$badge")
                 if ! badge=$(menu_graph_badge action__trainer install); then badge=; fi
@@ -2158,7 +2158,7 @@ menu_graph_render() {
                 if [[ "$badge" == *"|"* || "$badge" == *$'\n'* ]]; then
                     die "Invalid generated menu badge: action__video_codec_install"
                 fi
-                items+=("Install or Repair Video Codec v0.5.4|${badge}|Build the verified 64-bit runtime and optionally include the 32-bit Steam companion.")
+                items+=("Install or Repair Video Codec v0.5.6|${badge}|Build the verified 64-bit runtime and optionally include the 32-bit Steam companion.")
                 targets+=("action__video_codec_install")
                 badges+=("$badge")
                 if ! badge=$(menu_graph_badge action__video_codec_remove cleanup); then badge=; fi
@@ -2203,7 +2203,7 @@ menu_graph_render() {
                 if [[ "$badge" == *"|"* || "$badge" == *$'\n'* ]]; then
                     die "Invalid generated menu badge: action__graphics_setup"
                 fi
-                items+=("Install or Resume Mesa 26.2.5 / DirectMesh 1.4|${badge}|Install AMDGPU first when needed, then resume global DirectMesh and FSR4 RADV with retired R2 cleanup.")
+                items+=("Install or Resume Mesa 26.3.0 / DirectMesh 1.4|${badge}|Install AMDGPU first when needed, then resume global DirectMesh and FSR4 RADV with retired R2 cleanup.")
                 targets+=("action__graphics_setup")
                 badges+=("$badge")
                 if ! badge=$(menu_graph_badge action__fan_driver install); then badge=; fi

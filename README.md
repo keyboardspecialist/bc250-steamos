@@ -342,7 +342,7 @@ Install CoolerControl after the NCT6687 driver:
 
 Open the local interface at <http://localhost:11987>.
 
-CoolerControl is pinned to **5.1.1**. Upgrades snapshot existing configuration
+CoolerControl is pinned to **5.1.2**. Upgrades snapshot existing configuration
 and data before replacement; check migrated fan profiles and sensors afterward.
 REST and authenticated gRPC now share port 11987; the old unauthenticated 11988
 listener is gone. See [`coolercontrol/README.md`](coolercontrol/README.md).
@@ -449,7 +449,7 @@ Open the expert menu:
 | `./bc250-mesh-shader.sh uninstall` | Remove the global runtime |
 
 The global runtime uses the patched 64-bit RADV ICD. SteamOS supplies the
-32-bit RADV path. It builds Mesa **26.2.5** with pinned MastaG compute/FSR4
+32-bit RADV path. It builds Mesa **26.3.0** with pinned MastaG compute/FSR4
 patches and LoneWolf's checksum-pinned **DirectMesh 1.4** release. DirectMesh is enabled by default on BC-250;
 disable it for an individual game with this Steam launch option:
 
@@ -488,7 +488,7 @@ Install the pinned H.264 and HEVC codec release:
 ```
 
 The toolkit downloads the pinned `simpmix/bc250-encoding-decoding-fix`
-`v0.5.4` source, verifies it, and builds it against the active SteamOS image.
+`v0.5.6` source, verifies it, and builds it against the active SteamOS image.
 It then offers an optional, separately verified 32-bit companion for Steam and
 Remote Play. The 32-bit selection installs signed SteamOS multilib packages;
 declining retains a 64-bit-only installation.
@@ -943,14 +943,15 @@ See these documents for component development:
 - [`DEPENDENCY-AUDIT.md`](DEPENDENCY-AUDIT.md) — implemented updates, retained
   baselines, historical findings, and qualification gaps
 
-The Decky build uses UI 4.16.0, Rollup 4.64.12, React typings 19.3.0, and
+The Decky build uses UI 4.16.5, Rollup 4.68.5, React typings 19.3.0, and
 TypeScript 5.9.3 (retained because TypeScript 7 is incompatible with the current
-build integration). Use pnpm **9.15.9** and Node **24.12 or newer within 24.x**.
+build integration). Use pnpm **12.21.0** and Node **26.13.1 or newer within 26.x**.
 The installer provides a private home-directory toolchain with a checksum-verified
-pnpm download instead of replacing user-wide tooling. CI uses Node 24 and updated
-Actions; Trainer's Flatpak runtime targets KDE 6.11. One unfixed build-only
-`braces` advisory remains; the production dependency audit is clean, not a
-security certification.
+pnpm download instead of replacing user-wide tooling. Older stable Decky Loaders
+are upgraded to the current stable channel (minimum 3.3.1); newer/custom and
+prerelease Loaders are preserved. CI uses Node 26 and updated Actions; Trainer's
+Flatpak runtime targets KDE 6.11. Build-only dependency advisories remain; see
+`DEPENDENCY-AUDIT.md`. This is not a security or Decky runtime certification.
 
 ## Upstream projects
 
@@ -975,7 +976,7 @@ security certification.
 | BC-250 GE-Proton and RADV | [MastaG/linux-cachyos-bc250](https://github.com/MastaG/linux-cachyos-bc250) |
 | AIC8800 | [shenmintao/aic8800d80](https://github.com/shenmintao/aic8800d80) |
 | NCT6687D | [Fred78290/nct6687d](https://github.com/Fred78290/nct6687d) |
-| BC-250 VA-API video codec | [simpmix/bc250-encoding-decoding-fix](https://github.com/simpmix/bc250-encoding-decoding-fix) · [integrated release `v0.5.4`](https://github.com/simpmix/bc250-encoding-decoding-fix/releases/tag/v0.5.4) |
+| BC-250 VA-API video codec | [simpmix/bc250-encoding-decoding-fix](https://github.com/simpmix/bc250-encoding-decoding-fix) · [integrated release `v0.5.6`](https://github.com/simpmix/bc250-encoding-decoding-fix/releases/tag/v0.5.6) |
 
 See [`LICENSE.md`](LICENSE.md) and the component license files for license
 terms and attribution.

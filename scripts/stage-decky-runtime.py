@@ -136,8 +136,8 @@ def stage(output: Path, epoch: int, *, frontend: Optional[Path] = None) -> None:
         )
         copy_tree(BACKEND_SOURCE / "vendor/tomli", temporary / "py_modules/tomli")
         copy_tree(
-            BACKEND_SOURCE / "vendor/tomli-2.0.1.dist-info",
-            temporary / "py_modules/tomli-2.0.1.dist-info",
+            BACKEND_SOURCE / "vendor/tomli-2.5.0.dist-info",
+            temporary / "py_modules/tomli-2.5.0.dist-info",
         )
         normalize_tree(temporary, epoch)
         if output.exists():

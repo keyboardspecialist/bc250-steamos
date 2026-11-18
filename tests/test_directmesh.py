@@ -40,9 +40,9 @@ class DirectMeshTests(unittest.TestCase):
 
     def test_directmesh_is_the_global_default_and_pinned(self):
         source = MESH.read_text()
-        self.assertIn('DEFAULT_MESA_TAG="mesa-26.2.5"', source)
-        self.assertIn('MESA_COMMIT="ddaf85e353442d9d7f192fdcf1823e652e3f2ee3"', source)
-        self.assertIn('RADV_PROFILE_REVISION="directmesh-1.4-fsr4-v6"', source)
+        self.assertIn('DEFAULT_MESA_TAG="mesa-26.3.0"', source)
+        self.assertIn('MESA_COMMIT="0a6fa60abb737d26ac8a316a4aad7c9ddf64f9e4"', source)
+        self.assertIn('RADV_PROFILE_REVISION="directmesh-1.4-mesa-26.3-fsr4-v7"', source)
         self.assertIn('DIRECTMESH_RELEASE="directmesh-v1.4"', source)
         self.assertIn('https://github.com/lonewolf0622/Mesh-Shaders-for-Rdna-1-', source)
         self.assertIn('a51b430e7465b9de37d2cc88778c8970676c301c1f77d4b330edca28caff7418', source)
@@ -50,7 +50,7 @@ class DirectMeshTests(unittest.TestCase):
         self.assertIn('[[ "$2" == --directmesh ]]', source)
         self.assertIn('RADV_DIRECTMESH=0 %command%', source)
         self.assertNotIn('export RADV_DIRECTMESH=1', source)
-        self.assertIn('DIRECTMESH_REBASE="$MESA_PATCH_DIR/rebase-directmesh.py"', source)
+        self.assertIn('06ca0f29a00550d0cbdc27e3ad94b6886b4f026f146b8894a749715b0443f66e', source)
 
     def test_directmesh_rebaser_rejects_unpinned_input(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -181,7 +181,7 @@ verify_current_runtime
             self.assert_ok(result)
             self.assertFalse((state / "native-mesh").exists())
             self.assertEqual(manifest.read_text().split()[2:5], [
-                "mesa-26.2.5", fixtures.UPSTREAM_COMMIT, fixtures.RADV_PROFILE_REVISION
+                "mesa-26.3.0", fixtures.UPSTREAM_COMMIT, fixtures.RADV_PROFILE_REVISION
             ])
             self.assertEqual(Path(env["BC250_MESH_DRIVER"]).read_bytes(), b"new DirectMesh driver\n")
 

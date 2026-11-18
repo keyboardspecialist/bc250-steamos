@@ -10,7 +10,7 @@ action__helixsr_prepare["Prepare HelixSR v2.0.0<br/>Use the checksum-pinned rele
 action__helixsr_prepare_latest["Prepare latest HelixSR (YMMV)<br/>Opt in to GitHub's latest release; changes may not yet be tested. NVIDIA-derived files are not redistributed."]:::experimental
 action__helixsr_install["Install HelixSR game DLL<br/>Experimental: replace an existing lowercase amd_fidelityfx_upscaler_dx12.dll or amd_fidelityfx_dx12.dll with verified rollback."]:::experimental
 action__helixsr_uninstall["Uninstall HelixSR game DLL<br/>Restore one exact target from its verified rollback record."]:::cleanup
-action__setup["Install / resume Mesa 26.2.5 + DirectMesh 1.4 + FSR4 RADV<br/>Remove verified retired R2 files first, then build the global BC-250 DirectMesh/FSR4 driver and its AMDGPU prerequisites."]:::install
+action__setup["Install / resume Mesa 26.3.0 + DirectMesh 1.4 + FSR4 RADV<br/>Remove verified retired R2 files first, then build the global BC-250 DirectMesh/FSR4 driver and its AMDGPU prerequisites."]:::install
 action__native_mesh_remove["Remove retired BC250 RADV R2<br/>Remove R2 and its private Proton copy; preserve global RADV, the original Proton, game prefixes, and saves."]:::cleanup
 action__legacy_cleanup["Older per-game setup cleanup<br/>Migration only: remove old MESA_DRICONF_EXECUTABLE_OVERRIDE and VK_ICD_FILENAMES Steam launch options, then clear their records."]:::cleanup
 action__uninstall["Uninstall Mesa / RADV runtime<br/>Remove the alternate driver, ICD, and user environment generator; preserve build caches."]:::cleanup

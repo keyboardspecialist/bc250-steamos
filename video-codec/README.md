@@ -1,6 +1,6 @@
 # BC-250 VA-API video codec
 
-The toolkit installs the verified `v0.5.4` release from
+The toolkit installs the verified `v0.5.6` release from
 [`simpmix/bc250-encoding-decoding-fix`](https://github.com/simpmix/bc250-encoding-decoding-fix).
 
 The driver provides VA-API H.264 and HEVC encoding, decoding, and video
@@ -22,7 +22,7 @@ Run the toolkit as the logged-in user:
 After confirming the installation, the toolkit asks whether to include the
 optional 32-bit companion for Steam and Remote Play. Declining installs or
 repairs only the standard 64-bit runtime. The installer downloads the source
-at the pinned `v0.5.4` commit, verifies its
+at the pinned `v0.5.6` commit, verifies its
 SHA-256 digest, validates its archive layout, and builds it against the active
 SteamOS image. The managed environment retains the compute H.264 and HEVC
 backends. Both optional libx264/libx265 adapters are built: upstream now uses
@@ -111,5 +111,5 @@ driver redirect.
 
 The downloaded driver, shaders, and upstream tools use GPL-3.0-only. The
 installed runtime retains the upstream license and README. The pinned source
-commit is `bc1191850fa521ceb3345986c59c1a882ed757fc`; source archive SHA-256 is
-`6659bc48c4a8914385e869b4824f04257936e9d8e03574242409c05f2f819720`.
+commit is `4a01ac37efad9bfc382401fa1850ac554a755818`; source archive SHA-256 is
+`e7e2d517b5d1fdcb85d0d11317c97c8756f4d0566784a6dd438babbef7c9ae6e`.

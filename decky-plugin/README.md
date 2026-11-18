@@ -187,13 +187,20 @@ missing, builds the plugin, runs the tests, copies the runtime files to
 `~/homebrew/plugins/BC-250 Control/`, and restarts Decky. Run it as the deck
 user; the copy and restart use sudo. Re-run it after any code change.
 
+The build toolchain is private pnpm **12.21.0** and Node **26.13.1+ within 26.x**.
+Existing stable Decky Loaders older than **3.3.1** are upgraded using the
+checksum-verified upstream installer; newer, prerelease, and custom/unknown
+installations are not replaced. Loader 3.2.8 was found on the audit host.
+UI **4.16.5** contains upstream Steam frontend compatibility fixes. Building
+successfully does not prove compatibility with every Steam client.
+
 ## Build
 
 ```bash
 cd decky-plugin
-pnpm install
-pnpm run typecheck
-pnpm run build
+bash pnpm-build.sh install --frozen-lockfile
+bash pnpm-build.sh run typecheck
+bash pnpm-build.sh run build
 cd ..
 PYTHONPATH=backend:backend/vendor python3 -m unittest discover -s backend/tests
 node --test tests/test_decky_parity.cjs
@@ -203,6 +210,10 @@ python3 scripts/stage-decky-runtime.py
 The frontend bundle is written to `dist/index.js`. The complete, independently
 installable plugin runtime is staged at `decky-plugin/out/`; it includes private
 copies of `bc250_control` and the Python 3.8 `tomli` fallback.
+`pnpm-build.sh` ignores unrelated workspace settings without rewriting them.
+It exempts only the exact reviewed Rollup/native pins from pnpm's release-age
+gate, so a fresh install works even on their release day. Other supply-chain
+checks remain enabled; no global pnpm security policy is changed.
 
 ## Backend
 

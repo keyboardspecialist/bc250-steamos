@@ -347,15 +347,15 @@ class ToolkitTests(unittest.TestCase):
 
         self.assertIn(
             "https://github.com/SteamDeckHomebrew/decky-installer/"
-            "releases/latest/download/install_release.sh",
+            "releases/download/$DECKY_INSTALLER_VERSION/install_release.sh",
             installer,
         )
         self.assertIn("systemctl cat plugin_loader.service", installer)
-        self.assertIn(
-            "curl -L https://github.com/SteamDeckHomebrew/decky-installer/"
-            "releases/latest/download/install_release.sh | sh",
-            installer,
-        )
+        self.assertIn('DECKY_INSTALLER_VERSION="v1.10.0"', installer)
+        self.assertIn('DECKY_MIN_VERSION="3.3.1"', installer)
+        self.assertIn('sudo bash "$PNPM_DOWNLOAD"', installer)
+        self.assertIn("Decky installer checksum mismatch", installer)
+        self.assertNotIn("install_release.sh | sh", installer)
         self.assertLess(
             install_plugin.index("ensure_decky_loader"),
             install_plugin.index("ensure_build_toolchain"),

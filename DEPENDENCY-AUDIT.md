@@ -1,5 +1,97 @@
 # External dependency update audit
 
+## 2026-11-17 stable-release audit
+
+This section supersedes the older implemented-version tables below. Repository
+pins, manifests, CI actions, the complete npm lockfile, and vendored Python
+metadata were checked against upstream release APIs/registries. **Not every
+dependency can safely move to its newest major.** HelixSR and TypeScript remain
+explicit migration blockers, not silently reported as current.
+
+### Updated integrations
+
+| Dependency | Before → integrated | Notes |
+| --- | --- | --- |
+| Mesa / RADV | 26.2.5 → **26.3.0** | Commit `0a6fa60abb737d26ac8a316a4aad7c9ddf64f9e4`; seven checksum-pinned patches from MastaG `868b3fc12474851277f4792b7e6387e82b4f5fa5`, including its reviewed DirectMesh 1.4 port. All apply forward-only with zero fuzz; full RADV build and final ELF/linkage/feature checks passed. Cache profile advances to `directmesh-1.4-mesa-26.3-fsr4-v7`. |
+| OptiScaler | 0.9.4 → **0.9.5** | Official `Optiscaler_0.9.5-final.20261116.7z`, SHA-256 `77e3ed76bed04e1fb32bacb5a72799ff172f3da22ed5231c0cf3e84fe6761662`. Exact archive inventory now includes the two new Vulkan DLLs. Old 0.9.4 records remain readable; upgrades journal and back up newly introduced DLL collisions for exact uninstall restoration. Real archive extraction/validation passed. |
+| BC-250 VA-API codec | 0.5.4 → **0.5.6** | Tag resolves to `4a01ac37efad9bfc382401fa1850ac554a755818`; source archive SHA-256 `e7e2d517b5d1fdcb85d0d11317c97c8756f4d0566784a6dd438babbef7c9ae6e`. Native build, all 17 shaders, and ten selected upstream codec/SIMD tests passed. Optional x264/x265 headers are absent locally. |
+| CoolerControl | 5.1.1 → **5.1.2** | AppImage SHA-256 `4b9ec9b691d7b6c085c917c180400d815a36e45130bbb7b8432563a20912ddd9`; isolated `--version` reports `coolercontrold 5.1.2`. Both 5.0.0 and 5.1.1 ownership/integrity recognition remain supported. Pre-upgrade config/data snapshots and fan-control guards are preserved. |
+| Decky UI | 4.16.0 → **4.16.5** | Upstream 4.16.1–4.16.4 fix Steam frontend globals/focus/VR discovery; 4.16.5 corrects app-store types. Typecheck and Rollup bundle passed. The installed Loader supplies `DFL` at runtime: updating npm typings alone cannot repair an old Loader. |
+| Decky Loader bootstrap | Install only if absent → **upgrade recognizable stable versions older than 3.3.1** | Audit host has **v3.2.8**; latest stable is **v3.3.1**. Newer, prerelease, and unknown/custom installs are preserved. No Loader/service was actually changed during this audit. |
+| Decky installer | Unverified moving script → **v1.10.0**, SHA-256 verified | `install_release.sh` hash `ed2de421b9713dd355ea5ede58f70c67e02127747cd59d00f49a145053d33ba7`; run with **Bash**, not `sh` (upstream uses Bash syntax despite its shebang). The upstream installer still discovers its current stable Loader payload. |
+| Rollup / native binaries | 4.64.12 → **4.68.5** | Exact native/direct pins remain synchronized; compatible transitive refresh. pnpm's age gate initially rejected release-day artifacts on a fresh cache. `pnpm-build.sh` grants exact reviewed Rollup/native-version exceptions only, without disabling the age policy globally or editing the user's workspace. |
+| tslib | 2.8.1 → **2.9.1** | Current stable direct dependency. |
+| pnpm | 9.15.9 → **12.21.0** | npm's **stable** dist-tag; GitHub's newer 12.22.0 is still on npm's `next-12` channel. Verified native tarball SHA-256 `84c4773bcf4a217f4083cd7b2a91e4cee6103cf42426c1282ef37d308f55a410`. Private versioned install, new `runtime set node` command, and correct `PNPM_HOME/bin` precedence for migration from pnpm 9. Obsolete `package.json` pnpm settings removed. |
+| Node build runtime | 24.x → **26.13.1+ within 26.x** | Current stable/LTS; 27 alpha excluded. Installer remains private/user-local; CI pins 26.13.1. |
+| actions/setup-python | 7.0.0 → **7.1.0** | All workflows updated. |
+| pnpm/action-setup | 6.1.0 → **6.1.1** | All workflows updated. |
+| vendored tomli | 2.0.1 → **2.5.0** | Upstream pure-Python wheel, still supports Python >=3.8. SHA-256 `32a7b79ac57a2e83670ce329ccf675798bc5a2094783a63676866b70503f2e2b`; metadata/license paths updated in both runtime packagers. Import/parser smoke and Python 3.8 grammar checks passed. |
+
+### Current, dynamic, or deliberately held
+
+| Dependency | Audit finding / decision |
+| --- | --- |
+| **HelixSR** | **Held at 2.0.0; latest stable is 3.4.1.** The verified 3.4.1 ZIP has 118 files / 473,037,133 uncompressed bytes versus the qualified 2.0.0 149-file layout. It removes `HelixSR-fsrfg/amd_fidelityfx_dx12.dll`, replacing it with HLX DLSS (`HelixSR/helixsr.dll`) and prebuilt HLX FSR4. Existing shader counts, payload manifests, forwarding-DLL names, game ownership records, and rollback semantics do not describe it. Merely changing the pin would break preparation or install the wrong runtime. Requires a dedicated migration; neither the pin nor safety checks were weakened. |
+| **TypeScript** | **Held at 5.9.3; latest stable 7.0.2.** `@decky/rollup` 1.0.2 depends on the 5.x compiler API through `@rollup/plugin-typescript`. Moving to the native 7.x compiler requires replacing/adapting that build integration. |
+| DirectMesh | **1.4 current stable**. 1.4.1 is a withdrawn prerelease; its upstream port documents washed-out frames, high memory use, and GPU hangs. Do not promote it. |
+| Portable FSR4 DLL | **RC11 retained**. Upstream has RC11.1 and RC12, but **all** published DLL releases are prereleases, not a newer stable replacement. OptiClient tags are a separate component. |
+| libdrm source fallback | **2.4.134 current**; fallback wrap patch dry-run passes on Mesa 26.3.0. Does not replace host libdrm. |
+| @decky/api / @decky/rollup | **1.1.3 / 1.0.2 current**. |
+| React / DOM typings; router typings | **19.3.0 / 19.3.0; 5.1.20 current**. Auto-installed React build peer refreshed to 19.3.1; Decky owns the actual runtime React. |
+| react-icons | **5.7.0 current**. |
+| actions/checkout / setup-node / upload-artifact | **7.0.1 / 7.1.0 / 7.0.2 current**. |
+| KDE Platform/SDK | **6.11 retained/current published branch**; both Flathub refs resolve, 6.12 ref is absent. |
+| dbus-next | **0.2.3 current PyPI release**. |
+| RAM configuration tool | Dynamic latest discovery; newest release remains **v0.1**. |
+| GPU governor | Dynamic latest discovery now finds **v0.4.15** (previously 0.4.14); no fixed version to change. Existing cached/installed copies are not automatically proven current. |
+| GE-Proton / UMR / CU-manager | Existing rolling discovery/source/cache policies retained; not fixed stable-release pins to bump. |
+| Hardware/source baselines | AIC8800, NCT6687D, memory-temperature, SMU OC, Linux/EFI core unlock, EFI headers, and ACPI integrations use reviewed source snapshots, not published stable releases. No GitHub releases are published for those repositories. Their hardware adaptations are not blindly replaced with branch HEAD. |
+| Retired R2 / private Proton / legacy FSR4 | Removal/recovery identities only, **not active dependencies**. Do not bump historical hashes or revive retired installation paths. |
+| Python 3.8/3.14 test coverage / CMake/Qt minima | Compatibility baselines, not bundled artifact pins. Retained rather than silently dropping target compatibility or replacing SteamOS libraries. |
+
+The complete refreshed npm lock inventory (154 distinct names, including pnpm's
+platform helpers) was compared with registry `latest` dist-tags. Compatible
+parents were refreshed; incompatible transitive majors were **not** forced by
+overrides. For example, Decky's Rollup preset still requests commonjs 26,
+node-resolve 15, replace 5, plugin-typescript 11, and delete-plugin 2 rather than
+the latest 29/16/6/12/3 majors. pnpm's platform helper versions must follow pnpm,
+not their stale independent `latest` tags (some still say 0.0.0).
+
+The production npm audit is clean, checked separately from build dependencies. The
+full audit currently reports build-only **glob** and **minimatch** moderate
+advisories, and an unfixed **picomatch** high-severity ReDoS advisory:
+[GHSA-3g3m-2fjr-6pw4](https://github.com/advisories/GHSA-3g3m-2fjr-6pw4),
+[GHSA-g3hv-75wg-m249](https://github.com/advisories/GHSA-g3hv-75wg-m249),
+[GHSA-fc5q-39xc-vjpf](https://github.com/advisories/GHSA-fc5q-39xc-vjpf).
+Fixing the first two requires a reviewed parent-tool migration; the registry
+does not yet publish a picomatch fix. No advisory is suppressed. Avoid untrusted
+glob patterns. Older advisory findings below are historical, not today's result.
+
+Sources: official [Mesa archive](https://archive.mesa3d.org/),
+[MastaG port](https://github.com/MastaG/linux-cachyos-bc250/tree/868b3fc12474851277f4792b7e6387e82b4f5fa5/patches/mesa),
+[OptiScaler](https://github.com/optiscaler/OptiScaler/releases/tag/v0.9.5),
+[HelixSR](https://github.com/lonewolf0622/HelixSR/releases/tag/v3.4.1),
+[codec](https://github.com/simpmix/bc250-encoding-decoding-fix/releases/tag/v0.5.6),
+[CoolerControl](https://gitlab.com/coolercontrol/coolercontrol/-/releases/5.1.2),
+[Decky Loader](https://github.com/SteamDeckHomebrew/decky-loader/releases/tag/v3.3.1),
+npm/PyPI metadata and Flathub refs. Validation artifacts were isolated under
+`/tmp/opencode/dependency-audit-20261117`; no installed drivers, firmware,
+Loader, services, game files, or boot settings were upgraded.
+
+Final toolkit regression: **716 tests, 714 passed and 2 skipped**, run in
+isolated per-module processes. Generated menu consistency and changed Bash
+syntax/whitespace checks also passed.
+
+Additional local checks: **119 BC-250 CPU tests** on the new Mesa port passed
+with the no-op DRM shim; **173 backend tests**, **61 desktop-service tests**,
+and **22 Node frontend/QML tests** passed. The new Decky runtime ZIP stages
+successfully with tomli 2.5.0 and its MIT license. A fresh policy-cache frozen
+pnpm install passed while preserving an unrelated workspace file byte-for-byte.
+The real private-toolchain installer also passed in an isolated home directory:
+verified pnpm 12.21.0 plus Node 26.13.1. The user's global Node 24.18.0 / pnpm
+11.13.1, existing workspace configuration, and installed Loader 3.2.8 remain
+unchanged.
+
 ## 2026-11-09 follow-up
 
 - AMDGPU build dependencies now follow the installed SteamOS core/extra channel,

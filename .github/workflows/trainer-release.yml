@@ -58,19 +58,19 @@ jobs:
         run: echo "SOURCE_DATE_EPOCH=$(git log -1 --format=%ct)" >> "$GITHUB_ENV"
 
       - name: Set up Python
-        uses: actions/setup-python@v7.0.0
+        uses: actions/setup-python@v7.1.0
         with:
           python-version: "3.8"
 
       - name: Set up pnpm
-        uses: pnpm/action-setup@v6.1.0
+        uses: pnpm/action-setup@v6.1.1
         with:
           package_json_file: decky-plugin/package.json
 
       - name: Set up Node.js
         uses: actions/setup-node@v7.1.0
         with:
-          node-version: 24
+          node-version: 26.13.1
           cache: pnpm
           cache-dependency-path: decky-plugin/pnpm-lock.yaml
 
@@ -100,9 +100,9 @@ jobs:
       - name: Build Decky test fixture
         working-directory: decky-plugin
         run: |
-          pnpm --ignore-workspace install --frozen-lockfile
-          pnpm --ignore-workspace run typecheck
-          pnpm --ignore-workspace run build
+          bash pnpm-build.sh install --frozen-lockfile
+          bash pnpm-build.sh run typecheck
+          bash pnpm-build.sh run build
 
       - name: Configure BC250 Trainer
         run: |

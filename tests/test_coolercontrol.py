@@ -14,10 +14,10 @@ class CoolerControlTests(unittest.TestCase):
     def test_installer_is_pinned_and_verifies_the_official_appimage(self):
         source = INSTALLER.read_text(encoding="utf-8")
 
-        self.assertIn("VERSION=5.1.1", source)
+        self.assertIn("VERSION=5.1.2", source)
         self.assertIn(
             "APPIMAGE_SHA256="
-            "89d35570b098c885673afda56d3f38f830286b42f61051e0194e864d21495130",
+            "4b9ec9b691d7b6c085c917c180400d815a36e45130bbb7b8432563a20912ddd9",
             source,
         )
         self.assertIn("gitlab.com/coolercontrol/coolercontrol/-/releases/$VERSION", source)
@@ -41,15 +41,19 @@ class CoolerControlTests(unittest.TestCase):
             marker = root / "marker"
             current = b"current verified fixture"
             legacy = b"legacy verified fixture"
+            previous = b"previous verified fixture"
             current_hash = hashlib.sha256(current).hexdigest()
             legacy_hash = hashlib.sha256(legacy).hexdigest()
+            previous_hash = hashlib.sha256(previous).hexdigest()
             cases = (
-                (current, "5.1.1", current_hash, "", 0, 0),
+                (current, "5.1.2", current_hash, "", 0, 0),
+                (previous, "5.1.1", previous_hash, "", 0, 1),
+                (legacy, "5.1.1", previous_hash, "", 1, 1),
                 (legacy, "5.0.0", legacy_hash, "", 0, 1),
-                (legacy, "5.1.1", current_hash, "", 1, 1),
+                (legacy, "5.1.2", current_hash, "", 1, 1),
                 (current, "5.0.0", legacy_hash, "", 1, 1),
                 (legacy, "4.0.0", legacy_hash, "", 1, 1),
-                (current, "5.1.1", current_hash, "version=5.0.0\n", 1, 1),
+                (current, "5.1.2", current_hash, "version=5.0.0\n", 1, 1),
             )
             for content, version, digest, extra, known, installed in cases:
                 with self.subTest(version=version, digest=digest, extra=extra):
@@ -60,15 +64,16 @@ class CoolerControlTests(unittest.TestCase):
                     )
                     result = subprocess.run(
                         ["bash", "-c",
-                         'installer=$1; payload=$2; marker=$3; current=$4; legacy=$5; '
+                         'installer=$1; payload=$2; marker=$3; current=$4; legacy=$5; previous=$6; '
                          'set -- help; source "$installer" >/dev/null; '
                          'APPIMAGE=$payload; MARKER=$marker; APPIMAGE_SHA256=$current; '
                          'LEGACY_APPIMAGE_SHA256=$legacy; '
+                         'PREVIOUS_APPIMAGE_SHA256=$previous; '
                          'protected_root_file() { [[ -f "$1" && ! -L "$1" ]]; }; '
                          'if known_payload_integrity_valid; then echo known=0; else echo known=1; fi; '
                          'if payload_integrity_valid; then echo installed=0; else echo installed=1; fi',
                          "_", str(INSTALLER), str(payload), str(marker),
-                         current_hash, legacy_hash],
+                         current_hash, legacy_hash, previous_hash],
                         check=True, capture_output=True, text=True,
                     )
                     self.assertEqual(result.stdout, f"known={known}\ninstalled={installed}\n")
@@ -96,7 +101,7 @@ class CoolerControlTests(unittest.TestCase):
                  "_", str(INSTALLER), str(root)],
                 check=True, capture_output=True, text=True,
             )
-            snapshots = sorted((root / "backups").glob("pre-5.1.1.*"))
+            snapshots = sorted((root / "backups").glob("pre-5.1.2.*"))
             self.assertEqual(len(snapshots), 2, result.stdout)
             self.assertEqual((root / "backups").stat().st_mode & 0o777, 0o700)
             for snapshot in snapshots:
@@ -185,7 +190,7 @@ class CoolerControlTests(unittest.TestCase):
         self.assertIn("11987", readme)
         self.assertIn("11988 is removed", readme)
         self.assertIn("authentication", readme)
-        self.assertIn("pre-5.1.1", readme)
+        self.assertIn("pre-5.1.2", readme)
         self.assertIn("custom settings", readme)
 
     def test_service_uses_persistent_configuration_and_web_ui_daemon(self):

@@ -8,9 +8,11 @@ if [[ "${BASH_SOURCE[0]:-}" == "$0" ]]; then
     unset _bc250_hook
 fi
 
-VERSION=5.1.1
+VERSION=5.1.2
 APPIMAGE_NAME=CoolerControlD-x86_64.AppImage
-APPIMAGE_SHA256=89d35570b098c885673afda56d3f38f830286b42f61051e0194e864d21495130
+APPIMAGE_SHA256=4b9ec9b691d7b6c085c917c180400d815a36e45130bbb7b8432563a20912ddd9
+PREVIOUS_VERSION=5.1.1
+PREVIOUS_APPIMAGE_SHA256=89d35570b098c885673afda56d3f38f830286b42f61051e0194e864d21495130
 LEGACY_VERSION=5.0.0
 LEGACY_APPIMAGE_SHA256=15c17f7a3990c21f2cc8cbbda5cde8ea6c8ecb63a79f982aa9fbedc308d3440b
 APPIMAGE_URL=${COOLERCONTROL_DOWNLOAD_URL:-https://gitlab.com/coolercontrol/coolercontrol/-/releases/$VERSION/downloads/packages/$APPIMAGE_NAME}
@@ -77,6 +79,8 @@ known_payload_integrity_valid() {
         && grep -Fqx "$MANAGED_MARKER" "$MARKER" || return 1
     if payload_marker_matches "$VERSION" "$APPIMAGE_SHA256"; then
         expected=$APPIMAGE_SHA256
+    elif payload_marker_matches "$PREVIOUS_VERSION" "$PREVIOUS_APPIMAGE_SHA256"; then
+        expected=$PREVIOUS_APPIMAGE_SHA256
     elif payload_marker_matches "$LEGACY_VERSION" "$LEGACY_APPIMAGE_SHA256"; then
         expected=$LEGACY_APPIMAGE_SHA256
     else
@@ -145,7 +149,7 @@ show_status() {
     if payload_integrity_valid; then
         state="installed ($VERSION)"
     elif known_payload_integrity_valid; then
-        state="upgrade-required ($LEGACY_VERSION -> $VERSION)"; failed=1
+        state="upgrade-required ($(sed -n 's/^version=//p' "$MARKER") -> $VERSION)"; failed=1
     else
         state=incomplete; failed=1
     fi

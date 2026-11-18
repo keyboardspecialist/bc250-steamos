@@ -49,7 +49,7 @@ jobs:
         run: echo "SOURCE_DATE_EPOCH=$(git log -1 --format=%ct)" >> "$GITHUB_ENV"
 
       - name: Set up Decky Python
-        uses: actions/setup-python@v7.0.0
+        uses: actions/setup-python@v7.1.0
         with:
           python-version: "3.8"
 
@@ -63,28 +63,28 @@ jobs:
         run: bash scripts/check-efi-core-unlock-build.sh
 
       - name: Set up pnpm
-        uses: pnpm/action-setup@v6.1.0
+        uses: pnpm/action-setup@v6.1.1
         with:
           package_json_file: decky-plugin/package.json
 
       - name: Set up Node.js
         uses: actions/setup-node@v7.1.0
         with:
-          node-version: 24
+          node-version: 26.13.1
           cache: pnpm
           cache-dependency-path: decky-plugin/pnpm-lock.yaml
 
       - name: Install dependencies
         working-directory: decky-plugin
-        run: pnpm --ignore-workspace install --frozen-lockfile
+        run: bash pnpm-build.sh install --frozen-lockfile
 
       - name: Typecheck
         working-directory: decky-plugin
-        run: pnpm --ignore-workspace run typecheck
+        run: bash pnpm-build.sh run typecheck
 
       - name: Build frontend
         working-directory: decky-plugin
-        run: pnpm --ignore-workspace run build
+        run: bash pnpm-build.sh run build
 
       - name: Run backend tests
         run: PYTHONPATH=backend:backend/vendor python3 -m unittest discover -s backend/tests

@@ -8,12 +8,12 @@ if [[ "${BASH_SOURCE[0]:-}" == "$0" ]]; then
     unset _bc250_hook
 fi
 
-RELEASE="${BC250_OPTISCALER_RELEASE:-v0.9.4}"
+RELEASE="${BC250_OPTISCALER_RELEASE:-v0.9.5}"
 [[ "$RELEASE" =~ ^v[0-9][0-9A-Za-z._-]*$ ]] \
     || { printf '[bc250-optiscaler] Invalid release identifier.\n' >&2; exit 1; }
-ARCHIVE_NAME=Optiscaler_0.9.4-final.20260718._MM.7z
-ARCHIVE_URL="https://github.com/optiscaler/OptiScaler/releases/download/v0.9.4/$ARCHIVE_NAME"
-ARCHIVE_SHA256="${BC250_OPTISCALER_ARCHIVE_SHA256:-575cb4df866116093df75af607e37fd70e10f5163e0f23fd5c804142e80ef0ad}"
+ARCHIVE_NAME=Optiscaler_0.9.5-final.20261116.7z
+ARCHIVE_URL="https://github.com/optiscaler/OptiScaler/releases/download/$RELEASE/$ARCHIVE_NAME"
+ARCHIVE_SHA256="${BC250_OPTISCALER_ARCHIVE_SHA256:-77e3ed76bed04e1fb32bacb5a72799ff172f3da22ed5231c0cf3e84fe6761662}"
 [[ "$ARCHIVE_SHA256" =~ ^[0-9a-f]{64}$ ]] \
     || { printf '[bc250-optiscaler] Invalid archive checksum.\n' >&2; exit 1; }
 MESH_STATE="${BC250_MESH_STATE_DIR:-$HOME/.local/share/bc250-mesh-shader}"
@@ -107,7 +107,9 @@ ARCHIVE_FILES = (
     "OptiScaler.ini",
     "amd_fidelityfx_dx12.dll",
     "amd_fidelityfx_framegeneration_dx12.dll",
+    "amd_fidelityfx_framegeneration_vk.dll",
     "amd_fidelityfx_upscaler_dx12.dll",
+    "amd_fidelityfx_upscaler_vk.dll",
     "amd_fidelityfx_vk.dll",
     "dlssg_to_fsr3_amd_is_better.dll",
     "fakenvapi.dll",
@@ -128,7 +130,9 @@ RUNTIME_SOURCES = (
     "OptiScaler.dll",
     "amd_fidelityfx_dx12.dll",
     "amd_fidelityfx_framegeneration_dx12.dll",
+    "amd_fidelityfx_framegeneration_vk.dll",
     "amd_fidelityfx_upscaler_dx12.dll",
+    "amd_fidelityfx_upscaler_vk.dll",
     "amd_fidelityfx_vk.dll",
     "dlssg_to_fsr3_amd_is_better.dll",
     "fakenvapi.dll",
@@ -536,7 +540,12 @@ def read_record(record_dir):
         or not isinstance(record["files"], list) or not isinstance(record["directories"], list)
     ):
         raise Refusal("record identity is invalid")
-    expected_runtime = {target_for(source, record["proxy"]) for source in RUNTIME_SOURCES}
+    runtime_sources = RUNTIME_SOURCES
+    if record["release"] == "v0.9.4":
+        runtime_sources = tuple(source for source in runtime_sources if source not in {
+            "amd_fidelityfx_framegeneration_vk.dll", "amd_fidelityfx_upscaler_vk.dll",
+        })
+    expected_runtime = {target_for(source, record["proxy"]) for source in runtime_sources}
     backups_dir = os.path.join(record_dir, "backups")
     if not directory(backups_dir):
         raise Refusal("record backup directory is missing or unsafe")
@@ -815,13 +824,42 @@ def build_fresh_record(
         raise
 
 
-def update_record(record, record_dir, release_dir, release):
+def update_record(record, record_dir, release_dir, release, install_descriptor):
     install_path = record["installPath"]
     old_entries = {entry["path"]: entry for entry in record["files"]}
     files = []
     for source in RUNTIME_SOURCES:
         relative = target_for(source, record["proxy"])
-        old = old_entries[relative]
+        old = old_entries.get(relative)
+        if old is None:
+            # New in 0.9.5: snapshot collisions before publishing the updated
+            # journal, exactly as for a fresh install. Never lose game DLLs.
+            parent_descriptor, target = anchored_target(install_descriptor, relative)
+            try:
+                original = None
+                if os.path.lexists(target):
+                    if not regular(target):
+                        raise Refusal(f"Refusing non-regular or symlinked collision: {target}")
+                    original_sha = digest(target)
+                    mode = stat.S_IMODE(os.lstat(target).st_mode)
+                    name = backup_name(relative)
+                    backup = os.path.join(record_dir, "backups", name)
+                    with open(target, "rb") as src, open(backup, "xb") as dst:
+                        shutil.copyfileobj(src, dst)
+                    os.chmod(backup, 0o600)
+                    fsync(backup)
+                    fsync(os.path.dirname(backup))
+                    if digest(target) != original_sha or digest(backup) != original_sha:
+                        raise Refusal(f"Collision changed while being backed up: {target}")
+                    original = {"backup": name, "sha256": original_sha, "mode": mode}
+                files.append({
+                    "path": relative, "kind": "runtime",
+                    "installedSha256": digest(os.path.join(release_dir, source)),
+                    "installedMode": 0o644, "original": original,
+                })
+            finally:
+                os.close(parent_descriptor)
+            continue
         condition = file_condition(install_path, old)
         if condition == "modified":
             raise Refusal(f"Installed runtime changed outside the toolkit: {os.path.join(install_path, relative)}")
@@ -921,7 +959,7 @@ def install_runtime_open(
                 )
             record = previous_record
         else:
-            record = update_record(previous_record, record_dir, release_dir, release)
+            record = update_record(previous_record, record_dir, release_dir, release, install_descriptor)
             atomic_json(os.path.join(record_dir, "record.json"), record)
             fsync(record_dir)
     else:

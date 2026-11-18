@@ -130,9 +130,9 @@ shared_stage_payload() {
         "$SHARED_STAGE/py_modules/tomli"
     shared_copy_tree "$SHARED_SOURCE_DIR/vendor/dbus_next" \
         "$SHARED_STAGE/py_modules/dbus_next"
-    if [[ -d "$SHARED_REPO_DIR/backend/vendor/tomli-2.0.1.dist-info" ]]; then
-        shared_copy_tree "$SHARED_REPO_DIR/backend/vendor/tomli-2.0.1.dist-info" \
-            "$SHARED_STAGE/py_modules/tomli-2.0.1.dist-info"
+    if [[ -d "$SHARED_REPO_DIR/backend/vendor/tomli-2.5.0.dist-info" ]]; then
+        shared_copy_tree "$SHARED_REPO_DIR/backend/vendor/tomli-2.5.0.dist-info" \
+            "$SHARED_STAGE/py_modules/tomli-2.5.0.dist-info"
     fi
     if [[ -d "$SHARED_SOURCE_DIR/vendor/dbus_next-0.2.3.dist-info" ]]; then
         shared_copy_tree "$SHARED_SOURCE_DIR/vendor/dbus_next-0.2.3.dist-info" \

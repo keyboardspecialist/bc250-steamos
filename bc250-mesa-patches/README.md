@@ -22,14 +22,14 @@ packaging/rollback checks are not a claim of gameplay stability or higher FPS.
 
 ## Global DirectMesh + FSR4 RADV runtime
 
-The global route builds Mesa `mesa-26.2.5` at commit
-`ddaf85e353442d9d7f192fdcf1823e652e3f2ee3`. It combines LoneWolf's
+The global route builds Mesa `mesa-26.3.0` at commit
+`0a6fa60abb737d26ac8a316a4aad7c9ddf64f9e4`. It combines LoneWolf's
 **DirectMesh v1.4** release with the compute/FSR4 patches from
 `MastaG/linux-cachyos-bc250` at immutable commit
-`f05991ace64a42eda3d2dc583e96b8d35ce393e3`:
+`868b3fc12474851277f4792b7e6387e82b4f5fa5`:
 
 1. `0001-gfx1013-compute-queue-fix.patch`
-2. LoneWolf `bc250-directmesh-mesa-26.2.1.patch` (DirectMesh 1.4, locally rebased as below)
+2. `0002-bc250-directmesh.patch` (MastaG's Mesa 26.3 port of DirectMesh 1.4)
 3. `0003-bc250-fsr4-v3.patch`
 4. `0004-bc250-fsr4-combined-unroll.patch`
 5. `0005-bc250-fsr4-imageprep-texture.patch`
@@ -40,28 +40,30 @@ The DirectMesh asset comes from
 [`lonewolf0622/Mesh-Shaders-for-Rdna-1-`, release `directmesh-v1.4`](https://github.com/lonewolf0622/Mesh-Shaders-for-Rdna-1-/releases/tag/directmesh-v1.4),
 published November 8, 2026. Its SHA-256 is
 `a51b430e7465b9de37d2cc88778c8970676c301c1f77d4b330edca28caff7418`.
-Every file has a fixed SHA-256 in `bc250-mesh-shader.sh`. Setup requires
+That original release hash records provenance; the installer downloads the
+Mesa 26.3 port from the immutable MastaG commit above, independently pinned to
+SHA-256 `06ca0f29a00550d0cbdc27e3ad94b6886b4f026f146b8894a749715b0443f66e`.
+Every applied file has a fixed SHA-256 in `bc250-mesh-shader.sh`. Setup requires
 forward-only application with `--fuzz=0`, validates source markers after
 patching, and checks DirectMesh/FSR4 markers in the final ELF driver. All seven
 patches apply with zero fuzz to the pinned source. A full RADV build with
 `ninja -j4` and final ELF/dynamic-link/feature-marker validation **passed**.
-All **124 BC-250/DirectMesh CPU tests** also passed with Mesa's no-op DRM shim,
-using the release's separate checksum-verified `bc250-directmesh-tests.patch`
-fixtures (SHA-256 `a9db1827b773051933d078c77a6aca708839c479ff003c2a98af19e29ee8ec86`).
-Those fixtures were used only in the isolated validation tree, not added to the
-runtime installer. This is not installation, GPU gameplay, or conformance
-qualification.
+All **119 BC-250 CPU tests** in this port passed with Mesa's no-op DRM shim,
+using the release's checksum-verified `bc250-directmesh-tests.patch` fixtures
+(SHA-256 `a9db1827b773051933d078c77a6aca708839c479ff003c2a98af19e29ee8ec86`).
+The fixtures remain validation-only, not installer dependencies. This is not
+installation, GPU gameplay, or conformance qualification; test inventories
+also differ from the historical 124-test Mesa 26.2.5 run.
 
-`rebase-directmesh.py` accepts only the checksum-pinned upstream DirectMesh
-patch and refuses missing or ambiguous contexts. It preserves Mesa 26.2.5's
-`force_exact_glsl_fma` flag and padded-VA unmapping fix, and expands DirectMesh's
-compiler-key arrays and static assertions from 24 to **28 bytes**, retaining the
-complete key in pipeline-plan and shader-object caches. The v1.4 rebase also
-preserves Mesa's indirect-draw counts, VRS array-layer API, shader-unbind
-tracking, fragment-NIR guard, and already-upstream NIR min/max fix. It extends
-the existing immutable-sampler cache hash with v1.4's absent-set identity and
-omits duplicate compute-queue hunks already supplied by patch 1. It does not
-import the older unsafe mesh/task patch series or a broad GFX10.3 override.
+The port preserves the **28-byte** compiler key and existing Mesa fixes.
+Its patch header records the 26.3 API changes and the differences from the
+author's release. DirectMesh-related features and IB retention share one
+BC-250 enable/disable decision; other RDNA1 boards remain on the plain driver.
+`RADV_DIRECTMESH=0` also gates the feature advertisement. DirectMesh 1.4.1 is
+not used: it is a withdrawn prerelease with upstream reports of GPU hangs.
+The older `rebase-directmesh.py` and its tests remain as provenance for the
+26.2.5 integration but are no longer invoked by setup. Neither the old unsafe
+mesh/task patch series nor a broad GFX10.3 override is imported.
 
 DirectMesh 1.4 adds a **Task-index fallback** for Task + Mesh pipelines without
 a protected Mesh route, admits additional shared-atomic/LDS staging shapes,
@@ -72,7 +74,7 @@ using Task-index pipelines are skipped with a warning and pipeline statistics
 do not count the index pass as Mesh invocations. Upstream's BC-250 synthetic
 GPU results are not toolkit gameplay or Vulkan CTS qualification.
 
-The profile revision is `directmesh-1.4-fsr4-v6`. Existing verified 1.3.1
+The profile revision is `directmesh-1.4-mesa-26.3-fsr4-v7`. Existing verified 1.3.1/1.4
 installations remain recognized for upgrade/rollback, but are stale for setup:
 their cached driver is rebuilt rather than mistaken for the new release.
 

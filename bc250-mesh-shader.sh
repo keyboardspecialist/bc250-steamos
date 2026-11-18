@@ -14,13 +14,13 @@ UPSTREAM_REPO="https://github.com/DryhoppedIPA/bc250-gfx1013-fix"
 UPSTREAM_COMMIT="d3e6dc062c34d2523db0abe5741d1f5b0dea00d9"
 AMDGPU_REVISION="smu-8core-metrics-r1"
 LEGACY_UPSTREAM_COMMIT="b66203e012594204e5e3049856b28a2681112985"
-RADV_PROFILE_REVISION="directmesh-1.4-fsr4-v6"
+RADV_PROFILE_REVISION="directmesh-1.4-mesa-26.3-fsr4-v7"
 RAW_BASE="https://raw.githubusercontent.com/DryhoppedIPA/bc250-gfx1013-fix/$UPSTREAM_COMMIT"
 FSR4_RADV_REPO="https://github.com/MastaG/linux-cachyos-bc250"
-FSR4_RADV_COMMIT="f05991ace64a42eda3d2dc583e96b8d35ce393e3"
+FSR4_RADV_COMMIT="868b3fc12474851277f4792b7e6387e82b4f5fa5"
 FSR4_RADV_BASE="https://raw.githubusercontent.com/MastaG/linux-cachyos-bc250/$FSR4_RADV_COMMIT/patches/mesa"
-DEFAULT_MESA_TAG="mesa-26.2.5"
-MESA_COMMIT="ddaf85e353442d9d7f192fdcf1823e652e3f2ee3"
+DEFAULT_MESA_TAG="mesa-26.3.0"
+MESA_COMMIT="0a6fa60abb737d26ac8a316a4aad7c9ddf64f9e4"
 MESA_REPO="https://gitlab.freedesktop.org/mesa/mesa.git"
 LIBDRM_TARBALL="libdrm-2.4.134.tar.xz"
 LIBDRM_URL="https://dri.freedesktop.org/libdrm/$LIBDRM_TARBALL"
@@ -30,7 +30,8 @@ DIRECTMESH_REPO="https://github.com/lonewolf0622/Mesh-Shaders-for-Rdna-1-"
 DIRECTMESH_PATCH="bc250-${DIRECTMESH_RELEASE}.patch"
 DIRECTMESH_SHA256="a51b430e7465b9de37d2cc88778c8970676c301c1f77d4b330edca28caff7418"
 MESA_PATCH_DIR="${SELF%/*}/bc250-mesa-patches"
-DIRECTMESH_REBASE="$MESA_PATCH_DIR/rebase-directmesh.py"
+# The Mesa 26.3 port is independently checksum-pinned below. The old rebaser
+# remains as historical provenance/tests, not as an active build dependency.
 
 STATE_DIR="${BC250_MESH_STATE_DIR:-$HOME/.local/share/bc250-mesh-shader}"
 CACHE_DIR="$STATE_DIR/upstream-$UPSTREAM_COMMIT"
@@ -389,7 +390,7 @@ fetch_verified() {
 }
 
 stage_upstream() {
-    local profile="${1:-default}" rebased
+    local profile="${1:-default}"
     fetch_verified upstream-MIT-LICENSE \
         ddf5d9be5c762bcc5237e36235a1c5f00be521cfc92d8c264dfcce392e2c1313 \
         "$RAW_BASE/LICENSE"
@@ -400,32 +401,25 @@ stage_upstream() {
         ccf962b0b8aca2b9a67a2e2081d4edf6a66f8403fdf66a54d08a1ef10367f3eb \
         "$RAW_BASE/NOTICE.md"
     fetch_verified 0001-gfx1013-compute-queue-fix.patch \
-        eac1b6b82f64b67c33d822a33bd81310414b661588993724db2fd1bf61585936 \
+        5753a7f72181fcddd347d69c3842a57b82b56c924fb20a765643279cac25e6d8 \
         "$FSR4_RADV_BASE/0001-gfx1013-compute-queue-fix.patch"
-    fetch_verified "$DIRECTMESH_PATCH" "$DIRECTMESH_SHA256" \
-        "$DIRECTMESH_REPO/releases/download/$DIRECTMESH_RELEASE/bc250-directmesh-mesa-26.2.1.patch"
-    [[ -f "$DIRECTMESH_REBASE" && ! -L "$DIRECTMESH_REBASE" ]] \
-        || die "The DirectMesh rebase helper is missing or unsafe."
-    rebased=$(mktemp "$CACHE_DIR/.directmesh-rebase.XXXXXX")
-    if ! python3 -I "$DIRECTMESH_REBASE" "$CACHE_DIR/$DIRECTMESH_PATCH" > "$rebased"; then
-        rm -f -- "$rebased"
-        die "The pinned DirectMesh patch could not be rebased onto Mesa 26.2.5."
-    fi
-    mv -f -- "$rebased" "$CACHE_DIR/directmesh-mesa-26.2.5.patch"
+    fetch_verified 0002-bc250-directmesh.patch \
+        06ca0f29a00550d0cbdc27e3ad94b6886b4f026f146b8894a749715b0443f66e \
+        "$FSR4_RADV_BASE/0002-bc250-directmesh.patch"
     fetch_verified 0003-bc250-fsr4-v3.patch \
-        7663c6eb121d97f96de23f42c00583ad64af5ca83f887a9107412b80f5982b43 \
+        74aada437fccbede380735858d7157f7ded04145061ae67033cb9e67ff588efa \
         "$FSR4_RADV_BASE/0003-bc250-fsr4-v3.patch"
     fetch_verified 0004-bc250-fsr4-combined-unroll.patch \
-        1eed22232b5468e45aa5ff748db3b443cf740b51fd4847c8fb3ba445ad174d84 \
+        85314eec4fd26321864a7fadcc958f89f9dbdc61bb2ee14449d09c53d739ae85 \
         "$FSR4_RADV_BASE/0004-bc250-fsr4-combined-unroll.patch"
     fetch_verified 0005-bc250-fsr4-imageprep-texture.patch \
-        42f794d18d3399ddb04f466a568107b72ab417f04e158b3d48c891ea80cc1aa2 \
+        c510e021e8a969b6b82cefb2f772c310c7cad91732b4b6170be993f593e3962c \
         "$FSR4_RADV_BASE/0005-bc250-fsr4-imageprep-texture.patch"
     fetch_verified 0006-bc250-fsr4-resolution-variants.patch \
-        c5ca0f1dc7129b56b52455884e55de11359e4c0152f89f7857a4bb21b727f256 \
+        8e53ee6859022c5cd2fe758f58bdf000ceb3b54adb548d43468794a1d5af0c4b \
         "$FSR4_RADV_BASE/0006-bc250-fsr4-resolution-variants.patch"
     fetch_verified 0007-bc250-fsr4-production-defaults.patch \
-        5f4ff8b9937818a0c19543b9051859f3a49ec6edb39e9bab59f58a79920006c8 \
+        d8b55547f3a7fab90105fa604c8b5ee7e11898e4cf50062e51f786959763c80c \
         "$FSR4_RADV_BASE/0007-bc250-fsr4-production-defaults.patch"
     if [[ "$profile" == fsr4 ]]; then
         fetch_verified "$FSR4_PATCH_NAME" "$FSR4_PATCH_SHA256" "$FSR4_PATCH_URL"
@@ -2161,7 +2155,7 @@ cmd_setup() (
             local patch_name
             for patch_name in \
                 0001-gfx1013-compute-queue-fix.patch \
-                directmesh-mesa-26.2.5.patch \
+                0002-bc250-directmesh.patch \
                 0003-bc250-fsr4-v3.patch \
                 0004-bc250-fsr4-combined-unroll.patch \
                 0005-bc250-fsr4-imageprep-texture.patch \
@@ -3274,7 +3268,7 @@ mesh_menu_graph_render() {
                 if [[ "$badge" == *"|"* || "$badge" == *$'\n'* ]]; then
                     die "Invalid generated menu badge: action__setup"
                 fi
-                items+=("Install / resume Mesa 26.2.5 + DirectMesh 1.4 + FSR4 RADV|${badge}|Remove verified retired R2 files first, then build the global BC-250 DirectMesh/FSR4 driver and its AMDGPU prerequisites.")
+                items+=("Install / resume Mesa 26.3.0 + DirectMesh 1.4 + FSR4 RADV|${badge}|Remove verified retired R2 files first, then build the global BC-250 DirectMesh/FSR4 driver and its AMDGPU prerequisites.")
                 targets+=("action__setup")
                 badges+=("$badge")
                 if ! badge=$(mesh_menu_graph_badge action__native_mesh_remove cleanup); then badge=; fi

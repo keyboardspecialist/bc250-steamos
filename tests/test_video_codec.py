@@ -9,7 +9,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 SCRIPT = ROOT / "video-codec/bc250-video-codec.sh"
-SOURCE_ROOT = "bc250-encoding-decoding-fix-bc1191850fa521ceb3345986c59c1a882ed757fc"
+SOURCE_ROOT = "bc250-encoding-decoding-fix-4a01ac37efad9bfc382401fa1850ac554a755818"
 SHADERS = (
     "color_convert", "dct_transform", "deblock_filter", "entropy_encode",
     "hevc_motion_estimation", "hevc_pred", "hevc_quant", "hevc_reconstruct_sao",
@@ -55,7 +55,7 @@ class VideoCodecTests(unittest.TestCase):
             )
             self.assertEqual(absent.returncode, 1)
             self.assertIn("state: not-installed", absent.stdout)
-            self.assertIn("release: v0.5.4", absent.stdout)
+            self.assertIn("release: v0.5.6", absent.stdout)
 
             environment.parent.mkdir()
             environment.write_text(
@@ -71,13 +71,13 @@ class VideoCodecTests(unittest.TestCase):
 
     def test_source_commit_and_archive_digest_are_pinned(self):
         source = SCRIPT.read_text(encoding="utf-8")
-        self.assertIn("RELEASE=v0.5.4", source)
+        self.assertIn("RELEASE=v0.5.6", source)
         self.assertIn(
-            "SOURCE_COMMIT=bc1191850fa521ceb3345986c59c1a882ed757fc",
+            "SOURCE_COMMIT=4a01ac37efad9bfc382401fa1850ac554a755818",
             source,
         )
         self.assertIn(
-            "SOURCE_ARCHIVE_SHA256=6659bc48c4a8914385e869b4824f04257936e9d8e03574242409c05f2f819720",
+            "SOURCE_ARCHIVE_SHA256=e7e2d517b5d1fdcb85d0d11317c97c8756f4d0566784a6dd438babbef7c9ae6e",
             source,
         )
         self.assertIn("codeload.github.com/simpmix/bc250-encoding-decoding-fix/tar.gz/$SOURCE_COMMIT", source)
