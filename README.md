@@ -801,8 +801,8 @@ keep list. Persistent data remains under `/home/.steamos/offload`.
 
 ### Track and repair previously used features
 
-Use **Maintenance & Recovery > Track Used Features** before an update, then
-**Preview Known-Feature Repairs** and **Repair Damaged Known Features** after it:
+Use **Maintenance & Recovery > Refresh Feature Tracking** before an update, then
+**Check Tracked Feature Health** and **Repair Tracked Features** after it:
 
 ```bash
 ./bc250-toolkit.sh track-features
@@ -822,6 +822,14 @@ device names are not logged. Failed commands never become successful installs.
 Auto-install also takes inventory snapshots at each stage and reboot checkpoint.
 Read-only status/query commands and dry runs do not update tracking.
 
+The maintenance menus show the number of tracked features and any installed
+components not yet tracked, rather than an installer badge. Health badges show
+separate counts for `healthy`, `repair`, `reboot`, `verify`, `blocked`, and
+`manual`. These read-only checks run on menu entry and after actions; they do
+not request sudo or save a potentially stale health result. `verify` means
+administrator access is needed to inspect GRUB, not that damage was found.
+`manual` means automatic health/repair is not supported, not that it is healthy.
+
 Privileged commands record as the invoking `sudo` user; graphical services use
 the authenticated requesting user, never root-owned files in that user's home.
 Unattended root services are not attributed to an arbitrary desktop account.
@@ -840,8 +848,9 @@ never writes CMOS. Explicitly removed TTM overrides are not re-enabled.
 
 Other recorded components are flagged for manual review: the repair pass does
 not replay CPU/GPU unlocks, overclocks, swap profile selection, game DLL installs,
-experimental payloads, or guess which RADV/frontend setup was wanted. Failed,
-blocked or manual-review items produce a nonzero repair exit status. Storage
+experimental payloads, or guess which RADV/frontend setup was wanted. Failed
+or blocked items produce a nonzero repair exit status; manual-only entries are
+reported as skipped without failing otherwise successful repairs. Storage
 failure stops dependent repairs; independent failures are reported and retained
 for retry. A component may download/build software or request sudo during repair.
 

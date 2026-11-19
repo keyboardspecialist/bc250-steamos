@@ -228,7 +228,35 @@ class RamSplitTests(unittest.TestCase):
             self.assertEqual(result.returncode, 0, result.stderr)
             grub.write_text("linux /vmlinuz ttm.pages_limit=3145728\n")
             invalid = run_sourced('TTM_CONFIG=$1; GRUB_CFG=$2; cmd_ttm_verify', str(config), str(grub))
-            self.assertNotEqual(invalid.returncode, 0)
+            self.assertEqual(invalid.returncode, 1)
+            grub.unlink()
+            missing = run_sourced('TTM_CONFIG=$1; GRUB_CFG=$2; cmd_ttm_verify', str(config), str(grub))
+            self.assertEqual(missing.returncode, 1)
+
+    @unittest.skipIf(os.geteuid() == 0, "root bypasses file permissions")
+    def test_ttm_verify_distinguishes_inaccessible_efi_from_damage(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            config = root / "ttm.cfg"
+            efi = root / "efi"
+            grub = efi / "EFI/steamos/grub.cfg"
+            grub.parent.mkdir(parents=True)
+            grub.write_text("linux /vmlinuz ttm.pages_limit=3670016\n")
+            body = 'TTM_CONFIG=$1; GRUB_CFG=$2; render_ttm_config 3670016 > "$TTM_CONFIG"; cmd_ttm_verify'
+            efi.chmod(0o000)
+            try:
+                inaccessible = run_sourced(body, str(config), str(grub))
+                self.assertEqual(inaccessible.returncode, 2, inaccessible.stderr)
+                self.assertIn("Administrator access", inaccessible.stderr)
+            finally:
+                efi.chmod(0o700)
+            grub.chmod(0o000)
+            try:
+                unreadable = run_sourced(body, str(config), str(grub))
+                self.assertEqual(unreadable.returncode, 2, unreadable.stderr)
+            finally:
+                grub.chmod(0o600)
+            self.assertEqual(run_sourced(body, str(config), str(grub)).returncode, 0)
 
     def test_ttm_regeneration_failure_restores_config_and_grub(self):
         with tempfile.TemporaryDirectory() as directory:

@@ -1482,9 +1482,19 @@ show_guided_setup_overview() {
     pause_key
 }
 
+menu_graph_prepare() {
+    if [[ "$1" == menu__cmd_maintenance_menu ]]; then
+        require_script "$SCRIPT_DIR/scripts/feature-menu.sh"
+        source "$SCRIPT_DIR/scripts/feature-menu.sh"
+        bc250_feature_menu_refresh
+    fi
+}
+
 menu_graph_badge() {
     local node="$1" style="$2"
     case "$node" in
+        action__track_features) bc250_feature_menu_badge tracking ;;
+        action__repair_plan|action__repair_known) bc250_feature_menu_badge health ;;
         action__auto_base_installation) printf '%s' "${CG}[install / resume]${C0}" ;;
         action__toolkit_update)
             if [[ $TOOLKIT_UPDATE_AVAILABLE -eq 1 ]]; then
@@ -1587,6 +1597,11 @@ menu_graph_activate() {
         child__cec) run_menu_child cec ;;
         child__manage) run_menu_child manage ;;
         *) die "Unknown generated menu target: $1" ;;
+    esac
+    case "$1" in
+        action__track_features|action__repair_plan|action__repair_known|action__amdgpu_clean|child__manage|child__persistence)
+            if declare -F bc250_feature_menu_refresh >/dev/null; then bc250_feature_menu_refresh; fi
+            ;;
     esac
 }
 
@@ -2010,21 +2025,21 @@ menu_graph_render() {
                 if [[ "$badge" == *"|"* || "$badge" == *$'\n'* ]]; then
                     die "Invalid generated menu badge: action__track_features"
                 fi
-                items+=("Track Used Features|${badge}|Remember locally installed components and TTM settings before OS updates; no telemetry.")
+                items+=("Refresh Feature Tracking|${badge}|Update the local record of installed components and TTM settings; changes are also tracked automatically.")
                 targets+=("action__track_features")
                 badges+=("$badge")
                 if ! badge=$(menu_graph_badge action__repair_plan read_only); then badge=; fi
                 if [[ "$badge" == *"|"* || "$badge" == *$'\n'* ]]; then
                     die "Invalid generated menu badge: action__repair_plan"
                 fi
-                items+=("Preview Known-Feature Repairs|${badge}|Read-only checks of tracked components; distinguish damage from reboot-needed state.")
+                items+=("Check Tracked Feature Health|${badge}|Read-only checks; separate repairs, reboot, administrator verification and manual-only review.")
                 targets+=("action__repair_plan")
                 badges+=("$badge")
                 if ! badge=$(menu_graph_badge action__repair_known install); then badge=; fi
                 if [[ "$badge" == *"|"* || "$badge" == *$'\n'* ]]; then
                     die "Invalid generated menu badge: action__repair_known"
                 fi
-                items+=("Repair Damaged Known Features|${badge}|Confirm supported targeted repairs without replaying unlocks, CMOS writes, tuning or game DLL injection.")
+                items+=("Repair Tracked Features|${badge}|Verify and repair supported tracked components; never replay unlocks, CMOS writes, tuning or game DLL injection.")
                 targets+=("action__repair_known")
                 badges+=("$badge")
                 if ! badge=$(menu_graph_badge action__amdgpu_clean cleanup); then badge=; fi

@@ -3,10 +3,10 @@ flowchart TD
 
 menu__root["BC-250 installed components<br/>Inspect or remove toolkit components and preserved data."]:::root
 action__status["Show component inventory<br/>Inspect installed, partial, and preserved-data state."]:::read_only
-action__track["Track used features locally<br/>Remember installed components and TTM settings before an OS update; no telemetry."]:::install
+action__track["Refresh feature tracking<br/>Update the local record of installed components and TTM settings; changes are also tracked automatically."]:::install
 action__features["Show tracked features<br/>Read the local feature journal."]:::read_only
-action__repair_plan["Preview known-feature repairs<br/>Read-only health checks; distinguish damage, reboot-needed and manual review."]:::read_only
-action__repair["Repair damaged known features<br/>Confirm targeted repairs only; never replay CMOS writes, unlocks, tuning or game DLL injection."]:::install
+action__repair_plan["Check tracked feature health<br/>Read-only checks; separate repairs, reboot, administrator verification and manual-only review."]:::read_only
+action__repair["Repair tracked features<br/>Verify and repair supported tracked components; never replay unlocks, CMOS writes, tuning or game DLL injection."]:::install
 action__remove_trainer["Remove BC250 Trainer<br/>Review the plan and remove only this component."]:::cleanup
 action__remove_desktop["Remove Plasma desktop control<br/>Review the plan and remove only this component."]:::cleanup
 action__remove_decky["Remove Decky plugin<br/>Review the plan and remove only this component."]:::cleanup

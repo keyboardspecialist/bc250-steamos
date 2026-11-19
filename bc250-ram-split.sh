@@ -573,8 +573,22 @@ write_ttm_profile() {
 }
 
 cmd_ttm_verify() {
-    local pages
+    local pages parent
     pages=$(configured_ttm_pages) || return 1
+    # SteamOS mounts /efi root-only. An inaccessible boot file is unknown,
+    # not evidence that GRUB needs rewriting. Keep this probe rootless.
+    parent=$(dirname -- "$GRUB_CFG")
+    while [[ "$parent" != / && "$parent" != . ]]; do
+        if [[ -d "$parent" && ! -x "$parent" ]]; then
+            log "Administrator access is required to verify $GRUB_CFG" >&2
+            return 2
+        fi
+        parent=$(dirname -- "$parent")
+    done
+    if [[ -f "$GRUB_CFG" && ! -r "$GRUB_CFG" ]]; then
+        log "Administrator access is required to verify $GRUB_CFG" >&2
+        return 2
+    fi
     validate_generated_grub "$GRUB_CFG" "$pages"
 }
 

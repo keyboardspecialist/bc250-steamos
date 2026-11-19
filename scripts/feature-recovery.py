@@ -40,8 +40,8 @@ def script_command(component, *arguments, privileged=False):
     return (["sudo"] if privileged else []) + ["bash", str(path), *arguments]
 
 
-def probe(component, *arguments):
-    return subprocess.run(script_command(component, *arguments), text=True,
+def probe(component, *arguments, privileged=False):
+    return subprocess.run(script_command(component, *arguments, privileged=privileged), text=True,
                           capture_output=True, timeout=60)
 
 
@@ -122,8 +122,8 @@ def track():
     print(f"Local feature inventory saved: {state_path()}")
 
 
-def health(component, record, states):
-    """Return (state, explanation); no mutating or privileged probes."""
+def health(component, record, states, *, allow_privileged=False):
+    """Return (state, explanation); privilege is opt-in after repair consent."""
     if component == "ram":
         desired = record.get("ram")
         if not desired:
@@ -141,9 +141,20 @@ def health(component, record, states):
             return "manual", "A different TTM value is configured; track it explicitly instead of overwriting it."
         if desired["toolUsed"] and ram.get("toolState") == "not-installed":
             return "repair", "Restore the previously used verified memory utility (no CMOS write)."
-        if pages is not None and (configured is None or not ram.get("protected")
-                                  or probe("ram", "ttm-verify").returncode):
-            return "repair", f"Restore TTM {pages} pages and verify generated GRUB/update protection (no CMOS write)."
+        if pages is not None:
+            if configured is None or not ram.get("protected"):
+                return "repair", f"Restore TTM {pages} pages and verify generated GRUB/update protection (no CMOS write)."
+            verification = probe("ram", "ttm-verify")
+            if verification.returncode == 2:
+                if not allow_privileged:
+                    return "verify", "Administrator access is needed to verify generated GRUB; unreadable does not mean damaged."
+                # Only the confirmed repair path may elevate this fixed,
+                # read-only check. Never rewrite GRUB just to test access.
+                verification = probe("ram", "ttm-verify", privileged=True)
+                if verification.returncode == 2:
+                    raise ValueError("Generated GRUB is still inaccessible with administrator access")
+            if verification.returncode:
+                return "repair", f"Restore TTM {pages} pages and verify generated GRUB/update protection (no CMOS write)."
         if ram.get("rebootRequired") or (pages is not None and ram.get("ttmLivePages") not in (None, pages)):
             return "reboot", "Saved TTM configuration is present; reboot to apply it."
         return "healthy", "Verified saved RAM configuration."
@@ -169,8 +180,9 @@ def health(component, record, states):
     return "manual", f"Lifecycle: {states.get(component, 'not-probed')}. {MANUAL}"
 
 
-def plan(features, requested):
-    states = inventory()
+def plan(features, requested, states=None):
+    if states is None:
+        states = inventory()
     rows = []
     for component in ORDER:
         if component not in features or requested not in ("all", component):
@@ -181,6 +193,37 @@ def plan(features, requested):
             state, reason = "blocked", f"Health probe unavailable: {error}"
         rows.append((component, state, reason))
     return rows
+
+
+def menu_status():
+    """One read-only snapshot for both menus; never elevate or save health."""
+    with journal() as value:
+        features = value["features"]
+    tracking = f"{len(features)} tracked" if features else "not tracked"
+    try:
+        states = inventory()
+    except (ValueError, OSError, subprocess.SubprocessError):
+        print(f"{tracking}; inventory unavailable|health unavailable|error")
+        return
+    untracked = sum(state in {"installed", "partial"} and component not in features
+                    for component, state in states.items())
+    if untracked:
+        tracking += f"; {untracked} untracked"
+    if not features:
+        print(f"{tracking}|nothing tracked|neutral")
+        return
+    counts = {}
+    for _, state, _ in plan(features, "all", states):
+        counts[state] = counts.get(state, 0) + 1
+    # Unknown/manual states remain visible; "healthy" only counts checked
+    # components. An inaccessible EFI file is verification, not damage.
+    health_label = "; ".join(f"{counts[state]} {state}" for state in (
+        "repair", "blocked", "reboot", "verify", "healthy", "manual",
+    ) if counts.get(state))
+    level = ("error" if counts.get("repair") or counts.get("blocked")
+             else "warning" if counts.get("reboot") or counts.get("verify")
+             else "neutral" if counts.get("manual") else "healthy")
+    print(f"{tracking}|{health_label}|{level}")
 
 
 def repair_commands(component, record):
@@ -218,14 +261,20 @@ def repair(requested, yes):
             print("Cancelled.")
             return 0
     failed = False
+    manual_skipped = 0
     for component, state, _ in rows:
+        if state == "manual" and component != "storage":
+            # Unsupported automatic replay is deliberately skipped, not a
+            # failed repair. The plan still exposes its lifecycle for review.
+            manual_skipped += 1
+            continue
         if state in {"blocked", "manual"}:
             failed = True
             if component == "storage":
                 print("Storage health is unknown; no dependent repairs were attempted.", file=sys.stderr)
                 break
             continue
-        if state != "repair":
+        if state not in {"repair", "verify"}:
             continue
         try:
             # Re-read intent as well as health after confirmation/earlier repairs.
@@ -237,14 +286,15 @@ def repair(requested, yes):
                 continue
             if current_record.get("ram") != features[component].get("ram"):
                 raise ValueError("Recorded settings changed; review a fresh repair plan")
-            current, _ = health(component, current_record, inventory())
+            current, reason = health(component, current_record, inventory(), allow_privileged=True)
             if current in {"healthy", "reboot"}:
+                print(f"{component}: {current}: {reason}", flush=True)
                 continue
             if current != "repair":
                 raise ValueError("State changed; review a fresh repair plan")
             for command in repair_commands(component, current_record):
                 subprocess.run(command, check=True)
-            current, reason = health(component, current_record, inventory())
+            current, reason = health(component, current_record, inventory(), allow_privileged=True)
             print(f"{component}: {current}: {reason}", flush=True)
             if current not in {"healthy", "reboot"}:
                 raise ValueError("Post-repair health checks did not pass")
@@ -254,25 +304,31 @@ def repair(requested, yes):
             if component == "storage":
                 print("Storage repair failed; no dependent repairs were attempted.", file=sys.stderr)
                 break
+    if manual_skipped:
+        print(f"Skipped {manual_skipped} manual-only feature(s); review their component status separately.")
+    if not failed:
+        print("Supported repair checks completed successfully.")
     print("Repair never replays CMOS, CPU/GPU unlocks, overclocks or game DLL injection. Reboot when indicated.")
     return int(failed)
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("command", choices=("track", "features", "repair-plan", "repair", "forget"))
+    parser.add_argument("command", choices=("track", "features", "repair-plan", "repair", "forget", "menu-status"))
     parser.add_argument("component", nargs="?", default="all", choices=sorted(COMPONENTS | {"all"}))
     parser.add_argument("--yes", action="store_true")
     args = parser.parse_args()
     if os.geteuid() == 0:
         raise ValueError("Run as the logged-in user, not with sudo")
-    if args.command in {"track", "features"} and (args.component != "all" or args.yes):
-        parser.error("track/features accept no additional arguments")
+    if args.command in {"track", "features", "menu-status"} and (args.component != "all" or args.yes):
+        parser.error("track/features/menu-status accept no additional arguments")
     if args.command == "track":
         track()
     elif args.command == "features":
         with journal() as value:
             print(json.dumps(value, indent=2, sort_keys=True))
+    elif args.command == "menu-status":
+        menu_status()
     elif args.command == "repair-plan":
         if args.yes:
             parser.error("repair-plan is read-only and does not accept --yes")

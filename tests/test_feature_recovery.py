@@ -149,6 +149,59 @@ class FeatureRecoveryTests(unittest.TestCase):
         with patch.object(recovery, "json_probe", return_value={"state": "reboot-required"}):
             self.assertEqual(recovery.health("audio", record(), self.states)[0], "reboot")
 
+    def test_unreadable_grub_plan_does_not_request_privileges(self):
+        desired = record(ram={"toolUsed": True, "ttmPages": 3670016})
+        with patch.object(recovery, "json_probe", return_value=ram_status()), \
+                patch.object(recovery, "probe", return_value=subprocess.CompletedProcess([], 2)) as probe:
+            state, reason = recovery.health("ram", desired, self.states)
+        self.assertEqual(state, "verify")
+        self.assertIn("Administrator access", reason)
+        probe.assert_called_once_with("ram", "ttm-verify")
+
+    def test_confirmed_repair_verifies_root_only_grub_without_rewriting(self):
+        self.write_features({"ram": record(ram={"toolUsed": True, "ttmPages": 3670016})})
+        for reboot in (False, True):
+            with self.subTest(reboot=reboot), \
+                    patch.object(recovery, "inventory", return_value=self.states), \
+                    patch.object(recovery, "json_probe", return_value=ram_status(rebootRequired=reboot)), \
+                    patch.object(recovery, "probe", side_effect=[
+                        subprocess.CompletedProcess([], 2),  # Plan: no sudo.
+                        subprocess.CompletedProcess([], 2),  # Confirmed recheck.
+                        subprocess.CompletedProcess([], 0),  # Read-only sudo check.
+                    ]) as probe, \
+                    patch.object(recovery, "repair_commands") as commands, \
+                    contextlib.redirect_stdout(io.StringIO()) as output:
+                self.assertEqual(recovery.repair("ram", True), 0)
+            commands.assert_not_called()
+            self.assertEqual(probe.call_args_list[-1].kwargs, {"privileged": True})
+            self.assertIn("ram: reboot:" if reboot else "ram: healthy:", output.getvalue())
+
+    def test_repaired_ram_can_verify_root_only_grub_with_reboot_pending(self):
+        self.write_features({"ram": record(ram={"toolUsed": True, "ttmPages": 3670016})})
+        with patch.object(recovery, "inventory", return_value=self.states), \
+                patch.object(recovery, "json_probe", side_effect=[
+                    ram_status(protected=False),  # Plan.
+                    ram_status(protected=False),  # Confirmed recheck.
+                    ram_status(rebootRequired=True),  # Post-repair.
+                ]), \
+                patch.object(recovery, "probe", side_effect=[
+                    subprocess.CompletedProcess([], 2), subprocess.CompletedProcess([], 0),
+                ]), \
+                patch.object(recovery, "repair_commands", return_value=[["repair-ram"]]), \
+                patch.object(recovery.subprocess, "run") as run, \
+                contextlib.redirect_stdout(io.StringIO()) as output:
+            self.assertEqual(recovery.repair("ram", True), 0)
+        run.assert_called_once_with(["repair-ram"], check=True)
+        self.assertIn("ram: reboot:", output.getvalue())
+
+    def test_privileged_grub_verification_does_not_hide_actual_damage(self):
+        desired = record(ram={"toolUsed": True, "ttmPages": 3670016})
+        with patch.object(recovery, "json_probe", return_value=ram_status(rebootRequired=True)), \
+                patch.object(recovery, "probe", side_effect=[
+                    subprocess.CompletedProcess([], 2), subprocess.CompletedProcess([], 1),
+                ]):
+            self.assertEqual(recovery.health("ram", desired, self.states, allow_privileged=True)[0], "repair")
+
     def test_ram_repair_uses_recorded_limit_and_never_cmos(self):
         desired = record(ram={"toolUsed": False, "ttmPages": 3014656})
         with patch.object(recovery, "json_probe", return_value=ram_status(toolState="not-installed")):
@@ -166,6 +219,54 @@ class FeatureRecoveryTests(unittest.TestCase):
                          [("fan", "repair"), ("power", "manual")])
         self.assertEqual(recovery.state_path().read_bytes(), before)
 
+    def test_menu_status_separates_tracking_from_all_health_states(self):
+        self.write_features({component: record() for component in (
+            "fan", "power", "audio", "ram", "storage", "aic",
+        )})
+        before = recovery.state_path().read_bytes()
+        self.states["trainer"] = "installed"
+        health_states = dict(fan="repair", power="manual", audio="reboot",
+                             ram="verify", storage="healthy", aic="blocked")
+        with patch.object(recovery, "inventory", return_value=self.states) as inventory, \
+                patch.object(recovery, "health", side_effect=lambda component, *args:
+                    (health_states[component], "details")) as health, \
+                contextlib.redirect_stdout(io.StringIO()) as output:
+            recovery.menu_status()
+        self.assertEqual(output.getvalue(), "6 tracked; 1 untracked|"
+                         "1 repair; 1 blocked; 1 reboot; 1 verify; 1 healthy; 1 manual|error\n")
+        inventory.assert_called_once_with()
+        self.assertTrue(all(not call.kwargs for call in health.call_args_list))
+        self.assertEqual(recovery.state_path().read_bytes(), before)
+
+    def test_menu_status_without_tracking_does_not_claim_health_or_create_state(self):
+        self.states.update(fan="installed", ram="partial")
+        with patch.object(recovery, "inventory", return_value=self.states), \
+                patch.object(recovery, "health") as health, \
+                contextlib.redirect_stdout(io.StringIO()) as output:
+            recovery.menu_status()
+        self.assertEqual(output.getvalue(), "not tracked; 2 untracked|nothing tracked|neutral\n")
+        health.assert_not_called()
+        self.assertFalse(recovery.state_path().parent.exists())
+
+    def test_menu_status_inventory_failure_preserves_tracking_count(self):
+        self.write_features({"power": record()})
+        with patch.object(recovery, "inventory", side_effect=ValueError("Incomplete inventory")), \
+                contextlib.redirect_stdout(io.StringIO()) as output:
+            recovery.menu_status()
+        self.assertEqual(output.getvalue(), "1 tracked; inventory unavailable|health unavailable|error\n")
+
+    def test_menu_status_health_levels_never_call_manual_or_unknown_healthy(self):
+        self.write_features({"power": record()})
+        for state, level in (("healthy", "healthy"), ("manual", "neutral"),
+                             ("verify", "warning"), ("reboot", "warning"),
+                             ("blocked", "error"), ("repair", "error")):
+            with self.subTest(state=state), \
+                    patch.object(recovery, "inventory", return_value=self.states), \
+                    patch.object(recovery, "health", return_value=(state, "details")), \
+                    contextlib.redirect_stdout(io.StringIO()) as output:
+                recovery.menu_status()
+            self.assertEqual(output.getvalue(), f"1 tracked|1 {state}|{level}\n")
+
     def test_repair_checks_results_and_continues_independent_failures(self):
         self.write_features({"fan": record(), "aic": record()})
         calls = []
@@ -177,7 +278,7 @@ class FeatureRecoveryTests(unittest.TestCase):
 
         health = {"aic": 0}
 
-        def check(component, *args):
+        def check(component, *args, **kwargs):
             if component == "aic":
                 health[component] += 1
                 if health[component] == 3:
@@ -193,6 +294,87 @@ class FeatureRecoveryTests(unittest.TestCase):
         self.assertEqual(calls, [["fan"], ["aic"]])
         with recovery.journal() as value:
             self.assertEqual(set(value["features"]), {"fan", "aic"})
+
+    def test_manual_features_do_not_fail_successful_supported_repairs(self):
+        self.write_features({component: record() for component in (
+            "storage", "audio", "fan", "power", "mesh",
+        )})
+        before = recovery.state_path().read_bytes()
+        fan_checks = 0
+
+        def check(component, *args, **kwargs):
+            nonlocal fan_checks
+            if component == "fan":
+                fan_checks += 1
+                return ("healthy", "verified") if fan_checks == 3 else ("repair", "missing")
+            if component == "storage":
+                return "healthy", "verified"
+            if component == "audio":
+                return "reboot", "Reboot, do not rebuild."
+            return "manual", "Review component status."
+
+        with patch.object(recovery, "inventory", return_value=self.states), \
+                patch.object(recovery, "health", side_effect=check), \
+                patch.object(recovery, "repair_commands", return_value=[["fan"]]) as commands, \
+                patch.object(recovery.subprocess, "run") as run, \
+                contextlib.redirect_stdout(io.StringIO()) as output:
+            self.assertEqual(recovery.repair("all", True), 0)
+        commands.assert_called_once_with("fan", record())
+        run.assert_called_once_with(["fan"], check=True)
+        self.assertIn("Skipped 2 manual-only feature(s)", output.getvalue())
+        self.assertIn("Supported repair checks completed successfully.", output.getvalue())
+        self.assertEqual(recovery.state_path().read_bytes(), before)
+
+    def test_manual_only_repair_is_a_successful_noop(self):
+        self.write_features({"power": record()})
+        with patch.object(recovery, "inventory", return_value=self.states), \
+                patch.object(recovery, "repair_commands") as commands, \
+                contextlib.redirect_stdout(io.StringIO()) as output:
+            self.assertEqual(recovery.repair("power", True), 0)
+        commands.assert_not_called()
+        self.assertIn("Skipped 1 manual-only feature(s)", output.getvalue())
+
+    def test_blocked_component_still_fails_with_manual_features(self):
+        self.write_features({"ram": record(), "power": record()})
+        with patch.object(recovery, "inventory", return_value=self.states), \
+                patch.object(recovery, "health", side_effect=[
+                    ("blocked", "Unverified RAM state"), ("manual", "Review tuning"),
+                ]), \
+                patch.object(recovery, "repair_commands") as commands, \
+                contextlib.redirect_stdout(io.StringIO()) as output:
+            self.assertEqual(recovery.repair("all", True), 1)
+        commands.assert_not_called()
+        self.assertNotIn("completed successfully", output.getvalue())
+
+    def test_unknown_storage_still_blocks_dependent_repairs(self):
+        self.write_features({"storage": record(), "fan": record()})
+        for state in ("blocked", "manual"):
+            with self.subTest(state=state), \
+                    patch.object(recovery, "inventory", return_value=self.states), \
+                    patch.object(recovery, "health", side_effect=[
+                        (state, "Unknown storage health"), ("repair", "Missing fan driver"),
+                    ]), \
+                    patch.object(recovery, "repair_commands") as commands, \
+                    contextlib.redirect_stdout(io.StringIO()), \
+                    contextlib.redirect_stderr(io.StringIO()) as errors:
+                self.assertEqual(recovery.repair("all", True), 1)
+            commands.assert_not_called()
+            self.assertIn("no dependent repairs were attempted", errors.getvalue())
+
+    def test_post_repair_failure_still_fails_with_manual_features(self):
+        self.write_features({"fan": record(), "power": record()})
+        with patch.object(recovery, "inventory", return_value=self.states), \
+                patch.object(recovery, "health", side_effect=[
+                    ("repair", "Missing"), ("manual", "Review tuning"),
+                    ("repair", "Missing"), ("repair", "Still missing"),
+                ]), \
+                patch.object(recovery, "repair_commands", return_value=[["fan"]]), \
+                patch.object(recovery.subprocess, "run"), \
+                contextlib.redirect_stdout(io.StringIO()) as output, \
+                contextlib.redirect_stderr(io.StringIO()) as errors:
+            self.assertEqual(recovery.repair("all", True), 1)
+        self.assertIn("Post-repair health checks did not pass", errors.getvalue())
+        self.assertNotIn("completed successfully", output.getvalue())
 
     def test_storage_failure_blocks_dependents(self):
         self.write_features({"storage": record(), "fan": record()})
